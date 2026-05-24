@@ -33,7 +33,7 @@ Concrete examples:
 - User says "investigate this bug" → invoke `systematic-debugging`. Even if you think you can fix it directly, invoke first.
 - User says "what's the best approach to X" → invoke `brainstorming` if X is design-shaped, otherwise reply directly with `Plan:`.
 - User asks you to "add" or "implement" anything touching a named library → the research-gate hook will compel; invoke `research-classifier` before drafting a spec.
-- User says "remember", "save this", "I told you before" → invoke `memory`.
+- User says "remember", "save this", "I told you before" → invoke `managing-memory`.
 
 ## Response shape — the hard rule
 
@@ -99,7 +99,7 @@ Each row is a directive, not a suggestion. If the trigger matches, invoke.
 | Diff is ready for review                                         | `requesting-code-review`           |
 | Reviewer returned issues                                         | `receiving-code-review`            |
 | Branch green, deciding what to do                                | `finishing-a-branch`               |
-| User says "remember", "I told you", "save this", "forget"        | `memory`                           |
+| User says "remember", "I told you", "save this", "forget"        | `managing-memory`                           |
 | Adding or editing a skill                                        | `writing-skills`                   |
 
 If multiple skills could apply, use this priority:

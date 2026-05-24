@@ -1,5 +1,5 @@
 ---
-name: memory
+name: managing-memory
 description: Use when the user says "remember", "save this", "I told you before", or "forget that". Manages plain-markdown notes by classifying writes into Claude Code's native CLAUDE.md and reading-on-write for research-gate state.
 ---
 

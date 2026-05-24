@@ -7,7 +7,7 @@ You are running `/forget`.
 
 User input: $ARGUMENTS
 
-Invoke the `memory` skill.
+Invoke the `managing-memory` skill.
 
 Steps:
 
