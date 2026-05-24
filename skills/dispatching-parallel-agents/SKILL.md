@@ -26,7 +26,7 @@ Send N implementers in one batch. Collect N returns. Then review.
 
 2. **Confirm no file overlap.** Read each task's `Files:` list. If any file appears in two tasks, sequential.
 
-3. **TodoWrite the set.** One todo per task. Mark all `in_progress`.
+3. **`TaskCreate` the set.** One task per plan task. Mark all `in_progress` via `TaskUpdate`.
 
 4. **Build N envelopes** using `templates/implementer-prompt.md` (or `templates/dispatch-prompt.md` for non-implementer roles). Each envelope is self-contained — paste context, never reference paths.
 
@@ -35,7 +35,7 @@ Send N implementers in one batch. Collect N returns. Then review.
 6. **Wait for all returns.** Don't dispatch follow-ups before all N return.
 
 7. **Triage each Status:**
-   - `DONE` → mark TodoWrite completed, tick plan checkbox.
+   - `DONE` → mark the task `completed` via `TaskUpdate`, tick plan checkbox.
    - `DONE_WITH_CONCERNS` → record, mark completed.
    - `BLOCKED` → satisfy `Need:`, re-dispatch just that one.
    - `NEEDS_CONTEXT` → answer `Ask:`, re-dispatch just that one.
@@ -91,4 +91,4 @@ Next:
 - Dispatching parallel before understanding the failure mode.
 - Trusting a `DONE` without `Verify:` matching.
 - Dispatching 10 agents because you can; coordination cost dominates.
-- Forgetting to mark TodoWrite items completed → state drifts.
+- Forgetting to mark tasks `completed` via `TaskUpdate` → state drifts.

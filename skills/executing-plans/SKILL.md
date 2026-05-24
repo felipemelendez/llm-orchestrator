@@ -5,7 +5,7 @@ description: Use when you have a written plan and need to drive it task-by-task 
 
 # Executing plans
 
-The controller that walks a plan from first task to last. Calls `dispatching-subagents` or `dispatching-parallel-agents` per task. Tracks state in TodoWrite. Persists state in the plan file's checkboxes so `/clear` can resume.
+The controller that walks a plan from first task to last. Calls `dispatching-subagents` or `dispatching-parallel-agents` per task. Tracks state with the native Task tools (`TaskCreate` / `TaskUpdate` / `TaskList`). Persists state in the plan file's checkboxes so `/clear` can resume.
 
 ## When to use
 
@@ -35,14 +35,14 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
    - Adjacent tasks with `Independent: yes` and no overlapping `Files:` → parallel group.
    - Anything else → sequential group of size 1.
 
-4. **TodoWrite all tasks** in plan order. Mark items `in_progress` as you start each group.
+4. **`TaskCreate` one task per plan task** in plan order. Mark each `in_progress` via `TaskUpdate` as you start its group.
 
 5. **For each group:**
    - Size ≥ 3, parallel-eligible → invoke `dispatching-parallel-agents`.
    - Otherwise → invoke `dispatching-subagents`.
 
 6. **After each group completes**, before moving on, run these post-group assertions:
-   - Every completed task's TodoWrite item is marked `completed`.
+   - Every completed task is marked `completed` via `TaskUpdate`.
    - Every completed task's `- [ ]` in the plan file is ticked to `- [x]`. If not, tick it now (this is the only durable state across `/clear`).
    - `DONE_WITH_CONCERNS` items routed per the policy below.
 
@@ -60,11 +60,11 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
 ## State invariants
 
 At any point you should be able to answer:
-- "Which task is in flight?" → the TodoWrite item marked `in_progress`.
+- "Which task is in flight?" → the task marked `in_progress` (`TaskList`).
 - "What's next?" → the next `pending` item.
 - "What's done?" → all `completed` items AND the plan-file ticks must agree.
 
-If TodoWrite and plan-file ticks disagree, re-anchor: trust the plan file (it survived `/clear`), reset TodoWrite to match.
+If the task list and plan-file ticks disagree, re-anchor: trust the plan file (it survived `/clear`), reset the tasks (`TaskUpdate`) to match.
 
 ## Output shape
 
@@ -73,7 +73,7 @@ Mid-execution updates (between groups):
 ```
 Found:
 - Group <N> complete: <task numbers> DONE
-- TodoWrite: <X> completed, <Y> in flight, <Z> pending
+- Tasks: <X> completed, <Y> in flight, <Z> pending
 - Plan checkboxes: <X> ticked
 Next:
 - Starting group <N+1>: <task numbers>

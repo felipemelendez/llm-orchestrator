@@ -34,6 +34,7 @@ scan() {
         | grep -v '\.git/' \
         | grep -v 'tests/smoke.sh' \
         | grep -v 'tests/test-portability.sh' \
+        | grep -v '# portable-ok' \
         || true)
   if [[ -n "$hits" ]]; then
     printf '  %s✗%s %s\n' "$RED" "$RESET" "$desc"

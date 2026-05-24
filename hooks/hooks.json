@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/session-start.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/session-start.sh",
+            "timeout": 10
           }
         ]
       }
@@ -16,11 +17,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/user-prompt-submit.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/user-prompt-submit.sh",
+            "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-research-gate.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-research-gate.sh",
+            "timeout": 10
           }
         ]
       }
@@ -31,7 +34,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-no-verify.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-no-verify.sh",
+            "timeout": 10
           }
         ]
       }
@@ -41,11 +45,13 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/subagent-stop.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/subagent-stop.sh",
+            "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-researcher-validator.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-researcher-validator.sh",
+            "timeout": 10
           }
         ]
       }
@@ -55,7 +61,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-stop.sh"
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-stop.sh",
+            "timeout": 10
           }
         ]
       }

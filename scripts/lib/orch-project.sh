@@ -70,7 +70,7 @@ orch_file_mtime_date() {
       local ts
       ts=$(stat -c %Y "$f" 2>/dev/null || true)
       if [[ -n "$ts" ]]; then
-        date -d "@${ts}" +%Y-%m-%d 2>/dev/null || echo "unknown"
+        date -d "@${ts}" +%Y-%m-%d 2>/dev/null || echo "unknown"  # portable-ok: GNU date in Linux-only branch (macOS uses 'date -r' above)
       else
         echo "unknown"
       fi

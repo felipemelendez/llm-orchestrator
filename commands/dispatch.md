@@ -16,14 +16,14 @@ Steps:
 
 2. Resolve `$ARGUMENTS` into a task set.
 
-3. Use TodoWrite (native Claude Code tool) to create one todo per resolved task, in plan order. This is your state board for the rest of the run.
+3. Use `TaskCreate` (native Claude Code task tool) to create one task per resolved plan task, in plan order. This is your state board for the rest of the run.
 
 4. Decide routing per task by reading its `Independent:` line:
    - All selected tasks `Independent: yes` and no shared files → invoke `dispatching-parallel-agents` (one batch, no per-task review).
    - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with per-task two-stage review).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
 
-5. Follow the invoked skill exactly. After each task completes, mark its TodoWrite item completed and tick the plan checkbox in the plan file.
+5. Follow the invoked skill exactly. After each task completes, mark its task `completed` via `TaskUpdate` and tick the plan checkbox in the plan file.
 
 6. Continuous execution: do not ask the user between tasks. Stop only on unresolvable `BLOCKED`, genuine ambiguity, or all-done.
 

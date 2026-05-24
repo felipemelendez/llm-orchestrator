@@ -9,7 +9,7 @@ User input: $ARGUMENTS (optional — chosen option number 1-4)
 Preconditions:
 - `/verify` returned green.
 - `/review` verdict is `yes`, or `with-fixes` is fully addressed.
-- All TodoWrite items for this plan are marked completed.
+- All tasks for this plan are marked `completed` (`TaskList` shows none in flight).
 
 If preconditions are not met, stop and report which one.
 

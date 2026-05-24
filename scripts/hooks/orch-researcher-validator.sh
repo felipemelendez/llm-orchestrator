@@ -244,7 +244,7 @@ WARNING="orch-researcher-validator: Status/brief mismatch — ${MISMATCH}. Brief
 
 json_escape() {
   local s; s=$(cat)
-  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\n'/\\n}; s=${s//$'\r'/\\r}; s=${s//$'\t'/\\t}; s=${s//$'\b'/\\b}; s=${s//$'\f'/\\f}
   printf '"%s"' "${s}"
 }
 

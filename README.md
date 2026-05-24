@@ -86,7 +86,7 @@ Controller (the agent you talk to)
 | `orch-explorer`        | Haiku  | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
 | `orch-researcher`      | Sonnet | Verifies external APIs against current sources before any spec.      |
 
-The controller — the agent you talk to in your terminal or VS Code — holds state in `TodoWrite`, ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
+The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 
 Adding a role (`orch-refactorer`, `orch-security-reviewer`, `orch-test-writer`) is one new markdown file in `agents/` plus wiring it into a workflow skill or template — `./tests/validate-skills.sh` then confirms shape.
 
@@ -131,7 +131,7 @@ Eight layers, each solving a specific failure mode of single-agent AI tooling on
 
 1. **Memory** — additive to Claude Code's native CLAUDE.md, not a replacement. `/remember` auto-classifies facts into `## Conventions` / `## Decisions` / `## People` / `## Notes` of your project's `./CLAUDE.md`, creating sections as needed. `/forget` soft-deletes matching lines to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable. Concurrent sessions serialize writes through a portable file lock. Alongside CLAUDE.md, the plugin maintains a TTL-pruned doc cache and a brief index under `~/.llm-orchestrator/research/` that surfaces prior researcher verdicts to future tasks on the same library.
 2. **Workflow scaffolding** — skills and commands produce durable artifacts (specs, plans, reviews) committed under `docs/llm-orchestrator/`.
-3. **State machine** — `TodoWrite` plus plan-file checkboxes survive `/clear`. The next session reads the plan file and knows exactly where to resume.
+3. **State machine** — the native Task tools plus plan-file checkboxes survive `/clear`. The next session reads the plan file and knows exactly where to resume.
 4. **Dispatch routing** — parallel for independent tasks, sequential for dependent. The controller scans plan-task bodies for symbol references to other tasks and downgrades `Independent: yes` to sequential when it spots a real dependency.
 5. **Autonomous BLOCKED recovery** — when a subagent returns `Status: BLOCKED`, the controller routes through a 5-branch tree (missing context, sibling wait, decomposition, model escalation, or genuinely needs the user). Branches 1–4 happen invisibly; only branch 5 ever reaches you.
 6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Issues raised only when ≥80% confident; lower-confidence observations go into a separate `Notes:` section.

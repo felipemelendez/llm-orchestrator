@@ -37,7 +37,7 @@ The spec file gets read by `/llm-orchestrator:plan` (which produces the plan fil
 
 The `executing-plans` skill walks a plan task-by-task. State lives in two places:
 
-1. **`TodoWrite`** (Claude Code's native tool) — in-memory state board: which task is `in_progress`, which are `pending`, which are `completed`.
+1. **Task tools** (`TaskCreate`/`TaskUpdate`/`TaskList`, Claude Code's native task system) — in-memory state board: which task is `in_progress`, which are `pending`, which are `completed`.
 2. **Plan file checkboxes** — `### 1. Implement nowIso() with TDD  - [ ]` flips to `- [x]` as each task completes. This is the **durable** state — it survives `/clear` and `/exit`.
 
 If you `/clear` mid-orchestration, the next session reads the plan file, counts checked boxes, and knows exactly where to resume.

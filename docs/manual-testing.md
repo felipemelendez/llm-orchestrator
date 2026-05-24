@@ -277,11 +277,11 @@ Run `/plan`. **Pass:**
 ```
 
 **Watch for:**
-- Agent calls `TodoWrite` to create todos for each task
+- Agent calls `TaskCreate` to create one task per plan task
 - Agent dispatches `orch-implementer` (you'll see Task tool calls in the conversation)
 - After implementer returns, agent dispatches `orch-spec-reviewer`
 - Then `orch-code-reviewer`
-- TodoWrite items marked completed
+- Tasks marked `completed` via `TaskUpdate`
 - Plan file's `- [ ]` heading-level checkboxes ticked
 
 **Pass criteria:**

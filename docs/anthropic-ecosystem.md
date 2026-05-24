@@ -19,9 +19,9 @@ Each `commands/<name>.md` is a Claude Code slash command. The frontmatter `descr
 
 Each subagent gets a fresh context window. The orchestrator passes content into the agent's prompt; the agent returns a `Status:` block.
 
-### TodoWrite (built-in tool)
+### Task tools (built-in)
 
-Used as the state board for plan execution. The `executing-plans` and `dispatching-subagents` skills require it. One todo per plan task. Marked `in_progress` on dispatch, `completed` after the per-task review loop.
+Used as the state board for plan execution. The `executing-plans` and `dispatching-subagents` skills require them. `TaskCreate` makes one task per plan task; `TaskUpdate` marks it `in_progress` on dispatch and `completed` after the per-task review loop; `TaskList` reports current state.
 
 ### Skills (`skills/<name>/SKILL.md`)
 

@@ -22,7 +22,7 @@ Run one task to completion before the next. Review each task's diff before movin
 
 ## State tracking
 
-Before the first dispatch, call the native `TodoWrite` tool with one item per task. Mark items `in_progress` when you dispatch, `completed` when the inner loop finishes. This is your state board.
+Before the first dispatch, `TaskCreate` one task per plan task. Mark each `in_progress` via `TaskUpdate` when you dispatch, `completed` when the inner loop finishes. This is your state board.
 
 ## Inner loop (per task)
 
@@ -53,7 +53,7 @@ For each task:
 
   6. Same verdict routing as step 4.
 
-  7. Mark TodoWrite item completed. Tick the plan file's per-task header checkbox.
+  7. Mark the task `completed` via `TaskUpdate`. Tick the plan file's per-task header checkbox.
 
      Each task in a plan has a task-level checkbox on its `### N. <name>` line:
      ```
