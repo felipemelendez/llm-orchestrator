@@ -11,7 +11,7 @@ A structured operating layer on top of Claude Code's native primitives — agent
 ```
    You: "Add multi-tenant rate limiting with per-tenant Postgres policies."
 
-   ┌─ Controller ─────────────────────────────────────────────────────────┐
+   ┌─ Controller ──────────────────────────────────────────────────────────┐
    │                                                                       │
    │   orch-brainstormer (Opus)   ──→  writes spec, you approve            │
    │   /llm-orchestrator:plan     ──→  5 tasks identified                  │
@@ -19,12 +19,12 @@ A structured operating layer on top of Claude Code's native primitives — agent
    │   /llm-orchestrator:worktree ──→  isolated branch                     │
    │                                                                       │
    │   ┌── Parallel batch ──────────────────────────────────────────┐      │
-   │   │  orch-implementer #1 (Sonnet)  ──→  Status: DONE          │      │
-   │   │  orch-implementer #2 (Sonnet)  ──→  Status: DONE          │      │
+   │   │  orch-implementer #1 (Sonnet)  ──→  Status: DONE           │      │
+   │   │  orch-implementer #2 (Sonnet)  ──→  Status: DONE           │      │
    │   └────────────────────────────────────────────────────────────┘      │
    │                                                                       │
    │   ┌── Sequential with per-task review ─────────────────────────┐      │
-   │   │  orch-implementer #3   ──→  BLOCKED — needs #1's schema   │      │
+   │   │  orch-implementer #3   ──→  BLOCKED — needs #1's schema    │      │
    │   │    └── Branch 2: paste sibling output, re-dispatch         │      │
    │   │  orch-implementer #3   ──→  Status: DONE                   │      │
    │   │  orch-spec-reviewer    ──→  Ready: yes                     │      │
@@ -32,8 +32,8 @@ A structured operating layer on top of Claude Code's native primitives — agent
    │   │    └── re-dispatch implementer with fix list               │      │
    │   │  orch-implementer #3   ──→  Status: DONE                   │      │
    │   │  orch-code-reviewer    ──→  Ready: yes                     │      │
-   │   │  [tick plan checkbox]                                       │      │
-   │   │  …repeat for #4, #5…                                        │      │
+   │   │  [tick plan checkbox]                                      │      │
+   │   │  …repeat for #4, #5…                                       │      │
    │   └────────────────────────────────────────────────────────────┘      │
    │                                                                       │
    │   /llm-orchestrator:verify   ──→  pnpm test → 47 passed               │
