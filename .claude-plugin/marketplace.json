@@ -1,0 +1,25 @@
+{
+  "name": "llm-orchestrator",
+  "description": "Agent orchestration toolkit for Claude Code. Concise responses, structured plans, isolated worktrees, two-stage reviews, project memory, evidence-based verification.",
+  "owner": {
+    "name": "LLM Orchestrator"
+  },
+  "plugins": [
+    {
+      "name": "llm-orchestrator",
+      "description": "Agent orchestration toolkit. 15 skills, 13 commands, 6 native subagents, file-based memory, native Claude Code hooks.",
+      "version": "0.1.0",
+      "source": "./",
+      "license": "MIT",
+      "keywords": [
+        "agents",
+        "orchestration",
+        "skills",
+        "concise",
+        "memory",
+        "tdd",
+        "review"
+      ]
+    }
+  ]
+}

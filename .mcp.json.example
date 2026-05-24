@@ -1,0 +1,20 @@
+{
+  "_DO_NOT_RENAME_TO_.mcp.json_WITHOUT_EDITING": "Claude Code auto-loads every server in `mcpServers` when this file is named `.mcp.json`. The leading underscore on a key does NOT disable a server — Claude Code uses the value object, not the key name. To enable a server: copy this file to `.mcp.json`, drop the `_optional_servers` wrapper, and keep ONLY the server(s) you want under `mcpServers` with normal keys (e.g. \"memory\", not \"_memory_example\"). LLM Orchestrator does not require any MCP server.",
+  "_optional_servers": {
+    "memory": {
+      "_description": "Cross-session memory via official MCP server. Complements (does not replace) LLM Orchestrator's file-based memory.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    },
+    "sequential-thinking": {
+      "_description": "Long chain-of-thought scratch space, useful for orch-debugger and orch-brainstormer.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+    "context7": {
+      "_description": "Library documentation lookups during planning.",
+      "command": "npx",
+      "args": ["-y", "@upstash/context7-mcp"]
+    }
+  }
+}
