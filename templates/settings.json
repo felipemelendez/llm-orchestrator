@@ -1,0 +1,44 @@
+{
+  "_comment": "Drop this into .claude/settings.json (per-project) or merge into ~/.claude/settings.json (per-user). Adjust paths and permissions to taste.",
+  "env": {
+    "ORCH_HOOK_PROFILE": "standard",
+    "ORCH_SESSION_MAX_CHARS": "8000",
+    "ORCH_SESSION_RETENTION_DAYS": "90"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git worktree:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Read(*)",
+      "Glob(*)",
+      "Grep(*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git merge:*)",
+      "Bash(git reset:*)",
+      "Bash(rm:*)",
+      "Bash(gh pr:*)",
+      "Edit(*)",
+      "Write(*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(rm -rf /*)",
+      "Bash(curl * | sh)",
+      "Bash(curl * | bash)"
+    ]
+  },
+  "_hooks_note": "If you installed via --copy (not as a plugin), add hook entries here using Claude Code's settings.json hook schema. See docs/install.md → 'Wiring hooks for a --copy install' for the full example. If you installed as a plugin, hooks come from .claude-plugin/plugin.json automatically — leave this block out."
+}
