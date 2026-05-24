@@ -1,0 +1,21 @@
+{
+  "_note": "Documentation only. Hook scripts self-gate via ORCH_HOOK_PROFILE; this file lists which hooks are active at each profile.",
+  "profiles": {
+    "minimal": {
+      "hooks": ["orch-session-start"],
+      "notes": "Bootstrap only. Loads the Concise Agent Protocol meta-skill at SessionStart; no protocol reinforcement, no guard, no pruning."
+    },
+    "standard": {
+      "hooks": [
+        "orch-session-start",
+        "orch-user-prompt-submit",
+        "orch-guard",
+        "orch-research-gate",
+        "orch-subagent-stop",
+        "orch-researcher-validator",
+        "orch-stop"
+      ],
+      "notes": "Default. Bootstraps protocol; reinforces shape on each user turn; blocks --no-verify; fires the research gate on design-shape prompts; warns when subagents skip Status; validates researcher fidelity + writes brief index on clean outcomes; prunes trash and research cache on each Stop. ORCH_STRICT_RESEARCH=1 escalates research fidelity warnings to blocks."
+    }
+  }
+}
