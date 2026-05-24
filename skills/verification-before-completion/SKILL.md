@@ -1,0 +1,76 @@
+---
+name: verification-before-completion
+description: You MUST use this before claiming any work is done, fixed, passing, or ready to merge. Forces a real run of the verifying command before the claim — no exceptions.
+---
+
+# Verification before completion
+
+Claims of success cost nothing. Evidence costs a single command. Always pay it.
+
+## When to use
+
+- About to say "done", "fixed", "passing", "ready to merge".
+- About to mark a task `DONE` in a `Status:` block.
+- About to close a `Plan:` checkbox.
+
+## The gate
+
+Before claiming, run through these in order:
+
+1. **Identify** — what command proves this is done?
+   - Tests: `pnpm test <file>` or `cargo test <module>`.
+   - Build: `pnpm typecheck`, `cargo build`, `tsc --noEmit`.
+   - Behavior: a curl, a script, a manual UI step with screenshot.
+2. **Run** — execute it now. Not "I would run it"; run it.
+3. **Read** — read the output. Don't skim.
+4. **Verify** — does the output match the success criterion? Number of passing tests, absence of error lines, expected response.
+5. **Claim** — only now is the success claim allowed, and it cites the evidence.
+
+## What counts as evidence
+
+- A pasted line from the test runner with a pass count.
+- A non-zero return code is failure, even if the output looks fine.
+- "No output" is fine *only* if the command's success signal is silence (e.g., `tsc --noEmit`).
+- A `git diff --quiet && echo clean` is fine for "no uncommitted changes".
+
+## What does NOT count
+
+- "I think this should pass." — run it.
+- "The change is small, it can't break anything." — run it.
+- "Tests were passing earlier." — run it now.
+- "I'll verify in a follow-up." — verify before claiming.
+
+## Output shape
+
+After running the command:
+
+```
+Changed:
+- <file:line> — <what>
+Verify:
+- pnpm test users.test.ts → 4 passed
+```
+
+If verification fails, do NOT report `Changed:`. Report:
+
+```
+Found:
+- verification failed: <one-line summary>
+- pnpm test → 1 failing: <name> at <file:line>
+Next:
+- Invoke systematic-debugging.
+```
+
+## Common failures
+
+- Reading the wrong line of output (count of tests run vs. passed).
+- Claiming `Changed:` when the test still fails on an edge case.
+- Mistaking "lint warnings" for "lint passed".
+- Skipping verification because the change is "obvious".
+
+## Anti-patterns
+
+- "Tests pass" without pasting the line.
+- Verifying a different scenario than the one that broke.
+- Re-running tests until they happen to pass (flakes are bugs).
+- Pasting the command but not the output.
