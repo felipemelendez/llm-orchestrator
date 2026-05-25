@@ -23,6 +23,7 @@ Subagents:
 | `orch-debugger`        | sonnet | `/debug`               | Root-cause investigation before any edit                         |
 | `orch-brainstormer`    | opus   | brainstorming design stage | Open-design explorer; writes the spec                        |
 | `orch-researcher`      | sonnet | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
+| `orch-security-reviewer` | sonnet | `/review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps) |
 
 Prompt templates live in `templates/`:
 - `implementer-prompt.md`

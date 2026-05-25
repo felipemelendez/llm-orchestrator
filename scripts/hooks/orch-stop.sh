@@ -20,9 +20,13 @@ HOME_DIR="${ORCH_HOME:-${HOME}/.llm-orchestrator}"
 TRASH_DIR="${HOME_DIR}/memory/.trash"
 RESEARCH_CACHE_DIR="${HOME_DIR}/research/cache"
 
+TOOLCHAIN_CACHE_DIR="${HOME_DIR}/toolchain"
+
 # Pruning runs every turn (cheap, idempotent). Suppress errors so a missing
 # dir doesn't fail the hook.
 [[ -d "${TRASH_DIR}" ]] && find "${TRASH_DIR}" -name '*.md' -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
+# Toolchain cache: prune stale detection results (also clears any stranded .lock/.lockdir files).
+[[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && find "${TOOLCHAIN_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 # Research cache uses its own (shorter) retention since docs change faster than sessions.
 # Per-library overrides are honored: a cache file with `cache_ttl_days: <N>` in
 # frontmatter is pruned at <N> days instead of the global default.

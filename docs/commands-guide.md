@@ -30,7 +30,7 @@ description: One-line summary of what the command does. Triggers, not workflow.
 
 A command is a workflow wrapper. The skill is the discipline. Most commands open by invoking one skill, then call out to others as needed.
 
-Example: `/review` invokes `requesting-code-review`, which then dispatches subagents for the two stages.
+Example: `/review` invokes `requesting-code-review`, which dispatches subagents for spec-compliance then code-quality, plus an optional third security pass when the diff touches security-sensitive code.
 
 ## When to add a command
 
@@ -65,7 +65,7 @@ The validator checks the `description:` field on every command. Body validation 
 | `/plan`            | Turn an approved spec into a checklist-shaped plan.                     |
 | `/worktree`        | Create an isolated git worktree.                                        |
 | `/dispatch`        | Run a focused subagent with a constructed context envelope.             |
-| `/review`          | Two-stage review of the current diff.                                   |
+| `/review`          | Two-stage review (spec + code quality), plus an optional security pass on sensitive diffs. |
 | `/debug`           | Root-cause debugging.                                                   |
 | `/verify`          | Run tests/lint/typecheck and report evidence.                           |
 | `/finish`          | Decide between merge / PR / keep / discard.                             |

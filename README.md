@@ -38,6 +38,10 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Visual brainstorming** | During brainstorming, a local zero-dependency panel server (you open the printed `localhost` URL) renders live HTML mockups; the agent pushes screens and reads your clicks back, iterating before any code is written | Lets you see and react to UI/layout/structure choices instead of parsing them from prose |
 | **Spec & plan review** | A fresh reviewer subagent checks the spec, then the plan, for completeness, internal consistency, ambiguity, and scope before implementation begins — an advisory verdict biased toward approval that loops back only on real gaps | Catches design flaws that both author and standard reviewer miss |
 | **Protocol grader** | The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's reply on each Stop event against the six Concise Agent Protocol shapes (when the hook is active); non-blocking by default, set `ORCH_STRICT_PROTOCOL=1` to block | Keeps agent output machine-readable and reviewable over long sessions |
+| **Toolchain-aware verification** | Before running any verify command, the orchestrator detects the test runner and build tool from manifest/config files on disk (package.json, pyproject.toml, Cargo.toml, go.mod, Makefile), then uses those exact commands in `Verify:` lines | Prevents false "tests passed" from running the wrong test runner |
+| **Regression guard** | When a worktree is created the baseline test suite is captured; before a branch is merged or a PR opened, the suite is re-run and finishing is refused if a previously-green test now fails | Catches regressions introduced by the implementer before the branch lands |
+| **Security review** | `orch-security-reviewer` runs as an optional third review pass, scanning the diff for injection risks, missing auth checks, exposed secrets, and unsafe dependency patterns | Surfaces common security issues that code-quality reviewers are not specifically looking for |
+| **Convention detection** | The orchestrator can detect repo conventions on demand (`orch_detect_conventions`) to help seed `./CLAUDE.md`; subagents read conventions from `./CLAUDE.md` (kept lean, not auto-injected into every task prompt) | Conventions stay in one place you control; detection is available when you need to bootstrap or audit them |
 
 ---
 
@@ -65,7 +69,7 @@ The gate doesn't replace human review, doesn't verify business logic, and doesn'
 
 ## Meet the team
 
-Seven specialists, each with a single responsibility, a model chosen to match its job, and a fresh context window per dispatch. The controller routes work between them using a `Status:` enum (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT).
+Eight specialists, each with a single responsibility, a model chosen to match its job, and a fresh context window per dispatch. The controller routes work between them using a `Status:` enum (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT).
 
 ```
 You
@@ -75,10 +79,11 @@ Controller (the agent you talk to)
  ├─ orch-brainstormer   → spec
  ├─ orch-researcher     → verification brief
  ├─ orch-implementer ×N → code (TDD)
- ├─ orch-spec-reviewer  → does the diff match the spec?
- ├─ orch-code-reviewer  → is it idiomatic, safe, minimal?
- ├─ orch-debugger       → root cause
- └─ orch-explorer       → cheap reads (Haiku)
+ ├─ orch-spec-reviewer       → does the diff match the spec?
+ ├─ orch-code-reviewer       → is it idiomatic, safe, minimal?
+ ├─ orch-security-reviewer   → injection, auth, secrets, unsafe deps
+ ├─ orch-debugger            → root cause
+ └─ orch-explorer            → cheap reads (Haiku)
 ```
 
 | Agent                  | Model  | Job                                                                  |
@@ -90,6 +95,7 @@ Controller (the agent you talk to)
 | `orch-debugger`        | Sonnet | Root-cause investigator. Diagnoses bugs; does not patch them.        |
 | `orch-explorer`        | Haiku  | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
 | `orch-researcher`      | Sonnet | Verifies external APIs against current sources before any spec.      |
+| `orch-security-reviewer` | Sonnet | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
 
 The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 
@@ -154,7 +160,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "All 56 checks passed."
+./tests/smoke.sh                           # → "All 57 checks passed."
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

@@ -133,6 +133,7 @@ Claude Code's `Task` tool dispatches subagents declared in `agents/`. Use them b
 - `orch-debugger` — root-cause investigator (Sonnet)
 - `orch-brainstormer` — design-stage explorer (Opus)
 - `orch-researcher` — verifies external API claims against current sources (Sonnet)
+- `orch-security-reviewer` — optional third review pass; checks diffs for injection, auth gaps, secrets, unsafe deps (Sonnet)
 
 When a task is read-heavy (audit, "what files handle X", grep-sweeps), **dispatch `orch-explorer` instead of doing the reads inline.** Haiku is roughly a tenth the cost of Sonnet for the same searches.
 

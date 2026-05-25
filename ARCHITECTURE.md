@@ -98,6 +98,18 @@ Reinforced two ways: a `UserPromptSubmit` hook injects a per-turn reminder of th
 
 Before `brainstorming` writes a spec or `writing-plans` writes a plan, the controller dispatches `orch-researcher` (Sonnet) to verify the planned approach against current docs and on-disk state. The researcher returns one of four outcomes: `VERIFIED`, `CONTRADICTED` (halts the workflow until the spec is revised), `COULDN'T_VERIFY` (annotates the spec), or `NOT_APPLICABLE`. The classifier in front of it is biased toward `SKIP` — most tasks don't trigger research.
 
+### Engineering features (cross-layer)
+
+Four capabilities span multiple layers and are documented here rather than in a single layer:
+
+**Toolchain-aware verification.** Before a `Verify:` line is written, `scripts/lib/orch-detect.sh` inspects the project root for manifest and config files (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `Makefile`) to identify the test runner and build tool. Node projects always map to `npm run <script>`; the package manager itself is not detected. The detected commands are used verbatim in `Verify:` lines. Results are cached under `~/.llm-orchestrator/toolchain/<hash>/config.md` and re-detected only when manifest content changes.
+
+**Regression guard.** When a worktree is created (`using-git-worktrees` skill), `orch_regression_baseline` runs the detected test suite and records the outcome to `~/.llm-orchestrator/toolchain/<hash>/baseline.md`. Before a branch is merged or a PR opened (`finishing-a-branch` skill), `orch_regression_check` re-runs the suite and compares against that baseline. If a previously-green test now fails, finishing is refused until the regression is fixed or the user explicitly overrides.
+
+**Security review (orch-security-reviewer).** An optional third review pass — `orch-security-reviewer` (Sonnet) — runs automatically after the two standard review stages when the diff matches security-sensitive tokens (auth, crypto, payments, secrets, jwt, oauth, tls/ssl). The reviewer looks specifically for injection risks, missing auth checks, exposed secrets, and unsafe dependency patterns. Like the code reviewer, it applies an 80% confidence threshold and places lower-confidence observations in a `Notes:` section.
+
+**Convention detection.** The shell function `orch_detect_conventions` reads manifest and config files to detect coding conventions — naming patterns, linter, formatter, test runner, indentation hints. It is an on-demand helper (e.g., to seed or audit `./CLAUDE.md`) rather than auto-injected into every dispatch. Conventions are sourced from `./CLAUDE.md`; implementers read the pasted `## Conventions` section in the `## Project conventions` slot of `templates/implementer-prompt.md`. Detection results are cached per-project in `~/.llm-orchestrator/toolchain/<hash>/config.md`. `/remember` writes to `## Conventions` in CLAUDE.md.
+
 ---
 
 ## Component contract
@@ -193,7 +205,9 @@ User home directory (created on first use):
   ├── memory/<project-hash>.md             plugin-internal: ## Research config + declined_mcp only
   ├── memory/.trash/                       soft-deleted lines from /forget
   ├── research/cache/<hash>/<lib>.md       dated doc snapshots per library
-  └── research/briefs-index/<hash>.md      brief retrieval index for compounding lookups
+  ├── research/briefs-index/<hash>.md      brief retrieval index for compounding lookups
+  └── toolchain/<hash>/config.md           detected test runner / build tool per project
+                    baseline.md          baseline test-run outcome for regression guard
 
 User-curated project facts live in Claude Code's native ./CLAUDE.md (loaded by
 Claude Code itself, not by this plugin's SessionStart hook).
