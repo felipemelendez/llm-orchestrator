@@ -23,6 +23,12 @@ Skip this skill for one-line fixes, typos, or mechanical chores.
    - `RESEARCH_SKIP` → proceed to step 2 silently.
    - `RESEARCH_NEEDED` → announce briefly ("Found: research needed (<libraries>). Running pre-spec verification."), dispatch `orch-researcher`, wait for the brief. If outcome is `CONTRADICTED`, surface the contradiction inline and revise the framing before proceeding. If `VERIFIED` or `COULDN'T_VERIFY`, fold the findings into your clarifying questions (e.g., "docs show pattern X is current — do you want that or the older pattern?").
 
+1.7. **Architecture grounding (silent).** Skip for greenfield projects or trivial edits. For existing codebases with a non-trivial change, apply known decisions as spec constraints — no questions, no dispatching, no prompting.
+   - Call `orch_arch_cached "$PWD"`. On a cache hit (rc 0), read the returned decisions silently and apply them as hard constraints on the spec.
+   - Also read the `## Decisions` and `## Conventions` sections of `./CLAUDE.md` silently; treat every entry there as a constraint the spec must not break.
+   - On a cache miss (rc nonzero): still apply whatever `## Decisions`/`## Conventions` exist in CLAUDE.md silently. At most emit one line: "Tip: run `/llm-orchestrator:onboard` once to capture this codebase's architectural decisions." — never a question or interactive prompt.
+   - Do not dispatch `orch-explorer`, do not propose `/remember`, do not ask the user anything. Codebase study and decision capture happen once via `/llm-orchestrator:onboard`, not per task.
+
 2. **Ask up to 3 questions, one at a time.** Multiple choice when possible. Stop asking the moment the picture is clear.
 3. **Propose 2 options.** Each option has: one-line summary, one-line tradeoff. Mark a recommended option.
 4. **On user choice, write the spec.** Save to `docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md`. If research ran at step 1.5, fill in the spec's `## Research` section with the brief path, verdict, and notable findings. If no research ran, write "none — no research-relevant signals."

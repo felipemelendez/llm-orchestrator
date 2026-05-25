@@ -488,6 +488,72 @@ fi
 unset ORCH_HOME
 
 # ============================================================
+# Section 13: orch_arch_record + orch_arch_cached round-trip
+# ============================================================
+printf '\n%s== architecture study cache round-trip ==%s\n' "$DIM" "$RESET"
+
+ARCH_HOME="$TMP/arch-home"
+export ORCH_HOME="$ARCH_HOME"
+
+ARCH_DIR="$TMP/arch-project"
+mkdir -p "$ARCH_DIR"
+printf '{}' > "$ARCH_DIR/package.json"
+
+# Record decisions.
+orch_arch_record "$ARCH_DIR" "data layer: SQLite (offline-first)"
+RECORD_RC=$?
+if [[ $RECORD_RC -eq 0 ]]; then
+  ok "orch_arch_record exits 0"
+else
+  fail "orch_arch_record exits 0" "exit code: $RECORD_RC"
+fi
+
+# Cache file must exist.
+ARCH_CACHE_FILE=$(find "$ARCH_HOME/architecture" -name "decisions.md" 2>/dev/null | head -1)
+if [[ -n "$ARCH_CACHE_FILE" ]]; then
+  ok "decisions.md written under ~/.llm-orchestrator/architecture/"
+else
+  fail "decisions.md written under ~/.llm-orchestrator/architecture/" "no decisions.md under $ARCH_HOME/architecture"
+fi
+
+# Cache hit: orch_arch_cached returns the decisions and exits 0.
+ARCH_CACHED=$(orch_arch_cached "$ARCH_DIR" 2>/dev/null)
+ARCH_CACHED_RC=$?
+if [[ $ARCH_CACHED_RC -eq 0 ]]; then
+  ok "orch_arch_cached returns 0 on cache hit"
+else
+  fail "orch_arch_cached returns 0 on cache hit" "exit code: $ARCH_CACHED_RC"
+fi
+
+if printf '%s' "$ARCH_CACHED" | grep -q 'SQLite'; then
+  ok "orch_arch_cached prints recorded decisions on cache hit"
+else
+  fail "orch_arch_cached prints recorded decisions on cache hit" "got: $(printf '%s' "$ARCH_CACHED" | tr '\n' '|')"
+fi
+
+# Stale check: modify manifest → orch_arch_cached returns nonzero.
+printf '{"x":1}' >> "$ARCH_DIR/package.json"
+orch_arch_cached "$ARCH_DIR" >/dev/null 2>/dev/null
+ARCH_STALE_RC=$?
+if [[ $ARCH_STALE_RC -ne 0 ]]; then
+  ok "orch_arch_cached returns nonzero (stale) after manifest change"
+else
+  fail "orch_arch_cached returns nonzero (stale) after manifest change" "exit code was 0 (expected nonzero)"
+fi
+
+# After re-recording with new manifest, cache hit again.
+orch_arch_record "$ARCH_DIR" "data layer: SQLite (offline-first)" 2>/dev/null
+ARCH_RERECORD=$(orch_arch_cached "$ARCH_DIR" 2>/dev/null)
+ARCH_RERECORD_RC=$?
+if [[ $ARCH_RERECORD_RC -eq 0 ]]; then
+  ok "orch_arch_cached returns 0 after re-record with updated manifest"
+else
+  fail "orch_arch_cached returns 0 after re-record with updated manifest" "exit code: $ARCH_RERECORD_RC"
+fi
+
+unset ORCH_HOME
+
+# ============================================================
 # Summary
 # ============================================================
 printf '\n'
