@@ -262,7 +262,7 @@ if should_run install; then
   section "--copy install"
   rm -rf /tmp/orch-smoke-proj
   mkdir -p /tmp/orch-smoke-proj
-  ( cd /tmp/orch-smoke-proj && git init -q && git commit --allow-empty -q -m initial )
+  ( cd /tmp/orch-smoke-proj && git init -q && git -c user.email=ci@local -c user.name=ci commit --allow-empty -q -m initial )
 
   "${ROOT}/scripts/install.sh" --copy /tmp/orch-smoke-proj >/dev/null 2>&1
   rc=$?
