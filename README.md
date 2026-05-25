@@ -21,6 +21,8 @@ Restart Claude Code. The slash menu now includes the orchestrator commands (`/ll
 
 To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the command reference and [`docs/examples/sample-session.md`](./docs/examples/sample-session.md) for a walkthrough.
 
+**Requirements:** Claude Code, plus `bash` and `git`. Two optional features have their own dependency: visual brainstorming needs **Node.js** (to run the panel server) and the protocol grader needs **`python3`** (to parse transcripts). If either is missing, that one feature is skipped with a notice — the rest of the orchestrator works normally.
+
 ---
 
 ## What it does
@@ -29,13 +31,13 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 |---|---|---|
 | **Research gate** | Verifies the planned approach against current docs (vendor MCPs, Context7, web) and on-disk state before any code is written | Catches deprecated APIs and bad version assumptions before they ship |
 | **Two-stage code review** | Spec-compliance reviewer, then code-quality reviewer — each in a fresh subagent context | Catches bugs implementers miss in their own diffs |
-| **Autonomous BLOCKED recovery** | When an agent gets stuck, the controller tries four fixes before interrupting you: paste the missing context, run the prerequisite task first, split the work into smaller steps, or retry with a stronger model | Most blockers resolve without paging you |
+| **Autonomous BLOCKED recovery** | When an agent gets stuck, the controller tries four autonomous fixes before paging you: paste the missing context, run the prerequisite task first, split the work into smaller steps, or retry with a stronger model (a fifth branch surfaces to you) | Most blockers resolve without paging you |
 | **Parallel dispatch** | Independent tasks fan out to multiple implementers in one batch; dependent ones serialize | 3 concurrent implementers ≈ 1 sequential's wall time |
 | **Evidence-based completion** | Every "done" claim must include the output of the command that proves it — the test result, the typecheck pass, the linter exit code | Stops agents from declaring code finished without actually running the tests |
 | **CLAUDE.md classification** | `/remember <fact>` appends the fact to your project's CLAUDE.md (Claude Code's native memory file) under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically | Persistent project memory without you having to organize it by hand |
-| **Visual brainstorming** | During brainstorming, serves live HTML mockups in your browser from a local zero-dependency panel server; the agent pushes screens and reads your clicks back, iterating before any code is written | Lets you see and react to UI/layout/structure choices instead of parsing them from prose |
-| **Adversarial spec/plan review** | A dedicated adversarial pass challenges the spec or plan for gaps, contradictions, and hidden assumptions before implementation begins | Catches design flaws that both author and standard reviewer miss |
-| **Protocol grader** | The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades every controller reply against the six Concise Agent Protocol shapes; non-blocking by default, set `ORCH_STRICT_PROTOCOL=1` to block | Keeps agent output machine-readable and reviewable over long sessions |
+| **Visual brainstorming** | During brainstorming, a local zero-dependency panel server (you open the printed `localhost` URL) renders live HTML mockups; the agent pushes screens and reads your clicks back, iterating before any code is written | Lets you see and react to UI/layout/structure choices instead of parsing them from prose |
+| **Spec & plan review** | A fresh reviewer subagent checks the spec, then the plan, for completeness, internal consistency, ambiguity, and scope before implementation begins — an advisory verdict biased toward approval that loops back only on real gaps | Catches design flaws that both author and standard reviewer miss |
+| **Protocol grader** | The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's reply on each Stop event against the six Concise Agent Protocol shapes (when the hook is active); non-blocking by default, set `ORCH_STRICT_PROTOCOL=1` to block | Keeps agent output machine-readable and reviewable over long sessions |
 
 ---
 
@@ -100,9 +102,9 @@ Adding a role (`orch-refactorer`, `orch-security-reviewer`, `orch-test-writer`) 
 Each phase is a skill the controller invokes before acting. Mandatory checks, not suggestions — the controller scans for the relevant skill at every step and refuses to skip.
 
 1. **`research-classifier`.** Fires before any spec is written if signals match (library + version, vendor API, security verb, architectural change). Emits `RESEARCH_NEEDED` or `RESEARCH_SKIP`. On `RESEARCH_NEEDED`, the controller dispatches the `orch-researcher` subagent, which returns a brief with one of four outcomes: `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`. `CONTRADICTED` halts the workflow before the spec is drafted.
-2. **`brainstorming`.** Refines the rough idea through clarifying questions, explores alternatives in sections for validation. Writes the spec to `docs/llm-orchestrator/specs/<date>-<slug>.md`.
+2. **`brainstorming`.** Refines the rough idea through clarifying questions, explores alternatives in sections for validation. Writes the spec to `docs/llm-orchestrator/specs/<date>-<slug>.md`. A fresh `orch-spec-reviewer` subagent then checks the spec for completeness, consistency, clarity, and scope before planning — an advisory verdict (`Approved` | `Issues Found`); on issues the controller revises and re-checks, capped at 3 passes, then surfaces anything unresolved to you.
 3. **`using-git-worktrees`.** Isolates the work on a new branch in a dedicated worktree. Captures a green test baseline when one is obvious; defers to the user when it isn't.
-4. **`writing-plans`.** Breaks the approved spec into bite-sized tasks (2–5 minutes each). Every task lists exact files, complete code stubs where useful, and verification steps. Plan committed to `docs/llm-orchestrator/plans/<date>-<slug>.md` — its checkboxes are the durable state and survive `/clear`.
+4. **`writing-plans`.** Breaks the approved spec into bite-sized tasks. Every task lists exact files, complete code stubs where useful, and verification steps. A fresh general-purpose reviewer subagent then checks the plan against the spec for completeness, spec-coverage, and buildability before any task is dispatched — advisory, same 3-pass cap. Plan committed to `docs/llm-orchestrator/plans/<date>-<slug>.md` — its checkboxes are the durable state and survive `/clear`.
 5. **`executing-plans` → `dispatching-subagents` / `dispatching-parallel-agents`.** Dispatches a fresh-context subagent per task. Independent tasks fan out in parallel; dependent ones serialize. The controller scans plan-task bodies for symbol references that other tasks introduce and downgrades wrongly-claimed independence to sequential.
 6. **`test-driven-development`.** Red-green-refactor inside each implementer: failing test first, watch it fail, write minimal code, watch it pass, commit. If implementation gets written before its test, the skill instructs the implementer to delete it and start over test-first.
 7. **`requesting-code-review`.** Two reviewers in fresh contexts per task. Stage 1 — spec compliance: does the diff match what was specified? Stage 2 — code quality: correct, safe, idiomatic, minimal? Issues raised only at ≥80% confidence; lower-confidence observations land in a separate `Notes:` section.
@@ -156,7 +158,7 @@ cd llm-orchestrator
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 
-Inside that session, edit files in the repo and run `/reload-plugins` to pick up changes without restarting.
+Plugin code (skills, hooks, agents, commands) is read once at startup — there is no in-session reload. After editing files in the repo, restart Claude Code (or relaunch with `--plugin-dir`) to pick up the changes; `/clear` is not enough.
 
 Other modes:
 
