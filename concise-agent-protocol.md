@@ -129,4 +129,4 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 
 ## Linting
 
-A response-shape grader is on the v0.2 roadmap. Until then, the meta-skill and the per-skill output sections enforce the shapes by example. Reviewers catch drift.
+The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's last reply against the six shapes after every turn (non-blocking by default; set `ORCH_STRICT_PROTOCOL=1` to block on failure). `scripts/protocol-lint.sh` is a standalone CLI for the same check. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block).

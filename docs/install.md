@@ -70,7 +70,10 @@ This uses the plugin schema directly; no settings.json edits needed.
     ],
     "UserPromptSubmit": [
       { "matcher": "*",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/user-prompt-submit.sh" }] }
+        "hooks": [
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/user-prompt-submit.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-research-gate.sh" }
+        ] }
     ],
     "PreToolUse": [
       { "matcher": "Bash",
@@ -78,11 +81,17 @@ This uses the plugin schema directly; no settings.json edits needed.
     ],
     "SubagentStop": [
       { "matcher": "*",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/subagent-stop.sh" }] }
+        "hooks": [
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/subagent-stop.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-researcher-validator.sh" }
+        ] }
     ],
     "Stop": [
       { "matcher": "*",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-stop.sh" }] }
+        "hooks": [
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-stop.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-protocol-grader.sh" }
+        ] }
     ]
   }
 }
@@ -130,6 +139,8 @@ Other knobs:
 export ORCH_HOME=/some/path             # where plugin memory + research cache live
 export ORCH_SESSION_MAX_CHARS=12000     # cap injected context at SessionStart (default 8000)
 export ORCH_STRICT_RESEARCH=1           # escalate researcher fidelity warnings to blocks (exit 2)
+export ORCH_STRICT_STATUS=1             # block subagent stop on malformed Status block (exit 2)
+export ORCH_STRICT_PROTOCOL=1           # block controller Stop on malformed reply shape (exit 2)
 export ORCH_ALLOW_NO_VERIFY=1           # let `--no-verify` flags through
 ```
 

@@ -25,7 +25,9 @@ Every task category has a defined workflow that produces a durable artifact:
 | You ask for...           | Workflow                            | Artifact written                    |
 |--------------------------|-------------------------------------|--------------------------------------|
 | An open-ended feature    | `brainstorming` skill               | `docs/llm-orchestrator/specs/...md`  |
+| Visual brainstorming     | `brainstorming` skill (visual companion) | browser mockups + `docs/llm-orchestrator/specs/...md` |
 | Implementation of a spec | `writing-plans` skill               | `docs/llm-orchestrator/plans/...md`  |
+| Adversarial spec/plan review | `brainstorming` / `writing-plans` review step | issues list before implementation begins |
 | A bug fix                | `systematic-debugging` skill        | failing test + minimal fix           |
 | A code review            | `requesting-code-review` skill      | `docs/llm-orchestrator/reviews/...md`|
 
@@ -122,6 +124,7 @@ How the pieces fit together at the file level.
 - Profiles via env vars:
   - `ORCH_HOOK_PROFILE=minimal` — protocol bootstrap only (meta-skill SessionStart load).
   - `ORCH_HOOK_PROFILE=standard` (default) — adds UserPromptSubmit reminders, PreToolUse guard, SubagentStop validators, Stop-hook retention pruning, and the research gate.
+  - `ORCH_HOOK_PROFILE=strict` — all hooks active; protocol grader blocks on malformed replies (`ORCH_STRICT_PROTOCOL=1`); subagent stop blocks on malformed Status blocks (`ORCH_STRICT_STATUS=1`).
 - Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`.
 
 ### Templates
@@ -180,8 +183,9 @@ How the pieces fit together at the file level.
 ┌──────────────────────────────────────────────────────────────────┐
 │ Hooks (hooks/hooks.json → scripts/hooks/*.sh)                    │
 │   - SessionStart (bootstrap), UserPromptSubmit (reminder),       │
-│     PreToolUse (guard), SubagentStop (validators), Stop (prune)  │
-│   - profiles: minimal | standard                                 │
+│     PreToolUse (guard), SubagentStop (validators + researcher-   │
+│     validator), Stop (retention pruning + protocol grader)       │
+│   - profiles: minimal | standard | strict                        │
 └──────────────────────────────────────────────────────────────────┘
 
 User home directory (created on first use):

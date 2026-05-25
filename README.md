@@ -33,6 +33,9 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Parallel dispatch** | Independent tasks fan out to multiple implementers in one batch; dependent ones serialize | 3 concurrent implementers ≈ 1 sequential's wall time |
 | **Evidence-based completion** | Every "done" claim must include the output of the command that proves it — the test result, the typecheck pass, the linter exit code | Stops agents from declaring code finished without actually running the tests |
 | **CLAUDE.md classification** | `/remember <fact>` appends the fact to your project's CLAUDE.md (Claude Code's native memory file) under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically | Persistent project memory without you having to organize it by hand |
+| **Visual brainstorming** | Produces a diagram alongside the spec during the brainstorming phase, making structural choices visible before any code is written | Design decisions are reviewable at a glance rather than buried in prose |
+| **Adversarial spec/plan review** | A dedicated adversarial pass challenges the spec or plan for gaps, contradictions, and hidden assumptions before implementation begins | Catches design flaws that both author and standard reviewer miss |
+| **Protocol grader** | The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades every controller reply against the six Concise Agent Protocol shapes; non-blocking by default, set `ORCH_STRICT_PROTOCOL=1` to block | Keeps agent output machine-readable and reviewable over long sessions |
 
 ---
 
@@ -138,7 +141,7 @@ Eight layers, each solving a specific failure mode of single-agent AI tooling on
 7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output. A per-turn hook reinforces the rule.
 8. **Pre-spec verification — the research gate** — described above. Returns `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`; `CONTRADICTED` halts the workflow until the spec is revised.
 
-Implementation reference with code links and the layer-stack diagram: [`architecture.md`](./architecture.md).
+Implementation reference with code links and the layer-stack diagram: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
 
@@ -149,7 +152,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "All 54 checks passed."
+./tests/smoke.sh                           # → "All 56 checks passed."
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

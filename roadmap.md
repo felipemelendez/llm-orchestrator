@@ -3,16 +3,18 @@
 ## v0.1 — Foundation (this release)
 
 - Concise Agent Protocol documented
-- 15 skills (meta, brainstorming, writing-plans, executing-plans, TDD, systematic-debugging, worktrees, dispatch sequential, dispatch parallel, requesting/receiving review, verification-before-completion, finishing-a-branch, writing-skills, memory)
+- 16 skills (meta, brainstorming, writing-plans, executing-plans, TDD, systematic-debugging, worktrees, dispatch sequential, dispatch parallel, requesting/receiving review, verification-before-completion, finishing-a-branch, writing-skills, memory)
 - 10 commands (`/init`, `/plan`, `/worktree`, `/dispatch`, `/review`, `/debug`, `/verify`, `/finish`, `/remember`, `/forget`)
 - Hook profiles: minimal / standard / strict (`ORCH_HOOK_PROFILE`)
 - Memory written to Claude Code's native CLAUDE.md by `/remember` (auto-classified); plugin memory at `~/.llm-orchestrator/memory/<hash>.md` reserved for research-gate state
 - Skill linter (`tests/validate-skills.sh`)
 - One worked example end-to-end
+- Response-shape grader (`scripts/hooks/orch-protocol-grader.sh`, Stop hook; `ORCH_STRICT_PROTOCOL=1` to block; standalone CLI: `scripts/protocol-lint.sh`)
+- Visual brainstorming: structured spec exploration with diagram output
+- Adversarial spec/plan review: dedicated adversarial pass before implementation begins
 
 ## v0.2 — Hardening
 
-- Response-shape grader (lint replies against the protocol, off by default)
 - Worktree provenance enforced in `/finish` cleanup
 - Cost tracker (JSONL only): `~/.llm-orchestrator/metrics/costs.jsonl` + `/cost` summary
 - Context-budget audit + `/orch-doctor` to flag bloated skills/MCPs

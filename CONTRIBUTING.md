@@ -57,7 +57,7 @@ Next:
 - <smallest first step>
 ```
 
-PRs should reference the issue, include a one-line `Verify:` step in the description (the command and its expected output), and keep diffs scoped to a single concern. Add one row to the relevant table in the README or `architecture.md` if your change is user-facing.
+PRs should reference the issue, include a one-line `Verify:` step in the description (the command and its expected output), and keep diffs scoped to a single concern. Add one row to the relevant table in the README or `ARCHITECTURE.md` if your change is user-facing.
 
 ## Non-goals
 

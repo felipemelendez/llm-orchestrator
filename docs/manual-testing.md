@@ -15,9 +15,9 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ```bash
 cd ~/LLM-Orchestrator
-./tests/validate-skills.sh     # → "OK: 15 skills, 13 commands, 6 agents"
+./tests/validate-skills.sh     # → "OK: 16 skills, 10 commands, 7 agents"
 ./tests/test-portability.sh    # → "7 portability checks passed."
-./tests/smoke.sh               # → "All 45 checks passed."
+./tests/smoke.sh               # → "All 56 checks passed."
 ```
 
 **Pass criterion:** all three exit 0. If any fails, fix before continuing — Claude Code testing won't tell you anything useful until the mechanics are sound.
@@ -309,7 +309,7 @@ If all of 5.1–5.5 pass, the orchestration loop is sound. This is the most impo
 
 ## Phase 6 — BLOCKED recovery — 10 min
 
-The 4-branch recovery tree is what makes this system genuinely better than Superpowers' "stop and ask." Test it.
+The 4-branch recovery tree is what makes this system recover on its own instead of stopping to ask. Test it.
 
 ### 6.1 Force a BLOCKED → missing context
 

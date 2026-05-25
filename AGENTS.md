@@ -21,7 +21,8 @@ Subagents:
 | `orch-spec-reviewer`   | sonnet | `/review` stage 1      | "Does the diff match the spec/plan?"                             |
 | `orch-code-reviewer`   | sonnet | `/review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
 | `orch-debugger`        | sonnet | `/debug`               | Root-cause investigation before any edit                         |
-| `orch-brainstormer`    | opus   | `/init`-stage requests | Open-design explorer; writes the spec                            |
+| `orch-brainstormer`    | opus   | brainstorming design stage | Open-design explorer; writes the spec                        |
+| `orch-researcher`      | sonnet | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
 
 Prompt templates live in `templates/`:
 - `implementer-prompt.md`

@@ -33,7 +33,7 @@ Checks per **agent** (`agents/<name>.md`):
 - `description` present
 - `model:` (if set) is one of `haiku | sonnet | opus`
 
-Output: `OK: 15 skills, 13 commands, 6 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
+Output: `OK: 16 skills, 10 commands, 7 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
 
 ### `test-portability.sh` — shell portability scanner
 
