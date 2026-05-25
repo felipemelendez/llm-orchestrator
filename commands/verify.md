@@ -10,15 +10,19 @@ Steps:
 
 1. Invoke `verification-before-completion`.
 
-2. Detect verification commands:
-   - `package.json` scripts: `test`, `typecheck`, `lint` (or `tsc`, `eslint`)
-   - `Cargo.toml` → `cargo test`, `cargo clippy`
-   - `pyproject.toml` → `pytest`, `ruff check`, `mypy`
-   - `go.mod` → `go test ./...`, `go vet ./...`
-   - `Makefile` → `make test`
-   - If none detected, ask the user.
+2. Detect verification commands using the detection library:
 
-3. Run them in order: typecheck → lint → test. Stop on first failure.
+   ```bash
+   source scripts/lib/orch-detect.sh
+   orch_detect_cached "$PWD"
+   ```
+
+   Parse the `## Toolchain` section of the output for `test=`, `typecheck=`, and `lint=` lines.
+   Extract each value as the command to run (e.g. `test=npm run test` → run `npm run test`).
+   Do NOT run any `build=` command unless the user explicitly requests it.
+   If detection returns no `test=`/`typecheck=`/`lint=` lines, ask the user what command to run.
+
+3. Run detected commands in order: typecheck → lint → test. Stop on first failure.
 
 4. If `$ARGUMENTS` is non-empty, scope test runs to that filter.
 
@@ -40,3 +44,4 @@ Constraints:
 - Never claim "tests pass" without an actual run.
 - Paste the line from the output that proves it.
 - Don't pipe to `|| true` to mask failures.
+- Never run `build=` or deploy commands automatically.

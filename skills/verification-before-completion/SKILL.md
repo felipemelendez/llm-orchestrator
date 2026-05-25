@@ -18,9 +18,15 @@ Claims of success cost nothing. Evidence costs a single command. Always pay it.
 Before claiming, run through these in order:
 
 1. **Identify** — what command proves this is done?
-   - Tests: `pnpm test <file>` or `cargo test <module>`.
-   - Build: `pnpm typecheck`, `cargo build`, `tsc --noEmit`.
-   - Behavior: a curl, a script, a manual UI step with screenshot.
+   - Use the detection library to find the project's real gates:
+     ```bash
+     source scripts/lib/orch-detect.sh
+     orch_detect_cached "$PWD"
+     ```
+     Parse the `## Toolchain` section for `test=`, `typecheck=`, and `lint=` lines.
+     Use those values as the commands to run — do not hand-invent commands.
+   - If detection returns nothing, fall back to asking: `pnpm test <file>`, `cargo test <module>`, `tsc --noEmit`.
+   - Behavior checks: a curl, a script, a manual UI step with screenshot.
 2. **Run** — execute it now. Not "I would run it"; run it.
 3. **Read** — read the output. Don't skim.
 4. **Verify** — does the output match the success criterion? Number of passing tests, absence of error lines, expected response.
