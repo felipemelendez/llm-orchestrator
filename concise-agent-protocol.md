@@ -111,6 +111,17 @@ Ask: (only if NEEDS_CONTEXT)
 7. Hedge with one word ("likely", "probably") — never with a paragraph.
 8. The user can always ask for the long version. Don't volunteer it.
 
+### Write for the engineer
+
+The reader is a human engineer, not another agent. Clarity beats cleverness.
+
+- Lead with the answer in one plain sentence; details after.
+- Expand or avoid internal jargon and tool-names — "the research step," not "orch-researcher Trigger A"; "I'm stuck and need your input," not "Status: BLOCKED, branch 5."
+- Spell out a term or acronym on first use.
+- Short, common words over long ones; cut filler.
+- The shapes and `file:line` refs stay; this governs the words inside them.
+- Be brief: the fewest lines that fully answer. Stop when the question is answered. Expand only when asked.
+
 ## When to break the protocol
 
 - The user asks an open question that doesn't fit a shape ("how do you feel about X?") — answer plainly.

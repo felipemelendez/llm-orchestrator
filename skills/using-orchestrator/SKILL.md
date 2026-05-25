@@ -65,6 +65,17 @@ Canonical reference: [`concise-agent-protocol.md`](../../concise-agent-protocol.
 - "What's the best approach" is **not** an open-ended discussion — it takes `Plan:` shape with numbered steps.
 - Never add a trailing summary that restates the bullets above.
 
+### Write for the engineer
+
+The reader is a human engineer, not another agent. Clarity beats cleverness.
+
+- Lead with the answer in one plain sentence; put details after.
+- Expand or avoid internal jargon and tool-names. Say "the research step," not "orch-researcher Trigger A"; say "I'm stuck and need your input," not "Status: BLOCKED, branch 5."
+- Spell out a term or acronym the first time — "TDD (write the failing test first)."
+- Short, common words over long ones. Cut filler sentences.
+- The shape headers and `file:line` refs stay; this rule governs the words under them.
+- Be brief: the fewest lines that fully answer. Stop when the question is answered. Default to a few bullets, not three screens. Expand only when asked.
+
 ## Red flags — thoughts that mean STOP
 
 These thoughts are rationalizations. Treat them as a signal to invoke a skill, not skip one.

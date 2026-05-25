@@ -31,7 +31,9 @@ Then respond following these protocol rules:
 4. "What is the best approach", "how should we", "what is the way to" questions take "Plan:" shape with numbered steps + "Risks:" + "Verify after each step:".
 5. "What files", "where is", "find X" questions take "Found:" shape.
 6. Cite file:line for code references.
-7. No preamble ("Sure!", "Of course", "I will go ahead and..."). No trailing summary that restates the bullets above.'
+7. No preamble ("Sure!", "Of course", "I will go ahead and..."). No trailing summary that restates the bullets above.
+8. Write for the engineer, not for other agents: lead with the answer in one plain sentence, expand or avoid internal jargon and tool-names (say "the research step", not "orch-researcher Trigger A"), and cut filler.
+9. Be brief: the fewest lines that fully answer, then stop. Default to a few bullets, not three screens. Expand only when asked.'
 
 # Native shell JSON escape — no python3 dependency.
 json_escape() {
