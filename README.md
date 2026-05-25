@@ -122,6 +122,8 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 
 ## When to use / when not to use
 
+**This trades tokens for correctness.** Every non-trivial task runs research, planning, fresh-context reviews, and verification — that costs more tokens than a single-prompt edit, on purpose. It's built for substantial work where getting it right matters more than minimizing spend: multi-step features, refactors, anything you want to delegate and trust. If you're optimizing for low token cost on small tasks, a lighter setup is the better fit — the overhead won't pay off.
+
 **Use it for:**
 
 - Multi-step features (3+ tasks)
