@@ -20,6 +20,10 @@ You may edit only these files. If you need to edit something outside this list, 
 
 {{paste the relevant `## Conventions` section of ./CLAUDE.md here}}
 
+## Decisions
+
+{{paste the `## Decisions` section of ./CLAUDE.md here — architectural choices this change must not break (e.g. "offline-first via SQLite"). Treat each entry as a hard constraint: do not introduce code that violates a recorded decision.}}
+
 ## Research brief (if applicable)
 
 {{brief_path — path to docs/llm-orchestrator/research/...md, or "none — no research-gate run for this task"}}

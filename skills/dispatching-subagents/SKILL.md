@@ -31,6 +31,7 @@ For each task:
   1. Dispatch the orch-implementer agent with templates/implementer-prompt.md.
      - Paste the task text, the files-in-scope list, and the Verify command.
      - Paste the relevant `## Conventions` section of ./CLAUDE.md into the conventions slot.
+     - Paste the `## Decisions` section of ./CLAUDE.md into the decisions slot.
      - Model: sonnet (default) or haiku for mechanical tasks.
 
   2. Read the returned Status:
