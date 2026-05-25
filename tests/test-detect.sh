@@ -454,9 +454,17 @@ if [[ -z "$LOCK_CACHE_FILE" ]]; then
 else
   ok "lock-fallback: cache file located for lock simulation"
 
-  # Hold the lock (mkdir-based) so with_lock times out.
+  # Hold the REAL lock for whichever mechanism with_lock uses on this platform,
+  # so it actually times out: flock on the .lock file (Linux), else the
+  # atomic-mkdir .lockdir (macOS without flock). Holding the wrong one lets
+  # with_lock sail through and the timeout path never fires.
+  HELD_FLOCK=0
   STRANDED_LOCKDIR="${LOCK_CACHE_FILE}.lockdir"
-  mkdir -p "$STRANDED_LOCKDIR"
+  if command -v flock >/dev/null 2>&1; then
+    exec 9>"${LOCK_CACHE_FILE}.lock"
+    if flock -n 9; then HELD_FLOCK=1; fi
+  fi
+  [[ $HELD_FLOCK -eq 0 ]] && mkdir -p "$STRANDED_LOCKDIR"
 
   # Modify the manifest to invalidate the cache sha, forcing the lock path.
   cat > "$LOCK_DIR/package.json" <<'PKGEOF'
@@ -481,8 +489,13 @@ PKGEOF
     fail "lock-fallback: diagnostic printed to stderr on lock timeout" "stderr was: $FALLBACK_STDERR"
   fi
 
-  # Release the simulated held lock.
-  rmdir "$STRANDED_LOCKDIR" 2>/dev/null || true
+  # Release the held lock (whichever mechanism we used).
+  if [[ $HELD_FLOCK -eq 1 ]]; then
+    flock -u 9 2>/dev/null || true
+    exec 9>&- 2>/dev/null || true
+  else
+    rmdir "$STRANDED_LOCKDIR" 2>/dev/null || true
+  fi
 fi
 
 unset ORCH_HOME

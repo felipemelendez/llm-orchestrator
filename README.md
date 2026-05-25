@@ -134,7 +134,6 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 - Non-trivial refactors touching multiple files
 - Debugging that needs investigation before fixing
 - Code review at scale
-- Work you want to delegate and walk away from
 
 **Don't use it for:**
 
