@@ -55,7 +55,7 @@ $EDITOR commands/<name>.md
 ./tests/validate-skills.sh    # validates frontmatter description on commands too
 ```
 
-The validator checks the `description:` field on every command. Body validation (Constraints section, output shape) is a v0.2 roadmap item.
+The validator checks the `description:` field on every command. Body validation (Constraints section, output shape) is not currently enforced.
 
 ## Built-in commands (v0.1)
 

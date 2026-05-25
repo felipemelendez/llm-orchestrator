@@ -13,7 +13,7 @@ cmd="${1:-}"
 case "${cmd}" in
   --check)
     fail=0
-    for f in README.md AGENTS.md CLAUDE.md concise-agent-protocol.md ARCHITECTURE.md roadmap.md \
+    for f in README.md AGENTS.md CLAUDE.md concise-agent-protocol.md ARCHITECTURE.md \
              .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1

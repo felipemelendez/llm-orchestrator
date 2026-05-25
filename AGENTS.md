@@ -63,4 +63,4 @@ Controllers route by Status, not by parsing prose.
 
 ## Cross-harness
 
-LLM Orchestrator ships Claude Code first. Codex / Gemini / Copilot mirrors are tracked in [`roadmap.md`](./roadmap.md) and not yet shipped.
+LLM Orchestrator ships Claude Code first. There are no Codex / Gemini / Copilot mirrors yet.

@@ -96,4 +96,4 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## Upstream changes
 
-When Anthropic ships new Claude Code features, check `roadmap.md` — we add adoptions to the next minor version rather than chasing every release.
+When Anthropic ships new Claude Code features, adopt them deliberately rather than chasing every release.

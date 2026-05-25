@@ -146,4 +146,4 @@ export ORCH_ALLOW_NO_VERIFY=1           # let `--no-verify` flags through
 
 ## Cross-harness
 
-Claude Code is supported first-class. Codex / Gemini / Copilot mirrors are on the v0.3 roadmap. For now you can copy `skills/`, `commands/`, `templates/` into the harness's config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`.
+Claude Code is supported first-class; there are no Codex / Gemini / Copilot mirrors today. You can copy `skills/`, `commands/`, `templates/` into another harness's config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`.
