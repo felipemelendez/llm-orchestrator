@@ -13,7 +13,7 @@ cmd="${1:-}"
 case "${cmd}" in
   --check)
     fail=0
-    for f in README.md AGENTS.md CLAUDE.md concise-agent-protocol.md architecture.md roadmap.md \
+    for f in README.md AGENTS.md CLAUDE.md concise-agent-protocol.md ARCHITECTURE.md roadmap.md \
              .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
@@ -25,7 +25,7 @@ case "${cmd}" in
       fi
     done
     # Required hook scripts
-    for f in scripts/hooks/session-start.sh scripts/hooks/user-prompt-submit.sh scripts/hooks/guard-no-verify.sh scripts/hooks/subagent-stop.sh scripts/hooks/orch-stop.sh scripts/lib/orch-lock.sh scripts/statusline.sh output-styles/orchestrator.md; do
+    for f in scripts/hooks/session-start.sh scripts/hooks/user-prompt-submit.sh scripts/hooks/guard-no-verify.sh scripts/hooks/subagent-stop.sh scripts/hooks/orch-stop.sh scripts/lib/orch-lock.sh scripts/lib/orch-protocol.sh scripts/hooks/orch-protocol-grader.sh scripts/hooks/orch-research-gate.sh scripts/hooks/orch-researcher-validator.sh scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -75,6 +75,7 @@ case "${cmd}" in
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"
     done
     [[ -f "${ROOT}/scripts/statusline.sh" ]] && cp "${ROOT}/scripts/statusline.sh" "${dest}/.claude/scripts/"
+    [[ -f "${ROOT}/scripts/protocol-lint.sh" ]] && cp "${ROOT}/scripts/protocol-lint.sh" "${dest}/.claude/scripts/"
     # Copy the portable lock helper — memory commands source it.
     for f in "${ROOT}/scripts/lib/"*.sh; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/lib/"

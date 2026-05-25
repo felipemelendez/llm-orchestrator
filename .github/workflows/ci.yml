@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check server.cjs syntax
+        run: node --check skills/brainstorming/scripts/server.cjs
+
+      - name: Validate skills
+        run: bash tests/validate-skills.sh
+
+      - name: Smoke tests
+        run: bash tests/smoke.sh
+
+      - name: Research gate tests
+        run: bash tests/test-research-gate.sh
+
+      - name: Research classifier tests
+        run: bash tests/test-research-classifier.sh
+
+      - name: Protocol grader tests
+        run: bash tests/test-protocol-grader.sh
+
+      - name: Protocol hook e2e tests
+        run: bash tests/test-protocol-hooks.sh
+
+      - name: Research brief and agent contract tests
+        run: bash tests/test-research-brief.sh
+
+      - name: Portability tests
+        run: bash tests/test-portability.sh
