@@ -84,8 +84,12 @@ if should_run structural; then
             "${ROOT}/tests/test-research-classifier.sh"
   check_out "research-brief + orch-researcher contract pass" "All 41 brief/agent checks passed" \
             "${ROOT}/tests/test-research-brief.sh"
-  check_out "research-gate sniffer + validator + cache TTL pass" "All 66 gate/validator/TTL checks passed" \
+  check_out "research-gate sniffer + validator + cache TTL pass" "gate/validator/TTL checks passed" \
             "${ROOT}/tests/test-research-gate.sh"
+  check_out "protocol grader fixture tests pass" "All 14 checks passed" \
+            bash "${ROOT}/tests/test-protocol-grader.sh"
+  check_out "protocol hook e2e tests pass" "All 25 checks passed" \
+            bash "${ROOT}/tests/test-protocol-hooks.sh"
 fi
 
 # ------------------------------------------------------------

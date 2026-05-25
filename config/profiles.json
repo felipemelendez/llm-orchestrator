@@ -16,6 +16,19 @@
         "orch-stop"
       ],
       "notes": "Default. Bootstraps protocol; reinforces shape on each user turn; blocks --no-verify; fires the research gate on design-shape prompts; warns when subagents skip Status; validates researcher fidelity + writes brief index on clean outcomes; prunes trash and research cache on each Stop. ORCH_STRICT_RESEARCH=1 escalates research fidelity warnings to blocks."
+    },
+    "strict": {
+      "hooks": [
+        "orch-session-start",
+        "orch-user-prompt-submit",
+        "orch-guard",
+        "orch-research-gate",
+        "orch-subagent-stop",
+        "orch-researcher-validator",
+        "orch-protocol-grader",
+        "orch-stop"
+      ],
+      "notes": "All hooks active. Same hook set as standard plus orch-protocol-grader, and implies ORCH_STRICT_RESEARCH=1 — research fidelity warnings are treated as blocks rather than warnings."
     }
   }
 }

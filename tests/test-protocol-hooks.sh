@@ -1,0 +1,377 @@
+#!/usr/bin/env bash
+# End-to-end tests for the actual hook scripts:
+#   scripts/hooks/orch-protocol-grader.sh
+#   scripts/hooks/subagent-stop.sh
+#
+# Drives the real hook executables with temp JSONL transcripts in both
+# content schemas (string and array-of-blocks). Validates:
+#
+#   protocol-grader:
+#     (a) canonical Changed:+Verify: reply → no warning, exit 0
+#     (b) reply with no header, non-strict → warn (stderr), exit 0
+#     (c) same under ORCH_STRICT_PROTOCOL=1 → exit 2 + decision:block JSON
+#     (d) array-of-blocks schema, valid reply → exit 0
+#     (e) array-of-blocks schema, no header, strict → exit 2
+#
+#   subagent-stop:
+#     (f) Status: DONE + Summary: string schema → PASS exit 0
+#     (g) Status: DONE + Summary: array-of-blocks schema → PASS exit 0
+#     (h) Status: BLOCKED without Need: → warn stderr exit 0
+#     (i) Status: BLOCKED without Need: under ORCH_STRICT_STATUS=1 → exit 2
+#     (j) no Status: block in transcript → warn exit 0
+#
+#   fail-open:
+#     (k) missing transcript path → exit 0 (fail-open)
+#     (l) ORCH_HOOK_PROFILE=minimal → exit 0 (skipped)
+#
+# Bash 3.2 compatible.
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+GRADER="${ROOT}/scripts/hooks/orch-protocol-grader.sh"
+SUBAGENT="${ROOT}/scripts/hooks/subagent-stop.sh"
+
+if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+else GREEN=""; RED=""; DIM=""; RESET=""; fi
+
+PASS=0
+FAIL=0
+FAILED=()
+
+ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
+fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED+=("$1"); }
+
+# Write a JSONL file with a single assistant message using the string schema.
+# Usage: write_string_jsonl <path> <content_string>
+write_string_jsonl() {
+  local path="$1" content="$2"
+  python3 -c "
+import json, sys
+content = sys.argv[1]
+print(json.dumps({'role': 'assistant', 'content': content}))
+" "$content" > "$path"
+}
+
+# Write a JSONL file with a single assistant message using the array-of-blocks schema.
+# Usage: write_blocks_jsonl <path> <text_string>
+write_blocks_jsonl() {
+  local path="$1" text="$2"
+  python3 -c "
+import json, sys
+text = sys.argv[1]
+print(json.dumps({'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}))
+" "$text" > "$path"
+}
+
+# pipe_to_hook <hook_path> <transcript_path> [env_overrides...]
+# Pipes the hook event JSON to the hook, returns its exit code.
+# Stdout/stderr captured and discarded; use check_hook_* helpers for assertions.
+pipe_hook_exit() {
+  local hook="$1" transcript="$2"; shift 2
+  env "$@" bash "$hook" < <(printf '{"transcript_path":"%s"}' "$transcript") >/dev/null 2>&1
+  return $?
+}
+
+pipe_hook_all() {
+  local hook="$1" transcript="$2"; shift 2
+  local rc=0
+  local out
+  out=$(env "$@" bash "$hook" < <(printf '{"transcript_path":"%s"}' "$transcript") 2>&1) || rc=$?
+  printf '%s' "$out"
+  return $rc
+}
+
+# Temporary files (macOS-compatible: no suffix with mktemp)
+T_STRING=$(mktemp /tmp/orch-test-hook-string-XXXXXX)
+T_BLOCKS=$(mktemp /tmp/orch-test-hook-blocks-XXXXXX)
+T_MULTI=$(mktemp /tmp/orch-test-hook-multi-XXXXXX)
+cleanup() { rm -f "$T_STRING" "$T_BLOCKS" "$T_MULTI"; }
+trap cleanup EXIT
+
+printf '%s== Protocol grader hook (orch-protocol-grader.sh) ==%s\n' "$DIM" "$RESET"
+
+# (a) canonical Changed:+Verify: reply → no warning, exit 0
+VALID_REPLY="$(printf 'Changed:\n- scripts/foo.sh:1 — fix\n\nVerify:\n- bash tests/smoke.sh → all pass')"
+write_string_jsonl "$T_STRING" "$VALID_REPLY"
+rc=0; pipe_hook_exit "$GRADER" "$T_STRING" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(a) valid Changed:+Verify: string schema → exit 0"
+else fail "(a) valid Changed:+Verify: string schema" "expected exit 0, got $rc"; fi
+
+# (b) prose reply, non-strict → warn on stderr, exit 0
+write_string_jsonl "$T_STRING" "just prose no header"
+out=$(pipe_hook_all "$GRADER" "$T_STRING" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "does not conform"; then
+  ok "(b) prose reply non-strict → warn exit 0"
+else
+  fail "(b) prose reply non-strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (c) prose reply under ORCH_STRICT_PROTOCOL=1 → exit 2 + decision:block JSON
+write_string_jsonl "$T_STRING" "just prose no header"
+out=$(pipe_hook_all "$GRADER" "$T_STRING" ORCH_STRICT_PROTOCOL=1 2>&1); rc=$?
+if [[ $rc -eq 2 ]] && printf '%s' "$out" | grep -q '"decision":"block"'; then
+  ok "(c) prose reply strict → exit 2 + decision:block"
+else
+  fail "(c) prose reply strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (d) array-of-blocks schema, valid reply → exit 0
+write_blocks_jsonl "$T_BLOCKS" "$VALID_REPLY"
+rc=0; pipe_hook_exit "$GRADER" "$T_BLOCKS" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(d) valid Changed:+Verify: array-of-blocks schema → exit 0"
+else fail "(d) valid Changed:+Verify: array-of-blocks schema" "expected exit 0, got $rc"; fi
+
+# (e) array-of-blocks schema, prose, strict → exit 2
+write_blocks_jsonl "$T_BLOCKS" "just prose no header"
+out=$(pipe_hook_all "$GRADER" "$T_BLOCKS" ORCH_STRICT_PROTOCOL=1 2>&1); rc=$?
+if [[ $rc -eq 2 ]] && printf '%s' "$out" | grep -q '"decision":"block"'; then
+  ok "(e) prose array-of-blocks strict → exit 2 + decision:block"
+else
+  fail "(e) prose array-of-blocks strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+printf '\n%s== SubagentStop hook (subagent-stop.sh) ==%s\n' "$DIM" "$RESET"
+
+DONE_REPLY="$(printf 'Status: DONE\nSummary: completed the task\nChanged:\n- foo:1\nVerify:\n- ok')"
+BLOCKED_NO_NEED="$(printf 'Status: BLOCKED\nSummary: cannot proceed')"
+
+# (f) Status: DONE + Summary: string schema → PASS exit 0
+write_string_jsonl "$T_STRING" "$DONE_REPLY"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(f) DONE+Summary string schema → exit 0"
+else fail "(f) DONE+Summary string schema" "expected exit 0, got $rc"; fi
+
+# (g) Status: DONE + Summary: array-of-blocks schema → PASS exit 0
+write_blocks_jsonl "$T_BLOCKS" "$DONE_REPLY"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_BLOCKS" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(g) DONE+Summary array-of-blocks schema → exit 0"
+else fail "(g) DONE+Summary array-of-blocks schema" "expected exit 0, got $rc"; fi
+
+# (h) Status: BLOCKED without Need: → warn stderr exit 0
+write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
+out=$(pipe_hook_all "$SUBAGENT" "$T_STRING" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "without a Status:"; then
+  ok "(h) BLOCKED without Need: → warn exit 0"
+else
+  fail "(h) BLOCKED without Need:" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (i) Status: BLOCKED without Need: under ORCH_STRICT_STATUS=1 → exit 2
+write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
+out=$(pipe_hook_all "$SUBAGENT" "$T_STRING" ORCH_STRICT_STATUS=1 2>&1); rc=$?
+if [[ $rc -eq 2 ]] && printf '%s' "$out" | grep -q '"decision":"block"'; then
+  ok "(i) BLOCKED without Need: strict → exit 2 + decision:block"
+else
+  fail "(i) BLOCKED without Need: strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j) no Status: block in transcript → warn exit 0
+write_string_jsonl "$T_STRING" "I did some work but forgot the Status block."
+out=$(pipe_hook_all "$SUBAGENT" "$T_STRING" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "without a Status:"; then
+  ok "(j) no Status block → warn exit 0"
+else
+  fail "(j) no Status block" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+printf '\n%s== Broader schema coverage ==%s\n' "$DIM" "$RESET"
+
+# (m) thinking+text multi-block: thinking block then text with valid Status: DONE
+# orch_extract_last_assistant_text should concatenate only text blocks.
+python3 -c "
+import json
+text = 'Status: DONE\nSummary: completed ok'
+obj = {'role': 'assistant', 'content': [
+    {'type': 'thinking', 'thinking': 'Let me think about this...'},
+    {'type': 'text', 'text': text}
+]}
+print(json.dumps(obj))
+" > "$T_MULTI"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_MULTI" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(m) thinking+text multi-block → Status DONE extracted → exit 0"
+else fail "(m) thinking+text multi-block" "expected exit 0, got $rc"; fi
+
+# (n) text+tool_use multi-block: text with valid Changed:+Verify: then a tool_use block.
+# The grader should see the text block and grade it PASS.
+python3 -c "
+import json
+text = 'Changed:\n- foo:1 -- fix\n\nVerify:\n- bash tests/smoke.sh -> pass'
+obj = {'role': 'assistant', 'content': [
+    {'type': 'text', 'text': text},
+    {'type': 'tool_use', 'id': 'tool_abc', 'name': 'Bash', 'input': {'command': 'ls'}}
+]}
+print(json.dumps(obj))
+" > "$T_MULTI"
+rc=0; pipe_hook_exit "$GRADER" "$T_MULTI" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(n) text+tool_use multi-block → Changed:+Verify: extracted → exit 0"
+else fail "(n) text+tool_use multi-block" "expected exit 0, got $rc"; fi
+
+# (o) Extra keys on assistant object (id, model) — extraction is key-order-independent.
+python3 -c "
+import json
+text = 'Status: DONE\nSummary: key-order-independent extraction works'
+obj = {'id': 'msg_xyz', 'model': 'claude-opus-4', 'role': 'assistant',
+       'stop_reason': 'end_turn', 'content': text}
+print(json.dumps(obj))
+" > "$T_MULTI"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_MULTI" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(o) extra keys on assistant object (id, model) → exit 0"
+else fail "(o) extra keys on assistant object" "expected exit 0, got $rc"; fi
+
+# (p) multi-block with two text blocks concatenated — both parts together form Status: DONE.
+python3 -c "
+import json
+obj = {'role': 'assistant', 'content': [
+    {'type': 'text', 'text': 'Status: DONE\n'},
+    {'type': 'text', 'text': 'Summary: two text blocks joined\n'}
+]}
+print(json.dumps(obj))
+" > "$T_MULTI"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_MULTI" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(p) two text blocks concatenated form valid Status: DONE → exit 0"
+else fail "(p) two text blocks concatenated" "expected exit 0, got $rc"; fi
+
+# python3 guard: verify the guard lines exist in both hook scripts.
+# (Simulating python3 absence via PATH manipulation is not reliable across shells;
+#  the guard is covered by code inspection — verified with grep below.)
+if grep -q 'command -v python3' "$GRADER" && grep -q 'python3 not found' "$GRADER"; then
+  ok "(q) orch-protocol-grader.sh has python3 not-found guard"
+else
+  fail "(q) orch-protocol-grader.sh missing python3 guard" "grep found no guard"
+fi
+if grep -q 'command -v python3' "$SUBAGENT" && grep -q 'python3 not found' "$SUBAGENT"; then
+  ok "(q) subagent-stop.sh has python3 not-found guard"
+else
+  fail "(q) subagent-stop.sh missing python3 guard" "grep found no guard"
+fi
+
+printf '\n%s== Fail-open and profile gate ==%s\n' "$DIM" "$RESET"
+
+# (k) missing transcript path → exit 0 (fail-open)
+rc=0
+bash "$GRADER" < <(printf '{"transcript_path":"/tmp/this-file-does-not-exist-orch-test.jsonl"}') >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(k) grader: missing transcript → fail-open exit 0"
+else fail "(k) grader: missing transcript" "expected exit 0, got $rc"; fi
+
+rc=0
+bash "$SUBAGENT" < <(printf '{"transcript_path":"/tmp/this-file-does-not-exist-orch-test.jsonl"}') >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(k) subagent-stop: missing transcript → fail-open exit 0"
+else fail "(k) subagent-stop: missing transcript" "expected exit 0, got $rc"; fi
+
+# (l) ORCH_HOOK_PROFILE=minimal → exit 0 (skipped, both hooks)
+write_string_jsonl "$T_STRING" "just prose no header"
+rc=0; pipe_hook_exit "$GRADER" "$T_STRING" ORCH_HOOK_PROFILE=minimal ORCH_STRICT_PROTOCOL=1 || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(l) grader: ORCH_HOOK_PROFILE=minimal → exit 0 (skipped)"
+else fail "(l) grader: ORCH_HOOK_PROFILE=minimal" "expected exit 0, got $rc"; fi
+
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=minimal ORCH_STRICT_STATUS=1 || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(l) subagent-stop: ORCH_HOOK_PROFILE=minimal → exit 0 (skipped)"
+else fail "(l) subagent-stop: ORCH_HOOK_PROFILE=minimal" "expected exit 0, got $rc"; fi
+
+printf '\n%s== Direct extraction assertions ==%s\n' "$DIM" "$RESET"
+LIB="${ROOT}/scripts/lib/orch-protocol.sh"
+
+# (r) bleed-through: two assistant lines; last is pure tool_use (no text block).
+# orch_extract_last_assistant_text MUST return empty, not the prior assistant's text.
+T_BLEED=$(mktemp /tmp/orch-test-bleed-XXXXXX)
+python3 -c "
+import json
+line1 = json.dumps({'role': 'assistant', 'content': 'Status: DONE\nSummary: ok'})
+line2 = json.dumps({'role': 'assistant', 'content': [{'type': 'tool_use', 'name': 'x', 'input': {}}]})
+print(line1)
+print(line2)
+" > "$T_BLEED"
+bleed_result=$(bash -c "source '$LIB'; orch_extract_last_assistant_text '$T_BLEED'")
+if [[ -z "$bleed_result" ]]; then
+  ok "(r) bleed-through: trailing tool_use message → extracted text is empty (not stale)"
+else
+  fail "(r) bleed-through: trailing tool_use message" \
+       "expected empty; got: $(printf '%s' "$bleed_result" | head -1)"
+fi
+rm -f "$T_BLEED"
+
+# (s) direct extraction: thinking+text multi-block → text equals expected.
+T_DIRECT=$(mktemp /tmp/orch-test-direct-XXXXXX)
+python3 -c "
+import json
+text = 'Status: DONE\nSummary: completed ok'
+obj = {'role': 'assistant', 'content': [
+    {'type': 'thinking', 'thinking': 'thinking...'},
+    {'type': 'text', 'text': text}
+]}
+print(json.dumps(obj))
+" > "$T_DIRECT"
+direct_result=$(bash -c "source '$LIB'; orch_extract_last_assistant_text '$T_DIRECT'")
+if printf '%s' "$direct_result" | grep -q 'Status: DONE'; then
+  ok "(s) direct extraction: thinking+text → returned text contains 'Status: DONE'"
+else
+  fail "(s) direct extraction: thinking+text" \
+       "expected 'Status: DONE' in output; got: $(printf '%s' "$direct_result" | head -1)"
+fi
+
+# (t) direct extraction: text+tool_use → text equals text block only.
+python3 -c "
+import json
+text = 'Changed:\n- foo:1 -- fix\n\nVerify:\n- bash tests/smoke.sh -> pass'
+obj = {'role': 'assistant', 'content': [
+    {'type': 'text', 'text': text},
+    {'type': 'tool_use', 'id': 'tool_abc', 'name': 'Bash', 'input': {'command': 'ls'}}
+]}
+print(json.dumps(obj))
+" > "$T_DIRECT"
+direct_result=$(bash -c "source '$LIB'; orch_extract_last_assistant_text '$T_DIRECT'")
+if printf '%s' "$direct_result" | grep -q 'Changed:'; then
+  ok "(t) direct extraction: text+tool_use → returned text contains 'Changed:'"
+else
+  fail "(t) direct extraction: text+tool_use" \
+       "expected 'Changed:' in output; got: $(printf '%s' "$direct_result" | head -1)"
+fi
+
+# (u) direct extraction: two text blocks concatenated → joined text present.
+python3 -c "
+import json
+obj = {'role': 'assistant', 'content': [
+    {'type': 'text', 'text': 'Status: DONE\n'},
+    {'type': 'text', 'text': 'Summary: two text blocks joined\n'}
+]}
+print(json.dumps(obj))
+" > "$T_DIRECT"
+direct_result=$(bash -c "source '$LIB'; orch_extract_last_assistant_text '$T_DIRECT'")
+if printf '%s' "$direct_result" | grep -q 'Summary: two text blocks joined'; then
+  ok "(u) direct extraction: two text blocks → concatenated text present"
+else
+  fail "(u) direct extraction: two text blocks" \
+       "expected 'Summary: two text blocks joined'; got: $(printf '%s' "$direct_result" | head -1)"
+fi
+
+# (v) direct extraction: extra keys on assistant object (id, model) → string content returned.
+python3 -c "
+import json
+text = 'Status: DONE\nSummary: key-order-independent extraction works'
+obj = {'id': 'msg_xyz', 'model': 'claude-opus-4', 'role': 'assistant',
+       'stop_reason': 'end_turn', 'content': text}
+print(json.dumps(obj))
+" > "$T_DIRECT"
+direct_result=$(bash -c "source '$LIB'; orch_extract_last_assistant_text '$T_DIRECT'")
+if printf '%s' "$direct_result" | grep -q 'key-order-independent extraction works'; then
+  ok "(v) direct extraction: extra keys on assistant object → content returned correctly"
+else
+  fail "(v) direct extraction: extra keys on assistant object" \
+       "expected text in output; got: $(printf '%s' "$direct_result" | head -1)"
+fi
+rm -f "$T_DIRECT"
+
+# ============================================================
+# Summary
+# ============================================================
+TOTAL=$((PASS + FAIL))
+printf '\n'
+if (( FAIL == 0 )); then
+  printf '%sAll %d checks passed.%s\n' "$GREEN" "$TOTAL" "$RESET"
+  exit 0
+else
+  printf '%s%d passed, %d failed.%s\n' "$RED" "$PASS" "$FAIL" "$RESET"
+  for c in "${FAILED[@]}"; do printf '  - %s\n' "$c"; done
+  exit 1
+fi

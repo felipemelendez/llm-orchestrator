@@ -2,7 +2,15 @@
 # LLM Orchestrator SubagentStop hook.
 # Fires when a dispatched subagent finishes. Validates that the subagent's
 # final response contains a `Status:` block (DONE | DONE_WITH_CONCERNS |
-# BLOCKED | NEEDS_CONTEXT). If not, emits a non-blocking warning to stderr.
+# BLOCKED | NEEDS_CONTEXT) with the required sub-block implied by the enum.
+# If not, emits a non-blocking warning to stderr.
+#
+# Validation rules (via orch_grade_status_block):
+#   - Status: must appear at line start (not inline in prose)
+#   - DONE         requires Summary:
+#   - DONE_WITH_CONCERNS requires Concerns:
+#   - BLOCKED      requires Need:
+#   - NEEDS_CONTEXT requires Ask:
 #
 # Non-blocking by default; set ORCH_STRICT_STATUS=1 to make it blocking
 # (exit 2 with a decision block, telling Claude to re-run the subagent).
@@ -20,6 +28,21 @@ if [[ ",${DISABLED}," == *",orch-subagent-stop,"* ]] || [[ "${PROFILE}" == "mini
   exit 0
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  printf 'orch-subagent-stop: python3 not found — protocol grading disabled\n' >&2
+  exit 0
+fi
+
+# Source the protocol grader library.
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
+if [[ ! -f "${LIB}" ]]; then
+  printf 'orch-subagent-stop: lib not found: %s — grading disabled\n' "${LIB}" >&2
+  exit 0
+fi
+# shellcheck source=scripts/lib/orch-protocol.sh
+source "${LIB}"
+
 # Read the hook event JSON from stdin.
 INPUT=$(cat || true)
 
@@ -31,21 +54,33 @@ if [[ -z "${TRANSCRIPT}" || ! -f "${TRANSCRIPT}" ]]; then
   exit 0
 fi
 
-# Transcripts are JSONL with newlines escaped inside JSON string values.
-# Drop the line anchor and accept either a literal newline (some harnesses)
-# or an escaped \n preceding "Status:". Tail to bound the work.
-TAIL=$(tail -c 8000 "${TRANSCRIPT}" 2>/dev/null || true)
+# Extract the last assistant message text using the shared helper.
+# Handles both string-content and array-of-blocks schemas; returns decoded text.
+ASSISTANT_TEXT=$(orch_extract_last_assistant_text "${TRANSCRIPT}")
 
-# Match Status: followed by one of the four enum values, anywhere in the tail.
-# This tolerates JSONL (where actual newlines become \n) and plain markdown.
-if printf '%s' "${TAIL}" | grep -qE '(\\n|^|[[:space:]])Status:[[:space:]]*(DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)\b'; then
+if [[ -z "${ASSISTANT_TEXT}" ]]; then
+  # No role-keyed JSONL found; fall back to treating the whole file as the text.
+  # This handles plain markdown / mixed transcripts that are not JSONL.
+  ASSISTANT_TEXT=$(cat "${TRANSCRIPT}" 2>/dev/null || true)
+fi
+
+if [[ -z "${ASSISTANT_TEXT}" ]]; then
+  # Nothing to validate.
   exit 0
 fi
 
-WARN="orch-subagent-stop: subagent finished without a Status: block. Expected one of DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT at the start of a line."
+# Use orch_grade_status_block to validate line-leading Status: + sub-blocks.
+GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_status_block 2>&1)
+GRADE_RC=$?
+
+if [[ "${GRADE_RC}" -eq 0 ]]; then
+  exit 0
+fi
+
+WARN="orch-subagent-stop: subagent finished without a Status: block (${GRADE_OUTPUT}). Expected one of DONE (with Summary:) | DONE_WITH_CONCERNS (with Concerns:) | BLOCKED (with Need:) | NEEDS_CONTEXT (with Ask:) at the start of a line."
 
 if [[ "${STRICT}" == "1" ]]; then
-  printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "${WARN}")"
+  printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
   exit 2
 fi
 
