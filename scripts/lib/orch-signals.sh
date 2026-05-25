@@ -86,7 +86,16 @@ ORCH_SIG_VENDOR='\b(stripe|cloudflare|vercel|auth0|supabase|firebase|netlify)\b'
 ORCH_SIG_VERSION='(\bv[0-9]+(\.[0-9]+)*\b|\b[0-9]+\.[0-9]+(\.[0-9]+)*\b|(>=|<=|==|~|\^)[[:space:]]*[0-9]|\bversion[[:space:]]+[0-9])'
 
 # Security-sensitive verbs and nouns.
+# Used by the research gate (design-shape compel branch) — whole-word boundary
+# required here so that bare prose doesn't fire.
 ORCH_SIG_SECURITY='\b(auth|crypto|payment|secret|jwt|oauth|password|encryption|tls|ssl|webhook)\b'
+
+# Looser security pattern for diff-scanning in review Stage 3.
+# Stage 3 is advisory and should fail toward running; substring matching on
+# compound identifiers (checkAuth, hashPassword, bcrypt, encryptData, JWTToken)
+# is intentional. Short tokens that create false positives at substring level
+# (tls, ssl) remain word-bounded.
+ORCH_SIG_SECURITY_DIFF='(auth|crypt|payment|secret|jwt|oauth|password|encrypt|webhook)|\b(tls|ssl)\b'
 
 # Architectural signals (verb-or-noun shape).
 ORCH_SIG_ARCH='\b(migrate|migrating|migration|set[[:space:]]+up|wire|wiring|integrate|integrating|replace[[:space:]]+.+[[:space:]]+with|switch[[:space:]]+from|schema|config[[:space:]]+syntax)\b'

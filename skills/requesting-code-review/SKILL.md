@@ -1,11 +1,11 @@
 ---
 name: requesting-code-review
-description: You MUST use this when a diff is ready — before merge, before PR, before claiming any feature is done. Runs the two-stage review (spec compliance, then code quality) and integrates the verdict.
+description: You MUST use this when a diff is ready — before merge, before PR, before claiming any feature is done. Runs the two-stage review (spec compliance, then code quality) and an optional Stage 3 security review, then integrates the verdict.
 ---
 
 # Requesting code review
 
-Two reviews, in order. Each returns an `Issues:` block.
+Two required reviews plus one conditional, in order. Each returns an `Issues:` block.
 
 ## Stages
 
@@ -29,6 +29,27 @@ Inputs to the reviewer:
 - Project conventions (paste `CLAUDE.md` or relevant section)
 
 Run only after Stage 1 passes or its concerns are addressed.
+
+### Stage 3 — Security (conditional)
+
+Question: does the diff introduce security vulnerabilities?
+
+Run only when the diff touches security-sensitive areas. Check by grepping the diff and changed file paths (source `scripts/lib/orch-signals.sh` for `$ORCH_SIG_SECURITY_DIFF`):
+
+```bash
+source scripts/lib/orch-signals.sh
+echo "$DIFF" | grep -qiE "$ORCH_SIG_SECURITY_DIFF"
+```
+
+If the grep matches: dispatch `orch-security-reviewer`. Pass: diff only.
+If the grep does not match: skip silently — do not mention Stage 3 in the report.
+
+Stage 3 is advisory. Critical findings block the merge; Important and below are advisory (recorded, non-blocking).
+
+Inputs to the reviewer (when triggered):
+- `git diff <base>..HEAD`
+
+Checklist: authentication & authorization, secret/credential handling, input validation & injection (SQL/command/path), crypto misuse, unsafe deserialization, SSRF/CSRF, sensitive data in logs.
 
 ## Reviewer response shape
 
