@@ -90,6 +90,8 @@ if should_run structural; then
             bash "${ROOT}/tests/test-protocol-grader.sh"
   check_out "protocol hook e2e tests pass" "All 25 checks passed" \
             bash "${ROOT}/tests/test-protocol-hooks.sh"
+  check_out "detect toolchain + cache tests pass" "All 34 detect checks passed" \
+            bash "${ROOT}/tests/test-detect.sh"
 fi
 
 # ------------------------------------------------------------
