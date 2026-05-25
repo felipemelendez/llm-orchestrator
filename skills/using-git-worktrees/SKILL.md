@@ -46,7 +46,11 @@ Skip for tiny edits on a clean tree — just commit.
    - `pyproject.toml` → `uv sync` or `poetry install`
    - `go.mod` → `go mod download`
 
-7. **Run baseline tests once.** Capture the green state before any edits.
+7. **Run baseline tests and record.** Capture the green state before any edits and persist it so the regression guard can compare later.
+   ```
+   orch_regression_baseline <worktree-dir>
+   ```
+   This detects the test command, runs it, and writes `~/.llm-orchestrator/toolchain/<hash>/baseline.md`. If the suite is not green at this point, stop — do not proceed with edits until the baseline is clean.
 
 ## Cleanup
 

@@ -12,8 +12,13 @@ The branch is green. Now what?
 Before this skill runs:
 - `/verify` has been run; tests pass.
 - `/review` has been run; verdict is yes or with-fixes already addressed.
+- **Regression check passes.** Run:
+  ```
+  orch_regression_check <project-dir>
+  ```
+  If it returns nonzero (a previously-green suite now fails), **refuse to merge or open a PR** and report what regressed. Fix the regression first. This check is never destructive — it only reads and runs tests.
 
-If either is false, stop and do that first.
+If any precondition is false, stop and do that first.
 
 ## Detect environment
 
