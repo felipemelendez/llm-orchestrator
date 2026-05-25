@@ -27,6 +27,7 @@ Skip this skill for one-line fixes, typos, or mechanical chores.
 3. **Propose 2 options.** Each option has: one-line summary, one-line tradeoff. Mark a recommended option.
 4. **On user choice, write the spec.** Save to `docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md`. If research ran at step 1.5, fill in the spec's `## Research` section with the brief path, verdict, and notable findings. If no research ran, write "none — no research-relevant signals."
 5. **Self-review the spec.** Check for placeholders, contradictions, and "TBD".
+5.5. **Spec review (adversarial).** Dispatch a fresh `orch-spec-reviewer` subagent using `skills/brainstorming/spec-document-reviewer-prompt.md`, passing the spec path. If the result is `Issues Found`, fix the spec and re-dispatch. Cap at 3 iterations; if still failing after 3, surface the remaining issues to the user rather than blocking. The verdict is advisory — the agent may dispute a finding with reasoning before accepting it.
 6. **Hand off to `writing-plans`.**
 
 ## Spec format
@@ -78,9 +79,21 @@ Next:
 - Confirm choice, then I'll write the spec.
 ```
 
+## Visual companion (optional)
+
+Offer the browser visual panel **once**, in its own message, only when one or
+more upcoming questions are spatial or layout-heavy (wireframes, diagrams,
+side-by-side designs). Use the offer wording from `visual-companion.md`.
+
+If the user accepts, read `skills/brainstorming/visual-companion.md` and follow
+the operational loop there. For each subsequent question, decide
+visual-vs-terminal independently — a UI topic is not automatically a visual
+question.
+
 ## Anti-patterns
 
 - Asking 5 questions in one message.
 - Writing the spec before the user confirms an approach.
 - Proposing 4+ options. Two with a clear recommendation is enough.
 - "Comprehensive analysis" of an obvious problem.
+- Offering the visual panel more than once per session.

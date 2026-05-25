@@ -24,6 +24,7 @@ Skip for trivial work (under ~15 minutes of editing). Just do it.
 5. **Add risks.** One line per risk. Mitigation if obvious.
 6. **Self-review.** No "similar to task 3", no "TBD", no "etc.". Confirm `## References` section pulls citations from the brief (if any).
 7. **Save to** `docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md`.
+7.5. **Plan review (adversarial).** Dispatch a fresh general-purpose subagent (Task tool, `subagent_type: general-purpose`) using `skills/writing-plans/plan-document-reviewer-prompt.md`, passing the plan path and spec path. If the result is `Issues Found`, fix the plan and re-dispatch. Cap at 3 iterations; if still failing after 3, surface the remaining issues to the user rather than blocking. The verdict is advisory — the agent may dispute a finding with reasoning before accepting it.
 
 ## Plan format
 
