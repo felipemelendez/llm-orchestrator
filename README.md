@@ -17,7 +17,9 @@ In a Claude Code session:
 /plugin install llm-orchestrator@llm-orchestrator
 ```
 
-Restart Claude Code. The slash menu now includes the orchestrator commands (`/llm-orchestrator:plan`, `/llm-orchestrator:dispatch`, `/llm-orchestrator:review`, `/llm-orchestrator:remember`, …). That's the install verified.
+Restart Claude Code. The slash menu now includes the orchestrator commands (`/llm-orchestrator:onboard`, `/llm-orchestrator:plan`, `/llm-orchestrator:dispatch`, `/llm-orchestrator:review`, `/llm-orchestrator:remember`, …). That's the install verified.
+
+On a new project, run `/llm-orchestrator:onboard` first. It studies the codebase once, proposes `## Decisions` and `## Conventions` for `./CLAUDE.md`, and writes them on your approval. Skip it on a greenfield project — there is nothing to study yet.
 
 To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the command reference and [`docs/examples/sample-session.md`](./docs/examples/sample-session.md) for a walkthrough.
 
@@ -42,6 +44,8 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Regression guard** | When a worktree is created the baseline test suite is captured; before a branch is merged or a PR opened, the suite is re-run and finishing is refused if a previously-green test now fails | Catches regressions introduced by the implementer before the branch lands |
 | **Security review** | `orch-security-reviewer` runs as an optional third review pass, scanning the diff for injection risks, missing auth checks, exposed secrets, and unsafe dependency patterns | Surfaces common security issues that code-quality reviewers are not specifically looking for |
 | **Convention detection** | The orchestrator can detect repo conventions on demand (`orch_detect_conventions`) to help seed `./CLAUDE.md`; subagents read conventions from `./CLAUDE.md` (kept lean, not auto-injected into every task prompt) | Conventions stay in one place you control; detection is available when you need to bootstrap or audit them |
+| **Architecture grounding** | Per-task brainstorming silently reads the recorded `## Decisions`/`## Conventions` from `./CLAUDE.md` (and the arch cache) and applies them as constraints on the spec — no questions, no explorer dispatch. A diff that breaks a recorded decision is flagged by the code reviewer. | Stops a new feature from silently violating an established choice — e.g. adding a network dependency to an offline-first SQLite app |
+| **One-time codebase onboarding** | `/llm-orchestrator:onboard` studies the codebase once (stack, data layer, module boundaries, error handling, key dependencies) and proposes `## Decisions` + `## Conventions` for `./CLAUDE.md` behind a single approval gate. Idempotent — skips if already run. After that, every task reads those decisions silently. | Seeds CLAUDE.md with the codebase's load-bearing decisions so every future implementer and reviewer works from the same constraints, without you having to write them by hand |
 
 ---
 

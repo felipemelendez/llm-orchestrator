@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "llm-orchestrator",
-      "description": "Agent orchestration toolkit. 16 skills, 10 commands, 8 native subagents, file-based memory, native Claude Code hooks.",
+      "description": "Agent orchestration toolkit. 16 skills, 11 commands, 8 native subagents, file-based memory, native Claude Code hooks.",
       "version": "0.1.0",
       "source": "./",
       "license": "MIT",

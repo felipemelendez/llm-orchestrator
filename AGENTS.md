@@ -45,6 +45,22 @@ Every subagent returns exactly one Status:
 
 Controllers route by Status, not by parsing prose.
 
+## Commands
+
+| Command | What it does |
+|---------|--------------|
+| `/llm-orchestrator:onboard` | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. |
+| `/llm-orchestrator:init` | Add LLM Orchestrator conventions to a project. |
+| `/llm-orchestrator:plan` | Turn an approved spec into a checklist-shaped plan. |
+| `/llm-orchestrator:worktree` | Create an isolated git worktree. |
+| `/llm-orchestrator:dispatch` | Run a focused subagent with a constructed context envelope. |
+| `/llm-orchestrator:review` | Two-stage review (spec + code quality), plus optional security pass. |
+| `/llm-orchestrator:debug` | Root-cause debugging. |
+| `/llm-orchestrator:verify` | Run tests/lint/typecheck and report evidence. |
+| `/llm-orchestrator:finish` | Decide between merge / PR / keep / discard. |
+| `/llm-orchestrator:remember` | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
+| `/llm-orchestrator:forget` | Soft-delete matching lines from CLAUDE.md or plugin memory. |
+
 ## Cross-harness
 
 LLM Orchestrator ships Claude Code first. Codex / Gemini / Copilot mirrors are tracked in [`roadmap.md`](./roadmap.md) and not yet shipped.

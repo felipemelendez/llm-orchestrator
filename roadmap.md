@@ -4,7 +4,7 @@
 
 - Concise Agent Protocol documented
 - 16 skills (meta, brainstorming, writing-plans, executing-plans, TDD, systematic-debugging, worktrees, dispatch sequential, dispatch parallel, requesting/receiving review, verification-before-completion, finishing-a-branch, writing-skills, memory)
-- 10 commands (`/init`, `/plan`, `/worktree`, `/dispatch`, `/review`, `/debug`, `/verify`, `/finish`, `/remember`, `/forget`)
+- 11 commands (`/init`, `/plan`, `/worktree`, `/dispatch`, `/review`, `/debug`, `/verify`, `/finish`, `/remember`, `/forget`, `/onboard`)
 - Hook profiles: minimal / standard / strict (`ORCH_HOOK_PROFILE`)
 - Memory written to Claude Code's native CLAUDE.md by `/remember` (auto-classified); plugin memory at `~/.llm-orchestrator/memory/<hash>.md` reserved for research-gate state
 - Skill linter (`tests/validate-skills.sh`)

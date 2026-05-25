@@ -61,6 +61,7 @@ The validator checks the `description:` field on every command. Body validation 
 
 | Command            | What it does                                                            |
 |--------------------|--------------------------------------------------------------------------|
+| `/onboard`         | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. Run this first on an existing project before any feature work. |
 | `/init`            | Add LLM Orchestrator conventions to a project.                          |
 | `/plan`            | Turn an approved spec into a checklist-shaped plan.                     |
 | `/worktree`        | Create an isolated git worktree.                                        |

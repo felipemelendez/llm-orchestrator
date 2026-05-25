@@ -15,7 +15,7 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ```bash
 cd ~/LLM-Orchestrator
-./tests/validate-skills.sh     # → "OK: 16 skills, 10 commands, 8 agents"
+./tests/validate-skills.sh     # → "OK: 16 skills, 11 commands, 8 agents"
 ./tests/test-portability.sh    # → "7 portability checks passed."
 ./tests/smoke.sh               # → "All 57 checks passed."
 ```
@@ -112,10 +112,10 @@ Type `/` and look for the commands:
 
 ```
 /init  /plan  /worktree  /dispatch  /review  /verify  /finish
-/debug  /remember  /forget
+/debug  /remember  /forget  /onboard
 ```
 
-**Pass:** all 10 appear in the completion menu.
+**Pass:** all 11 appear in the completion menu.
 **Fail:** none appear → `commands/` directory not discovered. Check `/plugin list` shows the plugin enabled.
 
 ---
