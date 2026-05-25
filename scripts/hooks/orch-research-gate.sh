@@ -71,7 +71,9 @@ fi
 # Design intent + library/version/security mention → research-relevant.
 if (( should_compel == 0 )); then
   if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_DESIGN_VERB}"; then
-    if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LIBRARY}"; then
+    if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LIBRARY}" \
+       || printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LIBRARY_STRUCTURAL}" \
+       || printf '%s' "${PROMPT}" | grep -qE "${ORCH_SIG_LIBRARY_STRUCTURAL_DOTTED}"; then
       should_compel=1
       matched_signal="design verb + library mention"
     elif printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_VERSION}"; then
@@ -87,10 +89,23 @@ fi
 # Architectural signal + library → also compel.
 if (( should_compel == 0 )); then
   if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_ARCH}"; then
-    if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LIBRARY}"; then
+    if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LIBRARY}" \
+       || printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LIBRARY_STRUCTURAL}" \
+       || printf '%s' "${PROMPT}" | grep -qE "${ORCH_SIG_LIBRARY_STRUCTURAL_DOTTED}"; then
       should_compel=1
       matched_signal="architectural signal + library mention"
     fi
+  fi
+fi
+
+# Package-manager or IaC direct invocation — compel without requiring a design verb.
+# These are explicit tool commands, not natural language, so they carry enough
+# signal on their own (e.g. "sam deploy ...", "npm install ...", "terraform plan").
+if (( should_compel == 0 )); then
+  PKG_MANAGER_DIRECT='\b(npm(\s+(i|install))?|pnpm\s+add|yarn\s+add|pip3?\s+install|poetry\s+add|cargo\s+add|go\s+get|gem\s+install|bundle\s+add|composer\s+require|apt(-get)?\s+install|brew\s+install)\b|\b(terraform|kubectl|helm|ansible|pulumi|cdk|serverless)\s+\w+|\baws\s+sam\s+\w+|\bsam\s+(build|deploy|init|local|package|publish|validate)\b'
+  if printf '%s' "${LOWER}" | grep -qE "${PKG_MANAGER_DIRECT}"; then
+    should_compel=1
+    matched_signal="package-manager or IaC direct invocation"
   fi
 fi
 
@@ -108,8 +123,34 @@ if (( should_compel == 0 )); then
   fi
 fi
 
-# Bail silently on no match — most user messages should fall here.
+# Fail-loud on uncertainty: design verb + unrecognized capitalized proper-noun
+# that co-occurs with a structural hint (quote, dotted form, package-manager
+# verb, or known tech-suffix like "integration"/"sdk"/"api"/"plugin"/"lib").
+# Plain proper nouns in everyday English ("Monday", "London") must NOT fire.
+# Emit ONE notice — do not block (exit 0 so the agent still proceeds).
 if (( should_compel == 0 )); then
+  if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_DESIGN_VERB}"; then
+    # Only emit when the prompt also carries a structural hint that suggests the
+    # cap token is a tech artifact rather than a common proper noun.
+    # Hints: a quote char, a dotted identifier, a package-manager verb nearby,
+    # or one of the explicit tech-context suffixes in the same sentence.
+    STRUCTURAL_HINT=0
+    printf '%s' "${LOWER}" | grep -qE "['\"]|[a-z][.][a-z]|\b(npm|pnpm|yarn|pip3?|poetry|cargo|gem|brew)\b" \
+      && STRUCTURAL_HINT=1
+    printf '%s' "${LOWER}" | grep -qE "\b(integration|sdk|plugin|lib|framework|module|package|api|client|server|cli|driver|adapter|connector|extension)\b" \
+      && STRUCTURAL_HINT=1
+    if (( STRUCTURAL_HINT == 1 )); then
+      # Exclude common sentence-starters and design verbs themselves.
+      CAP_TOKEN=$(printf '%s' "${PROMPT}" \
+        | grep -oE '\b[A-Z][a-zA-Z0-9]{2,}\b' \
+        | grep -vE "^(I|In|The|This|An?|My|Our|We|It|If|When|For|To|Run|Add|Fix|Set|Get|Use|Build|Make|Let|Do|Can|Is|Are|How|What|Which|From|With|By|New|Old|All|More|Less|Just|Now|No|Yes|Ok|So)$" \
+        | grep -viE "^(Add|Implement|Build|Wire|Wiring|Integrate|Integrating|Migrate|Migrating|Migration|Upgrade|Upgrading|Refactor|Create|Introduce|Replace|Switch)$" \
+        | head -1 || true)
+      if [[ -n "${CAP_TOKEN}" ]]; then
+        printf 'Status: RESEARCH_UNCERTAIN — possible library "%s" with design verb but no confident signal; classifier not compelled. Run /llm-orchestrator:research to verify.\n' "${CAP_TOKEN}" >&2
+      fi
+    fi
+  fi
   exit 0
 fi
 

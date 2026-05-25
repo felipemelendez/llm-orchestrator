@@ -23,17 +23,59 @@ ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
 fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED+=("$1"); }
 
 # Curated sniffer tests.
+# Three outcomes:
+#   compel  — hook emits JSON on stdout (hookSpecificOutput)
+#   uncertain — hook emits RESEARCH_UNCERTAIN on stderr only, no JSON on stdout
+#   skip    — hook emits nothing at all
+_gate_stdout() { printf '{"prompt":"%s"}' "$1" | bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>/dev/null; }
+_gate_stderr() { printf '{"prompt":"%s"}' "$1" | bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>&1 >/dev/null; }
+
 expect_sniffer() {
   local prompt="$1" want="$2"
-  local input output got
-  input=$(printf '{"prompt":"%s"}' "${prompt}")
-  output=$(printf '%s' "${input}" | bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>&1)
-  got="skip"
-  [[ -n "${output}" ]] && got="compel"
+  local stdout_out stderr_out got
+  stdout_out=$(_gate_stdout "${prompt}")
+  stderr_out=$(_gate_stderr "${prompt}")
+  if [[ -n "${stdout_out}" ]]; then
+    got="compel"
+  elif echo "${stderr_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
+    got="uncertain"
+  else
+    got="skip"
+  fi
   if [[ "${got}" == "${want}" ]]; then
     ok "[sniffer ${want}] ${prompt}"
   else
     fail "[sniffer ${want}, got ${got}]" "${prompt}"
+  fi
+}
+
+# Expect the gate to emit RESEARCH_UNCERTAIN on stderr but NOT compel.
+expect_uncertain() {
+  local prompt="$1"
+  local stdout_out stderr_out
+  stdout_out=$(_gate_stdout "${prompt}")
+  stderr_out=$(_gate_stderr "${prompt}")
+  if [[ -n "${stdout_out}" ]]; then
+    fail "[uncertain, got compel] ${prompt}" "hook emitted JSON (false compel)"
+  elif echo "${stderr_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
+    ok "[uncertain] ${prompt}"
+  else
+    fail "[uncertain, got skip] ${prompt}" "hook stayed silent, expected RESEARCH_UNCERTAIN"
+  fi
+}
+
+# Expect the gate to stay completely silent (no stdout, no RESEARCH_UNCERTAIN stderr).
+expect_skip() {
+  local prompt="$1"
+  local stdout_out stderr_out
+  stdout_out=$(_gate_stdout "${prompt}")
+  stderr_out=$(_gate_stderr "${prompt}")
+  if [[ -n "${stdout_out}" ]]; then
+    fail "[skip, got compel] ${prompt}" "hook emitted JSON"
+  elif echo "${stderr_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
+    fail "[skip, got uncertain] ${prompt}" "hook emitted RESEARCH_UNCERTAIN"
+  else
+    ok "[skip] ${prompt}"
   fi
 }
 
@@ -55,6 +97,68 @@ expect_sniffer "How does our auth code work?"                          "skip"
 expect_sniffer "Refactor users.ts to be cleaner"                       "skip"
 expect_sniffer "What's our package manager?"                            "skip"
 expect_sniffer "What's the test command for this project?"             "skip"
+
+printf '\n%s== Version-signal false-positive guard ==%s\n' "$DIM" "$RESET"
+# These phrases contain a design verb so the version-signal branch is reached,
+# but they are benign ordinals/counts — must NOT compel.
+expect_sniffer "Add a function that covers step 2"   "skip"
+expect_sniffer "Implement phase 3 of the plan"       "skip"
+expect_sniffer "Build the top 5 features"            "skip"
+expect_sniffer "Create task 4 in the backlog"        "skip"
+# These MUST compel — they carry real version-shaped tokens.
+expect_sniffer "Upgrade to v4"                       "compel"
+expect_sniffer "Set up Next.js 15 middleware"        "compel"
+expect_sniffer "Add dependency pinned at >=1.55"     "compel"
+expect_sniffer "Add version 2.0 of the API"          "compel"
+expect_sniffer "Migrate to Python 3.12"              "compel"
+
+printf '\n%s== Sniffer curated tests (structural library detection) ==%s\n' "$DIM" "$RESET"
+# COMPEL: off-allowlist libraries detected via structural import/pkg-manager patterns.
+# Note: bare "import pandas" (no dot) is no longer a compel — use dotted/quoted/pkg forms.
+expect_sniffer "Set up import pandas.DataFrame for the pipeline"         "compel"
+expect_sniffer "pip install redis and integrate it"                      "compel"
+expect_sniffer "terraform apply to set up infra"                         "compel"
+expect_sniffer "import z from 'zod' and implement schema"               "compel"
+expect_sniffer "cargo add tokio and build async server"                  "compel"
+# Additional code-shaped COMPEL cases (design verb present, module-path-shaped token)
+expect_sniffer "Add a step that runs pip install redis"                  "compel"
+expect_sniffer "Wire up cargo add tokio"                                 "compel"
+expect_sniffer "Add import { z } from \"zod\""                          "compel"
+# JS require() — parenthesised form (single quotes; double-quote form also
+# matches at the regex level but is not testable via the printf helper because
+# bare " inside %s produces malformed JSON — single-quote form covers the branch).
+expect_sniffer "Add const redis = require('redis') for caching"         "compel"
+# SKIP: bare mention without a design verb — preserve SKIP-bias
+expect_sniffer "pandas is great for data science"                        "skip"
+expect_sniffer "we use redis at work"                                    "skip"
+
+printf '\n%s== Structural regex false-positive guard ==%s\n' "$DIM" "$RESET"
+# These must NOT compel — the structural regex must not match ordinary English
+# prepositions ("from the"), modal verbs ("use the"), or non-technical nouns.
+# IMPORTANT: these tests include a design verb so the structural regex IS evaluated;
+# they are the true test that the module-shape requirement actually prevents false fires.
+expect_sniffer "Refactor the function from the old module"               "skip"
+expect_sniffer "use the API key"                                         "skip"
+expect_sniffer "require approval from a manager"                         "skip"
+expect_sniffer "import contacts"                                         "skip"
+# Design-verb + prose import — must NOT compel (the real false-positive target).
+expect_sniffer "Add code to import contacts from a CSV"                  "skip"
+expect_sniffer "Build a feature to use the dashboard"                    "skip"
+expect_sniffer "Set up a flow to require approval from a manager"        "skip"
+expect_sniffer "Set up a workflow to require sign-off from a manager"    "skip"
+expect_sniffer "Refactor the helper to read from the cache"              "skip"
+# sam by itself (a person's name) must not trigger the IaC tool branch.
+expect_sniffer "build a sam raimi style UI"                              "skip"
+# Genuine IaC invocations must still compel.
+expect_sniffer "sam deploy the function"                                 "compel"
+expect_sniffer "aws sam build the stack"                                 "compel"
+
+printf '\n%s== RESEARCH_UNCERTAIN cry-wolf guard ==%s\n' "$DIM" "$RESET"
+# These must NOT emit RESEARCH_UNCERTAIN — plain proper nouns in no-signal context.
+expect_skip "Set up Monday morning standup"
+expect_skip "Build the London office"
+# Known-good UNCERTAIN: design verb + unknown proper noun WITH structural hint.
+expect_uncertain "set up Frobnicator integration"
 
 printf '\n%s== Sniffer curated tests (question-shape — Fix 1) ==%s\n' "$DIM" "$RESET"
 # Installed-version lookups — compel without design verb
@@ -107,7 +211,7 @@ Outcome: CONTRADICTED
 EOF
 
 validator_case() {
-  local label="$1" status="$2" brief="$3" expect="$4"
+  local label="$1" status="$2" brief="$3" expect="$4" grep_for="${5:-}"
   local transcript="$TMP/transcripts/${label// /-}.jsonl"
   printf '{"role":"assistant","content":"Status: %s\\nBrief: %s"}\n' "$status" "$brief" > "$transcript"
   local output rc got
@@ -122,7 +226,11 @@ validator_case() {
     fi
   elif [[ "$expect" == "warn" ]]; then
     if [[ "$rc" == "0" && -n "$output" ]]; then
-      ok "$label (warned, exit 0)"
+      if [[ -n "$grep_for" ]] && ! echo "$output" | grep -qF "$grep_for"; then
+        fail "$label" "warned but missing expected reason substring '$grep_for' in: $output"
+      else
+        ok "$label (warned, exit 0)"
+      fi
     else
       fail "$label" "rc=$rc, output=$output"
     fi
@@ -130,9 +238,9 @@ validator_case() {
 }
 
 validator_case "VERIFIED + clean brief"                  "VERIFIED"        "$TMP/briefs/clean-verified.md"          "silent"
-validator_case "VERIFIED hides deprecation"              "VERIFIED"        "$TMP/briefs/sneaky-verified.md"         "warn"
-validator_case "COULDN'T_VERIFY using CONTRADICTED form" "COULDN'T_VERIFY" "$TMP/briefs/sneaky-couldnt.md"          "warn"
-validator_case "CONTRADICTED missing revision section"   "CONTRADICTED"    "$TMP/briefs/incomplete-contradicted.md" "warn"
+validator_case "VERIFIED hides deprecation"              "VERIFIED"        "$TMP/briefs/sneaky-verified.md"         "warn" "brief language indicates a deprecation/removal/rename but Status says VERIFIED"
+validator_case "COULDN'T_VERIFY using CONTRADICTED form" "COULDN'T_VERIFY" "$TMP/briefs/sneaky-couldnt.md"          "warn" "CONTRADICTED template) but Status says COULDN'T_VERIFY"
+validator_case "CONTRADICTED missing revision section"   "CONTRADICTED"    "$TMP/briefs/incomplete-contradicted.md" "warn" "Status says CONTRADICTED but brief lacks a Recommended revision section"
 
 # NOT_APPLICABLE outcome cases (Fix 2)
 cat > "$TMP/briefs/na-proper.md" <<'EOF'
@@ -167,9 +275,9 @@ Use new client API.
 EOF
 
 validator_case "NOT_APPLICABLE proper Premise+Reality"   "NOT_APPLICABLE"  "$TMP/briefs/na-proper.md"           "silent"
-validator_case "NOT_APPLICABLE missing Reality"          "NOT_APPLICABLE"  "$TMP/briefs/na-missing-reality.md"  "warn"
-validator_case "NOT_APPLICABLE missing Premise"          "NOT_APPLICABLE"  "$TMP/briefs/na-missing-premise.md"  "warn"
-validator_case "NOT_APPLICABLE soft-pedaling CONTRADICTED" "NOT_APPLICABLE" "$TMP/briefs/na-softpedal.md"        "warn"
+validator_case "NOT_APPLICABLE missing Reality"          "NOT_APPLICABLE"  "$TMP/briefs/na-missing-reality.md"  "warn" "brief lacks required field(s): Reality"
+validator_case "NOT_APPLICABLE missing Premise"          "NOT_APPLICABLE"  "$TMP/briefs/na-missing-premise.md"  "warn" "brief lacks required field(s): Premise"
+validator_case "NOT_APPLICABLE soft-pedaling CONTRADICTED" "NOT_APPLICABLE" "$TMP/briefs/na-softpedal.md"        "warn" "NOT_APPLICABLE but brief contains the Before/After"
 
 # Different subagent → skip.
 T_OTHER="$TMP/transcripts/other.jsonl"
@@ -485,6 +593,25 @@ if [[ ! -f "$CACHE/research/cache/no-fm.md" ]]; then ok "Default 30d TTL prunes 
 if [[ ! -f "$CACHE/research/cache/short.md" ]]; then ok "7-day TTL prunes 35d-old cache"; else fail "7-day TTL" "short.md still present"; fi
 
 rm -rf "$TMP"
+
+# ============================================================
+# Uncertain-signal (RESEARCH_UNCERTAIN) tests
+# ============================================================
+# When a design verb is present AND a capitalized proper-noun token that
+# matches neither the allowlist nor the structural regex is found BUT co-occurs
+# with a structural hint (quote, dotted form, or package-manager verb), the
+# gate must emit a RESEARCH_UNCERTAIN notice.
+# Plain no-signal prompts and plain proper-nouns without structural hints must
+# remain completely silent.
+
+printf '\n%s== Uncertain-signal (RESEARCH_UNCERTAIN) tests ==%s\n' "$DIM" "$RESET"
+
+# UNCERTAIN: design verb + unknown cap token with structural hint ("integration"
+# suffix accepted as hint for tools that look like tech nouns).
+expect_uncertain "set up Frobnicator integration"
+
+# NEGATIVE: plain no-signal prompt → silent.
+expect_skip "fix the typo in the readme"
 
 printf '\n'
 # ============================================================

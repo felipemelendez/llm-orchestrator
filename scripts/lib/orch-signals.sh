@@ -36,12 +36,54 @@
 # The classifier separates them for nudge routing via ORCH_SIG_VENDOR.
 ORCH_SIG_LIBRARY='\b(next\.?js|react|vue|svelte|angular|nuxt|astro|remix|prisma|drizzle|sequelize|mongoose|typeorm|tailwindcss|tailwind|django|fastapi|flask|spring|rails|laravel|express|hono|nest\.?js|nestjs|trpc|graphql|apollo|axios|boto3|aws-sdk|stripe|auth0|nextauth|clerk|supabase|firebase|cloudflare|vercel|netlify|openai|anthropic|langchain|llamaindex|pydantic|sqlalchemy|mocha|vitest|jest|playwright|cypress|webpack|vite|rollup|esbuild|turbopack|biome|eslint|prettier|ruff|mypy|openssl|claude[[:space:]]?code|claude-code|mcp[[:space:]]+server|jsonl[[:space:]]+transcript)\b'
 
+# Structural library/dependency shapes — name-agnostic complement to the curated
+# allowlist above. Matches import/require statements followed by a MODULE-PATH-
+# SHAPED token (contains /  .  @  a quote or opening brace), any package-manager
+# install invocation, or an IaC CLI tool name with a subcommand.
+#
+# Design decisions:
+#   - "from" and "use" alone are NOT included: they fire on ordinary English
+#     ("from the old module", "use the API key"). Only "import" and "require"
+#     are listed, and they must be followed by a token with a module-path shape.
+#   - Module-path shape for "import": token must start with @, {, *, ' or ",
+#     OR start with a letter/digit and contain at least one of [./@:] to
+#     distinguish module paths ("pandas.DataFrame", "@scope/pkg", "'redis'")
+#     from plain English nouns ("contacts", "data", "records"). Bare single
+#     words like "import contacts" are excluded by this requirement.
+#   - "require" uses a separate branch that already enforces module-path shape
+#     (scoped @, quoted, or dotted/slashed bare token).
+#   - "from" is only matched when immediately followed by a quote character,
+#     which means it only fires on `from 'module'` / `from "module"` forms —
+#     not on prose "from the old module" or "from a manager".
+#   - "sam" alone (person's name) is excluded; require "aws sam" prefix or
+#     "sam (build|deploy|init|local|package|publish|validate)" to match IaC use.
+#   - \x27 dead-byte sequences removed; literal ' used where needed.
+#
+# Pattern 1 — import + module-path-shaped token (@ { * quote, OR word with ./@/:)
+# Pattern 2 — require + module-path-shaped token
+# Pattern 3 — from + immediate quote (from 'x' / from "x")
+# Pattern 4 — package-manager install verbs (npm, pnpm, yarn, pip, poetry,
+#              cargo, go, gem, bundler, composer, apt, brew)
+# Pattern 5 — IaC CLI tools (terraform, kubectl, helm, ansible, pulumi, cdk,
+#              serverless) + any subcommand; sam only with aws prefix or known
+#              subcommands
+ORCH_SIG_LIBRARY_STRUCTURAL='\bimport\s+(@[a-z0-9_-]|[{*'"'"'"][[:space:]a-z*]|[a-z][a-z0-9_-]*[./@:][a-z0-9_./@:-]*)|\brequire\s+(@[a-z0-9_-]|['"'"'"][a-z]|[a-z][a-z0-9_-]*[/.@][a-z0-9_./\\@-]*)|\brequire\s*\(\s*\\?['"'"'"]|\bfrom\s+['"'"'"]|\b(npm(\s+(i|install))?|pnpm\s+add|yarn\s+add|pip3?\s+install|poetry\s+add|cargo\s+add|go\s+get|gem\s+install|bundle\s+add|composer\s+require|apt(-get)?\s+install|brew\s+install)\b|\b(terraform|kubectl|helm|ansible|pulumi|cdk|serverless)\s+\w+|\baws\s+sam\s+\w+|\bsam\s+(build|deploy|init|local|package|publish|validate)\b'
+
+# Dotted CapitalizedName pattern — must run against ORIGINAL-case prompt.
+# Matches patterns like Foo.Bar, Pandas.DataFrame, TensorFlow.keras, etc.
+ORCH_SIG_LIBRARY_STRUCTURAL_DOTTED='\b[A-Z][a-zA-Z0-9]+\.[a-zA-Z]'
+
 # Vendor SaaS platforms — subset of LIBRARY but maintained separately so the
 # classifier can prefer "vendor MCP" over "doc aggregator" for their APIs.
 ORCH_SIG_VENDOR='\b(stripe|cloudflare|vercel|auth0|supabase|firebase|netlify)\b'
 
 # Version-shaped tokens.
-ORCH_SIG_VERSION='(\bv[0-9]+(\.[0-9]+)?\b|[a-z]\.?js[[:space:]]+[0-9]+|>=[[:space:]]*[0-9]+|\^[0-9]+|~[0-9]+|\b[a-z]+[[:space:]]+v?[0-9]+\b)'
+# Matches: v-prefixed numbers (v4, v1.2.3), dotted semantic versions (3.12, 1.0.0),
+# comparator-prefixed specifiers (>=1.55, ^7, ~2, ==1.0, <=5.0),
+# and the literal word "version" followed by a number (version 2.0).
+# The loose \b[a-z]+[[:space:]]+v?[0-9]+\b alternative has been removed to
+# eliminate false positives on "step 2", "phase 3", "top 5", "task 4".
+ORCH_SIG_VERSION='(\bv[0-9]+(\.[0-9]+)*\b|\b[0-9]+\.[0-9]+(\.[0-9]+)*\b|(>=|<=|==|~|\^)[[:space:]]*[0-9]|\bversion[[:space:]]+[0-9])'
 
 # Security-sensitive verbs and nouns.
 ORCH_SIG_SECURITY='\b(auth|crypto|payment|secret|jwt|oauth|password|encryption|tls|ssl|webhook)\b'
