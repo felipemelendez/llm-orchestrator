@@ -18,7 +18,7 @@ You may edit only these files. If you need to edit something outside this list, 
 
 ## Project conventions
 
-{{paste relevant section of CLAUDE.md — voice, formatting, frameworks}}
+{{paste the relevant `## Conventions` section of ./CLAUDE.md here}}
 
 ## Research brief (if applicable)
 
