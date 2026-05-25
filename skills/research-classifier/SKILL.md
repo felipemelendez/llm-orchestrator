@@ -65,7 +65,7 @@ The classifier emits a stakes value the researcher uses to decide depth and para
 
 ## The contract: what the classifier produces
 
-The classifier emits a single Status block. This is what downstream research (step 2) consumes.
+The classifier emits a single `Status:` block (below). **This block is internal** — the controller records it and hands it to the researcher dispatch. Never print it to the user; the human sees only the one-line acknowledgment in "Working dialogue with the user" below.
 
 ### When research should fire
 
@@ -211,13 +211,15 @@ These examples carry through to the smoke test as ground truth. If a heuristic c
 
 ## Working dialogue with the user
 
-When `RESEARCH_NEEDED` fires at Trigger A, the controller does not silently dispatch research. It surfaces a brief one-line acknowledgement:
+When `RESEARCH_NEEDED` fires, do not print the internal block (Trigger point, Libraries, Versions, Stakes, Aggressiveness, Triggers matched, Reason) — that is plumbing, useless to a human. Surface only two plain lines: that research is happening, and what you're verifying (plus the MCP nudge if any).
 
-> Found: research needed (Next.js 14 + middleware pattern). Running pre-spec verification.
+> Found: research needed (expo-sqlite). Verifying the installed version and whether an in-flight write can be cancelled. (Context7 covers the docs.)
 
-The user can interrupt with `skip research` if they want to override. Override is logged once to project memory under `## Notes` so behavior on that library is tracked, but the controller does not refuse subsequent overrides.
+No stakes, no trigger lists, no "aggressiveness applied." The user can interrupt with `skip research`. When they do, acknowledge it in one line and flag the tradeoff — then log the override once under `## Notes` and don't refuse later overrides:
 
-When `RESEARCH_SKIP` fires, no acknowledgement is shown. Skipping is the default; announcing it is noise.
+> Skipping research per your call — proceeding on training knowledge for expo-sqlite (may be stale).
+
+When the classifier itself returns `RESEARCH_SKIP` (no research needed), show nothing — that's an automatic decision, not a user action; announcing it is noise. Acknowledge only the user's explicit `skip research`.
 
 ## Anti-patterns
 
@@ -225,6 +227,7 @@ When `RESEARCH_SKIP` fires, no acknowledgement is shown. Skipping is the default
 - Treating a library mention as automatic NEEDED. Standard aggressiveness requires a second signal.
 - Treating `CONTRADICTED` as a soft warning. It is first-class — the plan must be revised.
 - Over-explaining the SKIP decision. One bullet of reason is enough.
+- Dumping the internal Status block to the user. Surface one plain line — not the Trigger/Stakes/Aggressiveness/Reason fields.
 - Hardcoding the signal lists in code without keeping the Examples table in sync. The smoke test reads this skill's table; drift breaks both.
 - Writing the MCP nudge as a question. It is an observation, not a popup.
 - Re-nudging within 12 months when memory shows a matching `declined_mcp:` entry. Read memory before nudging.
@@ -232,19 +235,8 @@ When `RESEARCH_SKIP` fires, no acknowledgement is shown. Skipping is the default
 - Defaulting to Context7 for every library mention. The right MCP is task-shape dependent — vendor MCPs for vendor APIs, GitHub MCP for changelogs/advisories, Context7 for general library docs, filesystem read for "what's installed."
 - Nudging two MCPs in the same parenthetical. Pick one — the most authoritative gap.
 
-## Output shape (single canonical example)
+## Output shape
 
-```
-Status: RESEARCH_NEEDED
-Trigger point: A
-Libraries: Next.js, NextAuth
-Versions: Next.js 14, NextAuth unspecified
-Stakes: high
-Aggressiveness applied: standard
-Triggers matched:
-- proper-noun library: "Next.js"
-- version-shaped token: "14"
-- security verb: "auth"
-- architectural verb: "set up"
-Reason: Multiple version-specific libraries plus security-sensitive verb.
-```
+The internal block is the one under "The contract" above — recorded by the controller, handed to the researcher, never shown to the user. What the **user** sees is one plain line:
+
+> Found: research needed (expo-sqlite). Verifying the installed version + whether a write can be cancelled. (Context7 covers the docs.)
