@@ -10,10 +10,12 @@ A team of specialized Claude Code subagents — architect, implementer, two revi
 
 ## Quick Start
 
-In a Claude Code session:
+In a Claude Code session, run these one at a time (let the first finish before the second):
 
 ```
 /plugin marketplace add felipemelendez/llm-orchestrator
+```
+```
 /plugin install llm-orchestrator@llm-orchestrator
 ```
 
