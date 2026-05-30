@@ -25,7 +25,7 @@ case "${cmd}" in
       fi
     done
     # Required hook scripts
-    for f in scripts/hooks/session-start.sh scripts/hooks/user-prompt-submit.sh scripts/hooks/guard-no-verify.sh scripts/hooks/subagent-stop.sh scripts/hooks/orch-stop.sh scripts/lib/orch-lock.sh scripts/lib/orch-protocol.sh scripts/hooks/orch-protocol-grader.sh scripts/hooks/orch-research-gate.sh scripts/hooks/orch-researcher-validator.sh scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md; do
+    for f in scripts/hooks/session-start.sh scripts/hooks/user-prompt-submit.sh scripts/hooks/guard-no-verify.sh scripts/hooks/subagent-stop.sh scripts/hooks/orch-stop.sh scripts/hooks/orch-context-pressure.sh scripts/lib/orch-lock.sh scripts/lib/orch-protocol.sh scripts/lib/orch-handoff.sh scripts/hooks/orch-protocol-grader.sh scripts/hooks/orch-research-gate.sh scripts/hooks/orch-researcher-validator.sh scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi

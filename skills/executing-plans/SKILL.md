@@ -46,6 +46,8 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
    - Every completed task's `- [ ]` in the plan file is ticked to `- [x]`. If not, tick it now (this is the only durable state across `/clear`).
    - `DONE_WITH_CONCERNS` items routed per the policy below.
 
+6a. **Tier-boundary handoff check.** After a tier completes with a green verify and material work remains, check context pressure. If context is past ~50%, invoke the `handing-off-to-fresh-context` skill before starting the next tier — a clean seam is the right moment to hand off. This is the primary handoff trigger; the context-pressure hook and `/llm-orchestrator:handoff` are fallbacks.
+
 7. **DONE_WITH_CONCERNS policy.** Read each concern:
    - Touches **correctness, security, or a public contract** → address now (re-enter the inner loop with a fix prompt).
    - Touches **ergonomics, perf, style, naming** → carry forward into the final `/review` pass; record in the plan file under an `## Outstanding concerns` section.
@@ -57,6 +59,10 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
    - Run `/verify`. If green, run `/review` (combined diff). If `Ready: yes`, hand to `/finish`.
    - If `/verify` red, invoke `systematic-debugging` and re-enter step 5 for the affected task.
 
+## Resuming from a handoff
+
+On resuming from a handoff artifact, the fresh controller's first action is to run the artifact's verification baseline commands and confirm green. Only after green does it pick up the next task. If verification diverges from the artifact's expected output, invoke `systematic-debugging` on the divergence before proceeding — never assume the baseline is current.
+
 ## State invariants
 
 At any point you should be able to answer:
@@ -65,6 +71,7 @@ At any point you should be able to answer:
 - "What's done?" → all `completed` items AND the plan-file ticks must agree.
 
 If the task list and plan-file ticks disagree, re-anchor: trust the plan file (it survived `/clear`), reset the tasks (`TaskUpdate`) to match.
+- The handoff artifact (under `docs/llm-orchestrator/handoffs/`) indexes plan-file checkbox state and TaskList; it never duplicates or contradicts them — the plan file remains the durable source of truth and the Task tools the in-flight source of truth.
 
 ## Output shape
 
