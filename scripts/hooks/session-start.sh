@@ -7,8 +7,10 @@
 # by this hook), and plugin-internal state (research config, declined_mcp,
 # cache priors) is loaded at trigger time by the gate hook, not ambient.
 #
-# Profile gating via ORCH_HOOK_PROFILE (default: standard).
-# Disable via ORCH_DISABLED_HOOKS containing "orch-session-start".
+# The meta-skill bootstrap always loads (profile-independent). The post-compaction
+# advisory, part of the Layer 9 handoff feature, is profile-aware: suppressed under
+# ORCH_HOOK_PROFILE=minimal and when ORCH_DISABLED_HOOKS contains "orch-context-pressure".
+# Disable this hook entirely via ORCH_DISABLED_HOOKS containing "orch-session-start".
 
 set -uo pipefail
 
@@ -21,6 +23,16 @@ fi
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 MAX_CHARS="${ORCH_SESSION_MAX_CHARS:-8000}"
+
+# Read the hook event JSON from stdin to detect the session source. SessionStart
+# fires with source in {startup, clear, compact, resume}. When source==compact,
+# this is the first turn AFTER native compaction — the moment to advise the
+# controller that the in-flight narrative is lossy. PreCompact cannot inject
+# context (it only supports decision:block), so this is where that advisory lives.
+INPUT=$(cat || true)
+# Anchor to the documented SessionStart source enum so an unrelated nested
+# "source" string elsewhere in the payload cannot shadow the real value.
+SOURCE=$(printf '%s' "${INPUT}" | grep -oE '"source"[[:space:]]*:[[:space:]]*"(startup|clear|compact|resume)"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 
 strip_frontmatter() {
   awk '
@@ -64,9 +76,33 @@ if [[ -f "${META_FILE}" ]]; then
   META_BODY=$(strip_frontmatter "${META_FILE}")
 fi
 
+# Post-compaction advisory — appended only when this session began from a
+# native compaction. Tells the fresh controller to treat the summarised
+# narrative as lossy and re-establish ground truth before continuing.
+#
+# This advisory is part of the Layer 9 handoff feature, whose owning hook is
+# orch-context-pressure. To honour the "minimal/disabled = silent" invariant
+# per-feature, suppress it under the minimal profile and when the pressure hook
+# is disabled — even though the meta-skill bootstrap below always loads.
+POSTCOMPACT_NOTE=""
+PRESSURE_DISABLED=0
+if [[ ",${DISABLED}," == *",orch-context-pressure,"* ]] || [[ "${PROFILE}" == "minimal" ]]; then
+  PRESSURE_DISABLED=1
+fi
+if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
+  POSTCOMPACT_NOTE="
+
+---
+<EXTREMELY_IMPORTANT>
+This session resumed immediately after native context compaction. The narrative above the compaction boundary is a lossy summary — treat in-flight details (file:line refs, test counts, what was just edited) as unverified. Before continuing or claiming any work is done: re-run the verification baseline (tests / typecheck) and reconcile against the plan file's checkboxes. If a handoff artifact under docs/llm-orchestrator/handoffs/ matches the CURRENT task (check its frontmatter slug against the active plan), read it; if none matches the current task, do NOT trust an older one — treat all in-flight state as lost and rebuild from the plan file and git history. Then, if mid-task, regenerate the handoff with /llm-orchestrator:handoff.
+</EXTREMELY_IMPORTANT>"
+fi
+
 if [[ -z "${META_BODY}" ]]; then
-  # Nothing to inject. Emit valid JSON with hookEventName so Claude Code accepts it.
-  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":""}}\n'
+  # Nothing to inject from the meta-skill. Still emit the post-compaction note
+  # if present. Emit valid JSON with hookEventName so Claude Code accepts it.
+  ESCAPED=$(printf '%s' "${POSTCOMPACT_NOTE}" | json_escape)
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"
   exit 0
 fi
 
@@ -90,6 +126,8 @@ POSTAMBLE="
 BODY="${PREAMBLE}${META_BODY}${POSTAMBLE}"
 
 BODY=$(truncate_at_line "${BODY}" "${MAX_CHARS}")
+# Append the post-compaction note AFTER truncation so it is never cut off.
+BODY="${BODY}${POSTCOMPACT_NOTE}"
 ESCAPED=$(printf '%s' "${BODY}" | json_escape)
 
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"

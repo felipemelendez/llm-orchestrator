@@ -62,52 +62,17 @@ _orch_handoff_sum_cache_creation() {
 }
 
 # ---------------------------------------------------------------------------
-# orch_handoff_estimate_pct <transcript_path>
+# _orch_handoff_tokens_from_line <usage_line>
 #
-# Finds the LAST assistant turn line in the JSONL transcript that contains a
-# "usage" block with an "input_tokens" field.  Sums:
+# Internal: given one JSONL line that contains a "usage" block, sum
 #   input_tokens + cache_read_input_tokens + cache_creation_input_tokens
-# divides by ORCH_CONTEXT_WINDOW_TOKENS (default 1000000, Opus / latest Claude Code model), and prints the
-# integer percentage to stdout.
-#
-# Prints "unknown" (exit 0) on any failure — advisory path only.
+# and print the integer total. Prints nothing (return 1) if input_tokens
+# cannot be parsed.
 # ---------------------------------------------------------------------------
-orch_handoff_estimate_pct() {
-  local transcript_path="$1"
-
-  # --- Validation ----------------------------------------------------------
-  if [[ -z "$transcript_path" ]]; then
-    printf 'orch_handoff_estimate_pct: missing transcript_path argument\n' >&2
-    printf 'unknown\n'
-    return 0
-  fi
-
-  if [[ ! -f "$transcript_path" ]]; then
-    printf 'orch_handoff_estimate_pct: file not found: %s\n' "$transcript_path" >&2
-    printf 'unknown\n'
-    return 0
-  fi
-
-  # Estimates context fill for whatever transcript_path the harness provides
-  # (for UserPromptSubmit/PreCompact that is the main session transcript).
-
-  # --- Find the last usage-bearing line via bounded tail (constant cost) ---
-  # Read only the last 256 KB to bound cost regardless of transcript size.
-  # Transcripts are one JSON object per line; the most recent usage line is
-  # near the end, so 256 KB reliably contains it. A partial first line from
-  # the cut simply won't match grep — harmless.
-  local last_line
-  last_line=$(tail -c "${ORCH_CONTEXT_TAIL_BYTES:-262144}" "$transcript_path" \
-    | grep '"usage"' | grep '"input_tokens"' | tail -1)
-
-  if [[ -z "$last_line" ]]; then
-    printf 'orch_handoff_estimate_pct: no usage line found in %s\n' "$transcript_path" >&2
-    printf 'unknown\n'
-    return 0
-  fi
+_orch_handoff_tokens_from_line() {
+  local last_line="$1"
 
   # --- Extract input_tokens ------------------------------------------------
-  # Match: "input_tokens": <number>
   local input_tokens
   input_tokens=$(printf '%s' "$last_line" \
     | grep -oE '"input_tokens"[[:space:]]*:[[:space:]]*[0-9]+' \
@@ -115,9 +80,7 @@ orch_handoff_estimate_pct() {
     | grep -oE '[0-9]+$')
 
   if [[ -z "$input_tokens" ]]; then
-    printf 'orch_handoff_estimate_pct: could not parse input_tokens\n' >&2
-    printf 'unknown\n'
-    return 0
+    return 1
   fi
 
   # --- Extract cache_read_input_tokens (plain integer, may be absent) ------
@@ -129,11 +92,7 @@ orch_handoff_estimate_pct() {
   cache_read="${cache_read:-0}"
 
   # --- Extract cache_creation_input_tokens (integer OR nested object) ------
-  # We need to capture either a plain integer or a {...} block.
-  # Strategy: cut everything after the key, then grab the first integer or
-  # the first {…} block.
   local raw_creation=""
-  # First try plain integer form: "cache_creation_input_tokens": 12345
   local plain_creation
   plain_creation=$(printf '%s' "$last_line" \
     | grep -oE '"cache_creation_input_tokens"[[:space:]]*:[[:space:]]*[0-9]+' \
@@ -143,15 +102,12 @@ orch_handoff_estimate_pct() {
   if [[ -n "$plain_creation" ]]; then
     raw_creation="$plain_creation"
   else
-    # Try object form: "cache_creation_input_tokens": {...}
-    # Extract everything from the key to the matching closing brace using awk.
     raw_creation=$(printf '%s' "$last_line" | awk '
       {
         key = "\"cache_creation_input_tokens\""
         idx = index($0, key)
         if (idx == 0) { next }
         rest = substr($0, idx + length(key))
-        # skip whitespace and colon
         sub(/^[[:space:]]*:[[:space:]]*/, "", rest)
         if (substr(rest,1,1) == "{") {
           depth=0
@@ -173,26 +129,117 @@ orch_handoff_estimate_pct() {
     cache_creation="${cache_creation:-0}"
   fi
 
-  # --- Compute percentage --------------------------------------------------
-  # Validate window: must be a positive integer; fall back to 1000000 if not.
+  awk -v inp="$input_tokens" -v cr="$cache_read" -v cc="$cache_creation" \
+    'BEGIN { print (inp + cr + cc) }'
+}
+
+# ---------------------------------------------------------------------------
+# orch_handoff_total_tokens <transcript_path> [nth]
+#
+# Prints the total context tokens (input + cache_read + cache_creation) from
+# the Nth-from-last non-synthetic usage-bearing line (nth=1 is the most recent,
+# the default). Synthetic all-zero usage lines are skipped. Prints "unknown"
+# (exit 0) on any failure or when fewer than nth such lines exist — advisory
+# path only.
+# ---------------------------------------------------------------------------
+orch_handoff_total_tokens() {
+  local transcript_path="$1"
+  local nth="${2:-1}"
+
+  if [[ -z "$transcript_path" ]] || [[ ! -f "$transcript_path" ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+  if ! [[ "$nth" =~ ^[0-9]+$ ]] || [[ "$nth" -lt 1 ]]; then
+    nth=1
+  fi
+
+  # Bounded tail read (constant cost regardless of transcript size).
+  #
+  # Skip SYNTHETIC usage lines, where "synthetic" means the whole usage block is
+  # zero (input + cache_read + cache_creation == 0) — interrupts / "<synthetic>"
+  # stop markers. Do NOT key on input_tokens==0 alone: a genuine assistant turn
+  # whose entire prompt prefix was a cache hit legitimately reports
+  # input_tokens:0 with a large cache_read (verified common on long runs). Such a
+  # turn carries the real fill and must be counted; dropping it would undercount
+  # or, when the tail is all cache-hit turns, return "unknown" exactly when the
+  # window is most full. So we compute each line's TOTAL and skip only zero-total
+  # lines.
+  #
+  # Walk usage lines newest-first, skip zero-total lines, return the Nth surviving
+  # total. The bounded tail keeps the line count (and thus iterations) small.
+  local reversed
+  reversed=$(tail -c "${ORCH_CONTEXT_TAIL_BYTES:-262144}" "$transcript_path" \
+    | grep '"usage"' | grep '"input_tokens"' \
+    | awk '{ a[NR] = $0 } END { for (i = NR; i >= 1; i--) print a[i] }')
+
+  if [[ -z "$reversed" ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  local count=0 total ln
+  while IFS= read -r ln; do
+    [[ -z "$ln" ]] && continue
+    total=$(_orch_handoff_tokens_from_line "$ln") || continue
+    # Skip synthetic all-zero lines.
+    [[ "$total" == "0" ]] && continue
+    count=$((count + 1))
+    if (( count == nth )); then
+      printf '%s\n' "$total"
+      return 0
+    fi
+  done <<< "$reversed"
+
+  # Fewer than nth non-synthetic usage lines exist.
+  printf 'unknown\n'
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# orch_handoff_window_tokens
+#
+# Prints the validated context-window size (ORCH_CONTEXT_WINDOW_TOKENS, default
+# 1000000 = Opus / latest Claude Code model). Falls back to 1000000 if the env
+# value is non-numeric or non-positive.
+# ---------------------------------------------------------------------------
+orch_handoff_window_tokens() {
   local window="${ORCH_CONTEXT_WINDOW_TOKENS:-1000000}"
   if ! [[ "$window" =~ ^[0-9]+$ ]] || ! [ "$window" -gt 0 ] 2>/dev/null; then
     window=1000000
   fi
+  printf '%s\n' "$window"
+}
 
-  local pct
-  pct=$(awk -v inp="$input_tokens" \
-             -v cr="$cache_read" \
-             -v cc="$cache_creation" \
-             -v win="$window" \
+# ---------------------------------------------------------------------------
+# orch_handoff_estimate_pct <transcript_path>
+#
+# Finds the LAST assistant turn line in the JSONL transcript that contains a
+# "usage" block with an "input_tokens" field, sums
+#   input_tokens + cache_read_input_tokens + cache_creation_input_tokens,
+# divides by the context window (orch_handoff_window_tokens), and prints the
+# integer percentage to stdout.
+#
+# Prints "unknown" (exit 0) on any failure — advisory path only.
+# ---------------------------------------------------------------------------
+orch_handoff_estimate_pct() {
+  local transcript_path="$1"
+
+  local total
+  total=$(orch_handoff_total_tokens "$transcript_path" 1)
+  if [[ "$total" == "unknown" ]]; then
+    printf 'unknown\n'
+    return 0
+  fi
+
+  local window
+  window=$(orch_handoff_window_tokens)
+
+  awk -v total="$total" -v win="$window" \
     'BEGIN {
-      total = inp + cr + cc
       if (win <= 0) { print "unknown"; exit }
-      pct = int(total / win * 100)
-      print pct
-    }')
-
-  printf '%s\n' "$pct"
+      print int(total / win * 100)
+    }'
   return 0
 }
 

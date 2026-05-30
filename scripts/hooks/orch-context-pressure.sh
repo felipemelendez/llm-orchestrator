@@ -7,11 +7,15 @@
 #   Set ORCH_HOOK_PROFILE=strict and ORCH_STRICT_CONTEXT_PRESSURE=1 to enable
 #   blocking once context reaches ORCH_CONTEXT_BLOCK_PCT (default 85%).
 #
-# PreCompact (new):
-#   Emits an advisory via additionalContext on every compaction event.
-#   In strict mode (ORCH_HOOK_PROFILE=strict AND ORCH_STRICT_CONTEXT_PRESSURE=1)
-#   AND trigger==auto, emits a top-level block decision instead so the controller
-#   can run /llm-orchestrator:handoff before compaction proceeds.
+# PreCompact:
+#   PreCompact does NOT support hookSpecificOutput.additionalContext (that field
+#   is dropped and fails schema validation on manual /compact). So this hook
+#   emits NOTHING on the advisory path. Only in strict mode
+#   (ORCH_HOOK_PROFILE=strict AND ORCH_STRICT_CONTEXT_PRESSURE=1) AND trigger==auto
+#   does it emit a top-level {"decision":"block"} so the controller can run
+#   /llm-orchestrator:handoff before an automatic compaction proceeds. The
+#   post-compaction advisory is injected separately by session-start.sh, which
+#   fires after compaction with source==compact and DOES support additionalContext.
 #
 # Gated by ORCH_HOOK_PROFILE: skipped under minimal.
 # Disabled if ORCH_DISABLED_HOOKS contains "orch-context-pressure".
@@ -59,6 +63,13 @@ if [[ "${HOOK_EVENT}" == "PreCompact" ]]; then
 
   STRICT_BLOCK="${ORCH_STRICT_CONTEXT_PRESSURE:-0}"
 
+  # PreCompact only supports the top-level {"decision":"block","reason":...}
+  # contract. It does NOT support hookSpecificOutput.additionalContext — that
+  # field is silently dropped (and fails schema validation on manual /compact).
+  # The post-compaction advisory is therefore injected from session-start.sh,
+  # which fires after compaction with source=="compact" and DOES support
+  # additionalContext. See docs/.../context-handoff-hook-contract.md.
+
   # Strict mode + auto trigger → block so the controller can run /llm-orchestrator:handoff first.
   if [[ "${PROFILE}" == "strict" ]] && [[ "${STRICT_BLOCK}" == "1" ]] && [[ "${TRIGGER}" == "auto" ]]; then
     REASON="Context compaction (trigger: ${TRIGGER}) is about to occur. Run /llm-orchestrator:handoff before compaction proceeds so state survives the boundary. The post-compaction controller should treat the in-flight narrative as lossy and re-run the verification baseline before continuing."
@@ -67,10 +78,8 @@ if [[ "${HOOK_EVENT}" == "PreCompact" ]]; then
     exit 0
   fi
 
-  # Advisory path (all other cases).
-  MSG="Context compaction is about to occur (trigger: ${TRIGGER}). Regenerate the handoff artifact with /llm-orchestrator:handoff so state survives the compaction boundary. The post-compaction controller should treat the in-flight narrative as lossy and re-run the verification baseline before continuing."
-  ESCAPED_MSG=$(printf '%s' "${MSG}" | json_escape)
-  printf '{"hookSpecificOutput":{"hookEventName":"PreCompact","additionalContext":%s}}\n' "${ESCAPED_MSG}"
+  # All other cases: nothing valid to emit on PreCompact. Exit silently — the
+  # post-compaction nudge happens in session-start.sh (source=="compact").
   exit 0
 fi
 
@@ -107,31 +116,82 @@ fi
 # shellcheck source=scripts/lib/orch-handoff.sh
 source "${_LIB}"
 
-# Estimate context fill percentage.
+# Estimate context fill. orch_handoff_total_tokens skips synthetic all-zero
+# usage lines (interrupts / "<synthetic>" turns), so this reflects the real
+# fill even when the transcript ends on a synthetic line.
 PCT=$(orch_handoff_estimate_pct "${TRANSCRIPT}" 2>/dev/null || true)
+TOKENS=$(orch_handoff_total_tokens "${TRANSCRIPT}" 1 2>/dev/null || true)
 
-# If unknown or below the warn threshold, exit silently.
+# Nothing parseable → silent. (estimate_pct derives from the same tokens, so an
+# unknown token total means an unknown percentage too.)
+if [[ "${TOKENS}" == "unknown" ]]; then
+  exit 0
+fi
+
+# --- Validate thresholds (fail safe to documented defaults, never fail open) --
+# Under set -u, an unvalidated non-numeric value fed to (( )) aborts the script
+# and silently suppresses the advisory/block. Validate every value that reaches
+# arithmetic, mirroring the window validation in orch_handoff_window_tokens.
 WARN_PCT="${ORCH_CONTEXT_WARN_PCT:-70}"
-if [[ "${PCT}" == "unknown" ]]; then
-  exit 0
+if ! [[ "${WARN_PCT}" =~ ^[0-9]+$ ]] || (( WARN_PCT < 1 )); then
+  WARN_PCT=70
 fi
-if (( PCT < WARN_PCT )); then
-  exit 0
-fi
-
 BLOCK_PCT="${ORCH_CONTEXT_BLOCK_PCT:-85}"
+if ! [[ "${BLOCK_PCT}" =~ ^[0-9]+$ ]] || (( BLOCK_PCT < 1 )); then
+  BLOCK_PCT=85
+fi
 STRICT_BLOCK="${ORCH_STRICT_CONTEXT_PRESSURE:-0}"
 
-# Strict block path.
-if [[ "${PROFILE}" == "strict" ]] && [[ "${STRICT_BLOCK}" == "1" ]] && (( PCT >= BLOCK_PCT )); then
-  REASON="Context ~${PCT}%. Run /llm-orchestrator:handoff, then resume in a fresh session before continuing."
-  ESCAPED_REASON=$(printf '%s' "${REASON}" | json_escape)
-  printf '{"decision":"block","reason":%s}\n' "${ESCAPED_REASON}"
+# Absolute token floor. On a 1M-token window the percentage thresholds are
+# miscalibrated: native auto-compaction fires near ~150K tokens (~15% on 1M),
+# far below the 70% warn (700K). So we also trigger on an absolute token count
+# sized to fire BEFORE native auto-compaction, restoring a proactive prong for
+# the default profile on large windows. Default 120000.
+HANDOFF_TOKENS="${ORCH_CONTEXT_HANDOFF_TOKENS:-120000}"
+if ! [[ "${HANDOFF_TOKENS}" =~ ^[0-9]+$ ]]; then
+  HANDOFF_TOKENS=120000
+fi
+
+WINDOW=$(orch_handoff_window_tokens)
+# Effective trigger = the lower of the absolute floor and the warn-percentage
+# expressed in tokens — i.e. fire when tokens >= floor OR pct >= warn.
+WARN_TOKENS=$(( WARN_PCT * WINDOW / 100 ))
+TRIGGER_TOKENS="${HANDOFF_TOKENS}"
+if (( WARN_TOKENS < TRIGGER_TOKENS )); then
+  TRIGGER_TOKENS="${WARN_TOKENS}"
+fi
+
+# Strict block path — enforcement. Fires while over the ceiling, by percentage
+# OR by an absolute token ceiling (ORCH_CONTEXT_BLOCK_TOKENS, default 140000 —
+# just under the ~150K native auto-compaction trigger, so strict enforcement on
+# a 1M window engages before compaction rather than at an unreachable 850K).
+BLOCK_TOKENS="${ORCH_CONTEXT_BLOCK_TOKENS:-140000}"
+if ! [[ "${BLOCK_TOKENS}" =~ ^[0-9]+$ ]]; then
+  BLOCK_TOKENS=140000
+fi
+if [[ "${PROFILE}" == "strict" ]] && [[ "${STRICT_BLOCK}" == "1" ]]; then
+  OVER_BLOCK=0
+  if [[ "${PCT}" != "unknown" ]] && (( PCT >= BLOCK_PCT )); then OVER_BLOCK=1; fi
+  if (( TOKENS >= BLOCK_TOKENS )); then OVER_BLOCK=1; fi
+  if (( OVER_BLOCK == 1 )); then
+    REASON="Context ~${PCT}% (${TOKENS} tokens). Run /llm-orchestrator:handoff, then resume in a fresh session before continuing."
+    ESCAPED_REASON=$(printf '%s' "${REASON}" | json_escape)
+    printf '{"decision":"block","reason":%s}\n' "${ESCAPED_REASON}"
+    exit 0
+  fi
+fi
+
+# Below the trigger → silent.
+if (( TOKENS < TRIGGER_TOKENS )); then
   exit 0
 fi
 
-# Advisory path.
-MSG="Context ~${PCT}% full. A tier boundary (after a green verify, between batches) is the right moment to hand off — run /llm-orchestrator:handoff to regenerate the handoff artifact and resume in a fresh session."
+# Advisory path. Fires each turn while above the floor — consistent with the
+# per-turn protocol reminder this hook family already injects — until a handoff
+# resets the session (a fresh session's token count starts below the floor).
+PCT_TXT="${PCT}"
+[[ "${PCT_TXT}" == "unknown" ]] && PCT_TXT="?"
+MSG="Context ~${PCT_TXT}% full (${TOKENS} tokens; native auto-compaction nears ~150K). A tier boundary (after a green verify, between batches) is the right moment to hand off — run /llm-orchestrator:handoff to regenerate the handoff artifact and resume in a fresh session before an automatic compaction summarizes in-flight state."
 ESCAPED_MSG=$(printf '%s' "${MSG}" | json_escape)
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "${ESCAPED_MSG}"
 exit 0

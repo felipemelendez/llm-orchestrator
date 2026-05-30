@@ -11,7 +11,7 @@ Regenerate a self-sufficient handoff artifact so a fresh controller resumes long
 
 - **Primary path (from `executing-plans` at a tier boundary):** a tier just completed with a green verify, material work remains, and context is past ~50%. The seam is clean — plan checkboxes accurate, diff reviewed, nothing in flight. Fire here.
 - **Fallback — explicit command:** the user runs `/llm-orchestrator:handoff`.
-- **Fallback — pressure hook:** the context-pressure hook runs on two events — `UserPromptSubmit` (advisory when context crosses the warn threshold, ~70%) and `PreCompact` (fires right before native auto-compaction, injecting a reminder that survives the compaction boundary so a handoff can happen before silent context loss). The hook is advisory by default; in strict profile (`ORCH_HOOK_PROFILE=strict` + `ORCH_STRICT_CONTEXT_PRESSURE=1`) it can hard-block the turn at the ~85% ceiling. A strict block is the unavoidable emergency brake — regenerate the handoff immediately, capturing whatever in-flight state exists (note any partial or un-verified items explicitly in the In-flight observations slot), then resume in a fresh session.
+- **Fallback — pressure hook:** the context-pressure hook runs on `UserPromptSubmit` (advisory when context crosses the warn threshold, ~70%) and on `PreCompact` (where, in strict profile only, it blocks an auto-compaction so a handoff can run first — PreCompact can only block, it cannot inject text). After native compaction completes, `session-start.sh` fires with `source=compact` and injects the post-compaction reminder: treat the summary as lossy and re-run the verification baseline. The hook is advisory by default; in strict profile (`ORCH_HOOK_PROFILE=strict` + `ORCH_STRICT_CONTEXT_PRESSURE=1`) it can hard-block the turn at the ~85% ceiling. A strict block is the unavoidable emergency brake — regenerate the handoff immediately, capturing whatever in-flight state exists (note any partial or un-verified items explicitly in the In-flight observations slot), then resume in a fresh session.
 
 ## When NOT to use
 
@@ -22,7 +22,7 @@ Regenerate a self-sufficient handoff artifact so a fresh controller resumes long
 
 Saturating mid-batch leaves state hard to capture: partial diffs, unverified results, agents mid-flight, review pending. Saturating between batches is trivial to hand off: checkboxes accurate, diff reviewed, clean starting point.
 
-**The rule:** if context > 50% and a tier just completed with a green verify and material work remains, fire — even though that is below the 70% threshold. Do not wait for the threshold mid-batch.
+**The rule:** if a tier just completed with a green verify and material work remains, fire when context is past ~50% of the window **or** past the absolute handoff floor (`ORCH_CONTEXT_HANDOFF_TOKENS`, default ~120K tokens), whichever comes first — even though that is below the 70% threshold. The absolute floor matters on a 1M-token window, where 50% is 500K — well above the ~150K point at which native auto-compaction kicks in; the token floor makes the seam fire before that. Do not wait for the threshold mid-batch.
 
 **Worked example:** context reaches 55% just after tier 2 green-verify, three tiers remain. Fire now — the seam is clean. If instead the hook fires at 70% while 12 subagent reports are still in flight, the state is tangled and the artifact will be incomplete. The threshold hook is the emergency brake for when no seam will arrive in time, not the primary signal.
 

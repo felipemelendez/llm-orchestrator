@@ -186,6 +186,7 @@ Other modes:
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
 - **`ORCH_CONTEXT_WINDOW_TOKENS`.** Default `1000000` (assumes Opus / the latest Claude Code model).
+- **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `120000` — absolute token floor that nudges a handoff before native auto-compaction (~150K tokens). On a 1M window the percentage warn (700K) sits above that native trigger, so this floor is what fires in time. The advisory fires each turn while above the floor (like the per-turn protocol reminder) until a handoff resets the session.
 
 Full installation guide: [`docs/install.md`](./docs/install.md). Slash command reference, agent roster, and response-protocol details: [`AGENTS.md`](./AGENTS.md), [`concise-agent-protocol.md`](./concise-agent-protocol.md).
 

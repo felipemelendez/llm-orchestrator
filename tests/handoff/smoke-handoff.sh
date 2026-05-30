@@ -5,7 +5,7 @@
 #   1. orch_handoff_estimate_pct against fixture JSONL files
 #   2. orch_handoff_body_hash determinism and sensitivity
 #   3. orch_handoff_next_revision on file with known revision and on missing file
-#   4. Hook output: high-input.json → additionalContext; low-input.json → empty
+#   4. Hook output: high-input.json → additionalContext; below-floor input → empty
 #   5. Hook latency measurement
 #   6. No-op detection: body_hash ignores frontmatter, catches real body changes
 #   7. Disabled-hook: ORCH_DISABLED_HOOKS and ORCH_HOOK_PROFILE=minimal yield empty stdout
@@ -139,14 +139,19 @@ else
     fail "high-input.json → stdout contains 'additionalContext'" "got: '${HIGH_OUT}'"
   fi
 
-  # Run hook with low-input.json — should emit empty stdout (below threshold).
+  # Run hook with a genuinely-below-threshold transcript (50K tokens, under both
+  # the 120K absolute floor and the 70% warn) — should emit empty stdout.
+  # NOTE: low.jsonl (200K) is intentionally NOT used here: 200K is above the
+  # absolute floor (it exceeds the ~150K native-compaction trigger), so it
+  # correctly DOES fire the advisory. low.jsonl remains the estimate_pct==20%
+  # fixture above; floor coverage lives in test-token-floor.sh.
   LOW_OUT=$(CLAUDE_PROJECT_DIR="${ROOT}" \
-    bash "$HOOK" < "${FIXTURES}/low-input.json" 2>/dev/null || true)
+    bash "$HOOK" < "${FIXTURES}/floor-below-input.json" 2>/dev/null || true)
 
   if [[ -z "$LOW_OUT" ]]; then
-    ok "low-input.json → empty stdout (below threshold)"
+    ok "below-threshold input (50K) → empty stdout"
   else
-    fail "low-input.json → empty stdout (below threshold)" "got: '${LOW_OUT}'"
+    fail "below-threshold input (50K) → empty stdout" "got: '${LOW_OUT}'"
   fi
 fi
 
