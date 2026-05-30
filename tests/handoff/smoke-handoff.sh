@@ -325,22 +325,22 @@ check_pct "regression: malformed.jsonl (unknown)" "${FIXTURES}/malformed.jsonl" 
 
 # ============================================================
 # Section 11: Defect 3 regression — non-numeric / empty window
-#             falls back to 200000 (high.jsonl → still 85%).
+#             falls back to 1000000 (high.jsonl 850000 tokens → still 85%).
 # ============================================================
 printf '\n%s== ORCH_CONTEXT_WINDOW_TOKENS validation (Defect 3 regression) ==%s\n' "$DIM" "$RESET"
 
 PCT_ABC=$(ORCH_CONTEXT_WINDOW_TOKENS=abc orch_handoff_estimate_pct "${FIXTURES}/high.jsonl" 2>/dev/null)
 if [[ "$PCT_ABC" == "85" ]]; then
-  ok "ORCH_CONTEXT_WINDOW_TOKENS=abc falls back to 200000 (high.jsonl still 85%)"
+  ok "ORCH_CONTEXT_WINDOW_TOKENS=abc falls back to 1000000 (high.jsonl still 85%)"
 else
-  fail "ORCH_CONTEXT_WINDOW_TOKENS=abc falls back to 200000" "got: '${PCT_ABC}'"
+  fail "ORCH_CONTEXT_WINDOW_TOKENS=abc falls back to 1000000" "got: '${PCT_ABC}'"
 fi
 
 PCT_EMPTY=$(ORCH_CONTEXT_WINDOW_TOKENS= orch_handoff_estimate_pct "${FIXTURES}/high.jsonl" 2>/dev/null)
 if [[ "$PCT_EMPTY" == "85" ]]; then
-  ok "ORCH_CONTEXT_WINDOW_TOKENS= (empty) falls back to 200000 (high.jsonl still 85%)"
+  ok "ORCH_CONTEXT_WINDOW_TOKENS= (empty) falls back to 1000000 (high.jsonl still 85%)"
 else
-  fail "ORCH_CONTEXT_WINDOW_TOKENS= (empty) falls back to 200000" "got: '${PCT_EMPTY}'"
+  fail "ORCH_CONTEXT_WINDOW_TOKENS= (empty) falls back to 1000000" "got: '${PCT_EMPTY}'"
 fi
 
 # ============================================================
@@ -355,8 +355,8 @@ SYNTH_TRANSCRIPT="${TMP}/synth-large.jsonl"
 for i in $(seq 1 5000); do
   printf '{"type":"human","message":{"content":"turn %d"}}\n' "$i"
 done > "$SYNTH_TRANSCRIPT"
-# Append a real usage line at the end: 50000 input_tokens / 200000 = 25%.
-printf '{"type":"assistant","message":{"usage":{"input_tokens":50000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' \
+# Append a real usage line at the end: 250000 input_tokens / 1000000 = 25%.
+printf '{"type":"assistant","message":{"usage":{"input_tokens":250000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n' \
   >> "$SYNTH_TRANSCRIPT"
 
 PCT_SYNTH=$(orch_handoff_estimate_pct "$SYNTH_TRANSCRIPT" 2>/dev/null)

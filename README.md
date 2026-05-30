@@ -29,6 +29,8 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 
 **Requirements:** Claude Code, plus `bash` and `git`. Two optional features have their own dependency: visual brainstorming needs **Node.js** (to run the panel server) and the protocol grader needs **`python3`** (to parse transcripts). If either is missing, that one feature is skipped with a notice — the rest of the orchestrator works normally.
 
+**Model recommendation:** Run Claude Code's controller on **Opus** (or whatever is the latest, most-capable Claude Code model). The orchestrator is tuned for the best available model — multi-stage research, parallel dispatch, two-stage review, and the handoff layer all benefit from Opus-class reasoning. The handoff's context-pressure estimation assumes Opus's 1M-token context window. If you run the controller on a smaller-window model (e.g. Haiku), set `ORCH_CONTEXT_WINDOW_TOKENS` to match that model's actual window size.
+
 ---
 
 ## What it does
@@ -183,6 +185,7 @@ Other modes:
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
+- **`ORCH_CONTEXT_WINDOW_TOKENS`.** Default `1000000` (assumes Opus / the latest Claude Code model).
 
 Full installation guide: [`docs/install.md`](./docs/install.md). Slash command reference, agent roster, and response-protocol details: [`AGENTS.md`](./AGENTS.md), [`concise-agent-protocol.md`](./concise-agent-protocol.md).
 

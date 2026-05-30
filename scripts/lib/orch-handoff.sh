@@ -67,7 +67,7 @@ _orch_handoff_sum_cache_creation() {
 # Finds the LAST assistant turn line in the JSONL transcript that contains a
 # "usage" block with an "input_tokens" field.  Sums:
 #   input_tokens + cache_read_input_tokens + cache_creation_input_tokens
-# divides by ORCH_CONTEXT_WINDOW_TOKENS (default 200000), and prints the
+# divides by ORCH_CONTEXT_WINDOW_TOKENS (default 1000000, Opus / latest Claude Code model), and prints the
 # integer percentage to stdout.
 #
 # Prints "unknown" (exit 0) on any failure — advisory path only.
@@ -174,10 +174,10 @@ orch_handoff_estimate_pct() {
   fi
 
   # --- Compute percentage --------------------------------------------------
-  # Validate window: must be a positive integer; fall back to 200000 if not.
-  local window="${ORCH_CONTEXT_WINDOW_TOKENS:-200000}"
+  # Validate window: must be a positive integer; fall back to 1000000 if not.
+  local window="${ORCH_CONTEXT_WINDOW_TOKENS:-1000000}"
   if ! [[ "$window" =~ ^[0-9]+$ ]] || ! [ "$window" -gt 0 ] 2>/dev/null; then
-    window=200000
+    window=1000000
   fi
 
   local pct

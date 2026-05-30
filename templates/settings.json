@@ -6,7 +6,7 @@
     "ORCH_SESSION_RETENTION_DAYS": "90",
     "ORCH_CONTEXT_WARN_PCT": "70",
     "ORCH_CONTEXT_BLOCK_PCT": "85",
-    "ORCH_CONTEXT_WINDOW_TOKENS": "200000",
+    "ORCH_CONTEXT_WINDOW_TOKENS": "1000000",
     "ORCH_STRICT_CONTEXT_PRESSURE": "0"
   },
   "permissions": {
@@ -44,5 +44,6 @@
       "Bash(curl * | bash)"
     ]
   },
+  "_context_window_note": "ORCH_CONTEXT_WINDOW_TOKENS defaults to 1000000 — the handoff assumes the controller runs on Opus / the latest Claude Code model (1M context window). Set it lower (e.g. 200000) only if you run the controller on a smaller-window model like Haiku.",
   "_hooks_note": "If you installed via --copy (not as a plugin), add hook entries here using Claude Code's settings.json hook schema. See docs/install.md → 'Wiring hooks for a --copy install' for the full example. If you installed as a plugin, hooks come from .claude-plugin/plugin.json automatically — leave this block out."
 }

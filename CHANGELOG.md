@@ -14,7 +14,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   - New lib `scripts/lib/orch-handoff.sh` — context-fill estimation, body hashing + no-op detection, revision counting.
   - Continuation contract: a resumed controller runs the verification baseline first and invokes systematic-debugging on divergence before proceeding.
   - Two-stage review (spec + code) runs on every regeneration; no-op regenerations are flagged.
-  - `executing-plans` now hands off at tier boundaries; new env knobs `ORCH_CONTEXT_WARN_PCT` (70), `ORCH_CONTEXT_BLOCK_PCT` (85), `ORCH_CONTEXT_WINDOW_TOKENS` (200000).
+  - `executing-plans` now hands off at tier boundaries; new env knobs `ORCH_CONTEXT_WARN_PCT` (70), `ORCH_CONTEXT_BLOCK_PCT` (85), `ORCH_CONTEXT_WINDOW_TOKENS` (1000000).
   - Docs: ARCHITECTURE Layer 9, README feature row, AGENTS command entry, settings.json env documentation.
 
 ### Hardened
