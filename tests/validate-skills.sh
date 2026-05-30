@@ -96,6 +96,17 @@ while IFS= read -r dir; do
   checked_skills=$((checked_skills+1))
 done < <(find "$ROOT/skills" -mindepth 1 -maxdepth 1 -type d | sort)
 
+# Required-section contract: handing-off-to-fresh-context
+_handoff_file="$ROOT/skills/handing-off-to-fresh-context/SKILL.md"
+if [[ -f "$_handoff_file" ]]; then
+  for _section in "When to use" "When NOT to use" "Steps" "Output shape" "Anti-patterns"; do
+    if ! grep -qF "## ${_section}" "$_handoff_file"; then
+      echo "FAIL: $_handoff_file missing required section: ## ${_section}"
+      fail=1
+    fi
+  done
+fi
+
 # Commands
 while IFS= read -r file; do
   fm_desc=$(awk '/^description:/ {sub(/^description:[ ]*/,""); print; exit}' "$file" | tr -d '\r')
