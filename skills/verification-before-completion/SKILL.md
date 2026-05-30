@@ -20,7 +20,10 @@ Before claiming, run through these in order:
 1. **Identify** — what command proves this is done?
    - Use the detection library to find the project's real gates:
      ```bash
-     source scripts/lib/orch-detect.sh
+     # Locate the lib across install layouts (CLAUDE_PLUGIN_ROOT is often unset
+     # here; marketplace installs nest under the plugin cache).
+     orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+     L=$(orch_lib orch-detect.sh); [ -n "$L" ] && source "$L" || echo "orch-detect.sh not found — reinstall the plugin" >&2
      orch_detect_cached "$PWD"
      ```
      Parse the `## Toolchain` section for `test=`, `typecheck=`, and `lint=` lines.

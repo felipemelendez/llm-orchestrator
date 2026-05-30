@@ -18,8 +18,11 @@
 # Double-source guard — only define if not already loaded.
 if ! declare -f orch_handoff_estimate_pct >/dev/null 2>&1; then
 
-# Resolve paths relative to this file.
-_HANDOFF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve paths relative to this file. Use ${BASH_SOURCE[0]:-$0} so self-location
+# works when sourced under zsh too (zsh leaves BASH_SOURCE unset but sets $0 to
+# the sourced file); otherwise the orch-project.sh sibling source below resolves
+# against the caller's cwd and fails when sourced from another directory.
+_HANDOFF_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Source sibling library for orch_sha1_of if not already loaded.
 if ! declare -f orch_sha1_of >/dev/null 2>&1; then

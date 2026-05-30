@@ -24,7 +24,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 LIB="${ROOT}/scripts/lib/orch-protocol.sh"
 if [[ ! -f "${LIB}" ]]; then
   printf 'orch-protocol-grader: lib not found: %s — grading disabled\n' "${LIB}" >&2

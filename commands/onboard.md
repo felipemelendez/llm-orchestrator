@@ -21,7 +21,7 @@ for p in \
   [[ -f "$p" ]] && { DETECT_LIB="$p"; break; }
 done
 if [[ -z "$DETECT_LIB" ]]; then
-  DETECT_LIB=$(find "$HOME/.claude/plugins" -name 'orch-detect.sh' -path '*llm-orchestrator*' 2>/dev/null | head -1)
+  DETECT_LIB=$(find "$HOME/.claude/plugins" -name 'orch-detect.sh' -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1)
 fi
 if [[ -z "$DETECT_LIB" || ! -f "$DETECT_LIB" ]]; then
   echo "orch-detect.sh not found. Reinstall the plugin." >&2
@@ -91,7 +91,7 @@ for p in \
   [[ -f "$p" ]] && { LOCK_LIB="$p"; break; }
 done
 if [[ -z "$LOCK_LIB" ]]; then
-  LOCK_LIB=$(find "$HOME/.claude/plugins" -name 'orch-lock.sh' -path '*llm-orchestrator*' 2>/dev/null | head -1)
+  LOCK_LIB=$(find "$HOME/.claude/plugins" -name 'orch-lock.sh' -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1)
 fi
 if [[ -z "$LOCK_LIB" || ! -f "$LOCK_LIB" ]]; then
   echo "orch-lock.sh not found. Reinstall the plugin." >&2

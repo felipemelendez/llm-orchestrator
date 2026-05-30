@@ -19,12 +19,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   - Hardened threshold parsing: `ORCH_CONTEXT_WARN_PCT` / `ORCH_CONTEXT_BLOCK_PCT` are now validated before arithmetic, so a malformed value falls back to its default instead of silently disabling the advisory/block under `set -u`.
   - Docs: ARCHITECTURE Layer 9, README feature row, AGENTS command entry, settings.json env documentation.
 
+### Added (discoverability)
+- New command `/llm-orchestrator:skills` — prints a one-screen catalog of the available skills and commands with their trigger conditions, grouped by phase, with an optional keyword filter. Renders from the session's injected catalog (no filesystem dependency, so it works from any working directory).
+
 ### Hardened
 - `Active task context` slot — records the files/line-ranges and key conventions the next action touches, so a fresh controller does not re-discover them.
 - Lean-artifact discipline — cap recent agent reports to the last 3–5 blocks, trim long reports to their verdict lines and cite git history or the prior transcript for the rest, so the handoff itself never strains the new window.
 - Re-hydration pointer in the resume prompt — git history (`git log -p <artifact>`) plus the prior session transcript, so a lean artifact stays safe.
 - Rollback affordance — a degraded or accidental regeneration can be reverted via `git checkout HEAD~1 -- <artifact>` (git history is the version record).
 - Reliability fixes from review: frontmatter stripping no longer collapses an interrupted/unterminated write to an empty body (which would have caused a false no-op); the transcript read is bounded to a tail slice for constant per-turn cost on long runs; and the context-window size is validated against non-numeric/empty values.
+- Cross-shell + install-layout robustness for commands/skills that source plugin libraries: a shared resolver locates a lib across all install layouts (`$CLAUDE_PLUGIN_ROOT`, the symlink/copy installs, and the version-nested marketplace cache — version-sorted so a stale older copy is never picked), and the libraries self-locate with `${BASH_SOURCE[0]:-$0}` so sibling `source`s work when a lib is loaded under zsh (where `BASH_SOURCE` is unset). Previously a command run from a user's project under a zsh-default shell could fail to find or correctly load a lib. New regression test `tests/test-lib-resolution.sh`.
 
 ### Changed
 - ARCHITECTURE renamed "Eight layers" → "Nine layers".

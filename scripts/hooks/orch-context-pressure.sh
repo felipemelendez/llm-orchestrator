@@ -107,7 +107,7 @@ if [[ -z "${TRANSCRIPT}" ]] || [[ ! -f "${TRANSCRIPT}" ]]; then
 fi
 
 # Source the handoff lib.
-_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 _LIB="${_HOOK_DIR}/../lib/orch-handoff.sh"
 if [[ ! -f "${_LIB}" ]]; then
   printf 'orch-context-pressure: lib not found: %s — pressure check disabled\n' "${_LIB}" >&2

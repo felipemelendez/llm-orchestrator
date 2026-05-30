@@ -15,8 +15,11 @@
 #
 # Bash 3.2 compatible.
 
-# Resolve paths relative to this file.
-_DETECT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve paths relative to this file. Use ${BASH_SOURCE[0]:-$0} so self-location
+# works when this lib is sourced under zsh too (zsh leaves BASH_SOURCE unset but
+# sets $0 to the sourced file). Without this, sibling sources below resolve
+# against the caller's cwd and fail when sourced from another directory.
+_DETECT_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Source sibling libraries if not already loaded.
 if ! declare -f orch_project_hash >/dev/null 2>&1; then

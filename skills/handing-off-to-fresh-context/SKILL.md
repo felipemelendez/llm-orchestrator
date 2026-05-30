@@ -30,13 +30,20 @@ Saturating mid-batch leaves state hard to capture: partial diffs, unverified res
 
 1. **Resolve the artifact path.** Use `docs/llm-orchestrator/handoffs/<date>-<slug>.md` (same slug as the plan). If the file already exists, this is a regeneration — overwrite in place, bump the revision. Never write a v2 sibling file.
 
-2. **Memory-aware bootstrap.** Read the `## ` sections of `./CLAUDE.md` and `~/.llm-orchestrator/architecture/<hash>/decisions.md` if present (resolve `<hash>` by sourcing `scripts/lib/orch-project.sh` and calling `orch_project_hash`, which returns the SHA-1 prefix of the git remote URL, repo root path, or cwd), plus relevant files under `~/.claude/projects/.../memory/`. The artifact's "Memory index" section is generated from these reads, not hand-written.
+2. **Memory-aware bootstrap.** Read the `## ` sections of `./CLAUDE.md` and `~/.llm-orchestrator/architecture/<hash>/decisions.md` if present (resolve `<hash>` by sourcing `orch-project.sh` and calling `orch_project_hash`, which returns the SHA-1 prefix of the git remote URL, repo root path, or cwd), plus relevant files under `~/.claude/projects/.../memory/`. The artifact's "Memory index" section is generated from these reads, not hand-written.
+
+   Locate plugin libs with this resolver (CLAUDE_PLUGIN_ROOT is often unset in skill bash, and marketplace installs nest under the plugin cache — so fall back to a version-sorted find). Reuse it for every `orch-*.sh` sourced below:
+
+   ```bash
+   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+   L=$(orch_lib orch-project.sh); [ -n "$L" ] && source "$L" || echo "orch-project.sh not found — reinstall the plugin" >&2
+   ```
 
 3. **Reconcile plan state.** Open the plan file, count task-heading checkboxes (completed/pending), cross-reference `TaskList` for in-flight tasks. The artifact indexes this state; the plan file and Task tools remain the source of truth — never duplicate or contradict them.
 
 4. **Populate all 10 slots from `templates/handoff.md`.** Paste the last 3–5 subagent reports verbatim (do not summarise). Fill the verification baseline with the exact commands and the expected output from the last green run. For the new `## Active task context` slot: list the specific files and line ranges the next action will touch first (goal-conditioned — so the fresh controller does not have to re-discover them), then list the key conventions and decisions active for this task indexed by heading from CLAUDE.md (do not duplicate CLAUDE.md's text, just cite the heading). This slot is intentionally small; do not dump context into it.
 
-5. **Set frontmatter.** Bump `revision` via `scripts/lib/orch-handoff.sh` → `orch_handoff_next_revision`. Set `last_regenerated_at` to now (ISO8601). Set `trigger` to `user`, `threshold`, or `tier-boundary`. Set `context_estimate_pct` to the estimate or `unknown`.
+5. **Set frontmatter.** Bump `revision` via `orch-handoff.sh` (source it with the `orch_lib` resolver from step 2: `L=$(orch_lib orch-handoff.sh); source "$L"`) → `orch_handoff_next_revision`. Set `last_regenerated_at` to now (ISO8601). Set `trigger` to `user`, `threshold`, or `tier-boundary`. Set `context_estimate_pct` to the estimate or `unknown`.
 
 6. **No-op check (within-session + cross-session).** Before overwriting an existing artifact, capture its body-hash. After generating the new content, compare: use `orch_handoff_bodies_match` if available, otherwise call `orch_handoff_body_hash` twice and compare the results. If equal, it is a within-session no-op — still write (bump revision + timestamp) but flag it to the user and to the reviewers as a redundant regeneration. For cross-session detection use `orch_handoff_is_noop` (body-hash vs the prior committed revision in git HEAD); note that HEAD comparison never fires on an uncommitted artifact, so the within-session comparison above must run first. **Rollback affordance:** because regeneration is latest-wins, a degraded or accidental regeneration can be rolled back via git — `git checkout HEAD~1 -- <artifact-path>` restores the prior revision, and `git log -- <artifact-path>` shows the full version record. Git history is the version record for handoff artifacts.
 

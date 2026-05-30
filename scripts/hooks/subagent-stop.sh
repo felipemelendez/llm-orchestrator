@@ -34,7 +34,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # Source the protocol grader library.
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
 if [[ ! -f "${LIB}" ]]; then
   printf 'orch-subagent-stop: lib not found: %s — grading disabled\n' "${LIB}" >&2
