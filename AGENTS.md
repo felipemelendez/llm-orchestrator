@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Subagent roles used by LLM Orchestrator commands. Names below match the `subagent_type:` value the Task tool expects (the same as each file's frontmatter `name:` in `agents/`).
+Reference for the subagent roles (specialized agents that run orchestrator commands) and the Status values they return. Names below match the `subagent_type:` value the Task tool expects (the same as each file's frontmatter `name:` in `agents/`).
 
 ## House style
 
-Every subagent in this project follows the Concise Agent Protocol. See [`concise-agent-protocol.md`](./concise-agent-protocol.md) for response shapes.
+Every subagent in this project follows the Concise Agent Protocol. See [`concise-agent-protocol.md`](./concise-agent-protocol.md) for response shapes. The controller (the main agent you talk to, which routes work to subagents) reads Status blocks to decide what to do next.
 
 Subagents:
 - Reply in shape blocks, not paragraphs.
@@ -12,7 +12,7 @@ Subagents:
 - Never write to `main`/`master` without explicit user OK.
 - Stop and return `Status: BLOCKED` rather than guess.
 
-## Roles
+## Roles _(haiku = fastest/cheapest · sonnet = balanced · opus = most capable)_
 
 | `subagent_type`        | Model  | Used by                | Purpose                                                          |
 |------------------------|--------|------------------------|------------------------------------------------------------------|
@@ -60,6 +60,7 @@ Controllers route by Status, not by parsing prose.
 | `/llm-orchestrator:finish` | Decide between merge / PR / keep / discard. |
 | `/llm-orchestrator:remember` | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
 | `/llm-orchestrator:forget` | Soft-delete matching lines from CLAUDE.md or plugin memory. |
+| `/llm-orchestrator:handoff` | Regenerate the versioned context-handoff artifact for the current task and hand control to a fresh session. Fires automatically at tier seams; invoke manually when context strains. |
 
 ## Cross-harness
 

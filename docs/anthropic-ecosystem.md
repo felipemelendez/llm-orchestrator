@@ -1,12 +1,12 @@
 # Leveraging the Anthropic ecosystem
 
-LLM Orchestrator is built on top of Claude Code's native primitives. Here's what we use, why, and what's optional.
+LLM Orchestrator is built on top of Claude Code's built-in features. Here's what we use, why, and what's optional. Sections under "Built-in features we use" are required; everything after "Model selection guidance" is optional.
 
-## Native primitives we use
+## Built-in features we use
 
 ### Slash commands (`commands/*.md`)
 
-Each `commands/<name>.md` is a Claude Code slash command. The frontmatter `description` shows up in `/help`. The body is the prompt the harness sends when the user types `/<name>`. User input is interpolated via `$ARGUMENTS`.
+Each `commands/<name>.md` is a Claude Code slash command. The frontmatter `description` shows up in `/help`. The body is the prompt Claude Code sends when the user types `/<name>`. User input is interpolated via `$ARGUMENTS`.
 
 ### Subagents (`agents/*.md`)
 
@@ -65,9 +65,9 @@ Our agents come pre-configured:
 
 Override per dispatch via the envelope's `model:` line.
 
-## Optional: MCP servers
+## Optional: MCP (Model Context Protocol) servers
 
-MCP (Model Context Protocol) servers extend Claude Code with external tools and data. LLM Orchestrator does **not** require any MCP servers — our memory is file-based by design.
+MCP servers extend Claude Code with external tools and data. LLM Orchestrator does **not** require any MCP servers — our memory is file-based by design.
 
 Optional pairings worth considering:
 

@@ -21,7 +21,9 @@ In a Claude Code session, run these one at a time (let the first finish before t
 
 Restart Claude Code. The slash menu now includes the orchestrator commands (`/llm-orchestrator:onboard`, `/llm-orchestrator:plan`, `/llm-orchestrator:dispatch`, `/llm-orchestrator:review`, `/llm-orchestrator:remember`, …). That's the install verified.
 
-On a new project, run `/llm-orchestrator:onboard` first. It studies the codebase once, proposes `## Decisions` and `## Conventions` for `./CLAUDE.md`, and writes them on your approval. Skip it on a greenfield project — there is nothing to study yet.
+On a new project, run `/llm-orchestrator:onboard` first. It studies the codebase once, proposes `## Decisions` and `## Conventions` for `./CLAUDE.md`, and writes them on your approval. Skip it on a brand-new project with no code yet — there is nothing to study.
+
+On a long task, the controller's context window fills up over time and its work quietly degrades. To prevent that, it hands off to a fresh session at a clean boundary between stages — no manual triage needed. You can trigger a handoff yourself at any point with `/llm-orchestrator:handoff`.
 
 To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the command reference and [`docs/examples/sample-session.md`](./docs/examples/sample-session.md) for a walkthrough.
 
@@ -48,12 +50,13 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Convention detection** | The orchestrator can detect repo conventions on demand (`orch_detect_conventions`) to help seed `./CLAUDE.md`; subagents read conventions from `./CLAUDE.md` (kept lean, not auto-injected into every task prompt) | Conventions stay in one place you control; detection is available when you need to bootstrap or audit them |
 | **Architecture grounding** | Per-task brainstorming silently reads the recorded `## Decisions`/`## Conventions` from `./CLAUDE.md` (and the arch cache) and applies them as constraints on the spec — no questions, no explorer dispatch. A diff that breaks a recorded decision is flagged by the code reviewer. | Stops a new feature from silently violating an established choice — e.g. adding a network dependency to an offline-first SQLite app |
 | **One-time codebase onboarding** | `/llm-orchestrator:onboard` studies the codebase once (stack, data layer, module boundaries, error handling, key dependencies) and proposes `## Decisions` + `## Conventions` for `./CLAUDE.md` behind a single approval gate. Idempotent — skips if already run. After that, every task reads those decisions silently. | Seeds CLAUDE.md with the codebase's load-bearing decisions so every future implementer and reviewer works from the same constraints, without you having to write them by hand |
+| **Context-aware handoff** | Regenerates a self-sufficient handoff artifact at tier boundaries (and on context-pressure / on demand) so a fresh controller resumes long tasks with zero state loss | The controller never works from a saturated context window on long multi-tier work |
 
 ---
 
 ## The research gate
 
-Most multi-agent kits write code from the model's parametric knowledge alone. This one doesn't. Before `brainstorming` writes a spec, and again before `writing-plans` writes a plan, a deterministic regex sniffer screens the input. If signals match (library mention + version, security verb, architectural change), a classifier decides whether to dispatch the researcher.
+Most multi-agent kits write code from the model's parametric knowledge alone. This one doesn't. Before `brainstorming` writes a spec, and again before `writing-plans` writes a plan, a fast keyword check screens the input. If signals match (library mention + version, security verb, architectural change), a classifier decides whether to dispatch the researcher.
 
 **The classifier is biased toward SKIP.** Most tasks don't trigger research, and the default behavior is silent. When it does fire, the researcher (a dispatched subagent, fresh context) returns one of four outcomes:
 
@@ -145,7 +148,7 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 
 ## How it works
 
-Eight layers, each solving a specific failure mode of single-agent AI tooling on real multi-step work:
+Nine layers, each solving a specific failure mode of single-agent AI tooling on real multi-step work:
 
 1. **Memory** — additive to Claude Code's native CLAUDE.md, not a replacement. `/remember` auto-classifies facts into `## Conventions` / `## Decisions` / `## People` / `## Notes` of your project's `./CLAUDE.md`, creating sections as needed. `/forget` soft-deletes matching lines to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable. Concurrent sessions serialize writes through a portable file lock. Alongside CLAUDE.md, the plugin maintains a TTL-pruned doc cache and a brief index under `~/.llm-orchestrator/research/` that surfaces prior researcher verdicts to future tasks on the same library.
 2. **Workflow scaffolding** — skills and commands produce durable artifacts (specs, plans, reviews) committed under `docs/llm-orchestrator/`.
@@ -155,6 +158,7 @@ Eight layers, each solving a specific failure mode of single-agent AI tooling on
 6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Issues raised only when ≥80% confident; lower-confidence observations go into a separate `Notes:` section.
 7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output. A per-turn hook reinforces the rule.
 8. **Pre-spec verification — the research gate** — described above. Returns `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`; `CONTRADICTED` halts the workflow until the spec is revised.
+9. **Context-aware handoff** — on a long task the controller's own context window fills up, which quietly degrades its work. At a clean boundary between stages it hands off to a fresh session, writing a self-contained handoff document so the next session resumes with nothing lost — and that session re-runs the tests first to confirm the starting point is still green.
 
 Implementation reference with code links and the layer-stack diagram: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
@@ -167,7 +171,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "All 57 checks passed."
+./tests/smoke.sh                           # → "All 61 checks passed."
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

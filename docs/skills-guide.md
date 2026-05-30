@@ -10,7 +10,7 @@ skills/<name>/SKILL.md
 
 One directory, one file. Optional sibling files (prompt fragments, scripts) live next to it.
 
-## Frontmatter
+## Frontmatter (the YAML block at the top of the file, between `---` markers)
 
 Required:
 - `name` — hyphenated, lowercase, matches the directory name.
@@ -39,7 +39,7 @@ description: Use when a spec is approved and you need a step-by-step implementat
 
 ## Description rule (the one that matters)
 
-The `description` field must describe **triggers**, not workflow. The harness uses this field to decide whether to invoke the skill. If you summarize the workflow there, the model thinks it has the gist and skips the body.
+The `description` field must describe **triggers**, not workflow. Claude Code uses this field to decide whether to invoke the skill. If you summarize the workflow there, the model thinks it has the gist and skips the body.
 
 Good:
 > Use when a diff is ready for review — before merge, before PR, before claiming a feature is done.
@@ -56,7 +56,7 @@ Bad:
 
 ## Output shape
 
-Every skill ends with a "Output shape" section showing the Concise Agent Protocol block the agent should produce. This is what makes skills compose.
+Every skill ends with a "Output shape" section showing the Concise Agent Protocol block (the structured status block Claude Code reads to know what happened) the agent should produce. This is what makes skills compose.
 
 ## Adding a skill
 

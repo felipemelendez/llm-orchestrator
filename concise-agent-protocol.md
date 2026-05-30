@@ -1,6 +1,6 @@
 # Concise Agent Protocol
 
-The central pattern in LLM Orchestrator. Agents respond in fixed shapes. Short by default.
+The central pattern in LLM Orchestrator. Agents respond in fixed shapes (fixed response formats) — six in total: Changed, Found, Blocked, Issues, Plan, Status. Short by default.
 
 ## Why
 

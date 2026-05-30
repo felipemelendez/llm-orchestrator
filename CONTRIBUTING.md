@@ -1,11 +1,11 @@
 # Contributing
 
-Contributions welcome — small skill additions, new subagent roles, hook improvements, and docs fixes all land cleanly. First-time contributors are welcome; the scaffolding below shows what a clean change looks like.
+How to add a skill, command, or subagent role: copy a template, run the tests, open a PR. Everything here is markdown + shell — no separate program to install (the "runtime" is the files themselves).
 
 This is intentionally a small, opinionated kit:
 
-- **Pure markdown + shell.** No runtime to learn. No build step. Add a skill by copying `templates/skill.md`.
-- **Small catalog (16 skills).** Your contribution actually gets noticed and used. Past ~40 skills the catalog gets unscannable — we cap there on purpose.
+- **Pure markdown + shell.** No build step. Add a skill by copying `templates/skill.md`. Hooks (automation scripts Claude Code runs at lifecycle events) live in `scripts/hooks/`.
+- **Small catalog (17 skills).** Your contribution actually gets noticed and used. Past ~40 skills the catalog gets unscannable — we cap there on purpose.
 - **Real test suite.** Three scripts (`smoke.sh`, `validate-skills.sh`, `test-portability.sh`) run in seconds and gate every commit. They catch regressions in JSON schemas, hook output formats, concurrency, portability (bash 3.2 / BSD / macOS), and shape-checking.
 - **TDD-for-skills loop documented.** `writing-skills` walks through: write a skill, dispatch a test subagent with no other context, see if the subagent follows the skill, refine.
 - **Native Claude Code primitives.** Your contribution works for everyone who uses Claude Code — no parallel platform support needed.
@@ -65,7 +65,7 @@ These are durable. We will never:
 
 - Ship a proprietary runtime.
 - Enable telemetry by default.
-- Accept more than ~40 first-party skills. Past that, the catalog becomes unscannable.
+- Accept more than ~40 first-party skills (cap stated in the philosophy bullets above).
 - Add background observers. Memory should be something the user opts into via `/remember`, not something that happens to them.
 
 If your proposed contribution conflicts with a non-goal, open an issue first — these are durable but discussable.

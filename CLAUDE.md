@@ -17,6 +17,7 @@ All replies use the Concise Agent Protocol. The canonical reference is [`concise
 - Use `/review` before declaring a feature complete.
 - Use `/debug` when something is broken — root cause first, fix second.
 - Use `/remember` when the user shares a fact that should survive the session.
+- Use `/handoff` when the controller's context is straining — the system fires automatically at tier seams, but you can invoke it manually.
 
 ## Skills
 
