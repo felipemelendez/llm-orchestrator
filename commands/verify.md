@@ -13,7 +13,11 @@ Steps:
 2. Detect verification commands using the detection library:
 
    ```bash
-   source scripts/lib/orch-detect.sh
+   # Locate the lib across install layouts (CLAUDE_PLUGIN_ROOT is often unset in
+   # command bash; marketplace installs nest under the plugin cache, so fall back
+   # to a version-sorted find).
+   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+   L=$(orch_lib orch-detect.sh); [ -n "$L" ] && source "$L" || echo "orch-detect.sh not found — reinstall the plugin" >&2
    orch_detect_cached "$PWD"
    ```
 

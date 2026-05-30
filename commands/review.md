@@ -38,7 +38,10 @@ Steps:
 7. Stage 3 — security review (conditional):
    - Check whether the diff is security-sensitive (source `scripts/lib/orch-signals.sh` for `$ORCH_SIG_SECURITY_DIFF`):
      ```bash
-     source scripts/lib/orch-signals.sh
+     # Locate the lib across install layouts (CLAUDE_PLUGIN_ROOT is often unset
+     # in command bash; marketplace installs nest under the plugin cache).
+     orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+     L=$(orch_lib orch-signals.sh); [ -n "$L" ] && source "$L" || echo "orch-signals.sh not found — reinstall the plugin" >&2
      echo "$DIFF" | grep -qiE "$ORCH_SIG_SECURITY_DIFF"
      ```
      Also check changed file paths for the same keywords.
