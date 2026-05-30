@@ -3,7 +3,11 @@
   "env": {
     "ORCH_HOOK_PROFILE": "standard",
     "ORCH_SESSION_MAX_CHARS": "8000",
-    "ORCH_SESSION_RETENTION_DAYS": "90"
+    "ORCH_SESSION_RETENTION_DAYS": "90",
+    "ORCH_CONTEXT_WARN_PCT": "70",
+    "ORCH_CONTEXT_BLOCK_PCT": "85",
+    "ORCH_CONTEXT_WINDOW_TOKENS": "200000",
+    "ORCH_STRICT_CONTEXT_PRESSURE": "0"
   },
   "permissions": {
     "allow": [

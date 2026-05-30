@@ -2,13 +2,13 @@
 
 LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory.
 
-This document has two parts. The first part — **Eight layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
+This document has two parts. The first part — **Nine layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
 
 If you want the pitch with worked examples, read the [`README.md`](./README.md). If you want to understand the system to extend it, read this file.
 
 ---
 
-## Eight layers
+## Nine layers
 
 Each solves one of the failure modes that single-agent AI tooling exhibits on real multi-step work.
 
@@ -33,7 +33,7 @@ Every task category has a defined workflow that produces a durable artifact:
 
 The spec file gets read by `/llm-orchestrator:plan` (which produces the plan file), the plan file gets read by `/llm-orchestrator:dispatch` (which executes it), and the plan file's checkboxes track state across `/clear`.
 
-16 skills total. The catalog is intentionally small — past ~40 skills, discoverability collapses.
+17 first-party skills today, capped at ~40 by design — past that, discoverability collapses.
 
 ### Layer 3 — State machine for multi-step work
 
@@ -98,6 +98,10 @@ Reinforced two ways: a `UserPromptSubmit` hook injects a per-turn reminder of th
 
 Before `brainstorming` writes a spec or `writing-plans` writes a plan, the controller dispatches `orch-researcher` (Sonnet) to verify the planned approach against current docs and on-disk state. The researcher returns one of four outcomes: `VERIFIED`, `CONTRADICTED` (halts the workflow until the spec is revised), `COULDN'T_VERIFY` (annotates the spec), or `NOT_APPLICABLE`. The classifier in front of it is biased toward `SKIP` — most tasks don't trigger research.
 
+### Layer 9 — Context-aware handoff
+
+A saturated context window degrades plan adherence, review quality, and evidence discipline in ways that are hard to detect mid-session. The handoff layer regenerates a self-sufficient artifact at `docs/llm-orchestrator/handoffs/<date>-<slug>.md` — versioned on disk, latest-wins per task, with git log as the full history. Detection is three-pronged: (1) **stage-boundary trigger** — fires at a clean boundary (after a green test run, between batches) past ~50% context fill; (2) **pressure hook** (`scripts/hooks/orch-context-pressure.sh`) — `UserPromptSubmit` advisory at ~70% (fill from `message.usage.input_tokens`), `PreCompact` before native auto-compaction (uses `trigger` field for auto vs manual, injects advisory that survives the compaction boundary, blocks at ~85% in strict); (3) **`/llm-orchestrator:handoff`** — manual fallback. The artifact indexes plan-file checkboxes and TaskList state — references only, never duplicates — so a fresh controller orients in one read. The fresh controller runs the embedded verification baseline first; red baseline surfaces to the user before work continues. Advisory by default; strict profile makes it blocking — dispatch halts until the artifact is regenerated and the fresh session confirmed.
+
 ### Engineering features (cross-layer)
 
 Four capabilities span multiple layers and are documented here rather than in a single layer:
@@ -139,16 +143,24 @@ How the pieces fit together at the file level.
 ### Hooks
 
 - File: `hooks/hooks.json` wires events → `scripts/hooks/<name>.sh`.
-- Profiles via env vars:
-  - `ORCH_HOOK_PROFILE=minimal` — protocol bootstrap only (meta-skill SessionStart load).
-  - `ORCH_HOOK_PROFILE=standard` (default) — adds UserPromptSubmit reminders, PreToolUse guard, SubagentStop validators, Stop-hook retention pruning, and the research gate.
-  - `ORCH_HOOK_PROFILE=strict` — all hooks active; protocol grader blocks on malformed replies (`ORCH_STRICT_PROTOCOL=1`); subagent stop blocks on malformed Status blocks (`ORCH_STRICT_STATUS=1`).
+- Profiles via `ORCH_HOOK_PROFILE`:
+  - `minimal` — bootstrap only: loads `using-orchestrator` (the Concise Agent Protocol — fixed response shapes) at SessionStart.
+  - `standard` (default) — adds UserPromptSubmit reminders, PreToolUse guard, SubagentStop validators, Stop-hook retention pruning, and the research gate.
+  - `strict` — all hooks active; malformed replies block (`ORCH_STRICT_PROTOCOL=1`); malformed Status blocks block (`ORCH_STRICT_STATUS=1`).
 - Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`.
 
 ### Templates
 
 - File: `templates/<name>.md`.
 - Used by commands. Output committed to `docs/llm-orchestrator/{specs,plans,reviews}/YYYY-MM-DD-<slug>.md`.
+
+### Context-handoff components
+
+- **Skill:** `skills/handing-off-to-fresh-context/SKILL.md` — fires at stage boundaries (after a green test run, between batches) and on manual invocation; writes the handoff artifact and instructs the controller to surface a resume prompt for the fresh session.
+- **Command:** `commands/handoff.md` — `/llm-orchestrator:handoff`; user-facing entry point; also invocable programmatically by the pressure hook in strict profile.
+- **Hook:** `scripts/hooks/orch-context-pressure.sh` — runs on `UserPromptSubmit` (advisory at the warn threshold, estimating fill from `message.usage.input_tokens`) and `PreCompact` (catches silent native auto-compaction; uses the `trigger` field to distinguish auto vs manual, injects an advisory that survives the compaction boundary, and in strict profile can block auto-compaction until a handoff occurs); profile-aware (no-op in minimal, warning in standard, blocking in strict); configurable via `ORCH_CONTEXT_WARN_PCT` (default 70), `ORCH_CONTEXT_BLOCK_PCT` (default 85), `ORCH_CONTEXT_WINDOW_TOKENS` (default 200000), `ORCH_STRICT_CONTEXT_PRESSURE` (default 0).
+- **Lib:** `scripts/lib/orch-handoff.sh` — shared shell helpers: context-fill estimation from the transcript (`orch_handoff_estimate_pct`), handoff body hashing for no-op detection (`orch_handoff_body_hash` / `orch_handoff_bodies_match`), revision counting (`orch_handoff_next_revision`), and committed-revision no-op detection (`orch_handoff_is_noop`). The artifact itself is written by the controller from `templates/handoff.md`.
+- **Template:** `templates/handoff.md` — handoff artifact shape: task summary, plan-file ref, TaskList snapshot (by reference), verification baseline, resume instructions.
 
 ### Memory
 
@@ -241,6 +253,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 4. Agent invokes `writing-plans` → writes `docs/llm-orchestrator/plans/2026-05-23-X-plan.md`. User reviews.
 5. Agent runs `/llm-orchestrator:worktree` to isolate.
 6. Agent runs `/llm-orchestrator:dispatch` per task → implementers return `Status:` blocks. Parallel where independent, sequential where dependent.
+6a. If the controller's context passes ~50% at a clean stage boundary, it regenerates the handoff artifact (`docs/llm-orchestrator/handoffs/<date>-<slug>.md`) and the user resumes in a fresh session — which runs the embedded verification baseline before continuing.
 7. Agent runs `/llm-orchestrator:review` → spec-reviewer then code-reviewer return `Issues:` blocks. BLOCKED recovery routes invisibly.
 8. Agent invokes `verification-before-completion` before claiming done.
 9. Agent runs `/llm-orchestrator:finish` → merge / PR / keep / discard menu.
@@ -261,6 +274,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 | `examples/`                   | Plugin manifest examples                          |
 | `docs/examples/`              | Illustrative response-shape examples             |
 | `tests/`                      | Validators (smoke, drift detection, portability) |
+| `docs/llm-orchestrator/handoffs/` | Versioned controller-handoff artifacts (one per long task) |
 
 ---
 

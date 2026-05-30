@@ -8,7 +8,7 @@ How LLM Orchestrator slash commands are shaped, and how to add one.
 commands/<name>.md
 ```
 
-One file. Frontmatter with `description`. Body is the prompt the harness sends when the user types `/<name>`.
+One file. Frontmatter (the YAML block at the top, between `---` markers) with `description`. Body is the prompt Claude Code sends when the user types `/<name>`.
 
 ## Frontmatter
 

@@ -9,13 +9,11 @@ Three ways to get LLM Orchestrator running.
 /plugin install llm-orchestrator
 ```
 
-After install, restart the session. The SessionStart hook will inject the `using-orchestrator` meta-skill, the latest saved session for this project, and any project memory.
+(`/plugin marketplace add` and `/plugin install` are built-in Claude Code commands, not orchestrator commands.)
 
-Verify:
+After install, restart the session. When you restart, the plugin loads automatically — no manual step.
 
-```
-/plugin list
-```
+Done when `/plugin list` shows `llm-orchestrator` installed.
 
 ## Option 2 — Symlink into your home dir
 
@@ -26,7 +24,7 @@ cd /path/to/llm-orchestrator
 ./scripts/install.sh --link
 ```
 
-This creates `~/.claude/llm-orchestrator -> /path/to/llm-orchestrator`. To make Claude Code load it, use the marketplace flow:
+This creates `~/.claude/llm-orchestrator -> /path/to/llm-orchestrator`. To make Claude Code load it, use the marketplace flow (built-in Claude Code commands):
 
 ```
 /plugin marketplace add ~/.claude/llm-orchestrator
@@ -34,6 +32,8 @@ This creates `~/.claude/llm-orchestrator -> /path/to/llm-orchestrator`. To make 
 ```
 
 The symlink keeps the install in sync with your local checkout — `git pull` in the original directory updates the plugin in place.
+
+Done when `/plugin list` shows `llm-orchestrator` installed.
 
 ## Option 3 — Per-project copy
 

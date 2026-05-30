@@ -1,6 +1,6 @@
 # Response-shape examples
 
-Illustrative sketches of the [Concise Agent Protocol](../../concise-agent-protocol.md) response shapes — they show the *form* an orchestrator reply takes, so you know what to expect before installing. These are schematic examples of the protocol, not captured transcripts of real runs.
+Example response shapes you'll see when using the orchestrator: planning, a code change, memory, and blocked-recovery.
 
 ---
 
