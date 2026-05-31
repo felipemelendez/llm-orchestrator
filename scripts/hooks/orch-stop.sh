@@ -22,6 +22,7 @@ RESEARCH_CACHE_DIR="${HOME_DIR}/research/cache"
 
 TOOLCHAIN_CACHE_DIR="${HOME_DIR}/toolchain"
 ARCH_CACHE_DIR="${HOME_DIR}/architecture"
+HANDOFF_STATE_DIR="${HOME_DIR}/handoff"
 
 # Pruning runs every turn (cheap, idempotent). Suppress errors so a missing
 # dir doesn't fail the hook.
@@ -30,6 +31,8 @@ ARCH_CACHE_DIR="${HOME_DIR}/architecture"
 [[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && find "${TOOLCHAIN_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 # Architecture study cache: prune stale decisions files at same retention as toolchain.
 [[ -d "${ARCH_CACHE_DIR}" ]] && find "${ARCH_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
+# Handoff nudge markers (Layer 9 fire-once state): short-lived, prune after 1 day.
+[[ -d "${HANDOFF_STATE_DIR}" ]] && find "${HANDOFF_STATE_DIR}" -name 'nudged.*' -type f -mtime +1 -delete 2>/dev/null || true
 # Research cache uses its own (shorter) retention since docs change faster than sessions.
 # Per-library overrides are honored: a cache file with `cache_ttl_days: <N>` in
 # frontmatter is pruned at <N> days instead of the global default.

@@ -46,7 +46,7 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
    - Every completed task's `- [ ]` in the plan file is ticked to `- [x]`. If not, tick it now (this is the only durable state across `/clear`).
    - `DONE_WITH_CONCERNS` items routed per the policy below.
 
-6a. **Tier-boundary handoff check.** After a tier completes with a green verify and material work remains, check context pressure. If context is past ~50% of the window **or** past the absolute handoff floor (`ORCH_CONTEXT_HANDOFF_TOKENS`, default ~120K tokens — whichever comes first), invoke the `handing-off-to-fresh-context` skill before starting the next tier — a clean seam is the right moment to hand off. The token floor is what fires on a 1M-token window, where 50% (500K) sits above the ~150K point at which native auto-compaction begins. This is the primary handoff trigger; the context-pressure hook and `/llm-orchestrator:handoff` are fallbacks.
+6a. **Tier-boundary handoff check.** After a tier completes with a green verify and material work remains, invoke the `handing-off-to-fresh-context` skill before starting the next tier — a clean seam is the right moment to write/refresh the handoff note. The clean seam is the primary trigger; the handoff-nudge hook (which fires once when context first crosses `ORCH_CONTEXT_HANDOFF_TOKENS`, default ~800K, and re-arms after each compaction) and `/llm-orchestrator:handoff` are the fallbacks.
 
 7. **DONE_WITH_CONCERNS policy.** Read each concern:
    - Touches **correctness, security, or a public contract** → address now (re-enter the inner loop with a fix prompt).

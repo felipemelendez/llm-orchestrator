@@ -92,12 +92,10 @@ if should_run structural; then
             bash "${ROOT}/tests/test-protocol-hooks.sh"
   check_out "detect toolchain + cache tests pass" "All 40 detect checks passed" \
             bash "${ROOT}/tests/test-detect.sh"
-  check_out "handoff validate checks pass" "PASS: validate-handoff" \
-            bash "${ROOT}/tests/handoff/validate-handoff.sh"
   check_out "handoff smoke tests pass" "PASS: smoke-handoff" \
             bash "${ROOT}/tests/handoff/smoke-handoff.sh"
-  check_out "handoff tier-boundary tests pass" "PASS: tier-boundary" \
-            bash "${ROOT}/tests/handoff/test-tier-boundary.sh"
+  check_out "handoff nudge/floor tests pass" "PASS: test-token-floor" \
+            bash "${ROOT}/tests/handoff/test-token-floor.sh"
   check_out "handoff precompact tests pass" "PASS: test-precompact" \
             bash "${ROOT}/tests/handoff/test-precompact.sh"
 fi

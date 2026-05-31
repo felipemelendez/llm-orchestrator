@@ -27,18 +27,7 @@
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-context-pressure.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-context-pressure.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-handoff-nudge.sh",
             "timeout": 10
           }
         ]

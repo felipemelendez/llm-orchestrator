@@ -29,7 +29,7 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 
 **Requirements:** Claude Code, plus `bash` and `git`. Two optional features have their own dependency: visual brainstorming needs **Node.js** (to run the panel server) and the protocol grader needs **`python3`** (to parse transcripts). If either is missing, that one feature is skipped with a notice — the rest of the orchestrator works normally.
 
-**Model recommendation:** Run Claude Code's controller on **Opus** (or whatever is the latest, most-capable Claude Code model). The orchestrator is tuned for the best available model — multi-stage research, parallel dispatch, two-stage review, and the handoff layer all benefit from Opus-class reasoning. The handoff's context-pressure estimation assumes Opus's 1M-token context window. If you run the controller on a smaller-window model (e.g. Haiku), set `ORCH_CONTEXT_WINDOW_TOKENS` to match that model's actual window size.
+**Model recommendation:** Run Claude Code's controller on **Opus** (or whatever is the latest, most-capable Claude Code model). The orchestrator is tuned for the best available model — multi-stage research, parallel dispatch, two-stage review, and the handoff layer all benefit from Opus-class reasoning. The handoff nudge's ~800K-token default assumes Opus's 1M-token context window; lower `ORCH_CONTEXT_HANDOFF_TOKENS` if you run the controller on a smaller-window model (e.g. Haiku).
 
 ---
 
@@ -53,7 +53,7 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Convention detection** | The orchestrator can detect repo conventions on demand (`orch_detect_conventions`) to help seed `./CLAUDE.md`; subagents read conventions from `./CLAUDE.md` (kept lean, not auto-injected into every task prompt) | Conventions stay in one place you control; detection is available when you need to bootstrap or audit them |
 | **Architecture grounding** | Per-task brainstorming silently reads the recorded `## Decisions`/`## Conventions` from `./CLAUDE.md` (and the arch cache) and applies them as constraints on the spec — no questions, no explorer dispatch. A diff that breaks a recorded decision is flagged by the code reviewer. | Stops a new feature from silently violating an established choice — e.g. adding a network dependency to an offline-first SQLite app |
 | **One-time codebase onboarding** | `/llm-orchestrator:onboard` studies the codebase once (stack, data layer, module boundaries, error handling, key dependencies) and proposes `## Decisions` + `## Conventions` for `./CLAUDE.md` behind a single approval gate. Idempotent — skips if already run. After that, every task reads those decisions silently. | Seeds CLAUDE.md with the codebase's load-bearing decisions so every future implementer and reviewer works from the same constraints, without you having to write them by hand |
-| **Context-aware handoff** | Regenerates a self-sufficient handoff artifact at tier boundaries (and on context-pressure / on demand) so a fresh controller resumes long tasks with zero state loss | The controller never works from a saturated context window on long multi-tier work |
+| **Context-aware handoff** | On a long task, the agent is nudged once (when context crosses ~800K tokens) to write a short handoff note; after the context is auto-compacted, a reminder tells the next turn to re-read it, reconcile against the plan, and re-verify | A long run continues cleanly across a compaction instead of drifting on a lossy summary |
 
 > **"When dynamic workflows are available"** — that means you're running inside Claude Code, on a recent enough version (the feature shipped 2026-05-28), and the work has opted into it. In that case the review runs as one fast, self-checking parallel script. Anywhere else — a different tool, an older Claude Code — the *same* review runs the original step-by-step way. You never lose the review, only the speed-up. The kit doesn't probe for the tool; it simply tries the workflow path and falls back if it isn't there. Force the choice with `ORCH_WORKFLOWS=1` (always prefer) or `ORCH_WORKFLOWS=0` (always use the step-by-step path).
 
@@ -163,7 +163,7 @@ Nine layers, each solving a specific failure mode of single-agent AI tooling on 
 6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Issues raised only when ≥80% confident; lower-confidence observations go into a separate `Notes:` section.
 7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output. A per-turn hook reinforces the rule.
 8. **Pre-spec verification — the research gate** — described above. Returns `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`; `CONTRADICTED` halts the workflow until the spec is revised.
-9. **Context-aware handoff** — on a long task the controller's own context window fills up, which quietly degrades its work. At a clean boundary between stages it hands off to a fresh session, writing a self-contained handoff document so the next session resumes with nothing lost — and that session re-runs the tests first to confirm the starting point is still green.
+9. **Context-aware handoff** — on a long task the controller's context window fills up, which quietly degrades its work. When usage crosses ~800K tokens the agent is reminded once to write a short handoff note (what's done, what's next, the verify command); after Claude Code auto-compacts the conversation, a reminder tells the next turn to re-read that note, trust the plan file's checkboxes, and re-run the tests before continuing. The plan file remains the durable recovery anchor.
 
 Implementation reference with code links and the layer-stack diagram: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
@@ -188,8 +188,7 @@ Other modes:
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
-- **`ORCH_CONTEXT_WINDOW_TOKENS`.** Default `1000000` (assumes Opus / the latest Claude Code model).
-- **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `120000` — absolute token floor that nudges a handoff before native auto-compaction (~150K tokens). On a 1M window the percentage warn (700K) sits above that native trigger, so this floor is what fires in time. The advisory fires each turn while above the floor (like the per-turn protocol reminder) until a handoff resets the session.
+- **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `800000` — the token count at which the agent is reminded once to write a handoff note before native compaction kicks in. Lower it for a smaller context window.
 
 Full installation guide: [`docs/install.md`](./docs/install.md). Slash command reference, agent roster, and response-protocol details: [`AGENTS.md`](./AGENTS.md), [`concise-agent-protocol.md`](./concise-agent-protocol.md).
 

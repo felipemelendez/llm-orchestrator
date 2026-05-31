@@ -1,50 +1,40 @@
 #!/usr/bin/env bash
-# Tests for the PreCompact + post-compaction handoff contract.
+# Tests for the post-compaction recovery note — the REACTIVE half of Layer 9.
 #
-# Contract under test (corrected 2026-05-30):
-#   - PreCompact does NOT support hookSpecificOutput.additionalContext; that field
-#     is dropped and fails schema validation on manual /compact. So the advisory
-#     path on PreCompact emits NOTHING.
-#   - The only valid PreCompact output is the top-level {"decision":"block",...},
-#     emitted only in strict mode on an auto trigger.
-#   - The post-compaction advisory is injected by session-start.sh when the
-#     session begins with source=="compact" (SessionStart DOES support
-#     additionalContext and fires after compaction).
+# Contract (2026-05-31, reactive-only):
+#   - There is no PreCompact hook and no context-pressure hook. When native
+#     compaction fires, session-start.sh runs with source=="compact" and injects
+#     ONLY a lean recovery note via hookSpecificOutput.additionalContext (no
+#     meta-skill body, to stay under the 10,000-char cap), deriving the newest
+#     handoff artifact path inline (by mtime).
+#   - The note tells the next turn: treat the summary as lossy, reconcile against
+#     the plan-file checkboxes (authoritative), re-verify if the baseline looks
+#     stale, discard a slug-mismatched handoff, stop if all tasks are checked.
+#   - Suppressed under ORCH_HOOK_PROFILE=minimal and when ORCH_DISABLED_HOOKS
+#     contains "orch-handoff-nudge"; on a normal startup it loads the full
+#     meta-skill instead and emits no recovery note.
 #
-# Checks:
-#   1. PreCompact auto, non-strict   → empty stdout (no additionalContext)
-#   2. PreCompact manual, non-strict → empty stdout
-#   3. PreCompact strict + auto      → top-level decision:block
-#   4. Disabled hook                 → empty stdout
-#   5. UserPromptSubmit regression   → additionalContext (unchanged contract)
-#   6. session-start source=compact  → additionalContext w/ post-compaction note
-#   7. session-start source=startup  → no post-compaction note
-#   8. Valid JSON on every non-empty output
-#
+# (The proactive 800K write-nudge is covered by test-token-floor.sh.)
 # Bash 3.2 compatible. Exits non-zero on any failure.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-HOOK="${ROOT}/scripts/hooks/orch-context-pressure.sh"
 SESSION_HOOK="${ROOT}/scripts/hooks/session-start.sh"
-FIXTURES="${ROOT}/tests/handoff/fixtures"
+
+TMPHOME="$(mktemp -d)"
+trap 'rm -rf "${TMPHOME}"' EXIT
 
 if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 else GREEN=""; RED=""; DIM=""; RESET=""; fi
 
-PASS=0
-FAIL=0
-FAILED=()
-
+PASS=0; FAIL=0; FAILED=()
 ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
 fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED+=("$1"); }
 
 assert_valid_json() {
   local label="$1" output="$2"
-  if [[ -z "$output" ]]; then
-    return 0  # empty stdout is fine (disabled / advisory-suppressed paths)
-  fi
+  [[ -z "$output" ]] && return 0
   if printf '%s' "$output" | python3 -c "import json,sys;json.load(sys.stdin)" 2>/dev/null; then
     ok "${label}: valid JSON"
   else
@@ -52,135 +42,87 @@ assert_valid_json() {
   fi
 }
 
-# Guard: hooks must exist.
-for h in "$HOOK" "$SESSION_HOOK"; do
-  if [[ ! -f "$h" ]]; then
-    printf '%sFAIL: test-precompact%s — hook not found: %s\n' "$RED" "$RESET" "$h"
-    exit 1
-  fi
-done
+[[ -f "$SESSION_HOOK" ]] || { printf '%sFAIL: test-precompact%s — not found: %s\n' "$RED" "$RESET" "$SESSION_HOOK"; exit 1; }
 
-printf '%s== PreCompact advisory path emits nothing (additionalContext unsupported) ==%s\n' "$DIM" "$RESET"
+printf '%s== Post-compaction lean injection via SessionStart ==%s\n' "$DIM" "$RESET"
 
-AUTO_INPUT='{"hook_event_name":"PreCompact","trigger":"auto","transcript_path":"tests/handoff/fixtures/high.jsonl"}'
-AUTO_OUT=$(printf '%s' "$AUTO_INPUT" | CLAUDE_PROJECT_DIR="${ROOT}" bash "$HOOK" 2>/dev/null || true)
+PROJ1="${TMPHOME}/proj1"
+mkdir -p "${PROJ1}/docs/llm-orchestrator/handoffs"
+printf -- '---\nslug: demo\n---\n' > "${PROJ1}/docs/llm-orchestrator/handoffs/2026-05-31-demo.md"
 
-if [[ -z "$AUTO_OUT" ]]; then
-  ok "PreCompact auto (non-strict): empty stdout"
-else
-  fail "PreCompact auto (non-strict): empty stdout" "got: '${AUTO_OUT}'"
-fi
-
-if printf '%s' "$AUTO_OUT" | grep -q 'additionalContext'; then
-  fail "PreCompact auto: must NOT emit additionalContext" "got: '${AUTO_OUT}'"
-else
-  ok "PreCompact auto: no additionalContext (correct — PreCompact does not support it)"
-fi
-
-MANUAL_INPUT='{"hook_event_name":"PreCompact","trigger":"manual","transcript_path":"tests/handoff/fixtures/high.jsonl"}'
-MANUAL_OUT=$(printf '%s' "$MANUAL_INPUT" | CLAUDE_PROJECT_DIR="${ROOT}" bash "$HOOK" 2>/dev/null || true)
-
-if [[ -z "$MANUAL_OUT" ]]; then
-  ok "PreCompact manual (non-strict): empty stdout"
-else
-  fail "PreCompact manual (non-strict): empty stdout" "got: '${MANUAL_OUT}'"
-fi
-
-printf '\n%s== PreCompact strict auto → block ==%s\n' "$DIM" "$RESET"
-
-STRICT_OUT=$(printf '%s' "$AUTO_INPUT" | \
-  CLAUDE_PROJECT_DIR="${ROOT}" ORCH_HOOK_PROFILE=strict ORCH_STRICT_CONTEXT_PRESSURE=1 \
-  bash "$HOOK" 2>/dev/null || true)
-
-if printf '%s' "$STRICT_OUT" | grep -q '"decision":"block"'; then
-  ok "PreCompact strict+auto: emits top-level decision:block"
-else
-  fail "PreCompact strict+auto: emits top-level decision:block" "got: '${STRICT_OUT}'"
-fi
-
-# The block payload must NOT carry hookSpecificOutput/additionalContext.
-if printf '%s' "$STRICT_OUT" | grep -q 'additionalContext'; then
-  fail "PreCompact strict block: must not carry additionalContext" "got: '${STRICT_OUT}'"
-else
-  ok "PreCompact strict block: clean decision/reason payload only"
-fi
-
-assert_valid_json "PreCompact strict auto block" "$STRICT_OUT"
-
-printf '\n%s== Disabled hook ==%s\n' "$DIM" "$RESET"
-
-DISABLED_OUT=$(printf '%s' "$AUTO_INPUT" | \
-  ORCH_DISABLED_HOOKS=orch-context-pressure bash "$HOOK" 2>/dev/null || true)
-
-if [[ -z "$DISABLED_OUT" ]]; then
-  ok "ORCH_DISABLED_HOOKS=orch-context-pressure + PreCompact → empty stdout"
-else
-  fail "ORCH_DISABLED_HOOKS=orch-context-pressure + PreCompact → empty stdout" "got: '${DISABLED_OUT}'"
-fi
-
-printf '\n%s== UserPromptSubmit regression ==%s\n' "$DIM" "$RESET"
-
-UPS_OUT=$(CLAUDE_PROJECT_DIR="${ROOT}" bash "$HOOK" < "${FIXTURES}/high-input.json" 2>/dev/null || true)
-
-if printf '%s' "$UPS_OUT" | grep -q 'additionalContext'; then
-  ok "UserPromptSubmit regression: high-input.json → additionalContext"
-else
-  fail "UserPromptSubmit regression: high-input.json → additionalContext" "got: '${UPS_OUT}'"
-fi
-
-if printf '%s' "$UPS_OUT" | grep -q '"hookEventName":"UserPromptSubmit"'; then
-  ok "UserPromptSubmit regression: hookEventName is UserPromptSubmit"
-else
-  fail "UserPromptSubmit regression: hookEventName is UserPromptSubmit" "got: '${UPS_OUT}'"
-fi
-
-assert_valid_json "UserPromptSubmit regression" "$UPS_OUT"
-
-printf '\n%s== Post-compaction injection via SessionStart ==%s\n' "$DIM" "$RESET"
-
-COMPACT_OUT=$(printf '%s' '{"hook_event_name":"SessionStart","source":"compact"}' | bash "$SESSION_HOOK" 2>/dev/null || true)
+COMPACT_OUT=$(printf '%s' '{"hook_event_name":"SessionStart","source":"compact","session_id":"c1"}' | CLAUDE_PROJECT_DIR="${PROJ1}" bash "$SESSION_HOOK" 2>/dev/null || true)
 
 if printf '%s' "$COMPACT_OUT" | grep -q '"hookEventName":"SessionStart"'; then
   ok "SessionStart compact: hookEventName is SessionStart"
 else
   fail "SessionStart compact: hookEventName is SessionStart" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
 fi
-
 if printf '%s' "$COMPACT_OUT" | grep -q 'resumed immediately after native context compaction'; then
   ok "SessionStart compact: injects post-compaction advisory"
 else
   fail "SessionStart compact: injects post-compaction advisory" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
 fi
-
 if printf '%s' "$COMPACT_OUT" | grep -q 'verification baseline'; then
-  ok "SessionStart compact: advisory tells controller to re-run verification baseline"
+  ok "SessionStart compact: tells controller to re-check the verification baseline"
 else
-  fail "SessionStart compact: advisory tells controller to re-run verification baseline" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
+  fail "SessionStart compact: verification baseline" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
 fi
-
+if printf '%s' "$COMPACT_OUT" | grep -q 'checkboxes'; then
+  ok "SessionStart compact: points at the plan checkboxes as authoritative"
+else
+  fail "SessionStart compact: plan checkboxes authoritative" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
+fi
+if printf '%s' "$COMPACT_OUT" | grep -q '2026-05-31-demo.md'; then
+  ok "SessionStart compact: derives the newest handoff path inline"
+else
+  fail "SessionStart compact: derives newest handoff path" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
+fi
+if printf '%s' "$COMPACT_OUT" | grep -q 'You are running LLM Orchestrator'; then
+  fail "SessionStart compact: must NOT re-inject the full meta-skill (10K cap risk)" "meta preamble leaked"
+else
+  ok "SessionStart compact: lean — no meta-skill preamble"
+fi
+if (( ${#COMPACT_OUT} < 10000 )); then
+  ok "SessionStart compact: output ${#COMPACT_OUT} chars (< 10000 additionalContext cap)"
+else
+  fail "SessionStart compact: under 10000-char cap" "was ${#COMPACT_OUT} chars"
+fi
 assert_valid_json "SessionStart compact" "$COMPACT_OUT"
 
-STARTUP_OUT=$(printf '%s' '{"hook_event_name":"SessionStart","source":"startup"}' | bash "$SESSION_HOOK" 2>/dev/null || true)
+printf '\n%s== Post-compaction "none" fallback (no handoff yet) ==%s\n' "$DIM" "$RESET"
+PROJ2="${TMPHOME}/proj2"
+mkdir -p "${PROJ2}/docs/llm-orchestrator/handoffs"   # empty
+NONE_OUT=$(printf '%s' '{"hook_event_name":"SessionStart","source":"compact","session_id":"c2"}' | CLAUDE_PROJECT_DIR="${PROJ2}" bash "$SESSION_HOOK" 2>/dev/null || true)
+if printf '%s' "$NONE_OUT" | grep -q 'Newest handoff artifact: none' && printf '%s' "$NONE_OUT" | grep -q 'rebuild from the plan file and git history'; then
+  ok "SessionStart compact (no artifact): emits 'none' + rebuild-from-plan instruction"
+else
+  fail "SessionStart compact (no artifact): 'none' + rebuild instruction" "got: '$(printf '%s' "$NONE_OUT" | head -c 200)'"
+fi
+assert_valid_json "SessionStart compact none" "$NONE_OUT"
 
+printf '\n%s== SessionStart startup unaffected ==%s\n' "$DIM" "$RESET"
+STARTUP_OUT=$(printf '%s' '{"hook_event_name":"SessionStart","source":"startup"}' | bash "$SESSION_HOOK" 2>/dev/null || true)
 if printf '%s' "$STARTUP_OUT" | grep -q 'resumed immediately after native context compaction'; then
   fail "SessionStart startup: must NOT inject post-compaction advisory" "got post-compaction note on a normal startup"
 else
   ok "SessionStart startup: no post-compaction advisory (correct)"
 fi
-
+if printf '%s' "$STARTUP_OUT" | grep -q 'You are running LLM Orchestrator'; then
+  ok "SessionStart startup: still loads the full meta-skill bootstrap"
+else
+  fail "SessionStart startup: loads meta-skill bootstrap" "bootstrap missing on startup"
+fi
 assert_valid_json "SessionStart startup" "$STARTUP_OUT"
 
-printf '\n%s== Post-compaction advisory is profile/disable-aware (minimal=silent) ==%s\n' "$DIM" "$RESET"
-
+printf '\n%s== Recovery note is profile/disable-aware (minimal=silent) ==%s\n' "$DIM" "$RESET"
 COMPACT_INPUT='{"hook_event_name":"SessionStart","source":"compact"}'
 
 MIN_OUT=$(printf '%s' "$COMPACT_INPUT" | ORCH_HOOK_PROFILE=minimal bash "$SESSION_HOOK" 2>/dev/null || true)
 if printf '%s' "$MIN_OUT" | grep -q 'resumed immediately after native context compaction'; then
-  fail "minimal profile + compact: must suppress post-compaction advisory" "advisory leaked under minimal"
+  fail "minimal profile + compact: must suppress recovery note" "advisory leaked under minimal"
 else
-  ok "minimal profile + compact: post-compaction advisory suppressed"
+  ok "minimal profile + compact: recovery note suppressed"
 fi
-# But the meta-skill bootstrap must still load under minimal.
 if printf '%s' "$MIN_OUT" | grep -q 'EXTREMELY_IMPORTANT'; then
   ok "minimal profile: meta-skill bootstrap still loads (not suppressed)"
 else
@@ -188,13 +130,13 @@ else
 fi
 assert_valid_json "minimal compact" "$MIN_OUT"
 
-DIS_OUT=$(printf '%s' "$COMPACT_INPUT" | ORCH_DISABLED_HOOKS=orch-context-pressure bash "$SESSION_HOOK" 2>/dev/null || true)
+DIS_OUT=$(printf '%s' "$COMPACT_INPUT" | ORCH_DISABLED_HOOKS=orch-handoff-nudge bash "$SESSION_HOOK" 2>/dev/null || true)
 if printf '%s' "$DIS_OUT" | grep -q 'resumed immediately after native context compaction'; then
-  fail "disabled pressure hook + compact: must suppress post-compaction advisory" "advisory leaked when pressure hook disabled"
+  fail "disabled handoff-nudge + compact: must suppress recovery note" "advisory leaked when disabled"
 else
-  ok "disabled pressure hook + compact: post-compaction advisory suppressed"
+  ok "ORCH_DISABLED_HOOKS=orch-handoff-nudge + compact: recovery note suppressed"
 fi
-assert_valid_json "disabled-pressure compact" "$DIS_OUT"
+assert_valid_json "disabled compact" "$DIS_OUT"
 
 printf '\n'
 if (( FAIL == 0 )); then

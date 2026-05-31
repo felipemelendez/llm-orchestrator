@@ -9,7 +9,7 @@
 #
 # The meta-skill bootstrap always loads (profile-independent). The post-compaction
 # advisory, part of the Layer 9 handoff feature, is profile-aware: suppressed under
-# ORCH_HOOK_PROFILE=minimal and when ORCH_DISABLED_HOOKS contains "orch-context-pressure".
+# ORCH_HOOK_PROFILE=minimal and when ORCH_DISABLED_HOOKS contains "orch-handoff-nudge".
 # Disable this hook entirely via ORCH_DISABLED_HOOKS containing "orch-session-start".
 
 set -uo pipefail
@@ -30,8 +30,11 @@ MAX_CHARS="${ORCH_SESSION_MAX_CHARS:-8000}"
 # controller that the in-flight narrative is lossy. PreCompact cannot inject
 # context (it only supports decision:block), so this is where that advisory lives.
 INPUT=$(cat || true)
-# Anchor to the documented SessionStart source enum so an unrelated nested
-# "source" string elsewhere in the payload cannot shadow the real value.
+# Extract the source, matching only the documented enum values. Claude Code's
+# SessionStart payload is flat (source is a top-level field), so the first match
+# is the real value. (This takes the first enum-valued "source" in the payload;
+# it does not anchor to the top level — fine because the payload does not nest
+# another enum-valued source.)
 SOURCE=$(printf '%s' "${INPUT}" | grep -oE '"source"[[:space:]]*:[[:space:]]*"(startup|clear|compact|resume)"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 
 strip_frontmatter() {
@@ -76,33 +79,64 @@ if [[ -f "${META_FILE}" ]]; then
   META_BODY=$(strip_frontmatter "${META_FILE}")
 fi
 
-# Post-compaction advisory — appended only when this session began from a
-# native compaction. Tells the fresh controller to treat the summarised
-# narrative as lossy and re-establish ground truth before continuing.
-#
-# This advisory is part of the Layer 9 handoff feature, whose owning hook is
-# orch-context-pressure. To honour the "minimal/disabled = silent" invariant
-# per-feature, suppress it under the minimal profile and when the pressure hook
-# is disabled — even though the meta-skill bootstrap below always loads.
-POSTCOMPACT_NOTE=""
+# The post-compaction recovery note is the reactive half of the Layer 9 handoff
+# feature (its proactive half is the orch-handoff-nudge UserPromptSubmit hook).
+# Honour the "minimal/disabled = silent" invariant: suppress under the minimal
+# profile and when the handoff nudge is disabled.
 PRESSURE_DISABLED=0
-if [[ ",${DISABLED}," == *",orch-context-pressure,"* ]] || [[ "${PROFILE}" == "minimal" ]]; then
+if [[ ",${DISABLED}," == *",orch-handoff-nudge,"* ]] || [[ "${PROFILE}" == "minimal" ]]; then
   PRESSURE_DISABLED=1
 fi
+
+# ---------------------------------------------------------------------------
+# Compact path — emit the lean recovery note ONLY (no meta-skill body).
+#
+# Why not re-inject the full meta-skill here? After native compaction the
+# per-turn UserPromptSubmit hook re-asserts the Concise Agent Protocol on the
+# next prompt, so the protocol is not lost. Re-injecting the ~8K meta body PLUS
+# this note would risk the documented 10,000-char additionalContext cap —
+# oversized hook output is spilled to a file and replaced with a preview, so
+# the agent might never read the recovery directive inline. Keeping the compact
+# output lean guarantees the directive is delivered.
+#
+# The newest-handoff path is derived live here (a pointer, never the artifact
+# body), so there is no cross-hook pointer file to go stale or clobber.
+# ---------------------------------------------------------------------------
 if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
-  POSTCOMPACT_NOTE="
+  PROJ="${CLAUDE_PROJECT_DIR:-${PWD}}"
+  HANDOFF_DIR="${PROJ}/docs/llm-orchestrator/handoffs"
+  NEWEST="none"
+  if [[ -d "${HANDOFF_DIR}" ]]; then
+    # Newest by modification time (robust to regeneration in place). The note
+    # also tells the next turn the plan file is authoritative over the artifact,
+    # so a wrong pick self-corrects, but mtime is the right primary signal.
+    _newest=$(ls -1t "${HANDOFF_DIR}"/*.md 2>/dev/null | head -1)
+    [[ -n "${_newest}" ]] && NEWEST="${_newest}"
+  fi
+
+  NOTE="
 
 ---
 <EXTREMELY_IMPORTANT>
-This session resumed immediately after native context compaction. The narrative above the compaction boundary is a lossy summary — treat in-flight details (file:line refs, test counts, what was just edited) as unverified. Before continuing or claiming any work is done: re-run the verification baseline (tests / typecheck) and reconcile against the plan file's checkboxes. If a handoff artifact under docs/llm-orchestrator/handoffs/ matches the CURRENT task (check its frontmatter slug against the active plan), read it; if none matches the current task, do NOT trust an older one — treat all in-flight state as lost and rebuild from the plan file and git history. Then, if mid-task, regenerate the handoff with /llm-orchestrator:handoff.
+This session resumed immediately after native context compaction. The narrative above the boundary is a lossy summary — treat in-flight details (file:line refs, test counts, what was just edited) as unverified.
+
+Before continuing or claiming any work done:
+- Reconcile against the plan file's checkboxes and TaskList — they are authoritative over any handoff artifact. Re-run the verification baseline if it looks stale.
+- Newest handoff artifact: ${NEWEST}. If its frontmatter slug does not match the active plan, discard it and rebuild from the plan file and git history.
+- If all plan tasks are checked, STOP and report — do not invent work.
 </EXTREMELY_IMPORTANT>"
+
+  ESCAPED=$(printf '%s' "${NOTE}" | json_escape)
+  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"
+  exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# Normal path — startup / clear / resume (and compact under minimal/disabled,
+# which falls through here and emits the meta-skill with no recovery note).
+# Load the using-orchestrator meta-skill as session context.
+# ---------------------------------------------------------------------------
 if [[ -z "${META_BODY}" ]]; then
-  # Nothing to inject from the meta-skill. Still emit the post-compaction note
-  # if present. Emit valid JSON with hookEventName so Claude Code accepts it.
-  ESCAPED=$(printf '%s' "${POSTCOMPACT_NOTE}" | json_escape)
-  printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"
   exit 0
 fi
 
@@ -126,8 +160,6 @@ POSTAMBLE="
 BODY="${PREAMBLE}${META_BODY}${POSTAMBLE}"
 
 BODY=$(truncate_at_line "${BODY}" "${MAX_CHARS}")
-# Append the post-compaction note AFTER truncation so it is never cut off.
-BODY="${BODY}${POSTCOMPACT_NOTE}"
 ESCAPED=$(printf '%s' "${BODY}" | json_escape)
 
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"

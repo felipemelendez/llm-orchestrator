@@ -65,7 +65,7 @@ Controllers route by Status, not by parsing prose.
 | `/llm-orchestrator:finish` | Decide between merge / PR / keep / discard. |
 | `/llm-orchestrator:remember` | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
 | `/llm-orchestrator:forget` | Soft-delete matching lines from CLAUDE.md or plugin memory. |
-| `/llm-orchestrator:handoff` | Regenerate the versioned context-handoff artifact for the current task and hand control to a fresh session. Fires automatically at tier seams; invoke manually when context strains. |
+| `/llm-orchestrator:handoff` | Write a short handoff note for the current task so work resumes cleanly after the context is compacted. Invoke manually, or the nudge hook prompts you once when context crosses ~800K tokens. |
 | `/llm-orchestrator:skills` | List the installed skills and commands with their trigger conditions — a one-screen catalog of what the plugin can do and when each fires. Optional keyword filter. |
 
 ## Cross-harness
