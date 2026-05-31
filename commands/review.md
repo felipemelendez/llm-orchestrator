@@ -8,7 +8,9 @@ User input: $ARGUMENTS (optional — base ref, defaults to origin/main or the pr
 
 Steps:
 
-1. Invoke `requesting-code-review`.
+1. Invoke `requesting-code-review`. Consult `using-workflows` to route: if the Workflow tool is
+   available (and `ORCH_WORKFLOWS` is not `0`), prefer the accelerated path in step 7a; otherwise
+   run the canonical ordered stages (steps 4–8). The two paths are not behaviorally identical.
 
 2. Determine the base ref:
    - If `$ARGUMENTS` is non-empty, use it.
@@ -48,6 +50,15 @@ Steps:
    - If the grep matches: dispatch `orch-security-reviewer` (or generic subagent with `templates/security-reviewer-prompt.md`). Pass: diff only.
    - If the grep does not match: skip Stage 3 silently. Do not mention it in the report.
    - Stage 3 is advisory. Critical findings from Stage 3 block the merge; Important and below are advisory (recorded, non-blocking).
+
+7a. Preferred path (Workflow tool present) — replaces steps 4–7:
+   - Compute `security_sensitive` from `$ORCH_SIG_SECURITY_DIFF` (the same grep as step 7) — the
+     single source of truth; never re-derive it in the workflow script.
+   - Run `workflows/review-diff.js` with `args = {specText, planText, conventions, diff,
+     security_sensitive}`. It reproduces the Stage-1-gates-Stage-2 ordering (early-exits when the
+     diff fails spec compliance), filters findings at ≥80% confidence, and runs a bounded
+     adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, earlyExit}`.
+   - Build the report below from that return, then continue at step 9.
 
 8. Merge all `Issues:` blocks (from whichever stages ran) into one report.
 
