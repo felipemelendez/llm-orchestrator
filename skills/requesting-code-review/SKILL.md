@@ -7,6 +7,27 @@ description: You MUST use this when a diff is ready — before merge, before PR,
 
 Two required reviews plus one conditional, in order. Each returns an `Issues:` block.
 
+## Two paths
+
+This review can run two ways. The markdown stages below are the **canonical** path. When the
+Workflow tool is available, prefer the accelerated path — it adds structured findings and an
+adversarial verify pass. The two are not behaviorally identical; routing follows `using-workflows`.
+
+### Preferred path (Workflow tool present)
+
+1. Compute the security boolean from the single source of truth — source
+   `scripts/lib/orch-signals.sh` and test the diff against `$ORCH_SIG_SECURITY_DIFF` (the same
+   grep shown in Stage 3 below). Do **not** re-derive that regex anywhere else.
+2. Run `workflows/review-diff.js`, passing `args = {specText, planText, conventions, diff,
+   security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1 (preserving the
+   early-exit below), confidence-filters at ≥80%, and verifies surviving findings with a bounded
+   skeptic pass. It returns `{confirmed, notes, earlyExit}`.
+3. Write the review artifact from that return, using the same report shape as the canonical path.
+
+### Fallback path (no Workflow tool) — canonical
+
+Run the ordered stages below as written. Unchanged.
+
 ## Stages
 
 ### Stage 1 — Spec compliance

@@ -1,6 +1,6 @@
 # Architecture
 
-LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory.
+LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory. One optional, additive exception: `workflows/*.js` — deterministic orchestration scripts for Claude Code's `Workflow` tool. These run only inside that harness and are a *preferred accelerator* for two layers (parallel dispatch and code review); the markdown path stays canonical and portable, so the kit still runs in any harness that can read markdown and run shell. See the "Workflows" entry in the Component contract.
 
 This document has two parts. The first part — **Nine layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
 
@@ -79,6 +79,14 @@ Verdict routing is mechanical:
 - Critical issues → re-dispatch implementer immediately
 - Important issues → re-dispatch
 - Minor-only → record and carry forward (per the DONE_WITH_CONCERNS policy)
+
+**Execution substrate.** The review dimensions are independent and breadth-first, so when Claude
+Code's `Workflow` tool is present this layer prefers `workflows/review-diff.js` — Stage 1 still
+gates Stage 2 (early-exit on a spec mismatch), Stage 3 stays conditional on the
+`scripts/lib/orch-signals.sh` security signal (passed in, not re-derived), findings are
+confidence-filtered and adversarially verified before they surface. The canonical markdown stages
+remain the fallback. Routing lives in the `using-workflows` skill. The same substrate is the
+planned path for Layer 4 (parallel dispatch over independent tasks).
 
 ### Layer 7 — Evidence-based completion
 
@@ -166,6 +174,22 @@ How the pieces fit together at the file level.
 
 - File: `templates/<name>.md`.
 - Used by commands. Output committed to `docs/llm-orchestrator/{specs,plans,reviews}/YYYY-MM-DD-<slug>.md`.
+
+### Workflows (Claude-Code-only accelerator)
+
+- File: `workflows/<name>.js` — a deterministic script for Claude Code's `Workflow` tool. Plain
+  JavaScript only (no TypeScript, no imports; the nondeterministic time/random builtins throw at
+  runtime). Begins with a pure-literal `export const meta = {...}`.
+- A *preferred* substrate for the breadth-first, independent-fan-out layers — today **Layer 6**
+  (code review, `workflows/review-diff.js`) and, when added, **Layer 4** (parallel dispatch). It
+  is never a hard dependency: every skill that prefers a workflow keeps its canonical markdown
+  path, and routing is the try-then-fallback heuristic in the `using-workflows` skill.
+- Reuses the existing `agents/orch-*.md` subagents via the `agentType` option (composed with a
+  structured `schema`); it adds no new agent roles.
+- Gate logic is never re-derived in JS — the controller computes it in shell (e.g.
+  `security_sensitive` from `scripts/lib/orch-signals.sh`) and passes it in via `args`.
+- Linter: `tests/validate-workflows.sh` (syntax via `node --check` **plus** a static token scan,
+  because parse-only validation does not catch the runtime-throw builtins).
 
 ### Context-handoff components
 
@@ -283,6 +307,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 | `skills/`, `commands/`        | Machine-readable artifacts the harness loads     |
 | `agents/`                     | Subagent definitions (`orch-implementer`, etc.)  |
 | `templates/`                  | Spec / plan / review templates committed per use |
+| `workflows/`                  | Claude-Code-only `Workflow` scripts; preferred accelerator for Layer 6 today (Layer 4 planned); markdown canonical |
 | `hooks/`, `scripts/`          | Glue + runtime guardrails                        |
 | `examples/`                   | Plugin manifest examples                          |
 | `docs/examples/`              | Illustrative response-shape examples             |

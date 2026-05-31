@@ -5,3 +5,8 @@ node_modules/
 .orch-worktree
 .worktrees/
 docs/llm-orchestrator/scratch/
+# Maintainer working artifacts (build byproducts) — never committed
+docs/llm-orchestrator/specs/
+docs/llm-orchestrator/plans/
+docs/llm-orchestrator/handoffs/
+docs/llm-orchestrator/research/

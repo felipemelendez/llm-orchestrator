@@ -118,7 +118,7 @@ while IFS= read -r file; do
   # Skill references in command bodies must resolve. We look for either:
   #   - `<skill-name>` matching a known skill dir
   #   - "Invoke the X skill" patterns
-  KNOWN_SKILLS="brainstorming|writing-plans|executing-plans|test-driven-development|systematic-debugging|using-git-worktrees|dispatching-subagents|dispatching-parallel-agents|requesting-code-review|receiving-code-review|verification-before-completion|finishing-a-branch|writing-skills|managing-memory|using-orchestrator"
+  KNOWN_SKILLS="brainstorming|writing-plans|executing-plans|test-driven-development|systematic-debugging|using-git-worktrees|dispatching-subagents|dispatching-parallel-agents|requesting-code-review|receiving-code-review|verification-before-completion|finishing-a-branch|writing-skills|managing-memory|using-orchestrator|using-workflows"
 
   while IFS= read -r skill_ref; do
     [[ -z "$skill_ref" ]] && continue
