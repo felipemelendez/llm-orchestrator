@@ -34,6 +34,11 @@ Prompt templates live in `templates/`:
 
 The native subagent definitions live in `agents/orch-*.md`.
 
+When Claude Code's `Workflow` tool is available, these same subagents are dispatched from
+workflow scripts via the `agentType` option (composed with a structured `schema`) — no new roles.
+`workflows/review-diff.js` drives the two-stage review this way; see the `using-workflows` skill
+for when a workflow is preferred over the inline markdown path.
+
 ## Status enum
 
 Every subagent returns exactly one Status:
