@@ -14,7 +14,7 @@
 #     contains "orch-handoff-nudge"; on a normal startup it loads the full
 #     meta-skill instead and emits no recovery note.
 #
-# (The proactive 800K write-nudge is covered by test-token-floor.sh.)
+# (The proactive write-nudge floor is covered by test-token-floor.sh.)
 # Bash 3.2 compatible. Exits non-zero on any failure.
 
 set -uo pipefail

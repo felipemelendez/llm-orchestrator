@@ -25,7 +25,7 @@ case "${cmd}" in
       fi
     done
     # Required hook scripts
-    for f in scripts/hooks/session-start.sh scripts/hooks/user-prompt-submit.sh scripts/hooks/guard-no-verify.sh scripts/hooks/subagent-stop.sh scripts/hooks/orch-stop.sh scripts/hooks/orch-handoff-nudge.sh scripts/lib/orch-lock.sh scripts/lib/orch-protocol.sh scripts/lib/orch-handoff.sh scripts/hooks/orch-protocol-grader.sh scripts/hooks/orch-research-gate.sh scripts/hooks/orch-researcher-validator.sh scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md; do
+    for f in scripts/hooks/session-start.sh scripts/hooks/user-prompt-submit.sh scripts/hooks/guard-no-verify.sh scripts/hooks/guard-destructive-git.sh scripts/hooks/subagent-stop.sh scripts/hooks/orch-stop.sh scripts/hooks/orch-handoff-nudge.sh scripts/lib/orch-lock.sh scripts/lib/orch-protocol.sh scripts/lib/orch-handoff.sh scripts/lib/orch-project.sh scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh scripts/hooks/orch-protocol-grader.sh scripts/hooks/orch-research-gate.sh scripts/hooks/orch-researcher-validator.sh scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -76,6 +76,8 @@ case "${cmd}" in
     done
     [[ -f "${ROOT}/scripts/statusline.sh" ]] && cp "${ROOT}/scripts/statusline.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/protocol-lint.sh" ]] && cp "${ROOT}/scripts/protocol-lint.sh" "${dest}/.claude/scripts/"
+    [[ -f "${ROOT}/scripts/orch-worktree-materialize.sh" ]] && cp "${ROOT}/scripts/orch-worktree-materialize.sh" "${dest}/.claude/scripts/"
+    [[ -f "${ROOT}/scripts/orch-worktree-integrate.sh" ]] && cp "${ROOT}/scripts/orch-worktree-integrate.sh" "${dest}/.claude/scripts/"
     # Copy the portable lock helper — memory commands source it.
     for f in "${ROOT}/scripts/lib/"*.sh; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/lib/"

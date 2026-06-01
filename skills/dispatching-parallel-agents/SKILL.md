@@ -5,90 +5,90 @@ description: Use when 3+ tasks are independent (no shared files, no order depend
 
 # Dispatching parallel agents (fan-out)
 
-Send N implementers in one batch. Collect N returns. Then review.
+Send N agents in one batch. Collect N returns. Then review.
+
+## The isolation invariant — read this first
+
+**No two agents ever write the same working tree at the same time.** Concurrent writes to one checkout race and clobber each other (a parallel agent running `git stash`/`reset`/`add` on the shared tree once silently destroyed in-flight work). So parallelism is allowed in exactly two safe shapes:
+
+- **Read-only fan-out** — reviewers, explorers, researchers. They only read, run tests read-only, and report; they **never** edit files or mutate git. Safe to run together on the shared checkout.
+- **Isolated writers** — each writing agent works in its **own git worktree** (a separate directory on its own branch), so its edits and commits cannot touch the shared tree or another agent's. You merge the branches back **sequentially** afterward.
+
+Never run two writers concurrently on the same checkout. If you can't isolate the writers, run them sequentially (`dispatching-subagents`).
 
 ## When this applies
 
-- 3+ tasks all marked `Independent: yes` in the plan.
-- No two selected tasks touch the same files.
-- You understand each task well enough to write a complete envelope.
+- 3+ read-only agents (review/explore/research), **or** 3+ writer tasks all `Independent: yes` that you will run in **separate worktrees**.
+- For writers: no two selected tasks touch the same files (so the branch merges stay trivial).
 
 ## When this does NOT apply
 
-- Tasks have dependencies → use `dispatching-subagents`.
-- Two tasks share files → conflicts will corrupt the work; use sequential.
+- Tasks have dependencies → `dispatching-subagents`.
+- Writers you can't (or won't) isolate in worktrees → run sequential.
+- Fewer than 3 independent tasks → sequential; coordination cost wins.
 - You haven't understood the problem → don't parallelize confusion.
-- Fewer than 3 independent tasks → just go sequential; the coordination cost wins.
 
-## Steps
+## Steps — read-only fan-out
 
-1. **Confirm independence.** For each pair of tasks, ask: "if I do these in opposite order, does the result change?" Yes → not independent → sequential.
+1. **Build N envelopes** (`templates/dispatch-prompt.md`). State explicitly: read-only — do not edit files or run any mutating git (`stash`/`reset`/`clean`/`checkout -- `/`add`/`commit`).
+2. **Send in parallel** in one message. **Wait for all returns.**
+3. **Triage by Status** (below) and synthesize. Nothing to merge — they wrote nothing.
 
-2. **Confirm no file overlap.** Read each task's `Files:` list. If any file appears in two tasks, sequential.
+## Steps — isolated writers
 
-3. **`TaskCreate` the set.** One task per plan task. Mark all `in_progress` via `TaskUpdate`.
-
-4. **Build N envelopes** using `templates/implementer-prompt.md` (or `templates/dispatch-prompt.md` for non-implementer roles). Each envelope is self-contained — paste context, never reference paths.
-
-5. **Send in parallel.** In a single message, dispatch all N agents.
-
-6. **Wait for all returns.** Don't dispatch follow-ups before all N return.
-
-7. **Triage each Status:**
-   - `DONE` → mark the task `completed` via `TaskUpdate`, tick plan checkbox.
-   - `DONE_WITH_CONCERNS` → record, mark completed.
-   - `BLOCKED` → satisfy `Need:`, re-dispatch just that one.
-   - `NEEDS_CONTEXT` → answer `Ask:`, re-dispatch just that one.
-
-8. **Check for conflicts.** Parallel implementers usually leave changes in the working tree (not yet committed). To detect overlap:
+1. **Confirm independence + no file overlap.** If two tasks share a file, run them sequential instead.
+2. **Materialize one worktree per writer — mechanically.** Don't hand-create worktrees. Run the engine, which atomically claims, creates, and (on any failure) rolls back the whole batch:
    ```bash
-   # Files touched in the working tree across all parallel implementers
-   git status --porcelain | awk '{ print $2 }' | sort | uniq -d
-   # If implementers DID commit (each commit-per-task), also check:
-   git log --since="<start of group>" --name-only --pretty=format: | sort | uniq -d
+   cd "$(git rev-parse --show-toplevel)"          # the engine builds paths from repo root
+   MAT="${CLAUDE_PLUGIN_ROOT:-.}/scripts/orch-worktree-materialize.sh"; [[ -f "$MAT" ]] || MAT=".claude/scripts/orch-worktree-materialize.sh"
+   SID="$(bash "$MAT" --sid)"                      # reads the persisted session id
+   bash "$MAT" "$SID" <slug1> <slug2> <slug3>
    ```
-   Any duplicate file means two implementers edited the same path. If non-empty:
-   - Read each touched line range with `git diff <file>`.
-   - You (the controller) reconcile by hand. Never let implementers merge each other.
-   - Re-run the relevant tests after merge.
-
-9. **Then review.** After all N are `DONE`, run a per-task spec-review and code-review pass (the inner loop from `dispatching-subagents` steps 3–6), or invoke `/review` once on the combined diff. Choose based on:
-   - High-risk surface (public APIs, security paths): per-task review.
-   - Low-risk surface (independent UI tweaks, parallel test additions): combined review.
+   It prints one `<slug>\t<path>\t<branch>` line per worktree. **If it exits non-zero, do NOT dispatch** — it found a conflict (duplicate slug, path/branch exists, slug already claimed) and created nothing. Paste each printed `<path>` into the matching writer envelope as its working directory. Distinctness is now enforced by the engine, not a manual `uniq` — and the implementer still self-defends (atomic `.orch-active` mutex on entry; `BLOCKED` if handed no worktree).
+3. **`TaskCreate` the set**, mark `in_progress`.
+4. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its worktree path. Each is self-contained.
+5. **Send in parallel**, one message. **Wait for all N returns** before any follow-up.
+6. **Triage each Status:**
+   - `DONE`/`DONE_WITH_CONCERNS` → mark completed, tick the plan checkbox.
+   - `BLOCKED` → satisfy `Need:`, re-dispatch that one.
+   - `NEEDS_CONTEXT` → answer `Ask:`, re-dispatch that one.
+7. **Review** (after all `DONE`): per-task spec+code review for high-risk surface, or `/review` on the combined diff for low-risk.
+8. **Merge back — run the integration engine (don't merge by hand).** It merges each branch sequentially, runs the test gate after each merge, stops at the first conflict/test-failure/empty-branch keeping prior successes, releases each claim, and removes each merged worktree:
+   ```bash
+   cd "$(git rev-parse --show-toplevel)"
+   INTEG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/orch-worktree-integrate.sh"; [[ -f "$INTEG" ]] || INTEG=".claude/scripts/orch-worktree-integrate.sh"
+   bash "$INTEG" --test "<suite command>" "$SID" <slug1> <slug2> ...
+   ```
+   On non-zero, read the report: `CONFLICT` means the independence check was wrong (reconcile by hand), `TEST_FAILED` leaves the base at the named SHA (the merge is NOT auto-undone — inspect or revert), `EMPTY` means a writer produced nothing (that task isn't done). Resolve the named slug, then run the printed `Re-run:` command for the rest. If the project has no test runner, pass `--allow-no-tests` (the run is reported UNVERIFIED).
 
 ## Sizing
 
-- Sweet spot: 3–5 parallel agents.
-- More than 8: re-think the decomposition.
-- Don't mix parallel implementers with parallel reviewers — review is sequential to implementation.
+- Sweet spot: 3–5 parallel agents. More than 8 → re-think the decomposition.
+- Don't mix parallel writers with parallel reviewers — review is sequential to implementation.
 
 ## Continuous execution
 
-Same rule as `dispatching-subagents`: don't pause between fan-out and review unless the user is genuinely needed.
+Don't pause between fan-out and review/merge unless the user is genuinely needed.
 
 ## Output shape
 
-After all return:
-
 ```
 Found:
-- Dispatched <N> agents in parallel
-- DONE: <list>
-- DONE_WITH_CONCERNS: <list>
-- BLOCKED: <list>
-- NEEDS_CONTEXT: <list>
-Conflicts:
-- <file> edited by agent A and B — merged into <commit>  (or "none")
+- Dispatched <N> agents in parallel (<read-only | isolated writers>)
+- DONE: <list>   DONE_WITH_CONCERNS: <list>   BLOCKED: <list>   NEEDS_CONTEXT: <list>
+Merged:
+- <branch> → <base> (clean)   ×N    (or "n/a — read-only")
 Verify:
 - <combined test command> → <line>
 Next:
-- /review the combined diff  (or per-task review pass if high-risk)
+- /review the combined diff (or per-task review if high-risk)
 ```
 
 ## Anti-patterns
 
-- Parallel agents on the same file.
-- Dispatching parallel before understanding the failure mode.
-- Trusting a `DONE` without `Verify:` matching.
+- **Parallel writers on the same checkout** — the cardinal sin; isolate them in worktrees or go sequential.
+- A read-only agent that edits files or runs `git stash`/`reset`/`checkout` — it isn't read-only. The guard blocks the *destructive* git (stash/reset/clean/checkout/restore), but it does NOT block `git add`/`commit` or `Edit`/`Write` tool calls — so the envelope must forbid those too. Isolation (separate worktrees) is the real protection; the guard is only the backstop.
+- Parallel agents on the same file, even in separate worktrees (merge conflicts).
+- Trusting a `DONE` without a matching `Verify:`.
 - Dispatching 10 agents because you can; coordination cost dominates.
-- Forgetting to mark tasks `completed` via `TaskUpdate` → state drifts.
+- Forgetting to `TaskUpdate` → state drifts.

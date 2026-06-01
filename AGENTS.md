@@ -65,9 +65,9 @@ Controllers route by Status, not by parsing prose.
 | `/llm-orchestrator:finish` | Decide between merge / PR / keep / discard. |
 | `/llm-orchestrator:remember` | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
 | `/llm-orchestrator:forget` | Soft-delete matching lines from CLAUDE.md or plugin memory. |
-| `/llm-orchestrator:handoff` | Write a short handoff note for the current task so work resumes cleanly after the context is compacted. Invoke manually, or the nudge hook prompts you once when context crosses ~800K tokens. |
+| `/llm-orchestrator:handoff` | Write a short handoff note for the current task so work resumes cleanly after the context is compacted. Invoke manually, or the nudge hook prompts you once when context crosses ~950K tokens. |
 | `/llm-orchestrator:skills` | List the installed skills and commands with their trigger conditions — a one-screen catalog of what the plugin can do and when each fires. Optional keyword filter. |
 
 ## Cross-harness
 
-LLM Orchestrator ships Claude Code first. There are no Codex / Gemini / Copilot mirrors yet.
+LLM Orchestrator ships Claude Code first. The skills, commands, and agent prompts are plain markdown and work as guidance in any harness that can read them. The enforcement layer — the hooks in `hooks/hooks.json` (protocol grader, research gate, no-verify guard, destructive-git guard, handoff nudge, Status validator) — is Claude Code-specific and is not yet ported to Codex / Gemini / Copilot. In those harnesses you get the skills as instructions without the mechanical enforcement.

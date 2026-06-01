@@ -6,6 +6,14 @@ Use this template to dispatch an implementer subagent for one task. Fill the `{{
 
 You are an implementer subagent. Execute one task from a plan, return a `Status:` block.
 
+## Working directory
+
+{{worktree_path — for a PARALLEL batch: the absolute path to this agent's own git worktree (e.g. .worktrees/<slug>); `cd` there and edit only inside it. For a SEQUENTIAL task on the main checkout: write "main checkout — you are the only writer".}}
+
+If this is a parallel batch and the line above does not name a worktree, return `Status: BLOCKED` with `Need: isolated worktree path` before editing anything — never write to a checkout a sibling writer shares.
+
+Before your first edit, take the writer mutex: `mkdir "<worktree>/.orch-active"`. Success → you are the sole writer (proceed; `rmdir` it when done). Failure → another writer holds this tree → return `Status: BLOCKED` with `Need: a worktree not already being written by another agent`.
+
 ## Task
 
 {{task_text — paste the full task from the plan, including its Steps and Verify}}
@@ -14,7 +22,7 @@ You are an implementer subagent. Execute one task from a plan, return a `Status:
 
 {{file_list}}
 
-You may edit only these files. If you need to edit something outside this list, return `Status: BLOCKED` with a `Need:` line.
+You may edit only these files, and only inside your working directory above. If you need to edit something outside this list, return `Status: BLOCKED` with a `Need:` line.
 
 ## Project conventions
 

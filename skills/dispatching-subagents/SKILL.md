@@ -7,6 +7,11 @@ description: Use when running one or more plan tasks sequentially with per-task 
 
 Run one task to completion before the next. Review each task's diff before moving on.
 
+This is also the safe default whenever writers share a checkout: because tasks run one at a time
+on the same tree, they cannot race or clobber each other. Only reach for
+`dispatching-parallel-agents` when the writers are isolated in separate worktrees (or the fan-out
+is read-only). When in doubt, stay here — sequential never loses work.
+
 ## When to use
 
 - A task that depends on prior tasks (the plan marks `Independent: no` or `depends on N`).

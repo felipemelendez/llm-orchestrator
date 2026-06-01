@@ -28,12 +28,15 @@ Skip for tiny edits on a clean tree — just commit.
    - `.worktrees/<slug>` (project-local; preferred)
    - `~/.llm-orchestrator/worktrees/<project>/<slug>` (fallback)
 
-3. **Add the worktree.**
+3. **Add the worktree — on a unique path and a unique branch.** Never point two writers at the same directory or the same branch.
    ```
    git worktree add .worktrees/<slug> -b <branch-name>
    ```
+   `git worktree add` itself refuses a path that already exists or a branch already checked out elsewhere — that refusal is your mechanical guard against two writers colliding on one tree. If it errors with "already exists" / "already checked out", STOP: a sibling owns that worktree; pick a different slug, do not reuse it.
 
-4. **Mark provenance.** Drop `.orch-worktree` in the new dir. This file is LLM Orchestrator's signal that *we* created it — cleanup will only remove worktrees with this marker.
+4. **Mark provenance.** Drop `.orch-worktree` in the new dir (cleanup only removes worktrees with this marker). `.orch-worktree-lock` records the owning session id for the registry's `--list`/`--release` — it is *informational provenance*, not the anti-clobber mechanism.
+
+   The two **real mechanical guards** are: (a) at create time, `git worktree add`'s own refusal of a duplicate path/branch plus the registry's atomic `mkdir` claim (see `orch-worktree-materialize.sh`); (b) at write time, the implementer's atomic `mkdir <worktree>/.orch-active` mutex — two writers handed the same path can never both proceed, because `mkdir` has exactly one winner. Both fail loudly; neither relies on a writer reading and obeying a text file.
 
 5. **Add to .gitignore if needed.**
    ```
@@ -54,13 +57,23 @@ Skip for tiny edits on a clean tree — just commit.
 
 ## Cleanup
 
+Release the ownership claim **before** removing the worktree (so a concurrent prune can't race the
+removal), then remove:
+
 ```
-cd <main-repo-root>
+cd "$(git rev-parse --show-toplevel)"
+MAT="${CLAUDE_PLUGIN_ROOT:-.}/scripts/orch-worktree-materialize.sh"; [[ -f "$MAT" ]] || MAT=".claude/scripts/orch-worktree-materialize.sh"
+SID="$(bash "$MAT" --sid)"
+bash "$MAT" --release "$SID" <slug>
 git worktree remove .worktrees/<slug>
 git worktree prune
 ```
 
-Refuse cleanup if `.orch-worktree` is missing — that worktree wasn't ours.
+Refuse cleanup if `.orch-worktree` is missing — that worktree wasn't ours. If `--release` reports
+either "release denied" (the session id changed mid-batch, e.g. after a `/clear`) or "refusing to
+release in-progress claim" (a kill-in-window orphan), ignore it and continue with `git worktree
+remove`: once the worktree directory is gone, the Stop hook's `--prune` reclaims the stale claim
+within the TTL. A denied release is never a permanent leak.
 
 ## Output shape
 
