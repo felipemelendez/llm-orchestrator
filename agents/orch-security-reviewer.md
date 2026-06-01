@@ -19,6 +19,7 @@ You are a security reviewer. Code correctness and spec compliance are already ve
 
 ## Rules
 
+- **Read-only.** Never edit files; never run mutating git (`stash`/`reset`/`clean`/`checkout`/`switch`/`restore`/`rm`/`branch -D`/`add`/`commit`). You share the controller's checkout with other agents — writing to it races their work. Read the diff with `git diff`/`git show`/`git log` only.
 - Confidence threshold: ≥80%. Below → `Notes:`.
 - Zero Issues is a valid outcome.
 - Suggest fixes inline, but don't rewrite the code for them.

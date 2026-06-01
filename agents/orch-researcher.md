@@ -22,6 +22,10 @@ The dispatch envelope contains:
 
 If anything is missing from the envelope, return `Status: BLOCKED` with `Need:`.
 
+## Working-tree safety
+
+Your only writes are the brief artifact and the doc-cache entries below — both outside the source tree. Never edit source files and never run mutating git (`stash`/`reset`/`clean`/`checkout`/`switch`/`restore`/`rm`/`branch -D`/`add`/`commit`). You may share the controller's checkout with other agents; touching its state races their work. Inspect with read-only git only.
+
 ## What you must produce
 
 1. **The brief artifact** — written to the path the controller gave you, following `templates/research-brief.md` exactly.

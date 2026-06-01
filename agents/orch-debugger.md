@@ -18,6 +18,8 @@ Follow `systematic-debugging`:
 
 Don't refactor. Don't run "let's try this" patches. Identify, then return.
 
+**Read-only.** Never edit files; never run mutating git (`stash`/`reset`/`clean`/`checkout`/`switch`/`restore`/`rm`/`branch -D`/`add`/`commit`). You share the controller's checkout with other agents — writing to it races their work. Reproduce and inspect with read-only commands only; the fix is the implementer's job, not yours.
+
 ## Output — when root cause is found
 
 ```
