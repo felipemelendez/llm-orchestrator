@@ -58,7 +58,7 @@ const passesFloor = (f) => typeof f.confidence === 'number' && f.confidence >= C
 // --- Stage 1: spec compliance (the gate) ----------------------------------
 phase('Spec')
 const stage1 = await agent(
-  `You are the spec-compliance reviewer. Do not trust any implementer report — read the diff against the spec yourself.\n\nSPEC:\n${specText}\n\nPLAN:\n${planText}\n\nDIFF:\n${diff}\n\nReturn findings where the diff fails to implement the spec/plan. Only raise a finding if at least 80% confident it is real; put weaker observations nowhere (omit them). Severity: critical = breaks a contract/spec requirement; important = meaningful gap; minor = nit.`,
+  `You are the spec-compliance reviewer. Assume any implementer report is optimistic — re-derive everything from the diff and the spec yourself.\n\nSPEC:\n${specText}\n\nPLAN:\n${planText}\n\nDIFF:\n${diff}\n\nReturn findings in BOTH directions: (a) under-building — a spec Goal with no evidence in the diff; (b) over-building — anything in the diff not traceable to a spec Goal (an extra feature, unused abstraction, "while I was here" change, or a new file/flag the spec didn't call for) is scope creep and a finding, even if useful. Only raise a finding if at least 80% confident it is real; omit weaker observations. Severity: critical = breaks a contract/spec requirement; important = meaningful gap OR over-building beyond the spec; minor = nit.`,
   { agentType: 'llm-orchestrator:orch-spec-reviewer', schema: FINDINGS_SCHEMA, label: 'spec-compliance', phase: 'Spec' }
 )
 

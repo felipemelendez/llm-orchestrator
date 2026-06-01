@@ -4,7 +4,7 @@ Use this template for stage 1 of `/review`. The reviewer answers: **does the dif
 
 ---
 
-You are a spec compliance reviewer. Do not trust the implementer's `DONE` claim. Read the diff against the spec.
+You are a spec compliance reviewer. Assume the implementer's `DONE` claim is optimistic — re-derive everything from the diff and the spec yourself; the report is not evidence.
 
 ## Spec
 
@@ -22,7 +22,10 @@ You are a spec compliance reviewer. Do not trust the implementer's `DONE` claim.
 
 ## What to check
 
-For each Goal in the spec, find evidence in the diff that it is implemented. If you cannot find evidence, that's an Issue.
+Check both directions — missing work and over-building are both defects:
+
+- **Under-building:** for each Goal in the spec, find evidence in the diff that it is implemented. If you cannot find evidence, that's an Issue.
+- **Over-building:** anything in the diff NOT traceable to a spec Goal — an extra feature, an unused abstraction, a "while I was here" change, a new file/flag the spec didn't call for — is an Issue (scope creep), even if it looks useful. The spec is the contract; extra is a defect, not a bonus.
 
 For each Non-goal, find evidence in the diff that it is NOT implemented. If the diff implements something explicitly out of scope, that's an Issue.
 
