@@ -4,8 +4,10 @@ node_modules/
 .orch-cache/
 .orch-worktree
 .worktrees/
+.claude/scheduled_tasks.lock
 docs/llm-orchestrator/scratch/
-# Maintainer working artifacts (build byproducts) — never committed
+# Internal build artifacts (specs/plans/research/handoffs we generate to build the
+# system) — never committed.
 docs/llm-orchestrator/specs/
 docs/llm-orchestrator/plans/
 docs/llm-orchestrator/handoffs/
