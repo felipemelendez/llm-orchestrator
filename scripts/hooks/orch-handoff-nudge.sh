@@ -2,7 +2,7 @@
 # LLM Orchestrator handoff nudge — UserPromptSubmit hook.
 #
 # ONE job: when the conversation's token usage first crosses an absolute floor
-# (ORCH_CONTEXT_HANDOFF_TOKENS, default 800000), tell the agent ONCE to write
+# (ORCH_CONTEXT_HANDOFF_TOKENS, default 950000), tell the agent ONCE to write
 # the durable handoff note, so the note exists before native auto-compaction
 # summarizes in-flight state. The matching half is session-start.sh, which
 # fires on source=compact and reminds the next turn to READ that note.
@@ -49,8 +49,8 @@ source "${_LIB}"
 TOKENS=$(orch_handoff_total_tokens "${TRANSCRIPT}" 1 2>/dev/null || true)
 [[ "${TOKENS}" == "unknown" || -z "${TOKENS}" ]] && exit 0
 
-FLOOR="${ORCH_CONTEXT_HANDOFF_TOKENS:-800000}"
-[[ "${FLOOR}" =~ ^[0-9]+$ ]] || FLOOR=800000
+FLOOR="${ORCH_CONTEXT_HANDOFF_TOKENS:-950000}"
+[[ "${FLOOR}" =~ ^[0-9]+$ ]] || FLOOR=950000
 # Force base-10 so a leading-zero value (e.g. 0700000) is not read as octal in
 # the arithmetic comparison / message below.
 FLOOR=$((10#${FLOOR}))

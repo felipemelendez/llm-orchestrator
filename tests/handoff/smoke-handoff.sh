@@ -74,8 +74,9 @@ else
   # Hermetic state dir so the fire-once marker never pre-exists / leaks.
   _SMOKE_HOME="$(mktemp -d)"
 
-  # high-input.json (850K, above the 800K floor) → nudge fires (additionalContext).
-  HIGH_OUT=$(CLAUDE_PROJECT_DIR="${ROOT}" ORCH_HOME="${_SMOKE_HOME}" \
+  # high-input.json (850K) with the floor pinned to 800K (independent of the
+  # 950000 production default) → nudge fires (additionalContext).
+  HIGH_OUT=$(CLAUDE_PROJECT_DIR="${ROOT}" ORCH_HOME="${_SMOKE_HOME}" ORCH_CONTEXT_HANDOFF_TOKENS=800000 \
     bash "$HOOK" < "${FIXTURES}/high-input.json" 2>/dev/null || true)
 
   if printf '%s' "$HIGH_OUT" | grep -q 'additionalContext'; then
@@ -84,8 +85,8 @@ else
     fail "high-input.json (850K) → nudge fires" "got: '${HIGH_OUT}'"
   fi
 
-  # floor-below-input.json (50K, under the 800K floor) → silent.
-  LOW_OUT=$(CLAUDE_PROJECT_DIR="${ROOT}" ORCH_HOME="${_SMOKE_HOME}" \
+  # floor-below-input.json (50K, under the floor) → silent.
+  LOW_OUT=$(CLAUDE_PROJECT_DIR="${ROOT}" ORCH_HOME="${_SMOKE_HOME}" ORCH_CONTEXT_HANDOFF_TOKENS=800000 \
     bash "$HOOK" < "${FIXTURES}/floor-below-input.json" 2>/dev/null || true)
 
   if [[ -z "$LOW_OUT" ]]; then

@@ -4,7 +4,7 @@
     "ORCH_HOOK_PROFILE": "standard",
     "ORCH_SESSION_MAX_CHARS": "8000",
     "ORCH_SESSION_RETENTION_DAYS": "90",
-    "ORCH_CONTEXT_HANDOFF_TOKENS": "800000"
+    "ORCH_CONTEXT_HANDOFF_TOKENS": "950000"
   },
   "permissions": {
     "allow": [
@@ -41,6 +41,6 @@
       "Bash(curl * | bash)"
     ]
   },
-  "_handoff_note": "ORCH_CONTEXT_HANDOFF_TOKENS is the token count at which the agent is reminded once to write a handoff note (a short status file) so a long task can continue cleanly after Claude Code compacts the conversation. Default 800000, which sits below the point where native compaction kicks in on a 1M-token window. Lower it for a smaller window. You can also write the note anytime with /llm-orchestrator:handoff.",
+  "_handoff_note": "ORCH_CONTEXT_HANDOFF_TOKENS is the token count at which the agent is reminded once to write a handoff note (a short status file) so a long task can continue cleanly after Claude Code compacts the conversation. Default 950000 (~95% of a 1M-token window), just below the point where native compaction kicks in. Lower it for a smaller window. You can also write the note anytime with /llm-orchestrator:handoff.",
   "_hooks_note": "If you installed via --copy (not as a plugin), add hook entries here using Claude Code's settings.json hook schema. See docs/install.md → 'Wiring hooks for a --copy install' for the full example. If you installed as a plugin, hooks come from .claude-plugin/plugin.json automatically — leave this block out."
 }

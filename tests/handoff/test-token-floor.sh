@@ -2,7 +2,7 @@
 # Tests for (a) the lib token-estimation helpers and (b) the handoff-nudge hook
 # (scripts/hooks/orch-handoff-nudge.sh), which fires ONCE per fill cycle when
 # conversation token usage first crosses ORCH_CONTEXT_HANDOFF_TOKENS (default
-# 800000), telling the agent to write the handoff note. It re-arms when usage
+# 950000), telling the agent to write the handoff note. It re-arms when usage
 # drops back below the floor (e.g. after a compaction), so a long session gets
 # one nudge per cycle, never per-turn nagging.
 #
@@ -37,10 +37,12 @@ export ORCH_HOME="${TMPHOME}/orch"
 trap 'rm -rf "${TMPHOME}"' EXIT
 
 # Run the nudge hook with a given transcript fixture + session id.
+# Pin the floor to 800K here so the crossing assertions (850K fires / 200K
+# silent) are independent of the production default (950000).
 nudge() {
   local jsonl="$1" sid="$2"
   printf '{"hook_event_name":"UserPromptSubmit","session_id":"%s","transcript_path":"tests/handoff/fixtures/%s"}' "$sid" "$jsonl" \
-    | CLAUDE_PROJECT_DIR="${ROOT}" bash "$HOOK" 2>/dev/null || true
+    | CLAUDE_PROJECT_DIR="${ROOT}" ORCH_CONTEXT_HANDOFF_TOKENS=800000 bash "$HOOK" 2>/dev/null || true
 }
 
 printf '%s== lib: token extraction, synthetic-skip, window ==%s\n' "$DIM" "$RESET"
@@ -84,10 +86,10 @@ printf '\n%s== hook: floor is configurable ==%s\n' "$DIM" "$RESET"
 OUT=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"s3","transcript_path":"tests/handoff/fixtures/low.jsonl"}' \
   | CLAUDE_PROJECT_DIR="${ROOT}" ORCH_CONTEXT_HANDOFF_TOKENS=150000 bash "$HOOK" 2>/dev/null || true)
 has_ctx "$OUT" && ok "200K with floor lowered to 150K → fires" || fail "configurable floor" "got: '$OUT'"
-# Non-numeric floor falls back to 800000 → 200K silent.
+# Non-numeric floor falls back to 950000 → 200K silent.
 OUT=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"s4","transcript_path":"tests/handoff/fixtures/low.jsonl"}' \
   | CLAUDE_PROJECT_DIR="${ROOT}" ORCH_CONTEXT_HANDOFF_TOKENS=oops bash "$HOOK" 2>/dev/null || true)
-[[ -z "$OUT" ]] && ok "non-numeric floor → defaults to 800000 → 200K silent" || fail "floor fallback" "got: '$OUT'"
+[[ -z "$OUT" ]] && ok "non-numeric floor → defaults to 950000 → 200K silent" || fail "floor fallback" "got: '$OUT'"
 
 printf '\n%s== hook: disabled / minimal → silent even above floor ==%s\n' "$DIM" "$RESET"
 OUT=$(printf '{"hook_event_name":"UserPromptSubmit","session_id":"s5","transcript_path":"tests/handoff/fixtures/high.jsonl"}' \
