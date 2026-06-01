@@ -54,7 +54,7 @@ report_and_exit() {
   if [[ ${#PENDING[@]} -gt 0 ]]; then local pj; pj="$(printf '%s, ' "${PENDING[@]}")"; printf 'Pending (not attempted, original order):\n- %s\n' "${pj%, }"; fi
   if [[ ${#RERUN[@]} -gt 0 ]]; then
     local t="--test $(printf '%q' "${TESTCMD}")"; [[ ${UNVERIFIED} -eq 1 ]] && t="--allow-no-tests"; [[ ${NOREMOVE} -eq 1 ]] && t="${t} --no-remove"
-    printf 'Re-run: orch-worktree-integrate.sh %s %s %s\n' "${t}" "${SID:-<sid>}" "${RERUN[*]}"
+    printf 'Re-run: bash %s %s %s %s\n' "${_SCRIPT_DIR}/orch-worktree-integrate.sh" "${t}" "${SID:-<sid>}" "${RERUN[*]}"
   fi
   exit "${code}"
 }
