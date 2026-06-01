@@ -24,6 +24,20 @@ agent, so the fan-out has to earn it):
 Good fits today: the two-stage code review (`workflows/review-diff.js`), parallel implementation
 of genuinely independent plan tasks, high-stakes multi-source research.
 
+## The isolation invariant (applies inside scripts too)
+
+The same rule as `dispatching-parallel-agents`: **no two agents write the same working tree at
+once.** It does not relax just because the fan-out is scripted.
+
+- **Read-only fan-out** (review, research, explore) — the agents only read and report. Safe to
+  `parallel()`/`pipeline()` on the shared checkout. `workflows/review-diff.js` is this shape.
+- **Writer fan-out** (parallel implementation) — every writing `agent()` MUST take
+  `isolation: 'worktree'` so each runs in its own checkout; the script then merges the branches
+  back sequentially. Never `parallel()` two writers without it — they would race the shared tree.
+
+So: writer agents → `agent(prompt, { isolation: 'worktree', ... })`; reviewer/research agents →
+plain `agent()`. If a script fans out writers without `isolation: 'worktree'`, that is a bug.
+
 ## When to stay inline
 
 - Sequential or interdependent work where each step needs the previous one's result. Most coding
@@ -70,3 +84,4 @@ The security-sensitive token set lives once, in `scripts/lib/orch-signals.sh`
 - Re-deriving the security regex (or any gate) inside a script instead of taking it via `args`.
 - Claiming the workflow and markdown paths are behaviorally identical.
 - One skeptic agent per finding with no cap.
+- Fanning out writer agents without `isolation: 'worktree'` — they race the shared checkout.

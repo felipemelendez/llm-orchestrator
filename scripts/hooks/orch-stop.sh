@@ -54,4 +54,11 @@ if [[ -d "${RESEARCH_CACHE_DIR}" ]]; then
   done < <(find "${RESEARCH_CACHE_DIR}" -name '*.md' -type f 2>/dev/null)
 fi
 
+# Worktree registry: drop ownership claims whose worktree directory is gone.
+# Safe to run every turn — an active worktree still exists on disk, so a claim
+# for in-flight work is never pruned.
+_ORCH_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+[[ -f "${_ORCH_ROOT}/scripts/orch-worktree-materialize.sh" ]] && \
+  bash "${_ORCH_ROOT}/scripts/orch-worktree-materialize.sh" --prune >/dev/null 2>&1 || true
+
 exit 0

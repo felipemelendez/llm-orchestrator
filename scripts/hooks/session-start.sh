@@ -37,6 +37,16 @@ INPUT=$(cat || true)
 # another enum-valued source.)
 SOURCE=$(printf '%s' "${INPUT}" | grep -oE '"source"[[:space:]]*:[[:space:]]*"(startup|clear|compact|resume)"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 
+# Persist the Claude Code session id so the worktree registry can key ownership
+# on it (used by orch-worktree-materialize.sh --list / --release; NOT on the
+# writer's anti-clobber critical path, so an absent sid degrades visibility only).
+# Best-effort: never fail the hook over this.
+SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
+if [[ -n "${SESSION_ID}" ]] && . "${ROOT}/scripts/lib/orch-project.sh" 2>/dev/null && declare -f orch_project_hash >/dev/null 2>&1; then
+  _sid_dir="${ORCH_HOME:-${HOME}/.llm-orchestrator}/sessions/$(orch_project_hash)"
+  mkdir -p "${_sid_dir}" 2>/dev/null && printf '%s\n' "${SESSION_ID}" > "${_sid_dir}/sid" 2>/dev/null || true
+fi
+
 strip_frontmatter() {
   awk '
     BEGIN { in_fm=0; passed=0 }
