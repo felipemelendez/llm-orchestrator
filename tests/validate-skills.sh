@@ -65,14 +65,12 @@ while IFS= read -r dir; do
     fail=1
   fi
 
-  # Shouting check — skip inside code fences AND inside explicit directive
-  # blocks like <EXTREMELY-IMPORTANT>...</EXTREMELY-IMPORTANT>. The directive
-  # tag is deliberately load-bearing prose; shouting there is intentional.
+  # Shouting check — skip inside code fences only. The skills no longer use
+  # <EXTREMELY-IMPORTANT> directive blocks (house style is plain imperative
+  # voice), so there is no shouting carveout to honour.
   awk '
     /^```/ { fence = !fence; next }
-    /<EXTREMELY[-_]IMPORTANT>/ { directive = 1; next }
-    /<\/EXTREMELY[-_]IMPORTANT>/ { directive = 0; next }
-    fence || directive { next }
+    fence { next }
     {
       n = split($0, words, /[[:space:]]+/);
       run = 0; max = 0
@@ -115,11 +113,11 @@ while IFS= read -r file; do
     fail=1
   fi
 
-  # Skill references in command bodies must resolve. We look for either:
-  #   - `<skill-name>` matching a known skill dir
-  #   - "Invoke the X skill" patterns
-  KNOWN_SKILLS="brainstorming|writing-plans|executing-plans|test-driven-development|systematic-debugging|using-git-worktrees|dispatching-subagents|dispatching-parallel-agents|requesting-code-review|receiving-code-review|verification-before-completion|finishing-a-branch|writing-skills|managing-memory|using-orchestrator|using-workflows"
-
+  # Skill references in command bodies must resolve to a real skills/<name>/.
+  # Only tokens in an explicit skill-reference CONTEXT are checked — "Invoke/Use
+  # [the] `X`" or "`X` skill" — so a dangling reference IS caught (we assert
+  # membership against the real skill list, NOT a pre-filtered known set; the
+  # latter would make the check tautological and unable to flag anything).
   while IFS= read -r skill_ref; do
     [[ -z "$skill_ref" ]] && continue
     found=0
@@ -130,9 +128,10 @@ while IFS= read -r file; do
       echo "FAIL: $file references unknown skill: $skill_ref"
       fail=1
     fi
-  done < <(grep -oE '`[a-z][a-z0-9-]+`' "$file" \
+  done < <( { grep -oE '([Ii]nvoke|[Uu]se)( the)? `[a-z][a-z0-9-]+`' "$file";
+              grep -oE '`[a-z][a-z0-9-]+` skill' "$file"; } \
+            | grep -oE '`[a-z][a-z0-9-]+`' \
             | tr -d '`' \
-            | grep -E "^(${KNOWN_SKILLS})$" \
             | sort -u)
 
   checked_commands=$((checked_commands+1))

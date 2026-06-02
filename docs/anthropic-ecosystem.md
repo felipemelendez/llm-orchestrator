@@ -91,7 +91,7 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## What we deliberately don't use
 
-- **PostToolUse for output capture** — privacy risk and surveillance shape. Memory is what the user opts into via `/remember`; we don't log tool outputs or transcripts.
+- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log tool outputs, arguments, prompts, or transcripts. The one opt-in, event-only exception is skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
 - **Background MCP observers** — same reason.
 
 ## Upstream changes

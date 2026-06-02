@@ -3,6 +3,33 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-06-01
+
+A reliability, cost, and tone pass. The orchestration behaves the same; it now costs far less context per session, says things plainly instead of shouting, ships new opt-in safety nets (all off by default), and is guarded by a wider test net. No breaking changes — every new enforcement is opt-in behind an `ORCH_STRICT_*` flag, and the safety guards explicitly resist the new dry-run switch.
+
+### Changed
+- **Far less context burned per session.** The SessionStart injection now sends only a marked protocol core (~545 tokens) instead of the whole meta-skill (~2,100 tokens); the full routing table, red-flag list, and dispatch detail stay in the skill file and load only when the agent reads them. The per-turn reminder was trimmed ~41% (~534 → ~314 tokens). A one-shot session now adds ~900 tokens of orchestrator framing, down from ~2,675. A custom meta-skill without the `<!-- ORCH:EAGER -->` markers falls back to full-body injection, so nothing breaks.
+- **Plain voice, no coercion.** Removed the `<EXTREMELY-IMPORTANT>` / "1% chance" / "you have no choice" framing from the meta-skill, the per-turn reminder, and the SessionStart preamble, aligning with Anthropic's own published skills. The rules are unchanged; only the tone is. The skill validator's shouting check is now strict everywhere (no directive-block carve-out).
+- **Leaner research-gate payload.** The gate's injected guidance dropped from ~1KB to ~330 bytes (prior-findings markers kept); a version question about the orchestrator plugin itself ("what version of llm-orchestrator is installed") no longer fires the gate, while real library/version lookups still do.
+- **`research-classifier` split for readability.** The 2,700-word skill is now a ~1,000-word core plus `STRATEGY.md` (aggressiveness, stakes, MCP-nudge rules) and `EXAMPLES.md` (the curated cases the smoke test checks). Skill descriptions across the catalog were tightened toward trigger form. Subagent codenames were removed from user-facing prose (operational dispatch instructions keep them).
+
+### Added
+- **Retry-storm circuit breaker** (`scripts/hooks/orch-retry-cap.sh`, Stop) — when the controller repeats essentially the same reply `ORCH_RETRY_CAP_N` times (default 3), it nudges the user to stop and reassess. Off by default; `ORCH_RETRY_CAP=1` to warn, `ORCH_STRICT_RETRY=1` to block. A different reply resets the counter, so normal progress never trips it.
+- **Verification gate** (`scripts/hooks/orch-verify-gate.sh`, Stop) — warns when a `Changed:` block ships without a `Verify:` line. Warn-only by default; `ORCH_STRICT_VERIFY=1` to block. Escapes on a dirty tree or a `wip` commit so work-in-progress isn't nagged.
+- **Opt-in usage telemetry** (`scripts/hooks/skill-telemetry.sh`, PostToolUse) — when `ORCH_TELEMETRY=1` (env or project `.orchrc`), appends one line per skill invocation: skill name + timestamp + project hash, and nothing else. Never logs prompts, arguments, or output. Off by default.
+- **`ORCH_HOOK_DRY_RUN=1`** — every injecting/grading hook logs what it *would* inject or block, then does nothing. The two git safety guards deliberately ignore it (they can never be made bypassable).
+- **`ORCH_DISABLE_PROTOCOL_GRADER=1`** — full opt-out for the protocol grader; `ORCH_STRICT_PROTOCOL=1` always wins.
+- **Composite `verify=` key** in `orch-detect.sh` — a single runnable check (documented verify script, else composed test/lint/typecheck) so a verification gate has one command to point at.
+- **New tests:** hook latency budget (every per-turn hook < 500ms; SessionStart budgeted separately), opt-in telemetry, the verification gate, and the retry breaker. Plus verify-key detection cases and a SessionStart eager-body budget guard.
+- README gains a **Hook precedence** section: defaults permissive, enforcement opt-in (`ORCH_STRICT_*`), capture opt-in (`ORCH_TELEMETRY`).
+
+### Hardened
+- **SessionStart latency:** a ~570ms per-session stall (a bash end-of-script buffer artifact, surfaced by the new latency test) is gone; the eager-body trim keeps it lean.
+- **`validate-skills.sh`** now actually catches a command that references a non-existent skill (the old reference check was tautological and could never fail), and discovers skills dynamically so a rename needs no test edit.
+- **`orch-lock.sh`** cleans its tempfile on interrupt via a subshell-scoped trap that never clobbers the caller's own signal traps.
+- **python3 dependency** for the protocol/Status graders now surfaces once, loudly, at session start when it's missing, instead of only at grade time.
+- The privacy posture in ARCHITECTURE and the ecosystem doc was amended in step with the new telemetry: tool outputs, arguments, prompts, and transcripts are still never captured — the one opt-in exception is event-only skill telemetry.
+
 ## [0.3.0] - 2026-05-31
 
 ### Added

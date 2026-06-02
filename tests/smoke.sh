@@ -90,7 +90,7 @@ if should_run structural; then
             bash "${ROOT}/tests/test-protocol-grader.sh"
   check_out "protocol hook e2e tests pass" "All 25 checks passed" \
             bash "${ROOT}/tests/test-protocol-hooks.sh"
-  check_out "detect toolchain + cache tests pass" "All 40 detect checks passed" \
+  check_out "detect toolchain + cache tests pass" "All 45 detect checks passed" \
             bash "${ROOT}/tests/test-detect.sh"
   check_out "handoff smoke tests pass" "PASS: smoke-handoff" \
             bash "${ROOT}/tests/handoff/smoke-handoff.sh"
@@ -98,6 +98,14 @@ if should_run structural; then
             bash "${ROOT}/tests/handoff/test-token-floor.sh"
   check_out "handoff precompact tests pass" "PASS: test-precompact" \
             bash "${ROOT}/tests/handoff/test-precompact.sh"
+  check_out "telemetry + dry-run tests pass" "PASS: test-telemetry" \
+            bash "${ROOT}/tests/test-telemetry.sh"
+  check_out "hook latency budget tests pass" "PASS: test-hook-latency" \
+            bash "${ROOT}/tests/test-hook-latency.sh"
+  check_out "verify-gate tests pass" "PASS: test-verify-gate" \
+            bash "${ROOT}/tests/test-verify-gate.sh"
+  check_out "retry-cap tests pass" "PASS: test-retry-cap" \
+            bash "${ROOT}/tests/test-retry-cap.sh"
 fi
 
 # ------------------------------------------------------------
@@ -114,6 +122,10 @@ if should_run hooks; then
   check "SessionStart emits valid JSON" python3 -m json.tool /tmp/orch-smoke-out.json
   check_out "SessionStart loads using-orchestrator skill" "Using LLM Orchestrator" \
             cat /tmp/orch-smoke-out.json
+  # Eager-body budget guard: the SessionStart injection must stay lean (only the
+  # marked protocol core, not the full meta-skill). Catches accidental re-bloat.
+  check "SessionStart eager body stays lean (< 3500 bytes)" \
+    bash -c '[ "$(wc -c < /tmp/orch-smoke-out.json)" -lt 3500 ]'
 
   # UserPromptSubmit — injects protocol reminder
   bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > /tmp/orch-smoke-out.json 2>&1

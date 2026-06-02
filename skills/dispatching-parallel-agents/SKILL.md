@@ -1,6 +1,6 @@
 ---
 name: dispatching-parallel-agents
-description: Use when 3+ tasks are independent (no shared files, no order dependency) and can be done concurrently. Fan-out only — per-task review happens after all return, not inside this skill.
+description: Use when 3+ tasks are independent — no shared files, no order dependency — and can run concurrently. Fan-out only; per-task review happens after all return.
 ---
 
 # Dispatching parallel agents (fan-out)

@@ -204,7 +204,7 @@ How the pieces fit together at the file level.
 - **Research cache + brief index** live at `~/.llm-orchestrator/research/cache/<hash>/` and `~/.llm-orchestrator/research/briefs-index/<hash>.md`. Written by the SubagentStop validator after `orch-researcher` returns; read by the gate hook on the next compelled trigger.
 - `<project-hash>` = SHA-1 of (a) git remote origin URL, (b) repo root path, or (c) cwd, in that order. Resolved by `scripts/lib/orch-project.sh`.
 - SessionStart loads the using-orchestrator meta-skill only. CLAUDE.md loading is Claude Code's native responsibility.
-- No background observer. No surveillance hooks.
+- No background observer. No content capture. The only PostToolUse hook is opt-in event-only skill telemetry (skill name + timestamp + project hash; off by default — see Non-goals).
 
 ---
 
@@ -317,6 +317,6 @@ Claude Code itself, not by this plugin's SessionStart hook).
 ## Non-goals
 
 - Not a multi-agent runtime. Agents are dispatched by the harness, not orchestrated by us.
-- Not a surveillance system. PostToolUse capture is out of scope; memory is opt-in.
+- Not a surveillance system. Tool outputs, arguments, prompts, and transcripts are never captured. The one optional exception is event-only skill telemetry (`ORCH_TELEMETRY=1`, off by default): it appends skill name + timestamp + project hash to `~/.llm-orchestrator/telemetry/skills.jsonl` — and nothing else. Opt-in only.
 - Not a security framework. We expose hook profiles; the harness owns sandboxing.
 - Not a skill catalog warehouse. We cap first-party skills at ~40 by design.

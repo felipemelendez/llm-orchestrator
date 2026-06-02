@@ -82,6 +82,12 @@ json_escape() {
 }
 
 MSG="Context has passed ~${FLOOR} tokens. At the next clean stopping point (a finished step with a green verify, nothing in flight), write or refresh the handoff note with /llm-orchestrator:handoff so it survives the upcoming automatic compaction. You will not be reminded again until after the next compaction."
+
+if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+  printf 'orch-dry-run[orch-handoff-nudge]: would inject handoff nudge (~%s token floor crossed)\n' "${FLOOR}" >&2
+  exit 0
+fi
+
 ESCAPED=$(printf '%s' "${MSG}" | json_escape)
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "${ESCAPED}"
 exit 0

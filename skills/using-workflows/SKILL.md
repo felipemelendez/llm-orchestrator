@@ -1,6 +1,6 @@
 ---
 name: using-workflows
-description: Use when a task is breadth-first and fans out into independent subagents (multi-dimension review, parallel implementation of independent tasks, multi-source research) and you are deciding whether to run it on Claude Code's Workflow tool or inline. The routing brain for the Workflow execution substrate.
+description: Use when a breadth-first task fans out into independent subagents (multi-dimension review, parallel implementation, multi-source research) and you're choosing the Workflow tool versus inline.
 ---
 
 # Using workflows

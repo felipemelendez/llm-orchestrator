@@ -146,6 +146,8 @@ detect_has   "package.json" "$NODE_DIR" "test"      "npm run test"
 detect_has   "package.json" "$NODE_DIR" "lint"      "npm run lint"
 detect_has   "package.json" "$NODE_DIR" "typecheck" "npm run typecheck"
 detect_has   "package.json" "$NODE_DIR" "build"     "npm run build"
+# Composed verify: chain of the non-empty safe checks (no documented verify script).
+detect_has   "package.json" "$NODE_DIR" "verify"    "npm run test && npm run lint && npm run typecheck"
 
 # ============================================================
 # Section 2: Python / pyproject.toml
@@ -178,6 +180,37 @@ detect_has   "go.mod" "$GO_DIR" "lint" "go vet ./..."
 printf '\n%s== Makefile detection ==%s\n' "$DIM" "$RESET"
 
 detect_has   "Makefile" "$MAKE_DIR" "test" "make test"
+detect_has   "Makefile" "$MAKE_DIR" "verify" "make test && make lint"
+
+# ============================================================
+# Section 5b: verify= composition and documented-verify precedence
+# ============================================================
+printf '\n%s== verify key ==%s\n' "$DIM" "$RESET"
+
+# Documented verify script wins over the composed fallback.
+VERIFY_DIR="$TMP/verify-project"
+mkdir -p "$VERIFY_DIR"
+cat > "$VERIFY_DIR/package.json" <<'EOF'
+{
+  "scripts": {
+    "test": "jest",
+    "lint": "eslint .",
+    "verify": "npm run test && npm run lint"
+  }
+}
+EOF
+detect_has   "documented verify" "$VERIFY_DIR" "verify" "npm run verify"
+
+# Partial composition: only test present → verify is just that one check.
+TEST_ONLY_DIR="$TMP/test-only-project"
+mkdir -p "$TEST_ONLY_DIR"
+cat > "$TEST_ONLY_DIR/package.json" <<'EOF'
+{"scripts":{"test":"jest"}}
+EOF
+detect_has   "single-check verify" "$TEST_ONLY_DIR" "verify" "npm run test"
+
+# Empty dir → no verify key.
+detect_missing "empty verify" "$EMPTY_DIR" "verify"
 
 # ============================================================
 # Section 6: Empty dir → nothing emitted

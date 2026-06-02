@@ -1,6 +1,6 @@
 ---
 name: requesting-code-review
-description: You MUST use this when a diff is ready — before merge, before PR, before claiming any feature is done. Runs the two-stage review (spec compliance, then code quality) and an optional Stage 3 security review, then integrates the verdict.
+description: You MUST use this when a diff is ready — before merge, before a PR, or before claiming any feature done. Runs the two-stage review plus an optional security pass.
 ---
 
 # Requesting code review

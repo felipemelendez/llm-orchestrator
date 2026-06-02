@@ -115,6 +115,15 @@ ORCH_SIG_INVOCATION='/llm-orchestrator:research'
 # Installed-version lookups.
 ORCH_SIG_QUESTION_VERSION='\b(what[[:space:]]+version[[:space:]]+of|which[[:space:]]+version[[:space:]]+of|current[[:space:]]+version[[:space:]]+of|version[[:space:]]+is[[:space:]]+installed|version[[:space:]]+do[[:space:]]+we[[:space:]]+have|version[[:space:]]+are[[:space:]]+we[[:space:]]+on)\b'
 
+# Self-referential / local-state suppressor. A version question about the
+# orchestrator plugin itself (or "this plugin") is answerable by reading
+# on-disk files — it needs no upstream-docs research pass. When this matches,
+# the installed-version question branch does NOT compel the gate. It is a
+# suppressor, not a compel signal: it never appears in the signal-class map.
+# It is intentionally narrow so library lookups ("what version of openssl is
+# installed") still compel.
+ORCH_SIG_LOCAL_SELF_LOOKUP='\b(llm-orchestrator|llm[[:space:]]+orchestrator|this[[:space:]]+plugin|the[[:space:]]+orchestrator[[:space:]]+plugin)\b'
+
 # Security-advisory queries.
 ORCH_SIG_QUESTION_ADVISORY='\b(cve|vulnerability|security[[:space:]]+advisory|advisory[[:space:]]+for|deprecation[[:space:]]+notice|known[[:space:]]+cve|any[[:space:]]+cve|eol[[:space:]]+date)\b'
 
