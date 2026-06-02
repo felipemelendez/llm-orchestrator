@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: You MUST use this before any creative work — building features, adding functionality, designing systems, or changing behavior. Explores intent and produces a short spec the user can approve before any code is written.
+description: You MUST use this before any creative work — building a feature, adding functionality, designing a system, or changing behavior — before any code is written.
 ---
 
 # Brainstorming

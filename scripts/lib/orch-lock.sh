@@ -75,8 +75,6 @@ append_under_section() {
 # Called via with_lock — must be visible in the same shell as the caller.
 _orch_append_under_section_unlocked() {
   local file="$1" section="$2" line="$3"
-  local tmp="${file}.tmp.$$"
-  local inserted=0 l
 
   if [[ ! -f "$file" ]]; then
     # File doesn't exist — create with just the section + line.
@@ -84,17 +82,29 @@ _orch_append_under_section_unlocked() {
     return 0
   fi
 
-  while IFS= read -r l || [[ -n "$l" ]]; do
-    printf '%s\n' "$l"
-    if [[ "$l" == "## $section" && "$inserted" == "0" ]]; then
-      printf '%s\n' "$line"
-      inserted=1
+  # Do the rewrite in a subshell with an EXIT-scoped tempfile cleanup. A subshell
+  # EXIT trap fires on normal completion and on a signal that terminates the
+  # subshell, so a killed write leaves no ${file}.tmp.$$ behind — and because the
+  # trap lives in the subshell it never touches the caller's own traps (an
+  # EXIT/INT trap in this function's shell would clobber them). with_lock still
+  # releases the lockdir when this returns, so the lock is not stranded.
+  (
+    local tmp="${file}.tmp.$$"
+    local inserted=0 l
+    trap 'rm -f "${tmp}"' EXIT
+
+    while IFS= read -r l || [[ -n "$l" ]]; do
+      printf '%s\n' "$l"
+      if [[ "$l" == "## $section" && "$inserted" == "0" ]]; then
+        printf '%s\n' "$line"
+        inserted=1
+      fi
+    done < "$file" > "$tmp"
+
+    if [[ "$inserted" == "0" ]]; then
+      printf '\n## %s\n%s\n' "$section" "$line" >> "$tmp"
     fi
-  done < "$file" > "$tmp"
 
-  if [[ "$inserted" == "0" ]]; then
-    printf '\n## %s\n%s\n' "$section" "$line" >> "$tmp"
-  fi
-
-  mv "$tmp" "$file"
+    mv "$tmp" "$file"
+  )
 }

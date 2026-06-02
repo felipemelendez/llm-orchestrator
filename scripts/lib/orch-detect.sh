@@ -98,7 +98,7 @@ orch_detect_toolchain() {
   # We collect each key independently so manifests can supply different keys.
   # But package.json wins for all keys it covers (first-match-per-key logic).
 
-  local test_cmd="" lint_cmd="" typecheck_cmd="" build_cmd=""
+  local test_cmd="" lint_cmd="" typecheck_cmd="" build_cmd="" verify_cmd=""
 
   # ---- 1. package.json ----
   if [[ -f "$pkg_json" ]]; then
@@ -114,6 +114,10 @@ orch_detect_toolchain() {
 
     val=$(_orch_json_script_val "$pkg_json" "build")
     [[ -n "$val" ]] && build_cmd="npm run build"
+
+    # A documented "verify" script wins over the composed fallback below.
+    val=$(_orch_json_script_val "$pkg_json" "verify")
+    [[ -n "$val" ]] && verify_cmd="npm run verify"
   fi
 
   # ---- 2. pyproject.toml ----
@@ -158,6 +162,24 @@ orch_detect_toolchain() {
     if [[ -z "$build_cmd" ]] && _orch_make_has_target "$makefile" "build"; then
       build_cmd="make build"
     fi
+    if [[ -z "$verify_cmd" ]] && _orch_make_has_target "$makefile" "verify"; then
+      verify_cmd="make verify"
+    fi
+  fi
+
+  # Compose a verify command when none is documented: chain the non-empty
+  # safe checks with && so the loop closes on a single pass/fail. Skip empty
+  # parts. A documented verify script (detected above) always wins.
+  if [[ -z "$verify_cmd" ]]; then
+    local part
+    for part in "$test_cmd" "$lint_cmd" "$typecheck_cmd"; do
+      [[ -z "$part" ]] && continue
+      if [[ -z "$verify_cmd" ]]; then
+        verify_cmd="$part"
+      else
+        verify_cmd="${verify_cmd} && ${part}"
+      fi
+    done
   fi
 
   # Emit only non-empty keys.
@@ -165,6 +187,7 @@ orch_detect_toolchain() {
   [[ -n "$lint_cmd"      ]] && printf 'lint=%s\n'      "$lint_cmd"
   [[ -n "$typecheck_cmd" ]] && printf 'typecheck=%s\n' "$typecheck_cmd"
   [[ -n "$build_cmd"     ]] && printf 'build=%s\n'     "$build_cmd"
+  [[ -n "$verify_cmd"    ]] && printf 'verify=%s\n'    "$verify_cmd"
 }
 
 # ---------------------------------------------------------------------------

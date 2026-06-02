@@ -29,6 +29,8 @@ Verify:
 
 ### 2. Found — research / read-only tasks
 
+`Found:` is also the shape for explanation queries — "what does X do", "how does Y work" — not just locating code ("where is X").
+
 ```
 Found:
 - <key fact 1>

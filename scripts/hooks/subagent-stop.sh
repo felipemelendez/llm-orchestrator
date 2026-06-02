@@ -79,6 +79,11 @@ fi
 
 WARN="orch-subagent-stop: subagent finished without a Status: block (${GRADE_OUTPUT}). Expected one of DONE (with Summary:) | DONE_WITH_CONCERNS (with Concerns:) | BLOCKED (with Need:) | NEEDS_CONTEXT (with Ask:) at the start of a line."
 
+if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+  printf 'orch-dry-run[orch-subagent-stop]: would %s — %s\n' "$([[ "${STRICT}" == "1" ]] && echo 'block (exit 2)' || echo 'warn (stderr)')" "${WARN}" >&2
+  exit 0
+fi
+
 if [[ "${STRICT}" == "1" ]]; then
   printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
   exit 2

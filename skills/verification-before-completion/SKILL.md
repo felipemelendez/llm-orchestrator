@@ -1,6 +1,6 @@
 ---
 name: verification-before-completion
-description: You MUST use this before claiming any work is done, fixed, passing, or ready to merge. Forces a real run of the verifying command before the claim — no exceptions.
+description: You MUST use this before claiming any work is done, fixed, passing, or ready to merge. Forces a real run of the verifying command first.
 ---
 
 # Verification before completion

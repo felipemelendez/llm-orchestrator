@@ -112,8 +112,16 @@ fi
 # Question-shape research — compel without a design verb.
 if (( should_compel == 0 )); then
   if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_QUESTION_VERSION}"; then
-    should_compel=1
-    matched_signal="installed-version lookup"
+    # Suppress when the subject is the orchestrator plugin itself — answerable
+    # by reading on-disk files, not an upstream-docs question. Library lookups
+    # ("what version of openssl is installed") are not self-referential and
+    # still compel.
+    if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_LOCAL_SELF_LOOKUP}"; then
+      : # local self-lookup — do not compel research
+    else
+      should_compel=1
+      matched_signal="installed-version lookup"
+    fi
   elif printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_QUESTION_ADVISORY}"; then
     should_compel=1
     matched_signal="security-advisory query"
@@ -237,7 +245,7 @@ fi
 # append optional sections only when corresponding priors were found.
 # ============================================================================
 
-GUIDANCE="LLM Orchestrator research-gate detected potential research-relevant signals in this message (${matched_signal}). Before invoking brainstorming, writing-plans, or producing any spec/plan/approach, invoke the research-classifier skill against the task text. Act on its Status: RESEARCH_NEEDED or RESEARCH_SKIP output. If RESEARCH_NEEDED, dispatch orch-researcher and surface the brief BEFORE committing to an approach. If RESEARCH_SKIP, proceed normally — do not announce the skip."
+GUIDANCE="LLM Orchestrator research-gate: signals detected (${matched_signal}). Before any spec, plan, or approach, invoke the research-classifier skill on the task text and act on its RESEARCH_NEEDED / RESEARCH_SKIP verdict. On RESEARCH_NEEDED, dispatch the research subagent and surface the brief before committing. On RESEARCH_SKIP, proceed silently."
 
 if [[ -n "${RESEARCH_CONFIG}" ]]; then
   GUIDANCE="${GUIDANCE}
@@ -249,14 +257,14 @@ fi
 if [[ -n "${CACHE_HITS}" ]]; then
   GUIDANCE="${GUIDANCE}
 
-Cache priors (use if fresh; re-fetch only if the surface may have shifted since the retrieval date):
+Cache priors (re-fetch only if the surface may have shifted):
 ${CACHE_HITS%$'\n'}"
 fi
 
 if [[ -n "${BRIEF_HITS}" ]]; then
   GUIDANCE="${GUIDANCE}
 
-Prior briefs (consult before re-researching the same surface; the researcher should verify the finding still holds or detect drift, not start from scratch):
+Prior briefs (verify still current; don't re-research from scratch):
 ${BRIEF_HITS%$'\n'}"
 fi
 
@@ -280,6 +288,11 @@ json_escape() {
   s=${s//$'\f'/\\f}
   printf '"%s"' "${s}"
 }
+
+if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+  printf 'orch-dry-run[orch-research-gate]: would inject research-gate guidance (%s chars, signal: %s)\n' "${#GUIDANCE}" "${matched_signal}" >&2
+  exit 0
+fi
 
 ESCAPED=$(printf '%s' "${GUIDANCE}" | json_escape)
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":%s}}\n' "${ESCAPED}"

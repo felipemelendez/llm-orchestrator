@@ -165,6 +165,9 @@ printf '\n%s== Sniffer curated tests (question-shape — Fix 1) ==%s\n' "$DIM" "
 expect_sniffer "What version of openssl is installed in this project?" "compel"
 expect_sniffer "What version of React is installed?"                   "compel"
 expect_sniffer "Which version of Prisma are we on?"                    "compel"
+# Self-referential plugin lookups — answerable locally, must NOT compel
+expect_sniffer "What version of llm-orchestrator is installed?"        "skip"
+expect_sniffer "What version of this plugin is installed?"             "skip"
 # Security-advisory queries — compel without design verb
 expect_sniffer "Is there a known CVE for our React version?"           "compel"
 expect_sniffer "Any CVE for openssl 3.0?"                              "compel"

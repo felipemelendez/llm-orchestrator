@@ -19,6 +19,12 @@ if [[ ",${DISABLED}," == *",orch-protocol-grader,"* ]] || [[ "${PROFILE}" == "mi
   exit 0
 fi
 
+# Full opt-out for the grader — but strict mode always wins, so the enforcement
+# path can never be silently disabled by this flag.
+if [[ "${ORCH_DISABLE_PROTOCOL_GRADER:-0}" == "1" && "${STRICT}" != "1" ]]; then
+  exit 0
+fi
+
 if ! command -v python3 >/dev/null 2>&1; then
   printf 'orch-protocol-grader: python3 not found — protocol grading disabled\n' >&2
   exit 0
@@ -60,6 +66,10 @@ GRADE_RC=$?
 
 if [[ ${GRADE_RC} -ne 0 ]]; then
   WARN="orch-protocol-grader: controller reply does not conform to Concise Agent Protocol. ${GRADE_OUT}"
+  if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+    printf 'orch-dry-run[orch-protocol-grader]: would %s — %s\n' "$([[ "${STRICT}" == "1" ]] && echo 'block (exit 2)' || echo 'warn (stderr)')" "${WARN}" >&2
+    exit 0
+  fi
   if [[ "${STRICT}" == "1" ]]; then
     printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
     exit 2

@@ -248,6 +248,11 @@ json_escape() {
   printf '"%s"' "${s}"
 }
 
+if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+  printf 'orch-dry-run[orch-researcher-validator]: would %s — %s\n' "$([[ "${STRICT}" == "1" ]] && echo 'block (exit 2)' || echo 'warn (stderr)')" "${WARNING}" >&2
+  exit 0
+fi
+
 if [[ "${STRICT}" == "1" ]]; then
   ESCAPED=$(printf '%s' "${WARNING}" | json_escape)
   printf '{"decision":"block","reason":%s}\n' "${ESCAPED}"

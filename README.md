@@ -188,6 +188,23 @@ Implementation reference with code links and the layer-stack diagram: [`ARCHITEC
 
 ---
 
+## Hook precedence
+
+The hooks follow three rules so their behavior is predictable without reading the source:
+
+1. **Defaults are permissive.** Out of the box, no hook blocks your turn or rewrites your work. Hooks inject context and grade output; they don't gate it.
+2. **Enforcement is opt-in, always under an `ORCH_STRICT_*` flag.** A hook only blocks when you ask it to: `ORCH_STRICT_PROTOCOL=1` makes the protocol grader block off-shape replies; `ORCH_STRICT_VERIFY=1` makes the Stop hook block a `Changed:` block with no verify evidence; `ORCH_STRICT_RETRY=1` makes the retry-storm breaker block once the controller has repeated essentially the same reply `ORCH_RETRY_CAP_N` times (default 3). Unset, each warns at most. The retry breaker is **off entirely** unless `ORCH_RETRY_CAP=1` (warn-only) or `ORCH_STRICT_RETRY=1` — its threshold is a conservative placeholder until telemetry data can tune it.
+3. **Information capture is opt-in, always under `ORCH_TELEMETRY`.** Nothing about your session is recorded unless `ORCH_TELEMETRY=1`. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for exactly what is and isn't logged.
+
+Two switches cut across all of the above:
+
+- **`ORCH_DISABLE_PROTOCOL_GRADER=1`** turns the protocol grader off entirely. `ORCH_STRICT_PROTOCOL=1` wins if both are set — strict mode is never silently disabled.
+- **`ORCH_HOOK_DRY_RUN=1`** makes every hook log what it *would* inject or block to stderr and then do nothing. Use it to tune behavior safely before turning a strict flag on.
+
+When two flags conflict, the safer reading wins: a strict flag beats a disable flag, and dry-run beats an enforcement action.
+
+---
+
 ## Install from source
 
 For contributors and local development:
@@ -195,7 +212,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "All 61 checks passed."
+./tests/smoke.sh                           # → "All 65 checks passed."
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

@@ -123,7 +123,7 @@ if printf '%s' "$MIN_OUT" | grep -q 'resumed immediately after native context co
 else
   ok "minimal profile + compact: recovery note suppressed"
 fi
-if printf '%s' "$MIN_OUT" | grep -q 'EXTREMELY_IMPORTANT'; then
+if printf '%s' "$MIN_OUT" | grep -q 'You are running LLM Orchestrator'; then
   ok "minimal profile: meta-skill bootstrap still loads (not suppressed)"
 else
   fail "minimal profile: meta-skill bootstrap still loads" "bootstrap missing under minimal"
