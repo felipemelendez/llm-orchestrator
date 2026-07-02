@@ -13,6 +13,10 @@ Claims of success cost nothing. Evidence costs a single command. Always pay it.
 - About to mark a task `DONE` in a `Status:` block.
 - About to close a `Plan:` checkbox.
 
+## Delegation
+
+When the harness ships a native verification skill (Claude Code's `verify` drives the affected flow end-to-end), prefer it to run the mechanics — it exercises real behavior, not just the test suite. This skill still governs the two things the native skill doesn't: *when* verification is mandatory (before any done/fixed/passing claim, no exceptions) and *what counts as evidence* (the pasted command + output below). The toolchain-detection steps are the fallback when no native verifier exists.
+
 ## The gate
 
 Before claiming, run through these in order:

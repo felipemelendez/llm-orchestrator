@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: You MUST use this when ANY bug, test failure, exception, regression, or unexpected behavior appears — before proposing or applying any fix. Forces root-cause investigation.
+description: You MUST use this when ANY bug, test failure, exception, regression, or unexpected behavior appears — before proposing or applying any fix. Forces root-cause investigation. Do not use for the expected red phase of TDD — a new failing test you just wrote is progress, not a bug.
 ---
 
 # Systematic debugging

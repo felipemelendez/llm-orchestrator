@@ -36,6 +36,9 @@ Files:
 - create: <path>
 - modify: <path>:<line-range>
 - test: <path>
+Interfaces (optional; authoritative for dependency routing when present):
+- introduces: <symbols/endpoints/schemas/files this task creates>
+- consumes: <what this task needs that another task introduces, or "nothing">
 
 Sub-steps (progress notes):
 - [ ] write failing test in `<file>` covering `<behavior>`

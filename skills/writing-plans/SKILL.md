@@ -19,12 +19,12 @@ Skip for trivial work (under ~15 minutes of editing). Just do it.
 
 1. **Read the spec.** Re-read every section. Note any "TBD". Confirm `## Research` section is populated (verdict + brief path) or explicitly "none".
 2. **Map files.** List every file you will create or modify, with line ranges if obvious. If you can't list them, the spec isn't ready.
-3. **Order tasks.** Each task is independent enough to dispatch, or explicitly marked sequential.
+3. **Order tasks.** Each task is independent enough to dispatch, or explicitly marked sequential. Where independence matters, declare an `Interfaces:` block per task — `introduces:` (symbols/endpoints/files the task creates) and `consumes:` (what it needs from other tasks). The executor treats declared interfaces as authoritative and falls back to body-scanning only when the block is absent.
 4. **For each task, write checkable steps.** 2–5 minutes of work each. Steps include: write test, run test (expect fail), implement, run test (expect pass), commit. Every step must be literal and executable (see the no-placeholder rule below) — the exact command with its expected output line, and the specific change, not a description of it.
 5. **Add risks.** One line per risk. Mitigation if obvious.
 6. **Self-review.** Run the no-placeholder rule below over the whole plan, and check cross-task consistency: a symbol introduced in one task is referenced by the exact same name in later tasks (no `clearLayers()` in task 2 then `clearFullLayers()` in task 5). Confirm `## References` section pulls citations from the brief (if any).
 7. **Save to** `docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md`.
-7.5. **Plan review.** Dispatch a fresh general-purpose subagent (Task tool, `subagent_type: general-purpose`) using `skills/writing-plans/plan-document-reviewer-prompt.md`, passing the plan path and spec path. If the result is `Issues Found`, fix the plan and re-dispatch. Cap at 3 iterations; if still failing after 3, surface the remaining issues to the user rather than blocking. The verdict is advisory — the agent may dispute a finding with reasoning before accepting it.
+7.5. **Plan review — the step-6 self-review is the primary check.** Run it honestly; it catches most real gaps at a fraction of a subagent round-trip's cost. **Escalate to a fresh reviewer subagent only for high-stakes plans** — security-sensitive work, an irreversible migration, 5+ tasks, or a plan whose line-number/command claims you couldn't verify yourself: dispatch a general-purpose subagent with `skills/writing-plans/plan-document-reviewer-prompt.md`, passing the plan and spec paths. Advisory verdict; if `Issues Found`, fix and re-dispatch, cap 3 iterations, then surface what remains to the user rather than blocking.
 
 ## No placeholders (hard rule)
 
