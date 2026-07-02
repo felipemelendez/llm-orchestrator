@@ -10,7 +10,7 @@ Each `commands/<name>.md` is a Claude Code slash command. The frontmatter `descr
 
 ### Subagents (`agents/*.md`)
 
-`agents/orch-implementer.md`, `orch-spec-reviewer.md`, `orch-code-reviewer.md`, `orch-explorer.md`, `orch-debugger.md`, `orch-brainstormer.md` are native Claude Code subagents. Frontmatter declares:
+`agents/orch-implementer.md`, `orch-spec-reviewer.md`, `orch-code-reviewer.md`, `orch-security-reviewer.md`, `orch-explorer.md`, `orch-debugger.md`, `orch-brainstormer.md`, `orch-researcher.md` are native Claude Code subagents. Frontmatter declares:
 
 - `name` — invoked via the Task tool with `subagent_type: <name>`
 - `description` — used by Claude to decide when to dispatch
@@ -59,8 +59,8 @@ Per Anthropic recommendations on cost-performance tradeoff:
 Our agents come pre-configured:
 - `orch-explorer`: Haiku (cheap reads)
 - `orch-implementer`: Sonnet (default)
-- `orch-spec-reviewer`, `orch-code-reviewer`: Sonnet
-- `orch-debugger`: Sonnet
+- `orch-spec-reviewer`, `orch-code-reviewer`, `orch-security-reviewer`: Sonnet
+- `orch-debugger`, `orch-researcher`: Sonnet
 - `orch-brainstormer`: Opus (design-shaped)
 
 Override per dispatch via the envelope's `model:` line.
@@ -94,6 +94,20 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 - **PostToolUse for output capture** — privacy risk and surveillance shape. We never log tool outputs, arguments, prompts, or transcripts. The one opt-in, event-only exception is skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
 - **Background MCP observers** — same reason.
 
-## Upstream changes
+## Native equivalents and division of labor
 
-When Anthropic ships new Claude Code features, adopt them deliberately rather than chasing every release.
+Claude Code now ships first-party versions of several capabilities this plugin pioneered for itself. The plugin's posture: **prefer the native mechanism when the harness provides it; the plugin's job is policy — when a step is mandatory, what counts as evidence, and in what order stages run — not mechanics.** Feature availability below was verified against a live Claude Code session on 2026-07-02; re-verify before relying on it, because the harness evolves fast.
+
+| Capability | Native Claude Code feature | What this plugin adds | Rule |
+|---|---|---|---|
+| Verification | `/verify` skill (drives the affected flow end-to-end) | The gate: *when* verification is mandatory (before any done/fixed/passing claim) and the `Verify:` evidence format | Prefer native `/verify` for mechanics; this plugin decides when it must run |
+| Code review | `/code-review` (multi-agent, confidence-filtered; `ultra` for cloud review) and `/security-review` | Stage 1 spec-compliance review (native review doesn't check a diff against a spec), the spec-gates-quality order, and the failure-scenario evidence rule | Native review is an accepted substrate for Stage 2/3 mechanics; Stage 1 and the gating order are this plugin's contract |
+| Worktree isolation | Per-agent worktree isolation on agent dispatch | Ownership registry with atomic claims, `.orch-worktree` provenance, green-baseline capture, test-gated sequential merge-back | Prefer native isolation for the checkout itself; the registry/baseline/merge-back discipline still applies |
+| Memory | CLAUDE.md hierarchy (native, automatic) plus the assistant's auto-memory directory | Write-side classification (`/remember` → Conventions/Decisions/People/Notes) and recoverable `/forget` | Native surfaces store; the plugin only classifies and soft-deletes |
+| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Haiku variant with `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
+| Planning | Native plan mode and Plan agent | Durable spec/plan artifacts under `docs/llm-orchestrator/` with checkbox state that survives `/clear` | Native plan mode for the proposal loop; plugin artifacts for cross-session state |
+| Fan-out orchestration | `Workflow` tool (deterministic scripts, structured schema, resume) | The routing rule (`using-workflows`) and ready-made scripts (`workflows/review-diff.js`) | Already delegation-shaped: the plugin only supplies scripts and the when-to-fan-out policy |
+
+What has **no** native equivalent and remains this plugin's own ground: the Concise Agent Protocol response shapes, the research gate (pre-spec verification of external API assumptions with four first-class outcomes), TDD and root-cause-first debugging enforcement, the brainstorm → spec → plan → dispatch pipeline with per-stage review, and the BLOCKED recovery tree.
+
+When Anthropic ships a new Claude Code feature, adopt it deliberately rather than chasing every release: fold the native mechanism into the matching row above, shrink the plugin's own mechanics to the policy layer, and delete what the platform absorbed. A duplicated mechanism is a liability — it drifts from the native one and pays maintenance for no rigor.

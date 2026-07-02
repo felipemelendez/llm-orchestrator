@@ -1,6 +1,6 @@
 ---
 name: requesting-code-review
-description: You MUST use this when a diff is ready — before merge, before a PR, or before claiming any feature done. Runs the two-stage review plus an optional security pass.
+description: You MUST use this when a diff is ready — before merge, before a PR, or before claiming any feature done. Runs the two-stage review plus an optional security pass. Do not use mid-task on incomplete diffs.
 ---
 
 # Requesting code review
@@ -12,6 +12,12 @@ Two required reviews plus one conditional, in order. Each returns an `Issues:` b
 This review can run two ways. The markdown stages below are the **canonical** path. When the
 Workflow tool is available, prefer the accelerated path — it adds structured findings and an
 adversarial verify pass. The two are not behaviorally identical; routing follows `using-workflows`.
+
+A harness-native review skill (Claude Code's `code-review` for quality, `security-review` for
+security) is an accepted substrate for the *mechanics* of Stage 2 / Stage 3. What stays this
+skill's contract regardless of substrate: Stage 1 spec compliance (native review checks
+correctness, not whether the diff implements the approved spec), the spec-gates-quality order,
+and the confidence + failure-scenario rules below.
 
 ### Preferred path (Workflow tool present)
 
@@ -102,6 +108,8 @@ Zero issues is a valid verdict. The reviewer is not measured by findings count.
 ## Confidence rule
 
 The reviewer should not raise an Issue unless ≥80% confident it's real. Speculation goes in a separate `Notes:` section, not in `Issues:`.
+
+**Critical findings additionally require concrete evidence:** the spec line violated (Stage 1), the failure scenario — specific inputs/state → wrong behavior (Stage 2), or the exploitation path (Stage 3). A Critical claim that can't state its evidence gets downgraded, not surfaced. LLM reviewers systematically over-flag correct code, and demanding the concrete scenario is the published countermeasure — it converts "this looks wrong" into a checkable claim.
 
 ## Output (from the controller after both stages)
 

@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: You MUST use this before any creative work — building a feature, adding functionality, designing a system, or changing behavior — before any code is written.
+description: You MUST use this before any creative work — building a feature, adding functionality, designing a system, or changing behavior — before any code is written. Do not use for one-line fixes, mechanical chores, or when an approved spec already exists.
 ---
 
 # Brainstorming
@@ -33,7 +33,7 @@ Skip this skill for one-line fixes, typos, or mechanical chores.
 3. **Propose 2 options.** Each option has: one-line summary, one-line tradeoff. Mark a recommended option.
 4. **On user choice, write the spec.** Save to `docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md`. If research ran at step 1.5, fill in the spec's `## Research` section with the brief path, verdict, and notable findings. If no research ran, write "none — no research-relevant signals."
 5. **Self-review the spec.** Check for placeholders, contradictions, and "TBD".
-5.5. **Spec review.** Dispatch a fresh `orch-spec-reviewer` subagent using `skills/brainstorming/spec-document-reviewer-prompt.md`, passing the spec path. If the result is `Issues Found`, fix the spec and re-dispatch. Cap at 3 iterations; if still failing after 3, surface the remaining issues to the user rather than blocking. The verdict is advisory — the agent may dispute a finding with reasoning before accepting it.
+5.5. **Spec review — inline by default.** Walk the spec once more against this checklist, inline: no placeholders or TBDs; every Goal has a testable success criterion; Non-goals are stated; the Approach contradicts no recorded `## Decisions` entry; scope matches what the user asked. Fix what you find. An honest inline pass catches most real gaps in seconds; a fresh-subagent round-trip costs minutes for marginal gain at this stage (independence pays off on code diffs, not on a document you just wrote and can re-read cold). **Escalate to a subagent only for high-stakes specs** — security-sensitive, irreversible migration, public API: dispatch a fresh `orch-spec-reviewer` with `skills/brainstorming/spec-document-reviewer-prompt.md`, advisory verdict, cap 3 iterations, surface what remains.
 6. **Hand off to `writing-plans`.**
 
 ## Spec format

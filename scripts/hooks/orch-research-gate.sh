@@ -155,7 +155,15 @@ if (( should_compel == 0 )); then
         | grep -viE "^(Add|Implement|Build|Wire|Wiring|Integrate|Integrating|Migrate|Migrating|Migration|Upgrade|Upgrading|Refactor|Create|Introduce|Replace|Switch)$" \
         | head -1 || true)
       if [[ -n "${CAP_TOKEN}" ]]; then
-        printf 'Status: RESEARCH_UNCERTAIN — possible library "%s" with design verb but no confident signal; classifier not compelled. Run /llm-orchestrator:research to verify.\n' "${CAP_TOKEN}" >&2
+        # Emit as additionalContext, not stderr: exit-0 stderr from a
+        # UserPromptSubmit hook never reaches the model, so a stderr notice
+        # here would be a silent no-op. CAP_TOKEN is strictly alphanumeric
+        # (grepped as [A-Z][a-zA-Z0-9]{2,}), so it is JSON-safe unescaped.
+        if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+          printf 'orch-dry-run[research-gate]: would inject RESEARCH_UNCERTAIN notice for %s\n' "${CAP_TOKEN}" >&2
+        else
+          printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"LLM Orchestrator research-gate: RESEARCH_UNCERTAIN — possible library %s with a design verb but no confident signal. If the task depends on that library'"'"'s current API, run /llm-orchestrator:research to verify before planning."}}\n' "${CAP_TOKEN}"
+        fi
       fi
     fi
   fi

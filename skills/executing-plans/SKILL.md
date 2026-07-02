@@ -26,6 +26,7 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
    - Body — to scan for **semantic** dependencies (see step 2).
 
 2. **Compute the real dependency set.** Trust but verify the plan's `Independent:` line:
+   - If a task declares an `Interfaces:` block, treat it as the authoritative signal: A consumes what B introduces → A depends on B. Only body-scan tasks without the block.
    - For each task, scan the body for references to symbols, endpoints, schemas, types, or files that another later task introduces (look in those tasks' `Files:` and bodies).
    - If task A references something task B creates, A depends on B — regardless of what `Independent:` says.
    - Common semantic dependencies: API specs depend on the routes they document; tests depend on the code they exercise; migration runbooks depend on the migration they describe.

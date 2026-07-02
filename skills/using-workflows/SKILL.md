@@ -1,6 +1,6 @@
 ---
 name: using-workflows
-description: Use when a breadth-first task fans out into independent subagents (multi-dimension review, parallel implementation, multi-source research) and you're choosing the Workflow tool versus inline.
+description: Use when deciding whether an already-chosen fan-out (multi-dimension review, parallel implementation, multi-source research) runs on the Workflow tool or inline. Do not use to decide whether to parallelize at all — that is dispatching-parallel-agents.
 ---
 
 # Using workflows
@@ -11,10 +11,11 @@ Claude Code's `Workflow` tool runs a deterministic JavaScript script that fans o
 The markdown flow stays canonical and portable. See the contract brief at
 `docs/llm-orchestrator/research/2026-05-31-workflow-tool-contract.md`.
 
-## When to prefer a workflow
+## When a chosen fan-out should run on the Workflow tool
 
-All three must hold (Anthropic's cost guidance — multi-agent runs ~15× the tokens of a single
-agent, so the fan-out has to earn it):
+Whether to fan out at all is `dispatching-parallel-agents`' decision. Once a fan-out is chosen,
+route it through a workflow only if all three hold (Anthropic's cost guidance — multi-agent runs
+~15× the tokens of a single agent, so the fan-out has to earn it):
 
 1. **Breadth-first** — the work splits into parts that can run at once.
 2. **Independent** — the parts don't share context or depend on each other's output mid-flight.

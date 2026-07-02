@@ -87,13 +87,13 @@ const stage23 = await parallel(
   [
     () =>
       agent(
-        `You are the code-quality reviewer. Judge correctness, safety, idiom, minimalism, and test coverage of this diff against the project's conventions.\n\nCONVENTIONS:\n${conventions}\n\nDIFF:\n${diff}\n\nOnly raise a finding if at least 80% confident it is real.`,
+        `You are the code-quality reviewer. Judge correctness, safety, idiom, minimalism, and test coverage of this diff against the project's conventions.\n\nCONVENTIONS:\n${conventions}\n\nDIFF:\n${diff}\n\nOnly raise a finding if at least 80% confident it is real. A critical finding must state the concrete failure scenario in its claim (the specific inputs or state that produce the wrong behavior); if you cannot construct one, use severity important or omit it.`,
         { agentType: 'llm-orchestrator:orch-code-reviewer', schema: FINDINGS_SCHEMA, label: 'code-quality', phase: 'Quality+Security' }
       ),
     securitySensitive
       ? () =>
           agent(
-            `You are the security reviewer. This diff matched the security-sensitive token set. Look for injection (SQL/command/path), missing auth checks, exposed secrets/credentials, crypto misuse, unsafe deserialization, SSRF/CSRF, and sensitive data in logs.\n\nDIFF:\n${diff}\n\nOnly raise a finding if at least 80% confident it is real.`,
+            `You are the security reviewer. This diff matched the security-sensitive token set. Look for injection (SQL/command/path), missing auth checks, exposed secrets/credentials, crypto misuse, unsafe deserialization, SSRF/CSRF, and sensitive data in logs.\n\nDIFF:\n${diff}\n\nOnly raise a finding if at least 80% confident it is real. A critical finding must name the concrete attack input or exposure path in its claim; if you cannot state one, use severity important or omit it.`,
             { agentType: 'llm-orchestrator:orch-security-reviewer', schema: FINDINGS_SCHEMA, label: 'security', phase: 'Quality+Security' }
           )
       : null,
@@ -146,7 +146,7 @@ if (toVerify.length > 0) {
     batches.map((batch, bi) => () => {
       const listed = batch.map((f, i) => `[${i}] (${f.severity}) ${f.file}:${f.line} — ${f.claim}`).join('\n')
       return agent(
-        `You are a skeptical verifier. For each finding below, try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak or you cannot confirm it from the diff.\n\nDIFF:\n${diff}\n\nFINDINGS:\n${listed}\n\nReturn one verdict per finding by its [index].`,
+        `You are a skeptical verifier. For each finding below, try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak or you cannot confirm it from the diff. A critical finding whose claim states no concrete failure scenario or attack path is weak evidence by definition — refute it unless the diff itself makes the scenario obvious.\n\nDIFF:\n${diff}\n\nFINDINGS:\n${listed}\n\nReturn one verdict per finding by its [index].`,
         { agentType: 'llm-orchestrator:orch-code-reviewer', schema: VERDICT_SCHEMA, label: `verify:${bi}`, phase: 'Verify' }
       ).then((v) => ({ batch, verdicts: v?.verdicts || [] }))
     })

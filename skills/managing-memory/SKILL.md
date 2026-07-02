@@ -11,6 +11,8 @@ A thin layer over Claude Code's native CLAUDE.md. We don't reinvent persistence 
 2. **Soft-delete via `/forget`** — removed lines move to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable.
 3. **Plugin-internal memory** at `~/.llm-orchestrator/memory/<project-hash>.md` for research-gate state that doesn't belong in user-facing CLAUDE.md — `## Research config` (aggressiveness knob) and `declined_mcp:` entries.
 
+Two native surfaces, two owners: **CLAUDE.md** is the *user's* curated memory — that's what this skill writes to. The harness may also keep an *assistant-owned* auto-memory directory (Claude Code persists the model's own notes across sessions); this skill never writes there, and facts the user asks to remember belong in CLAUDE.md, not in assistant notes.
+
 ## Where things live
 
 | Target file                                     | What goes there                                            | Loaded by                              |

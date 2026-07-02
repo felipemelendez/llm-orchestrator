@@ -23,25 +23,30 @@ ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
 fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED+=("$1"); }
 
 # Curated sniffer tests.
-# Three outcomes:
-#   compel  — hook emits JSON on stdout (hookSpecificOutput)
-#   uncertain — hook emits RESEARCH_UNCERTAIN on stderr only, no JSON on stdout
-#   skip    — hook emits nothing at all
+# Three outcomes (all read from stdout — exit-0 stderr from a UserPromptSubmit
+# hook never reaches the model, so since v0.5.0 the uncertain notice is JSON
+# additionalContext on stdout, distinguished from compel by its
+# RESEARCH_UNCERTAIN marker):
+#   compel  — hook emits classifier-guidance JSON on stdout (no RESEARCH_UNCERTAIN)
+#   uncertain — hook emits a RESEARCH_UNCERTAIN notice as JSON on stdout
+#   skip    — hook emits nothing on stdout
 _gate_stdout() { printf '{"prompt":"%s"}' "$1" | bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>/dev/null; }
-_gate_stderr() { printf '{"prompt":"%s"}' "$1" | bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>&1 >/dev/null; }
+
+_gate_classify() {
+  local stdout_out="$1"
+  if [[ -z "${stdout_out}" ]]; then
+    printf 'skip'
+  elif printf '%s' "${stdout_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
+    printf 'uncertain'
+  else
+    printf 'compel'
+  fi
+}
 
 expect_sniffer() {
   local prompt="$1" want="$2"
-  local stdout_out stderr_out got
-  stdout_out=$(_gate_stdout "${prompt}")
-  stderr_out=$(_gate_stderr "${prompt}")
-  if [[ -n "${stdout_out}" ]]; then
-    got="compel"
-  elif echo "${stderr_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
-    got="uncertain"
-  else
-    got="skip"
-  fi
+  local got
+  got=$(_gate_classify "$(_gate_stdout "${prompt}")")
   if [[ "${got}" == "${want}" ]]; then
     ok "[sniffer ${want}] ${prompt}"
   else
@@ -49,33 +54,25 @@ expect_sniffer() {
   fi
 }
 
-# Expect the gate to emit RESEARCH_UNCERTAIN on stderr but NOT compel.
+# Expect the gate to emit the RESEARCH_UNCERTAIN notice but NOT compel.
 expect_uncertain() {
-  local prompt="$1"
-  local stdout_out stderr_out
-  stdout_out=$(_gate_stdout "${prompt}")
-  stderr_out=$(_gate_stderr "${prompt}")
-  if [[ -n "${stdout_out}" ]]; then
-    fail "[uncertain, got compel] ${prompt}" "hook emitted JSON (false compel)"
-  elif echo "${stderr_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
+  local prompt="$1" got
+  got=$(_gate_classify "$(_gate_stdout "${prompt}")")
+  if [[ "${got}" == "uncertain" ]]; then
     ok "[uncertain] ${prompt}"
   else
-    fail "[uncertain, got skip] ${prompt}" "hook stayed silent, expected RESEARCH_UNCERTAIN"
+    fail "[uncertain, got ${got}] ${prompt}" "expected a RESEARCH_UNCERTAIN additionalContext notice"
   fi
 }
 
-# Expect the gate to stay completely silent (no stdout, no RESEARCH_UNCERTAIN stderr).
+# Expect the gate to stay completely silent on stdout.
 expect_skip() {
-  local prompt="$1"
-  local stdout_out stderr_out
-  stdout_out=$(_gate_stdout "${prompt}")
-  stderr_out=$(_gate_stderr "${prompt}")
-  if [[ -n "${stdout_out}" ]]; then
-    fail "[skip, got compel] ${prompt}" "hook emitted JSON"
-  elif echo "${stderr_out}" | grep -q 'RESEARCH_UNCERTAIN'; then
-    fail "[skip, got uncertain] ${prompt}" "hook emitted RESEARCH_UNCERTAIN"
-  else
+  local prompt="$1" got
+  got=$(_gate_classify "$(_gate_stdout "${prompt}")")
+  if [[ "${got}" == "skip" ]]; then
     ok "[skip] ${prompt}"
+  else
+    fail "[skip, got ${got}] ${prompt}" "hook emitted output on stdout"
   fi
 }
 

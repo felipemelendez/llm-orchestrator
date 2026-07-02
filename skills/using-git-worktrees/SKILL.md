@@ -15,6 +15,10 @@ Isolation by directory, not by stash.
 
 Skip for tiny edits on a clean tree — just commit.
 
+## Delegation
+
+When dispatching a writing subagent through a harness that offers per-agent worktree isolation (Claude Code's agent dispatch can create an isolated worktree per agent), prefer that for the checkout itself — the harness handles creation and cleanup. The steps below apply to worktrees the controller manages directly, and the surrounding discipline — registry claim, provenance marker, green-baseline capture, test-gated merge-back — applies either way.
+
 ## Steps
 
 1. **Check for existing isolation.** If you're already inside a worktree, don't nest.

@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: You MUST use this when implementing any feature or bugfix where tests are practical — before writing implementation code. Enforces red-green-refactor with verification at each step.
+description: You MUST use this when implementing any feature or bugfix where tests are practical — before writing implementation code. Enforces red-green-refactor with verification at each step. Do not use for docs-only or config-only changes with no testable behavior.
 ---
 
 # Test-driven development

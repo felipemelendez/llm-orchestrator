@@ -4,7 +4,7 @@ LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. Th
 
 This document has two parts. The first part — **Nine layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
 
-If you want the pitch with worked examples, read the [`README.md`](./README.md). If you want to understand the system to extend it, read this file.
+If you want the pitch, read the [`README.md`](./README.md); for a worked example, see [`docs/examples/sample-session.md`](./docs/examples/sample-session.md). If you want to understand the system to extend it, read this file.
 
 ---
 
@@ -27,13 +27,13 @@ Every task category has a defined workflow that produces a durable artifact:
 | An open-ended feature    | `brainstorming` skill               | `docs/llm-orchestrator/specs/...md`  |
 | Visual brainstorming     | `brainstorming` skill (visual companion) | browser mockups + `docs/llm-orchestrator/specs/...md` |
 | Implementation of a spec | `writing-plans` skill               | `docs/llm-orchestrator/plans/...md`  |
-| Adversarial spec/plan review | `brainstorming` / `writing-plans` review step | issues list before implementation begins |
+| Spec/plan review (inline self-review; subagent escalation for high-stakes) | `brainstorming` / `writing-plans` review step | issues fixed before implementation begins |
 | A bug fix                | `systematic-debugging` skill        | failing test + minimal fix           |
 | A code review            | `requesting-code-review` skill      | `docs/llm-orchestrator/reviews/...md`|
 
 The spec file gets read by `/llm-orchestrator:plan` (which produces the plan file), the plan file gets read by `/llm-orchestrator:dispatch` (which executes it), and the plan file's checkboxes track state across `/clear`.
 
-17 first-party skills today, capped at ~40 by design — past that, discoverability collapses.
+18 first-party skills today, capped at ~40 by design — past that, discoverability collapses. Published skill-library research also reports that selection accuracy drops sharply once trigger descriptions become semantically confusable, so the binding constraint is distinct triggers, not the raw count.
 
 ### Layer 3 — State machine for multi-step work
 
@@ -67,7 +67,7 @@ BLOCKED: Need: <X>
    └── Branch 5 (Genuinely needs the user) ──→ STOP — ask one specific question
 ```
 
-Branches 1–4 happen invisibly. You only ever see branch 5. Most blocks in our test runs resolve in branches 1–2.
+Branches 1–4 happen invisibly. You only ever see branch 5 — the tree is designed so a blocker gets four autonomous resolution attempts before it costs the user attention.
 
 ### Layer 6 — Two-stage code review
 
@@ -220,7 +220,7 @@ How the pieces fit together at the file level.
 ┌──────────────────────────────────────────────────────────────────┐
 │ Bootstrap: SessionStart hook                                     │
 │   - injects using-orchestrator (Concise Agent Protocol)          │
-│     wrapped in EXTREMELY_IMPORTANT directive framing             │
+│     plain-voice protocol core (~545 tokens; body on demand)      │
 └─────┬────────────────────────────────────────────────────────────┘
       │
       ▼
@@ -288,7 +288,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 4. Agent invokes `writing-plans` → writes `docs/llm-orchestrator/plans/2026-05-23-X-plan.md`. User reviews.
 5. Agent runs `/llm-orchestrator:worktree` to isolate.
 6. Agent runs `/llm-orchestrator:dispatch` per task → implementers return `Status:` blocks. Parallel where independent, sequential where dependent.
-6a. If the controller's context passes ~50% at a clean stage boundary, it regenerates the handoff artifact (`docs/llm-orchestrator/handoffs/<date>-<slug>.md`) and the user resumes in a fresh session — which runs the embedded verification baseline before continuing.
+6a. When context usage crosses `ORCH_CONTEXT_HANDOFF_TOKENS` (default 950000, ≈95% of the window) — or at any clean stage boundary the controller chooses — it regenerates the handoff artifact (`docs/llm-orchestrator/handoffs/<date>-<slug>.md`) and the user resumes in a fresh session — which runs the embedded verification baseline before continuing.
 7. Agent runs `/llm-orchestrator:review` → spec-reviewer then code-reviewer return `Issues:` blocks. BLOCKED recovery routes invisibly.
 8. Agent invokes `verification-before-completion` before claiming done.
 9. Agent runs `/llm-orchestrator:finish` → merge / PR / keep / discard menu.

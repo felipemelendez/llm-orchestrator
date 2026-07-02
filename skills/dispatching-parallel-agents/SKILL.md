@@ -20,6 +20,7 @@ Never run two writers concurrently on the same checkout. If you can't isolate th
 
 - 3+ read-only agents (review/explore/research), **or** 3+ writer tasks all `Independent: yes` that you will run in **separate worktrees**.
 - For writers: no two selected tasks touch the same files (so the branch merges stay trivial).
+- Substrate: once the fan-out is decided, `using-workflows` chooses whether it runs on the Workflow tool or inline. This skill decides *whether* to parallelize; that one decides *where*.
 
 ## When this does NOT apply
 
