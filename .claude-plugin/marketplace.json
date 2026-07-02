@@ -2,7 +2,7 @@
   "name": "llm-orchestrator",
   "description": "Agent orchestration toolkit for Claude Code. Concise responses, structured plans, isolated worktrees, two-stage reviews, project memory, evidence-based verification.",
   "owner": {
-    "name": "LLM Orchestrator"
+    "name": "Felipe Melendez"
   },
   "plugins": [
     {
@@ -11,6 +11,8 @@
       "version": "0.5.0",
       "source": "./",
       "license": "MIT",
+      "homepage": "https://github.com/felipemelendez/llm-orchestrator",
+      "category": "development",
       "keywords": [
         "agents",
         "orchestration",
