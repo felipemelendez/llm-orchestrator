@@ -67,6 +67,30 @@ Claude Code ships first-party versions of several things this kit does. This plu
 
 Still exclusively this plugin's ground: the Concise Agent Protocol response shapes, the research gate, TDD and root-cause-first debugging enforcement, and the BLOCKED recovery tree. Full map with the delegation rules: [`docs/anthropic-ecosystem.md`](./docs/anthropic-ecosystem.md).
 
+## How is this different from Superpowers or Everything Claude Code?
+
+Fair question — from the outside they look similar (skills, agents, workflows). They occupy different points on one axis: **how much of the system still works on the turns the model ignores its instructions.**
+
+**[Superpowers](https://github.com/obra/superpowers)** is a skills library — genuinely good written discipline (TDD, systematic debugging, plan execution, worktrees) that this plugin's own skill catalog descends from. Its enforcement surface is one session-start hook that loads the skill index; from there on, every rule holds only if the model chooses to follow it, every turn (verified on disk against v6.2.0, 2026-07-29).
+
+**[Everything Claude Code (ECC)](https://github.com/affaan-m/everything-claude-code)** is a breadth play: a very large catalog of agents, skills, rules, and hooks spanning Claude Code, Cursor, Codex, and OpenCode. If you want one resource that covers many harnesses and many workflows, that's the one — this plugin doesn't try to compete on surface area.
+
+**LLM Orchestrator is depth on a single question: can you trust the result without having watched the work?** It bets everything on one harness (Claude Code's hook events) and wires the *policy* into machinery that checks the model's actual behavior:
+
+| The failure | What this plugin does about it — mechanically |
+|---|---|
+| Agent claims tests passed without running them | A hook stamps every real test run into a ledger the model never writes; a cited `[orch-evidence]` stamp is validated against it, so invented evidence fails lookup. Verified end-to-end against a live v2.1.220 session |
+| Two agents write the same files at once | Atomic per-worktree locks plus a guard that physically blocks work-destroying git commands — for the controller *and* every subagent |
+| Broken parallel work reaches your branch | A speculative merge queue tests the combined result and only ever fast-forwards your branch to a state the suite passed on |
+| Plan built on a hallucinated or outdated API | A pre-spec research gate whose `CONTRADICTED` verdict **halts the workflow** until the plan is revised |
+| Agent loops on the same failing action | A breaker detects the identical action repeated 3× in a row and intervenes |
+| Agent quits halfway; silence reads as success | Empty returns are flagged as failures; every task carries `Done when:` / `Stop if:`, with an honest `PARTIAL` status that preserves finished work |
+| "Does any of this actually help?" | A committed eval benchmark — including the cases where the plugin does **not** help (next section) |
+
+**When to choose which.** They compose: this plugin alongside an instruction library is a sensible setup, and both neighbors are better choices for what they're best at — Superpowers for a battle-tested skill catalog with a big community, ECC for cross-harness breadth. Choose LLM Orchestrator for the thing written guidance alone cannot provide: delegating multi-step work and trusting the *result* — claims that are verifiable and failures that are recoverable — rather than trusting the model's compliance.
+
+---
+
 ## What is measured, and what is not
 
 The behavioural claims above divide into three honesty classes, per the 2026-07-28 eval run (`tests/evals/results/benchmark.json`, n=3 per arm per case, model pinned to opus, scratch projects isolated outside the repo):
