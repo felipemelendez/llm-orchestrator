@@ -15,7 +15,13 @@ Claims of success cost nothing. Evidence costs a single command. Always pay it.
 
 ## Delegation
 
-When the harness ships a native verification skill (Claude Code's `verify` drives the affected flow end-to-end), prefer it to run the mechanics — it exercises real behavior, not just the test suite. This skill still governs the two things the native skill doesn't: *when* verification is mandatory (before any done/fixed/passing claim, no exceptions) and *what counts as evidence* (the pasted command + output below). The toolchain-detection steps are the fallback when no native verifier exists.
+Two things this skill does **not** delegate, and one it must not do.
+
+Native `/verify` builds and runs the app — *"without falling back to tests or type checks"* — and since v2.1.215 Claude cannot invoke it on its own. It is a good manual complement, not a substrate this flow can call.
+
+`/goal` is the closer relative: a session-scoped prompt-based Stop hook whose evaluator re-checks a completion condition after every turn. It enforces *"keep going until X holds"*. This skill enforces the different thing — *"do not claim X without pasting the command and its output"*. Use both; they compose.
+
+**Do not instruct the model to verify.** Current models already do. Anthropic's Opus 5 guidance is explicit that prompts containing *"include a final verification step"* or *"use a subagent to verify"* cause over-verification, and that *"the same applies to legacy harness scaffolding that adds separate verification steps."* What survives is the **evidence format** below — a completion claim carries the command and its output, because that is what a human reader needs, not because the model needs reminding.
 
 ## The gate
 
@@ -45,6 +51,8 @@ Before claiming, run through these in order:
 - A non-zero return code is failure, even if the output looks fine.
 - "No output" is fine *only* if the command's success signal is silence (e.g., `tsc --noEmit`).
 - A `git diff --quiet && echo clean` is fine for "no uncommitted changes".
+
+**The evidence stamp.** When the evidence-ledger hook is active, verify-shaped commands (test/lint/typecheck/build) print a final `[orch-evidence <stamp> exit=N]` line. Copy that line into the `Verify:` block verbatim. The stamp is minted by a hook and recorded in a ledger the model never writes, so the gate can check a claim against recorded reality instead of trusting the text: a made-up stamp fails lookup, and a stamp from a failing run carries its non-zero exit with it. Evidence without a stamp is still accepted (custom scripts fall outside the stamp regex) — but a stamped command's stamp is not optional.
 
 ## What does NOT count
 

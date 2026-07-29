@@ -96,6 +96,8 @@ check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-verify-gate.sh"         "$TRANSCRIPT_EVENT"
 ORCH_RETRY_CAP=1 check_latency "orch-retry-cap.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-stop.sh"                "$TRANSCRIPT_EVENT"
+check_latency "orch-evidence-ledger.sh"     "$BASH_EVENT"
+check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
 
 printf '\n'
 if (( FAIL == 0 )); then

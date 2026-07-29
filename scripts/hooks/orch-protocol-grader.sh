@@ -71,7 +71,7 @@ if [[ ${GRADE_RC} -ne 0 ]]; then
     exit 0
   fi
   if [[ "${STRICT}" == "1" ]]; then
-    printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+    printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')" | tee /dev/stderr
     exit 2
   fi
   echo "${WARN}" >&2

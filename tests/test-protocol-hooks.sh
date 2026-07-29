@@ -67,9 +67,19 @@ print(json.dumps({'role': 'assistant', 'content': [{'type': 'text', 'text': text
 # pipe_to_hook <hook_path> <transcript_path> [env_overrides...]
 # Pipes the hook event JSON to the hook, returns its exit code.
 # Stdout/stderr captured and discarded; use check_hook_* helpers for assertions.
+# Set PIPE_AGENT_TYPE to include an "agent_type" field (SubagentStop always
+# carries one on the current harness; the validator scopes its checks by it).
+PIPE_AGENT_TYPE=""
+mk_hook_input() { # <transcript>
+  if [[ -n "$PIPE_AGENT_TYPE" ]]; then
+    printf '{"transcript_path":"%s","agent_type":"%s"}' "$1" "$PIPE_AGENT_TYPE"
+  else
+    printf '{"transcript_path":"%s"}' "$1"
+  fi
+}
 pipe_hook_exit() {
   local hook="$1" transcript="$2"; shift 2
-  env "$@" bash "$hook" < <(printf '{"transcript_path":"%s"}' "$transcript") >/dev/null 2>&1
+  env "$@" bash "$hook" < <(mk_hook_input "$transcript") >/dev/null 2>&1
   return $?
 }
 
@@ -77,7 +87,7 @@ pipe_hook_all() {
   local hook="$1" transcript="$2"; shift 2
   local rc=0
   local out
-  out=$(env "$@" bash "$hook" < <(printf '{"transcript_path":"%s"}' "$transcript") 2>&1) || rc=$?
+  out=$(env "$@" bash "$hook" < <(mk_hook_input "$transcript") 2>&1) || rc=$?
   printf '%s' "$out"
   return $rc
 }
@@ -133,6 +143,10 @@ fi
 
 printf '\n%s== SubagentStop hook (subagent-stop.sh) ==%s\n' "$DIM" "$RESET"
 
+# The validator scopes its shape checks by agent_type; these cases simulate an
+# implementer return (the agent whose contract is the Status block).
+PIPE_AGENT_TYPE="llm-orchestrator:orch-implementer"
+
 DONE_REPLY="$(printf 'Status: DONE\nSummary: completed the task\nChanged:\n- foo:1\nVerify:\n- ok')"
 BLOCKED_NO_NEED="$(printf 'Status: BLOCKED\nSummary: cannot proceed')"
 
@@ -151,7 +165,7 @@ else fail "(g) DONE+Summary array-of-blocks schema" "expected exit 0, got $rc"; 
 # (h) Status: BLOCKED without Need: → warn stderr exit 0
 write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
 out=$(pipe_hook_all "$SUBAGENT" "$T_STRING" 2>&1); rc=$?
-if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "without a Status:"; then
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "without a valid Status"; then
   ok "(h) BLOCKED without Need: → warn exit 0"
 else
   fail "(h) BLOCKED without Need:" "exit=$rc out=$(printf '%s' "$out" | head -1)"
@@ -169,10 +183,94 @@ fi
 # (j) no Status: block in transcript → warn exit 0
 write_string_jsonl "$T_STRING" "I did some work but forgot the Status block."
 out=$(pipe_hook_all "$SUBAGENT" "$T_STRING" 2>&1); rc=$?
-if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "without a Status:"; then
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "without a valid Status"; then
   ok "(j) no Status block → warn exit 0"
 else
   fail "(j) no Status block" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j2) last_assistant_message present but EMPTY → premature-termination warn.
+out=$(printf '{"agent_type":"llm-orchestrator:orch-implementer","last_assistant_message":""}' \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "premature termination"; then
+  ok "(j2) empty last_assistant_message → premature-termination warn, exit 0"
+else
+  fail "(j2) empty final message" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+out=$(printf '{"agent_type":"llm-orchestrator:orch-implementer","last_assistant_message":""}' \
+      | ORCH_STRICT_STATUS=1 bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 2 ]] && printf '%s' "$out" | grep -q '"decision":"block"'; then
+  ok "(j2b) empty final message + strict → exit 2 (subagent told to keep working)"
+else
+  fail "(j2b) empty strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j3) last_assistant_message carries a valid DONE — no transcript needed.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
+                  'last_assistant_message': 'Status: DONE\nSummary: done via field'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 && -z "$out" ]]; then
+  ok "(j3) valid DONE via last_assistant_message field → silent exit 0"
+else
+  fail "(j3) DONE via field" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j4) reviewer scoping: Issues: reply is that agent's valid shape; prose is not.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-code-reviewer',
+                  'last_assistant_message': 'Issues:\n- none found'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 && -z "$out" ]]; then
+  ok "(j4) reviewer Issues: reply → silent (Status block not demanded of reviewers)"
+else
+  fail "(j4) reviewer Issues:" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-code-reviewer',
+                  'last_assistant_message': 'looks fine to me overall'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "protocol shape"; then
+  ok "(j4b) reviewer free prose → shape warn"
+else
+  fail "(j4b) reviewer prose" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j5) PARTIAL: valid with Progress:+Remaining:; invalid when Remaining: missing.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
+                  'last_assistant_message': 'Status: PARTIAL\nProgress:\n- step 1 done\nRemaining:\n- step 2'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 && -z "$out" ]]; then
+  ok "(j5) PARTIAL with Progress:+Remaining: → silent exit 0"
+else
+  fail "(j5) PARTIAL valid" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
+                  'last_assistant_message': 'Status: PARTIAL\nProgress:\n- step 1 done'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q 'Remaining:'; then
+  ok "(j5b) PARTIAL missing Remaining: → warn names the missing line"
+else
+  fail "(j5b) PARTIAL invalid" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j6) non-plugin agent (e.g. native Explore): free prose is NOT graded.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'Explore',
+                  'last_assistant_message': 'here are the files I found: a.ts, b.ts'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 && -z "$out" ]]; then
+  ok "(j6) native agent free prose → silent (no shape contract imposed)"
+else
+  fail "(j6) native agent" "exit=$rc out=$(printf '%s' "$out" | head -1)"
 fi
 
 printf '\n%s== Broader schema coverage ==%s\n' "$DIM" "$RESET"

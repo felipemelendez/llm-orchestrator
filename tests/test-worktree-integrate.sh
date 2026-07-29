@@ -77,12 +77,51 @@ grep -q 'C-version' seed.txt && [[ "$(git rev-parse HEAD)" != "$base_before" ]] 
 printf '%s' "$OUT" | grep -q '^Re-run:' && ok "report emits a Re-run line" || fail "no Re-run line" "out=$OUT"
 printf '%s' "$OUT" | grep -qE '^Re-run:.*[[:space:]]d([[:space:]]|$)' && ok "Re-run line contains the stopped slug d" || fail "Re-run missing slug d" "out=$OUT"
 
-printf '\n%s== test failure: merge stays, base NOT hard-reset ==%s\n' "$DIM" "$RESET"
+printf '\n%s== unconditional test failure → environmental fallback to serial ==%s\n' "$DIM" "$RESET"
+# --test false is red even at the base state inside the integration worktree,
+# so the speculative engine must NOT blame a branch: it falls back to serial,
+# whose contract (failing merge stays on base, never auto-reset) applies.
 mat e; mk e fe.txt eee
 OUT="$(bash "$INTEG" --test false "$SID" e 2>&1)"; rc=$?
 [[ $rc -ne 0 ]] && ok "test failure → non-zero" || fail "testfail exit"
 printf '%s' "$OUT" | grep -q 'TEST_FAILED' && ok "report flags TEST_FAILED" || fail "TEST_FAILED flag" "out=$OUT"
-[[ -f fe.txt ]] && ok "merge commit stays on base (no auto reset --hard)" || fail "merge was undone"
+printf '%s' "$OUT" | grep -q 'Falling back to --serial' && ok "base-state red → declared environmental, serial fallback" || fail "env fallback declared" "out=$OUT"
+[[ -f fe.txt ]] && ok "serial contract: merge commit stays on base (no auto reset --hard)" || fail "merge was undone"
+
+printf '\n%s== speculative green path: N branches, ONE suite run ==%s\n' "$DIM" "$RESET"
+CNT="${TMP}/cnt-green"; : > "$CNT"
+mat s1 s2; mk s1 fs1.txt one; mk s2 fs2.txt two
+OUT="$(bash "$INTEG" --test "echo run >> '$CNT'" "$SID" s1 s2 2>&1)"; rc=$?
+[[ $rc -eq 0 ]] && ok "speculative green batch → exit 0" || fail "spec green exit" "rc=$rc out=$OUT"
+[[ -f fs1.txt && -f fs2.txt ]] && ok "both changes landed on base" || fail "spec changes missing"
+runs=$(wc -l < "$CNT" | tr -d ' ')
+[[ "$runs" == "1" ]] && ok "exactly 1 suite run for 2 branches (was 2 under serial)" || fail "suite run count" "runs=$runs"
+printf '%s' "$OUT" | grep -q 'speculative batch' && ok "report names the speculative batch" || fail "spec report" "out=$OUT"
+[[ ! -d .worktrees/s1 && ! -d .worktrees/s2 ]] && ok "worktrees removed after land" || fail "spec worktrees not removed"
+git branch --list "orch/${SID}/_integration.*" | grep -q . && fail "integration branch leaked after green land" || ok "integration branch cleaned up after green land"
+
+printf '\n%s== speculative red tip: bisect ejects the regressor, lands the green prefix ==%s\n' "$DIM" "$RESET"
+CNT2="${TMP}/cnt-red"; : > "$CNT2"
+mat x1 x2 x3; mk x1 fx1.txt one; mk x2 broken.txt bad; mk x3 fx3.txt three
+OUT="$(bash "$INTEG" --test "echo run >> '$CNT2'; test ! -f broken.txt" "$SID" x1 x2 x3 2>&1)"; rc=$?
+[[ $rc -ne 0 ]] && ok "red tip → non-zero" || fail "bisect exit" "rc=$rc"
+[[ -f fx1.txt ]] && ok "green prefix (x1) landed on base" || fail "x1 missing" "out=$OUT"
+[[ ! -f broken.txt && ! -f fx3.txt ]] && ok "regressor (x2) and everything behind it kept OFF the base" || fail "red content landed"
+printf '%s' "$OUT" | grep -q 'x2 — TEST_FAILED' && ok "report ejects exactly x2" || fail "eject slug" "out=$OUT"
+printf '%s' "$OUT" | grep -qE 'kept at [0-9a-f]+ on branch' && ok "failing state kept on the integration branch for inspection" || fail "failing state ref" "out=$OUT"
+printf '%s' "$OUT" | grep -qE '^Re-run:.*x2 x3' && ok "Re-run lists the ejected slug and the pending tail" || fail "Re-run tail" "out=$OUT"
+[[ ! -d "${OWNERS}/x1" ]] && ok "landed slug x1 claim released" || fail "x1 claim leaked"
+[[ -d "${OWNERS}/x2" && -d "${OWNERS}/x3" ]] && ok "unlanded slugs keep their claims" || fail "x2/x3 claims"
+git diff --quiet && git diff --cached --quiet && ok "base clean after bisect (only --ff-only moves ever touch it)" || fail "base dirty after bisect"
+git branch -D "$(git branch --list "orch/${SID}/_integration.*" | tr -d ' *')" >/dev/null 2>&1 || true
+
+printf '\n%s== --serial opt-out: one suite run per branch, old engine ==%s\n' "$DIM" "$RESET"
+CNT3="${TMP}/cnt-serial"; : > "$CNT3"
+mat r1 r2; mk r1 fr1.txt one; mk r2 fr2.txt two
+OUT="$(bash "$INTEG" --serial --test "echo run >> '$CNT3'" "$SID" r1 r2 2>&1)"; rc=$?
+[[ $rc -eq 0 ]] && ok "--serial green → exit 0" || fail "serial exit" "rc=$rc"
+runs=$(wc -l < "$CNT3" | tr -d ' ')
+[[ "$runs" == "2" ]] && ok "--serial runs the suite once per branch (2 for 2)" || fail "serial run count" "runs=$runs"
 
 printf '\n%s== no test command: refuse unless --allow-no-tests ==%s\n' "$DIM" "$RESET"
 mat g; mk g fg.txt ggg

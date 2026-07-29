@@ -18,6 +18,11 @@ Before your first edit, take the writer mutex: `mkdir "<worktree>/.orch-active"`
 
 {{task_text — paste the full task from the plan, including its Steps and Verify}}
 
+## Termination
+
+- Done when: {{done_when — the plan task's `Done when:` line, or the default: "the Verify command exits green and every sub-step of the task is complete". Meeting this is the only path to DONE.}}
+- Stop if: {{stop_if — the plan task's `Stop if:` line, or the default: "2 consecutive failed fix attempts on the same test, or any edit needed outside the files in scope". When one fires, stop trying and return PARTIAL (with Progress:/Remaining:) or BLOCKED (with Need:) — further attempts past this line are the failure mode, not persistence.}}
+
 ## Files in scope
 
 {{file_list}}
@@ -90,6 +95,19 @@ Verify:
 - <command> → <line>
 ```
 
+### Partial progress (a Stop-if fired; keep what works)
+
+```
+Status: PARTIAL
+Summary: <one line — which Stop-if fired>
+Progress:
+- <what is done and verified, with file:line>
+Remaining:
+- <what is left, concrete enough to resume from>
+Verify:
+- <command> → <line for the completed part>
+```
+
 ### Cannot proceed
 
 ```
@@ -113,7 +131,7 @@ Ask:
 ## Rules
 
 - Follow TDD: failing test before implementation.
-- Run the verify command; paste the actual output line.
+- Run the verify command; paste the actual output line. If the output ends with an `[orch-evidence <stamp> exit=N]` line, copy it into `Verify:` verbatim — the controller validates the stamp against the hook-written ledger.
 - Don't refactor adjacent code "while you're there".
 - Don't invent new dependencies.
 - Don't write commentary outside the Status block.

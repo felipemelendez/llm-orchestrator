@@ -88,7 +88,15 @@ else
 
   # Frontmatter — match the validator's expectations
   must_grep "$AGENT" '^name: orch-researcher$' "Frontmatter name matches filename"
-  must_grep "$AGENT" '^model: sonnet$' "Model is sonnet (matches review tier)"
+  must_grep "$AGENT" '^model: opus$' "Model is opus (fresher knowledge cutoff than fable)"
+  # Effort must NOT be pinned: agents inherit the session preference (HAL found
+  # higher effort reduced accuracy in most runs; Anthropic says effort is a
+  # general preference, and pinning would override the user's session choice).
+  if grep -q '^effort: ' "$AGENT"; then
+    fail "Effort is not pinned (inherits session)" "found a pinned effort: line"
+  else
+    ok "Effort is not pinned (inherits session)"
+  fi
   must_grep "$AGENT" '^tools:.*WebFetch' "Agent has WebFetch tool"
   must_grep "$AGENT" '^tools:.*WebSearch' "Agent has WebSearch tool"
   must_grep "$AGENT" '^tools:.*Read' "Agent has Read tool"

@@ -41,7 +41,7 @@ User confirms. Agent writes `docs/llm-orchestrator/specs/2026-05-23-token-rate-l
 
 ## 2. Plan
 
-User: `/plan`
+User: `/llm-orchestrator:plan`
 
 Agent invokes `writing-plans`, reads the spec, writes `docs/llm-orchestrator/plans/2026-05-23-token-rate-limit-plan.md`. Three tasks:
 
@@ -51,7 +51,7 @@ Agent invokes `writing-plans`, reads the spec, writes `docs/llm-orchestrator/pla
 
 ## 3. Worktree
 
-User: `/worktree`
+User: `/llm-orchestrator:worktree`
 
 ```
 Changed:
@@ -60,12 +60,12 @@ Changed:
 Verify:
 - (cd .worktrees/token-rate-limit && pnpm test)
 Next:
-- /dispatch task 1 and task 3 in parallel.
+- /llm-orchestrator:dispatch task 1 and task 3 in parallel.
 ```
 
 ## 4. Dispatch
 
-User: `/dispatch 1,3`
+User: `/llm-orchestrator:dispatch 1,3`
 
 Agent dispatches two implementers in parallel. Both return:
 
@@ -104,7 +104,7 @@ Verify:
 
 ## 5. Review
 
-User: `/review`
+User: `/llm-orchestrator:review`
 
 Stage 1 — spec compliance. Verdict: yes.
 Stage 2 — code quality. One Important issue: missing test for the concern.
@@ -117,12 +117,12 @@ Issues:
 Verdict:
 - with-fixes — address 1 Important before merging
 Next:
-- Add the missing test, then /verify and /finish.
+- Add the missing test, then /llm-orchestrator:verify and /llm-orchestrator:finish.
 ```
 
 ## 6. Verify
 
-User: `/verify`
+User: `/llm-orchestrator:verify`
 
 ```
 Verify:
@@ -130,12 +130,12 @@ Verify:
 - lint: 0 warnings
 - test: 146 passed
 Next:
-- /finish
+- /llm-orchestrator:finish
 ```
 
 ## 7. Finish
 
-User: `/finish`
+User: `/llm-orchestrator:finish`
 
 ```
 Found:

@@ -51,10 +51,11 @@ Never run two writers concurrently on the same checkout. If you can't isolate th
 5. **Send in parallel**, one message. **Wait for all N returns** before any follow-up.
 6. **Triage each Status:**
    - `DONE`/`DONE_WITH_CONCERNS` → mark completed, tick the plan checkbox.
-   - `BLOCKED` → satisfy `Need:`, re-dispatch that one.
-   - `NEEDS_CONTEXT` → answer `Ask:`, re-dispatch that one.
-7. **Review** (after all `DONE`): per-task spec+code review for high-risk surface, or `/review` on the combined diff for low-risk.
-8. **Merge back — run the integration engine (don't merge by hand).** It merges each branch sequentially, runs the test gate after each merge, stops at the first conflict/test-failure/empty-branch keeping prior successes, releases each claim, and removes each merged worktree:
+   - `BLOCKED` → route through the recovery tree in `dispatching-subagents`: missing context resumes the same agent via `SendMessage` (by agentId — the partial context survives); sibling-wait, decomposition, and model escalation re-dispatch fresh.
+   - `NEEDS_CONTEXT` → answer `Ask:` via `SendMessage` to that agentId; the resume returns in the background — don't spawn a duplicate while waiting.
+   - `PARTIAL` → its Stop-if fired: record `Progress:`, resume with unblocking guidance, or re-dispatch fresh with `Progress:`/`Remaining:` pasted if the transcript shows a retry storm.
+7. **Review** (after all `DONE`): per-task spec+code review for high-risk surface, or `/llm-orchestrator:review` on the combined diff for low-risk.
+8. **Merge back — run the integration engine (don't merge by hand).** By default it runs a speculative merge queue: every branch batch-merges onto an isolated integration worktree, the suite runs ONCE at the combined tip, and the base fast-forwards only to a suite-green SHA. On a red tip it re-tests the base state (environmental red falls back to `--serial`), bisects out the first regressor (kept on the integration branch for inspection), lands the tested-green prefix, and reports the rest `Pending` with a `Re-run:` line. Expect ONE `tests:` line shared by all landed branches, not one per branch. `--serial` restores the old merge-test-merge-test engine. Either way it releases each landed claim and removes each landed worktree:
    ```bash
    cd "$(git rev-parse --show-toplevel)"
    INTEG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/orch-worktree-integrate.sh"; [[ -f "$INTEG" ]] || INTEG=".claude/scripts/orch-worktree-integrate.sh"
@@ -82,7 +83,7 @@ Merged:
 Verify:
 - <combined test command> → <line>
 Next:
-- /review the combined diff (or per-task review if high-risk)
+- /llm-orchestrator:review the combined diff (or per-task review if high-risk)
 ```
 
 ## Anti-patterns

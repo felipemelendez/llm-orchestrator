@@ -128,10 +128,11 @@ The roster covers, by role:
 - an implementer that runs one plan task at a time;
 - a spec reviewer and a code reviewer for the two-stage review, plus an optional security reviewer;
 - a debugger for root-cause investigation;
-- a design explorer for the brainstorming stage;
 - a researcher that verifies external API claims against current sources.
 
-When a task is read-heavy (audit, "what files handle X", grep-sweeps), **dispatch the read-only explorer subagent instead of doing the reads inline.** It runs on a cheaper, faster model — roughly a tenth the cost of the default model for the same searches.
+When a task is read-heavy (audit, "what files handle X", grep-sweeps), **dispatch a read-only explorer instead of doing the reads inline** — the win is context, not cost: the sweep's output stays out of the controller's window.
+
+Delegate for size, not reflexively. Current models delegate readily on their own, and a subagent costs a fresh context that must re-gather what the controller already knows. If you can finish it in a handful of tool calls, do it inline. If one agent can do it, use one.
 
 When a task is design-shaped (new feature, multi-step build), **go through `brainstorming` → spec → `/llm-orchestrator:plan` → `/llm-orchestrator:dispatch`.** Don't implement features inline when the orchestration path exists.
 

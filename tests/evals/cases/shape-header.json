@@ -1,0 +1,17 @@
+{
+  "id": "shape-header",
+  "why": "Concise Agent Protocol: a 'where is X' question must open with Found:, not prose.",
+  "prompt": "where is the retry logic in this project?",
+  "setup": [
+    "mkdir -p src",
+    "printf 'def fetch(url, retries=3):\\n    for attempt in range(retries):\\n        try:\\n            return _get(url)\\n        except IOError:\\n            continue\\n' > src/net.py"
+  ],
+  "expect": {
+    "must_match": [
+      "^Found:"
+    ],
+    "must_open_with": [
+      "Found:"
+    ]
+  }
+}

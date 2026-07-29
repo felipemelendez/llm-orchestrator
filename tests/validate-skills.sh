@@ -16,7 +16,8 @@
 # Agents:
 #   - frontmatter has name + description
 #   - filename matches frontmatter name
-#   - model is one of haiku|sonnet|opus (if present)
+#   - model is one of haiku|sonnet|opus|fable|inherit or a full id (if present)
+#   - effort is one of low|medium|high|xhigh|max (if present)
 
 set -uo pipefail
 
@@ -153,8 +154,26 @@ if [[ -d "$ROOT/agents" ]]; then
       echo "FAIL: $file missing description"
       fail=1
     fi
-    if [[ -n "$fm_model" && ! "$fm_model" =~ ^(haiku|sonnet|opus)$ ]]; then
-      echo "FAIL: $file model='$fm_model' not in haiku|sonnet|opus"
+    fm_effort=$(awk '/^effort:/ {print $2; exit}' "$file" | tr -d '\r')
+    if [[ -n "$fm_effort" && ! "$fm_effort" =~ ^(low|medium|high|xhigh|max)$ ]]; then
+      echo "FAIL: $file effort='$fm_effort' not in low|medium|high|xhigh|max"
+      fail=1
+    fi
+    fm_maxturns=$(awk '/^maxTurns:/ {print $2; exit}' "$file" | tr -d '\r')
+    if [[ -n "$fm_maxturns" && ! "$fm_maxturns" =~ ^[1-9][0-9]*$ ]]; then
+      echo "FAIL: $file maxTurns='$fm_maxturns' is not a positive integer"
+      fail=1
+    fi
+    # The implementer must NOT carry maxTurns: its .orch-active mutex is
+    # released by a voluntary final-turn rmdir, and a hard cap can strand it
+    # (the reaper mitigates but does not license the cap; maxTurns may also
+    # reset on SendMessage resume, so it is not a real bound).
+    if [[ "$(basename "$file")" == "orch-implementer.md" && -n "$fm_maxturns" ]]; then
+      echo "FAIL: orch-implementer.md must not set maxTurns (strands the writer mutex on cap)"
+      fail=1
+    fi
+    if [[ -n "$fm_model" && ! "$fm_model" =~ ^(haiku|sonnet|opus|fable|inherit|claude-[a-z0-9.-]+)$ ]]; then
+      echo "FAIL: $file model='$fm_model' not in haiku|sonnet|opus|fable|inherit|<full-id>"
       fail=1
     fi
     checked_agents=$((checked_agents+1))

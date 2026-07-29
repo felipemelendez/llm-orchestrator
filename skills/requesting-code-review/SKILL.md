@@ -13,11 +13,15 @@ This review can run two ways. The markdown stages below are the **canonical** pa
 Workflow tool is available, prefer the accelerated path — it adds structured findings and an
 adversarial verify pass. The two are not behaviorally identical; routing follows `using-workflows`.
 
-A harness-native review skill (Claude Code's `code-review` for quality, `security-review` for
-security) is an accepted substrate for the *mechanics* of Stage 2 / Stage 3. What stays this
-skill's contract regardless of substrate: Stage 1 spec compliance (native review checks
-correctness, not whether the diff implements the approved spec), the spec-gates-quality order,
-and the confidence + failure-scenario rules below.
+**This flow cannot delegate to the native review skills.** As of Claude Code v2.1.215,
+*"Claude no longer runs the `/verify` and `/code-review` skills on its own"* — both carry
+`disable-model-invocation: true` and cannot be preloaded into a subagent. They are excellent
+**manual** passes (`/code-review xhigh` on a real diff is worth running by hand), but a skill
+cannot invoke them, so the plugin's own reviewer agents are the only automatable substrate.
+
+What stays this skill's contract either way: Stage 1 spec compliance (native review checks
+correctness, never whether the diff implements the approved spec), the spec-gates-quality
+order, and the evidence rules below.
 
 ### Preferred path (Workflow tool present)
 
@@ -26,7 +30,7 @@ and the confidence + failure-scenario rules below.
    grep shown in Stage 3 below). Do **not** re-derive that regex anywhere else.
 2. Run `workflows/review-diff.js`, passing `args = {specText, planText, conventions, diff,
    security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1 (preserving the
-   early-exit below), confidence-filters at ≥80%, and verifies surviving findings with a bounded
+   early-exit below), demotes findings below 0.8 confidence to `Notes:`, and verifies the rest with a bounded
    skeptic pass. It returns `{confirmed, notes, earlyExit}`.
 3. Write the review artifact from that return, using the same report shape as the canonical path.
 
@@ -107,9 +111,15 @@ Zero issues is a valid verdict. The reviewer is not measured by findings count.
 
 ## Confidence rule
 
-The reviewer should not raise an Issue unless ≥80% confident it's real. Speculation goes in a separate `Notes:` section, not in `Issues:`.
+**The threshold belongs to the filter, not the reviewer.** Reviewers are told to report everything they find and tag each finding with a confidence from 0.0 to 1.0. The controller (or `workflows/review-diff.js`) then demotes findings below 0.8 into `Notes:` — nothing is discarded.
 
-**Critical findings additionally require concrete evidence:** the spec line violated (Stage 1), the failure scenario — specific inputs/state → wrong behavior (Stage 2), or the exploitation path (Stage 3). A Critical claim that can't state its evidence gets downgraded, not surfaced. LLM reviewers systematically over-flag correct code, and demanding the concrete scenario is the published countermeasure — it converts "this looks wrong" into a checkable claim.
+Do not instruct a reviewer to be conservative or to report only high-severity issues. Current models follow that literally and report less — recall falls while the false-positive rate barely moves. Anthropic's guidance for Opus 5 is explicit: *"ask it to report everything and filter in a separate pass instead."*
+
+**Critical findings additionally require concrete evidence:** the spec line violated (Stage 1), the failure scenario — specific inputs/state → wrong behavior (Stage 2), or the exploitation path (Stage 3). A Critical claim that can't state its evidence gets downgraded, not surfaced.
+
+Be precise about which half of this rule the literature actually supports. **Stage 1's is cited:** the paper suggests mitigations *"that explicitly force evidence grounding, for example, requiring the rationale to cite the exact requirement clause being violated"* — that is the spec-line rule, near-verbatim. **Stage 2's failure-scenario rule is our own inference.** The paper's nearest text is an observation, not a prescription: 48.2% of findings were "Logic Error" claims made *"often without a falsifiable counterexample."*
+
+Be honest about how strong the rest is. LLM reviewers do systematically over-flag correct code ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)), but that paper's measured countermeasure is a **fix-guided verification filter** — the reviewer proposes a correction and the correction is *executed* as counterfactual evidence. The same paper finds that prompts asking for more explanation *increase* misjudgement. So a prose scenario is the weak form: it converts "this looks wrong" into a checkable claim, but it is not itself the check. `workflows/review-diff.js` implements the strong form: every finding must carry a `fix`, and the skeptic pass **executes** the fix in a scratch copy where the claim is runnable — a finding survives only if the original misbehaves and the fixed version behaves; equivalence refutes it. Surviving findings are labelled `verifiedBy: executed` (a real counterfactual run) or `verifiedBy: reasoned` (survived argument only — the weak form, used when the claim isn't runnable). Weigh them accordingly.
 
 ## Output (from the controller after both stages)
 
@@ -118,10 +128,12 @@ Issues:
 - Critical: 0
 - Important: 2
 - Minor: 4
+Notes:
+- <findings the reviewer tagged below 0.8 confidence — recorded, never blocking>
 Verdict:
 - with-fixes — address 2 Important before merging
 Next:
-- Fix users.ts:42 and api.ts:118. Re-run /review.
+- Fix users.ts:42 and api.ts:118. Re-run /llm-orchestrator:review.
 ```
 
 ## Anti-patterns

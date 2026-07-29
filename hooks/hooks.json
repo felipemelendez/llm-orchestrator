@@ -60,6 +60,28 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-evidence-ledger.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-evidence-ledger.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "SubagentStop": [
@@ -74,6 +96,26 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-researcher-validator.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-retry-cap.sh",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "(^|:)orch-implementer$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-worktree-reaper.sh",
+            "timeout": 10
+          },
+          {
+            "type": "prompt",
+            "prompt": "You are validating an implementer subagent's final message — the last_assistant_message field of this hook input: $ARGUMENTS. The implementer's termination contract: its final message must contain a line-leading 'Status:' block, one of DONE or DONE_WITH_CONCERNS (with a Verify: line quoting a command it actually ran and that command's output), PARTIAL (with Progress: and Remaining: lines), BLOCKED (with a Need: line), or NEEDS_CONTEXT (with an Ask: line). Return {\"ok\": true} when the contract is met. Return {\"ok\": false, \"reason\": \"...\"} ONLY when the message shows premature or unaware termination: it trails off mid-work with no Status block, or it claims DONE while its Verify: is missing, empty, or an assertion like 'should pass' instead of pasted command output. The reason must instruct the agent to either finish and verify, or return an honest PARTIAL (Progress:/Remaining:) or BLOCKED (Need:) block — never to fabricate success. When in doubt, return {\"ok\": true}.",
+            "timeout": 30
           }
         ]
       }

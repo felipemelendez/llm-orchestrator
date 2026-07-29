@@ -39,7 +39,7 @@ mk_transcript() {
 run() { # run <transcript> [env assignments...]: prints "rc|stderr"
   local tr="$1"; shift
   local err rc
-  err=$(printf '{"transcript_path":"%s"}' "$tr" | env "$@" CLAUDE_PROJECT_DIR="$CLEAN" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+  err=$(printf '{"transcript_path":"%s","session_id":"vg-test"}' "$tr" | env "$@" ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$CLEAN" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
   printf '%s|%s' "$rc" "$err"
 }
 
@@ -78,19 +78,68 @@ for prose in \
 done
 [[ "$fp_ok" == "1" ]] && ok "negated/descriptive prose in Found:/Plan:/Status:/Issues: never fires (even strict)"
 
-printf '\n%s== WIP escape: dirty tree → silent even with claim ==%s\n' "$DIM" "$RESET"
+printf '\n%s== WIP escape narrowed: dirty tree ALONE still warns ==%s\n' "$DIM" "$RESET"
 DIRTY="$TMP/dirty"; mkdir -p "$DIRTY"
 ( cd "$DIRTY" && git init -q && git config user.email t@t && git config user.name t \
   && echo hi > f && git add f && git commit -qm initial && echo change >> f )
-err=$(printf '{"transcript_path":"%s"}' "$tr" | CLAUDE_PROJECT_DIR="$DIRTY" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
-if [[ "$rc" == "0" ]] && [[ -z "$err" ]]; then ok "dirty tree → WIP escape, no warning"; else fail "dirty escape" "rc=$rc err=$err"; fi
+err=$(printf '{"transcript_path":"%s","session_id":"vg-test"}' "$tr" | ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$DIRTY" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'orch-verify-gate'; then
+  ok "dirty tree alone (the normal mid-task state) → still warns"
+else fail "dirty-alone warns" "rc=$rc err=$err"; fi
 
-printf '\n%s== WIP escape: last commit subject contains wip → silent ==%s\n' "$DIM" "$RESET"
+printf '\n%s== WIP escape narrowed: clean tree + wip subject still warns ==%s\n' "$DIM" "$RESET"
 WIP="$TMP/wip"; mkdir -p "$WIP"
 ( cd "$WIP" && git init -q && git config user.email t@t && git config user.name t \
   && echo hi > f && git add f && git commit -qm "wip: halfway" )
-err=$(printf '{"transcript_path":"%s"}' "$tr" | CLAUDE_PROJECT_DIR="$WIP" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
-if [[ "$rc" == "0" ]] && [[ -z "$err" ]]; then ok "wip commit subject → no warning"; else fail "wip escape" "rc=$rc err=$err"; fi
+err=$(printf '{"transcript_path":"%s","session_id":"vg-test"}' "$tr" | ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$WIP" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'orch-verify-gate'; then
+  ok "clean tree + wip subject → still warns (work is committed, claim needs evidence)"
+else fail "clean+wip warns" "rc=$rc err=$err"; fi
+
+printf '\n%s== WIP escape: dirty tree AND wip subject → silent ==%s\n' "$DIM" "$RESET"
+BOTH="$TMP/both"; mkdir -p "$BOTH"
+( cd "$BOTH" && git init -q && git config user.email t@t && git config user.name t \
+  && echo hi > f && git add f && git commit -qm "wip: halfway" && echo change >> f )
+err=$(printf '{"transcript_path":"%s","session_id":"vg-test"}' "$tr" | ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$BOTH" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+if [[ "$rc" == "0" ]] && [[ -z "$err" ]]; then ok "dirty + wip subject → WIP escape, no warning"; else fail "dirty+wip escape" "rc=$rc err=$err"; fi
+
+printf '\n%s== Evidence ledger: cited stamp validated against the hook-written ledger ==%s\n' "$DIM" "$RESET"
+# Build a ledger at the exact path the gate computes (same libs, same env).
+LEDGER=$(ORCH_HOME="$TMP/orch-home" bash -c '
+  source "'"$ROOT"'/scripts/lib/orch-project.sh"
+  source "'"$ROOT"'/scripts/lib/orch-evidence.sh"
+  orch_evidence_ledger_path vg-test')
+mkdir -p "$(dirname "$LEDGER")"
+printf 'aaaa11112222\t0\t1700000000\tnpm test\nbbbb33334444\t1\t1700000001\tpytest -q\n' > "$LEDGER"
+
+tr_good=$(mk_transcript "Changed: fixed it.
+Verify: npm test → 142 passed [orch-evidence aaaa11112222 exit=0]")
+out=$(run "$tr_good"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" && -z "$err" ]]; then ok "valid stamp (exit 0) → silent"; else fail "valid stamp" "rc=$rc err=$err"; fi
+
+tr_fab=$(mk_transcript "Changed: fixed it.
+Verify: npm test → 142 passed [orch-evidence deadbeef0123 exit=0]")
+out=$(run "$tr_fab"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'not in the evidence ledger'; then
+  ok "fabricated stamp → warns (not recorded by the hook)"
+else fail "fabricated stamp" "rc=$rc err=$err"; fi
+out=$(run "$tr_fab" ORCH_STRICT_VERIFY=1); rc=${out%%|*}
+if [[ "$rc" == "2" ]]; then ok "fabricated stamp + strict → blocks (exit 2)"; else fail "fabricated strict" "rc=$rc"; fi
+
+tr_failing=$(mk_transcript "Changed: fixed it.
+Verify: pytest -q → all good [orch-evidence bbbb33334444 exit=1]")
+out=$(run "$tr_failing"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'FAILED'; then
+  ok "stamp recorded with exit=1 → warns (cited run actually failed)"
+else fail "failing stamp" "rc=$rc err=$err"; fi
+
+tr_stampless=$(mk_transcript "Changed: fixed it.
+Verify: ./custom-check.sh → ok")
+out=$(run "$tr_stampless" ORCH_STRICT_VERIFY=1); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'note'; then
+  ok "stampless Verify: with ledger present → soft note only, never blocks"
+else fail "stampless soft" "rc=$rc err=$err"; fi
+rm -f "$LEDGER"
 
 printf '\n%s== Dry-run logs intent, never blocks ==%s\n' "$DIM" "$RESET"
 out=$(run "$tr" ORCH_STRICT_VERIFY=1 ORCH_HOOK_DRY_RUN=1); rc=${out%%|*}; err=${out#*|}

@@ -12,18 +12,17 @@ Subagents:
 - Never write to `main`/`master` without explicit user OK.
 - Stop and return `Status: BLOCKED` rather than guess.
 
-## Roles _(haiku = fastest/cheapest · sonnet = balanced · opus = most capable)_
+## Roles _(model = capability, chosen per role; effort inherits the session preference — see docs/anthropic-ecosystem.md for the table and the evidence)_
 
 | `subagent_type`        | Model  | Used by                | Purpose                                                          |
 |------------------------|--------|------------------------|------------------------------------------------------------------|
-| `orch-explorer`        | haiku  | `/plan`, `/debug`      | Read-only codebase search; returns file:line refs                |
-| `orch-implementer`     | sonnet | `/dispatch`            | Executes one task from a plan; returns `Status:` block           |
-| `orch-spec-reviewer`   | sonnet | `/review` stage 1      | "Does the diff match the spec/plan?"                             |
-| `orch-code-reviewer`   | sonnet | `/review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
-| `orch-debugger`        | sonnet | `/debug`               | Root-cause investigation before any edit                         |
-| `orch-brainstormer`    | opus   | brainstorming design stage | Open-design explorer; writes the spec                        |
-| `orch-researcher`      | sonnet | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
-| `orch-security-reviewer` | sonnet | `/review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps) |
+| `orch-explorer`        | sonnet | `/llm-orchestrator:plan`, `/llm-orchestrator:debug`      | Read-only codebase search; returns file:line refs                |
+| `orch-implementer`     | opus   | `/llm-orchestrator:dispatch`            | Executes one task from a plan; returns `Status:` block           |
+| `orch-spec-reviewer`   | opus   | `/llm-orchestrator:review` stage 1      | "Does the diff match the spec/plan?"                             |
+| `orch-code-reviewer`   | opus   | `/llm-orchestrator:review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
+| `orch-debugger`        | opus   | `/llm-orchestrator:debug`               | Root-cause investigation before any edit                         |
+| `orch-researcher`      | opus   | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
+| `orch-security-reviewer` | opus   | `/llm-orchestrator:review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps) |
 
 Prompt templates live in `templates/`:
 - `implementer-prompt.md`
@@ -45,6 +44,7 @@ Every subagent returns exactly one Status:
 
 - `DONE` — task complete, verified.
 - `DONE_WITH_CONCERNS` — complete but flagged issues; see `Concerns:` block.
+- `PARTIAL` — a `Stop if:` condition fired mid-task; see `Progress:` / `Remaining:` blocks. The controller resumes or re-dispatches with the remainder — completed work is never redone.
 - `BLOCKED` — cannot proceed; see `Need:` block.
 - `NEEDS_CONTEXT` — missing info from the controller; see `Ask:` block.
 

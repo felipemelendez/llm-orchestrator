@@ -3,7 +3,7 @@ description: Append a fact to your project's CLAUDE.md with auto-classification 
 argument-hint: "[fact]"
 ---
 
-You are running `/remember`.
+You are running `/llm-orchestrator:remember`.
 
 User input: $ARGUMENTS
 

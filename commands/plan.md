@@ -2,7 +2,7 @@
 description: Turn a spec into a dated, checklist-shaped plan at docs/llm-orchestrator/plans/. Uses the writing-plans skill.
 ---
 
-You are running `/plan`.
+You are running `/llm-orchestrator:plan`.
 
 User input: $ARGUMENTS (optional — spec path or "latest")
 
@@ -37,9 +37,9 @@ Changed:
 Verify:
 - cat docs/llm-orchestrator/plans/<file> | head -40
 Next:
-- /worktree to isolate, then /dispatch (it routes to sequential or parallel based on task independence)
+- /llm-orchestrator:worktree to isolate, then /llm-orchestrator:dispatch (it routes to sequential or parallel based on task independence)
 ```
 
 Constraints:
 - Plan is one file. No multi-file plans.
-- Do not start implementing inside `/plan`. That's `/dispatch` or inline work.
+- Do not start implementing inside `/llm-orchestrator:plan`. That's `/llm-orchestrator:dispatch` or inline work.

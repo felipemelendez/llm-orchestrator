@@ -88,14 +88,14 @@ ORCH_SIG_VERSION='(\bv[0-9]+(\.[0-9]+)*\b|\b[0-9]+\.[0-9]+(\.[0-9]+)*\b|(>=|<=|=
 # Security-sensitive verbs and nouns.
 # Used by the research gate (design-shape compel branch) — whole-word boundary
 # required here so that bare prose doesn't fire.
-ORCH_SIG_SECURITY='\b(auth|crypto|payment|secret|jwt|oauth|password|encryption|tls|ssl|webhook)\b'
+ORCH_SIG_SECURITY='\b(auth|crypto|payment|secret|jwt|oauth|password|credential|encryption|tls|ssl|webhook)\b|\b(access|refresh|bearer|api|session|csrf)[-_ ]?tokens?\b'
 
 # Looser security pattern for diff-scanning in review Stage 3.
 # Stage 3 is advisory and should fail toward running; substring matching on
 # compound identifiers (checkAuth, hashPassword, bcrypt, encryptData, JWTToken)
 # is intentional. Short tokens that create false positives at substring level
 # (tls, ssl) remain word-bounded.
-ORCH_SIG_SECURITY_DIFF='(auth|crypt|payment|secret|jwt|oauth|password|encrypt|webhook)|\b(tls|ssl)\b'
+ORCH_SIG_SECURITY_DIFF='(auth|crypt|payment|secret|jwt|oauth|password|credential|encrypt|webhook)|\b(tls|ssl)\b|\b(access|refresh|bearer|api|session|csrf)[-_ ]?tokens?\b'
 
 # Architectural signals (verb-or-noun shape).
 ORCH_SIG_ARCH='\b(migrate|migrating|migration|set[[:space:]]+up|wire|wiring|integrate|integrating|replace[[:space:]]+.+[[:space:]]+with|switch[[:space:]]+from|schema|config[[:space:]]+syntax)\b'
@@ -105,7 +105,20 @@ ORCH_SIG_ARCH='\b(migrate|migrating|migration|set[[:space:]]+up|wire|wiring|inte
 ORCH_SIG_DESIGN_VERB='\b(add|implement|build|set[[:space:]]+up|wire|wiring|integrate|integrating|migrate|migrating|migration|upgrade|upgrading|refactor|create|introduce|switch[[:space:]]+from|replace)\b'
 
 # Explicit user invocation.
-ORCH_SIG_INVOCATION='/llm-orchestrator:research'
+ORCH_SIG_INVOCATION='/llm-orchestrator:research\b'
+
+# Verify-shaped commands — test/lint/typecheck/build invocations across the
+# common ecosystems. Used by the evidence-ledger PostToolUse hook to decide
+# which Bash results get an evidence stamp, and (indirectly) by the verify
+# gate when it validates a cited stamp.
+#
+# COMMAND-POSITION ANCHORED: the tool name must be the first word of a command
+# segment (start of string, or right after ; & | — which also covers && and
+# ||). Without that anchor, `git add tests/smoke.sh`, `echo pytest passed`,
+# and `chmod +x tests/x.sh` all minted valid exit-0 stamps — evidence for runs
+# that verified nothing. Conservative on purpose: a false negative just means
+# no stamp (soft note at most); a false positive is a forged credential.
+ORCH_SIG_VERIFY_CMD='(^|[;&|])[[:space:]]*((npm|pnpm|yarn|bun)([[:space:]]+run)?[[:space:]]+(test|lint|typecheck|check|build)\b|(pytest|jest|vitest|mocha|rspec|tox|phpunit|tsc|ruff|eslint|flake8|mypy)\b|go[[:space:]]+(test|vet)\b|cargo[[:space:]]+(test|check|clippy)\b|mix[[:space:]]+test\b|gradle[[:space:]]+test\b|mvn[[:space:]]+(test|verify)\b|make[[:space:]]+(test|check)\b|(bash[[:space:]]+|sh[[:space:]]+)?(\./)?tests?/[A-Za-z0-9._/-]*\.sh\b)'
 
 # === Question-shape signals ===
 # These signals compel WITHOUT a design verb. They're queries against project

@@ -2,23 +2,40 @@
 # LLM Orchestrator — worktree merge-back / integration engine.
 #
 # The symmetric JOIN half of the materialize engine. After parallel writers
-# finish in their isolated worktrees, this merges each branch back into the base
-# branch — sequentially, with a test gate after EACH merge, stopping at the first
-# failure while keeping prior successes. Orchestration is only complete when the
-# pieces reassemble reliably; this enforces that instead of trusting the
-# controller to merge by hand.
+# finish in their isolated worktrees, this reassembles their branches into the
+# base test-gated. Two modes:
 #
-# Safety: conflicts get a clean `git merge --abort`. A signal/error mid-merge
-# aborts the in-progress merge so the base is never left half-merged. We NEVER
-# auto-`reset --hard` the base; a test failure after a clean merge stops and
-# reports the base SHA for the human/controller to resolve. Destructive git here
-# runs inside this trusted script, out of the PreToolUse guard's scope.
+# SPECULATIVE (default) — the merge-queue discipline Zuul and GitHub merge
+#   queues use: all N branches are merged sequentially onto a throwaway
+#   integration branch in an ISOLATED worktree (the base is never touched),
+#   and the suite runs ONCE against the combined tip.
+#     - Green tip → the base fast-forwards to it atomically. N branches land
+#       for one suite run instead of N.
+#     - Red tip → bisect the merge points for the longest explicitly-tested
+#       green prefix, fast-forward the base to THAT, eject the first failing
+#       branch (kept on the integration branch for inspection), report the
+#       rest Pending with a Re-run line. Only states that actually ran green
+#       ever reach the base.
+#   Safety is strictly stronger than serial: the base never holds an untested
+#   or half-merged commit at any instant — its only mutation is a --ff-only
+#   move to a suite-green SHA.
+#
+# SERIAL (--serial) — the original engine: merge each branch into the base one
+#   at a time, run the suite after each, stop at the first conflict / test
+#   failure / empty branch keeping prior successes. A test failure leaves the
+#   failed merge committed on the base (never auto-reset) for inspection.
+#
+# Both modes: conflicts abort cleanly; empty branches (a BLOCKED writer that
+# produced nothing) stop the queue rather than silently "passing"; merged
+# slugs release their registry claim and (unless --no-remove) drop their
+# worktree; the report always says exactly what landed, what didn't, and how
+# to re-run the remainder.
 #
 # NOTE: sourcing this file sets -uo pipefail in the caller's shell (intentional).
 #
 # Usage:
 #   orch-worktree-integrate.sh [--test "<cmd>"] [--allow-no-tests] [--no-remove] \
-#                              [--dry-run] <session_id> <slug> [slug ...]
+#                              [--serial] [--dry-run] <session_id> <slug> [slug ...]
 #
 # Bash 3.2 compatible.
 
@@ -42,6 +59,8 @@ PRE=""           # base HEAD captured just before the in-flight slug's merge
 TESTOUT=""       # temp file holding current test output (cleaned on every exit)
 NOREMOVE=0       # --no-remove, reproduced in the Re-run line
 RAW=()           # original slug args (global so on_signal can slice them)
+INT_BR=""        # speculative: integration branch (kept when it holds a failure)
+INT_WT=""        # speculative: integration worktree path (always cleaned)
 
 report_and_exit() {
   local code="$1" s
@@ -58,6 +77,8 @@ report_and_exit() {
   fi
   exit "${code}"
 }
+
+# --- serial mode (original engine) -----------------------------------------
 
 on_signal() {
   # Decide from git's REAL state, not a shadow flag (which lags commits by a line).
@@ -81,50 +102,9 @@ on_signal() {
   report_and_exit 1
 }
 
-do_integrate() {
-  local dry=0 allow_no_tests=0
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --test) TESTCMD="$2"; shift 2 ;;
-      --allow-no-tests) allow_no_tests=1; shift ;;
-      --no-remove) NOREMOVE=1; shift ;;
-      --dry-run) dry=1; shift ;;
-      *) break ;;
-    esac
-  done
-  SID="${1:-}"; shift || true
-  [[ -n "${SID}" ]] || { echo "orch-integrate: empty session id (try materialize --sid)" >&2; exit 2; }
-  [[ "${SID}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "orch-integrate: invalid session id — got '${SID}'" >&2; exit 2; }
-  [[ $# -gt 0 ]] || { echo "usage: orch-worktree-integrate.sh [--test \"<cmd>\"] [--allow-no-tests] [--no-remove] [--dry-run] <session_id> <slug> [slug ...]" >&2; exit 2; }
-
-  RAW=("$@"); local raw slug branch i n="$#"
-
-  # pre-flight (no mutation)
-  git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "orch-integrate: not inside a git repository" >&2; exit 2; }
-  [[ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]] || { echo "orch-integrate: must be run from the repo root" >&2; exit 2; }
-  git diff --quiet >/dev/null 2>&1 && git diff --cached --quiet >/dev/null 2>&1 || { echo "orch-integrate: base branch is dirty — commit or stash your own changes first" >&2; exit 2; }
-  for raw in "${RAW[@]}"; do
-    slug="$(sanitize "${raw}")"; branch="orch/${SID}/${slug}"
-    git show-ref --verify --quiet "refs/heads/${branch}" || { echo "orch-integrate: branch missing: ${branch}" >&2; exit 2; }
-  done
-
-  # resolve the test command
-  if [[ -z "${TESTCMD}" ]]; then
-    TESTCMD="$(. "${_SCRIPT_DIR}/lib/orch-detect.sh" >/dev/null 2>&1; orch_detect_cached "${PWD}" 2>/dev/null | sed -n 's/^test=//p' | head -1)"
-  fi
-  if [[ -z "${TESTCMD}" ]]; then
-    [[ ${allow_no_tests} -eq 1 ]] || { echo "orch-integrate: no test command found — pass --test \"<cmd>\" or --allow-no-tests" >&2; exit 2; }
-    UNVERIFIED=1
-  fi
-
-  if [[ ${dry} -eq 1 ]]; then
-    printf 'DRY integrate plan (test: %s):\n' "${TESTCMD:-UNVERIFIED}"
-    for raw in "${RAW[@]}"; do slug="$(sanitize "${raw}")"; printf -- '- %s → HEAD via orch/%s/%s\n' "${slug}" "${SID}" "${slug}"; done
-    return 0
-  fi
-
+do_serial() {
   trap 'on_signal' EXIT INT TERM HUP
-  local mergesha testline extra
+  local raw slug branch i n="${#RAW[@]}" mergesha testline extra
   for (( i=0; i<n; i++ )); do
     raw="${RAW[$i]}"; slug="$(sanitize "${raw}")"; branch="orch/${SID}/${slug}"
     CUR_SLUG="${slug}"; CUR_IDX=${i}; PRE=""
@@ -163,22 +143,238 @@ do_integrate() {
     # lesser harm) instead of double-reporting it as both MERGED and ABORTED. CUR_IDX
     # stays at this slug so a between-slugs signal lists the correct remaining work.
     CUR_SLUG=""; PRE=""
-    extra=""
-    bash "${MAT}" --release "${SID}" "${slug}" >/dev/null 2>&1 || extra=" [claim not released: ${slug}]"
-    if [[ ${NOREMOVE} -eq 0 ]]; then
-      git worktree remove ".worktrees/${slug}" >/dev/null 2>&1 || extra="${extra} [worktree not removed: .worktrees/${slug}]"
-      git worktree prune >/dev/null 2>&1 || true
-    fi
-    I_LINE+=("${slug} → MERGED (tests: ${testline})${extra}")
+    release_and_remove "${slug}"
+    I_LINE+=("${slug} → MERGED (tests: ${testline})${extra_note}")
   done
 
   CUR_IDX=-1
   report_and_exit 0
 }
 
+# --- shared cleanup helper -------------------------------------------------
+extra_note=""
+release_and_remove() { # <slug> — release registry claim + drop worktree; sets extra_note
+  local slug="$1"
+  extra_note=""
+  bash "${MAT}" --release "${SID}" "${slug}" >/dev/null 2>&1 || extra_note=" [claim not released: ${slug}]"
+  if [[ ${NOREMOVE} -eq 0 ]]; then
+    git worktree remove ".worktrees/${slug}" >/dev/null 2>&1 || extra_note="${extra_note} [worktree not removed: .worktrees/${slug}]"
+    git worktree prune >/dev/null 2>&1 || true
+  fi
+}
+
+# --- speculative mode ------------------------------------------------------
+
+spec_cleanup_int() { # remove the integration worktree; drop the branch unless $1=keep
+  if [[ -n "${INT_WT}" ]]; then
+    git worktree remove --force "${INT_WT}" >/dev/null 2>&1 || true
+    git worktree prune >/dev/null 2>&1 || true
+    INT_WT=""
+  fi
+  if [[ -n "${INT_BR}" && "${1:-}" != "keep" ]]; then
+    git branch -D "${INT_BR}" >/dev/null 2>&1 || true
+    INT_BR=""
+  fi
+}
+
+SPEC_LANDED=0    # set the moment the base fast-forwards; the signal report depends on it
+spec_on_signal() {
+  [[ -n "${INT_WT}" ]] && git -C "${INT_WT}" merge --abort >/dev/null 2>&1 || true
+  spec_cleanup_int
+  if [[ ${SPEC_LANDED} -eq 1 ]]; then
+    # The ff-only move already happened; only cleanup was interrupted.
+    STOPPED="ABORTED (signal during cleanup) — the verified batch ALREADY LANDED (base at $(git rev-parse --short HEAD 2>/dev/null)); some claims/worktrees may need manual release"
+    PENDING=(); RERUN=()
+  else
+    # The base is untouched until the single --ff-only move.
+    STOPPED="ABORTED (signal) — speculative batch discarded, base untouched"
+    PENDING=(); RERUN=("${RAW[@]}")
+  fi
+  report_and_exit 1
+}
+
+spec_test() { # run the suite inside the integration worktree; prints last line, rc = suite rc
+  TESTOUT="$(mktemp)"
+  if ( cd "${INT_WT}" && eval "${TESTCMD}" ) >"${TESTOUT}" 2>&1; then
+    local line; line="$(grep -v '^[[:space:]]*$' "${TESTOUT}" | tail -1 | cut -c1-80)"; [[ -n "${line}" ]] || line="passed"
+    rm -f "${TESTOUT}"; TESTOUT=""
+    printf '%s' "${line}"; return 0
+  fi
+  rm -f "${TESTOUT}"; TESTOUT=""
+  return 1
+}
+
+spec_land() { # <sha> — fast-forward the base to an explicitly-verified SHA
+  git merge --ff-only "$1" >/dev/null 2>&1
+}
+
+do_speculative() {
+  trap 'spec_on_signal' EXIT INT TERM HUP
+  local n="${#RAW[@]}" i raw slug branch testline
+  local SLUGS=() MSHA=()   # MSHA[i] = integration tip after slug i merged (1-based via i+1)
+  local base_sha; base_sha="$(git rev-parse HEAD)"
+
+  INT_BR="orch/${SID}/_integration.$$"
+  INT_WT="$(git rev-parse --show-toplevel)/.worktrees/_integration.$$"
+  mkdir -p "$(git rev-parse --show-toplevel)/.worktrees" 2>/dev/null || true
+  if ! git worktree add -b "${INT_BR}" "${INT_WT}" HEAD >/dev/null 2>&1; then
+    # Cannot build the speculation scratch space — fall back to serial.
+    INT_BR=""; INT_WT=""
+    trap - EXIT INT TERM HUP
+    do_serial
+    return
+  fi
+
+  # Phase 1: merge every branch onto the integration tip (no tests yet).
+  local queue_stop_idx=-1 queue_stop_line=""
+  for (( i=0; i<n; i++ )); do
+    raw="${RAW[$i]}"; slug="$(sanitize "${raw}")"; branch="orch/${SID}/${slug}"
+    SLUGS[$i]="${slug}"
+    if [[ "$(git -C "${INT_WT}" rev-list --count "HEAD..${branch}" 2>/dev/null || echo 0)" == "0" ]]; then
+      queue_stop_idx=${i}; queue_stop_line="${slug} — EMPTY — branch has no commits ahead of base (the task produced nothing, or was already integrated)"
+      break
+    fi
+    if ! git -C "${INT_WT}" merge --no-ff -m "integrate ${slug}" "${branch}" >/dev/null 2>&1; then
+      git -C "${INT_WT}" merge --abort >/dev/null 2>&1 || true
+      queue_stop_idx=${i}; queue_stop_line="${slug} — CONFLICT — overlapping changes; merge aborted, base clean"
+      break
+    fi
+    MSHA[$i]="$(git -C "${INT_WT}" rev-parse HEAD)"
+  done
+
+  local merged_count=${#MSHA[@]}   # branches that merged cleanly onto the tip
+
+  # Phase 2: one suite run at the deepest clean tip; on red, bisect for the
+  # longest explicitly-tested-green prefix. lo is always a TESTED-green index
+  # (0 = base, assumed green per the regression baseline); hi a tested-red one.
+  local land_idx=${merged_count}   # 1-based count of slugs to land
+  local fail_line=""
+  if [[ ${merged_count} -gt 0 && ${UNVERIFIED} -eq 0 ]]; then
+    if testline="$(spec_test <"/dev/null")"; then
+      : # tip green → land everything that merged
+    else
+      # Red tip. Before blaming a branch, check the BASE state inside this
+      # same worktree: a fresh worktree misses untracked build state (deps,
+      # generated files), and a suite red for environmental reasons must not
+      # eject an innocent branch. Environmental/pre-existing red → serial
+      # fallback, which tests on the real base checkout.
+      git -C "${INT_WT}" checkout -q "${base_sha}" >/dev/null 2>&1
+      if ! spec_test >/dev/null </dev/null; then
+        printf 'orch-integrate: suite is red at the BASE state inside the integration worktree — environmental (untracked deps?) or pre-existing failure, not attributable to any branch. Falling back to --serial (tests run on the base checkout).\n' >&2
+        trap - EXIT INT TERM HUP
+        spec_cleanup_int
+        do_serial
+        return
+      fi
+      git -C "${INT_WT}" checkout -q "${INT_BR}" >/dev/null 2>&1
+      # lo can only advance via an explicitly GREEN test at MSHA[lo-1], so the
+      # salvage point needs no re-test; capture the green suite line as we go.
+      local lo=0 hi=${merged_count} mid green_line="" green_out=""
+      while (( hi - lo > 1 )); do
+        mid=$(( (lo + hi) / 2 ))
+        git -C "${INT_WT}" checkout -q "${MSHA[$((mid-1))]}" >/dev/null 2>&1
+        if green_out="$(spec_test </dev/null)"; then lo=${mid}; green_line="${green_out}"; else hi=${mid}; fi
+      done
+      land_idx=${lo}
+      testline="${green_line:-passed}"
+      local cul_slug="${SLUGS[$((hi-1))]}" cul_sha; cul_sha="$(git rev-parse --short "${MSHA[$((hi-1))]}")"
+      if (( land_idx > 0 )); then
+        fail_line="${cul_slug} — TEST_FAILED — ejected from the queue; '${TESTCMD}' fails at the first prefix containing it (failing state kept at ${cul_sha} on branch ${INT_BR}; base untouched by it)"
+      else
+        fail_line="${cul_slug} — TEST_FAILED — no green prefix found ('${TESTCMD}' red at the first merge); nothing landed, base untouched (failing state kept at ${cul_sha} on branch ${INT_BR})"
+      fi
+    fi
+  elif [[ ${UNVERIFIED} -eq 1 ]]; then
+    testline="UNVERIFIED"
+  fi
+
+  # Phase 3: land the verified prefix with a single fast-forward.
+  if (( land_idx > 0 )); then
+    if ! spec_land "${MSHA[$((land_idx-1))]}"; then
+      spec_cleanup_int keep
+      STOPPED="LAND_FAILED — fast-forward refused (the base moved since the batch started, or untracked files collide with merged content); verified result kept on branch ${INT_BR}, base untouched"
+      PENDING=(); RERUN=("${RAW[@]}")
+      report_and_exit 1
+    fi
+    SPEC_LANDED=1
+    for (( i=0; i<land_idx; i++ )); do
+      release_and_remove "${SLUGS[$i]}"
+      I_LINE+=("${SLUGS[$i]} → MERGED (tests: ${testline}; speculative batch — 1 suite run for ${land_idx} branch(es))${extra_note}")
+    done
+  fi
+
+  # Phase 4: report the stop line + pending set.
+  if [[ -n "${fail_line}" ]]; then
+    local cul_idx=${land_idx}   # 0-based index of the culprit
+    STOPPED="${fail_line}"
+    PENDING=("${RAW[@]:$((cul_idx+1))}"); RERUN=("${RAW[@]:${cul_idx}}")
+    spec_cleanup_int keep       # keep the branch holding the failing state
+    report_and_exit 1
+  fi
+  if (( queue_stop_idx >= 0 )); then
+    STOPPED="${queue_stop_line}"
+    PENDING=("${RAW[@]:$((queue_stop_idx+1))}"); RERUN=("${RAW[@]:${queue_stop_idx}}")
+    spec_cleanup_int
+    report_and_exit 1
+  fi
+
+  spec_cleanup_int
+  report_and_exit 0
+}
+
+do_integrate() {
+  local dry=0 allow_no_tests=0 serial=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --test) TESTCMD="$2"; shift 2 ;;
+      --allow-no-tests) allow_no_tests=1; shift ;;
+      --no-remove) NOREMOVE=1; shift ;;
+      --serial) serial=1; shift ;;
+      --dry-run) dry=1; shift ;;
+      *) break ;;
+    esac
+  done
+  SID="${1:-}"; shift || true
+  [[ -n "${SID}" ]] || { echo "orch-integrate: empty session id (try materialize --sid)" >&2; exit 2; }
+  [[ "${SID}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "orch-integrate: invalid session id — got '${SID}'" >&2; exit 2; }
+  [[ $# -gt 0 ]] || { echo "usage: orch-worktree-integrate.sh [--test \"<cmd>\"] [--allow-no-tests] [--no-remove] [--serial] [--dry-run] <session_id> <slug> [slug ...]" >&2; exit 2; }
+
+  RAW=("$@"); local raw slug branch
+
+  # pre-flight (no mutation)
+  git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "orch-integrate: not inside a git repository" >&2; exit 2; }
+  [[ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]] || { echo "orch-integrate: must be run from the repo root" >&2; exit 2; }
+  git diff --quiet >/dev/null 2>&1 && git diff --cached --quiet >/dev/null 2>&1 || { echo "orch-integrate: base branch is dirty — commit or stash your own changes first" >&2; exit 2; }
+  for raw in "${RAW[@]}"; do
+    slug="$(sanitize "${raw}")"; branch="orch/${SID}/${slug}"
+    git show-ref --verify --quiet "refs/heads/${branch}" || { echo "orch-integrate: branch missing: ${branch}" >&2; exit 2; }
+  done
+
+  # resolve the test command
+  if [[ -z "${TESTCMD}" ]]; then
+    TESTCMD="$(. "${_SCRIPT_DIR}/lib/orch-detect.sh" >/dev/null 2>&1; orch_detect_cached "${PWD}" 2>/dev/null | sed -n 's/^test=//p' | head -1)"
+  fi
+  if [[ -z "${TESTCMD}" ]]; then
+    [[ ${allow_no_tests} -eq 1 ]] || { echo "orch-integrate: no test command found — pass --test \"<cmd>\" or --allow-no-tests" >&2; exit 2; }
+    UNVERIFIED=1
+  fi
+
+  if [[ ${dry} -eq 1 ]]; then
+    printf 'DRY integrate plan (%s; test: %s):\n' "$([[ ${serial} -eq 1 ]] && echo serial || echo 'speculative — 1 suite run at the combined tip')" "${TESTCMD:-UNVERIFIED}"
+    for raw in "${RAW[@]}"; do slug="$(sanitize "${raw}")"; printf -- '- %s → HEAD via orch/%s/%s\n' "${slug}" "${SID}" "${slug}"; done
+    return 0
+  fi
+
+  if [[ ${serial} -eq 1 ]]; then
+    do_serial
+  else
+    do_speculative
+  fi
+}
+
 main() {
   case "${1:-}" in
-    -h|--help|"") echo "usage: orch-worktree-integrate.sh [--test \"<cmd>\"] [--allow-no-tests] [--no-remove] [--dry-run] <session_id> <slug> [slug ...]" ;;
+    -h|--help|"") echo "usage: orch-worktree-integrate.sh [--test \"<cmd>\"] [--allow-no-tests] [--no-remove] [--serial] [--dry-run] <session_id> <slug> [slug ...]" ;;
     *) do_integrate "$@" ;;
   esac
 }

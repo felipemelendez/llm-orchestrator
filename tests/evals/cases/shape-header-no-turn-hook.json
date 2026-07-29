@@ -1,0 +1,20 @@
+{
+  "id": "shape-header-no-turn-hook",
+  "why": "Ablation for the per-turn protocol reminder (~870 chars injected EVERY turn, accumulating). The with arm here runs the full plugin MINUS the per-turn hook; comparing this case's with-rate to shape-header's with-rate isolates the hook's turn-one contribution. (Its post-compaction and long-session role is NOT measurable in a one-turn eval and stays labelled unmeasured.)",
+  "prompt": "where is the retry logic in this project?",
+  "setup": [
+    "mkdir -p src",
+    "printf 'def fetch(url, retries=3):\\n    for attempt in range(retries):\\n        try:\\n            return _get(url)\\n        except IOError:\\n            continue\\n' > src/net.py"
+  ],
+  "with_env": {
+    "ORCH_DISABLED_HOOKS": "orch-user-prompt-submit"
+  },
+  "expect": {
+    "must_match": [
+      "^Found:"
+    ],
+    "must_open_with": [
+      "Found:"
+    ]
+  }
+}

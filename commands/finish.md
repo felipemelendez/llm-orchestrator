@@ -2,13 +2,13 @@
 description: Decide what to do with the current branch — merge, PR, keep, or discard. Never destructive without explicit confirmation.
 ---
 
-You are running `/finish`.
+You are running `/llm-orchestrator:finish`.
 
 User input: $ARGUMENTS (optional — chosen option number 1-4)
 
 Preconditions:
-- `/verify` returned green.
-- `/review` verdict is `yes`, or `with-fixes` is fully addressed.
+- `/llm-orchestrator:verify` returned green.
+- `/llm-orchestrator:review` verdict is `yes`, or `with-fixes` is fully addressed.
 - All tasks for this plan are marked `completed` (`TaskList` shows none in flight).
 
 If preconditions are not met, stop and report which one.

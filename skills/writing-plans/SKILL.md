@@ -21,6 +21,7 @@ Skip for trivial work (under ~15 minutes of editing). Just do it.
 2. **Map files.** List every file you will create or modify, with line ranges if obvious. If you can't list them, the spec isn't ready.
 3. **Order tasks.** Each task is independent enough to dispatch, or explicitly marked sequential. Where independence matters, declare an `Interfaces:` block per task — `introduces:` (symbols/endpoints/files the task creates) and `consumes:` (what it needs from other tasks). The executor treats declared interfaces as authoritative and falls back to body-scanning only when the block is absent.
 4. **For each task, write checkable steps.** 2–5 minutes of work each. Steps include: write test, run test (expect fail), implement, run test (expect pass), commit. Every step must be literal and executable (see the no-placeholder rule below) — the exact command with its expected output line, and the specific change, not a description of it.
+4.5. **For each task, write the termination contract** — a `Done when:` line (the observable end state; the verify command's green output is the usual one) and a `Stop if:` line (the abort conditions: N failed fix attempts on the same test, an edit needed outside the task's Files, a budget). An agent with an acceptance criterion but no stop rule knows how to prove success but not when to stop failing — "unaware of termination conditions" is 12.4% of multi-agent failures in the MAST taxonomy (arXiv:2503.13657, N=1642). The dispatcher pastes both lines into the implementer envelope; a fired `Stop if:` returns `PARTIAL` or `BLOCKED`, never more attempts.
 5. **Add risks.** One line per risk. Mitigation if obvious.
 6. **Self-review.** Run the no-placeholder rule below over the whole plan, and check cross-task consistency: a symbol introduced in one task is referenced by the exact same name in later tasks (no `clearLayers()` in task 2 then `clearFullLayers()` in task 5). Confirm `## References` section pulls citations from the brief (if any).
 7. **Save to** `docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md`.
@@ -58,6 +59,8 @@ Spec: docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md
 
 ### 1. <task name>
 Independent: yes | no (depends on N)
+Done when: <observable end state>
+Stop if: <abort conditions → PARTIAL or BLOCKED>
 
 Steps:
 - [ ] write failing test in <file>
@@ -85,7 +88,7 @@ Plan:
 - Saved to docs/llm-orchestrator/plans/2026-05-23-<slug>-plan.md
 - N tasks, M marked independent
 Next:
-- /worktree to isolate, then /dispatch task 1
+- /llm-orchestrator:worktree to isolate, then /llm-orchestrator:dispatch task 1
 ```
 
 ## Anti-patterns

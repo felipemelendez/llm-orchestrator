@@ -12,3 +12,9 @@ docs/llm-orchestrator/specs/
 docs/llm-orchestrator/plans/
 docs/llm-orchestrator/handoffs/
 docs/llm-orchestrator/research/
+
+# eval scratch (never commit; results/benchmark.json + raw.jsonl ARE committed)
+tests/evals/results/work/
+tests/evals/results/run-*.log
+tests/evals/results/raw.*.jsonl
+tests/evals/results/benchmark.*.json

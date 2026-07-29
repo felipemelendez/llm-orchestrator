@@ -10,12 +10,13 @@ Each `commands/<name>.md` is a Claude Code slash command. The frontmatter `descr
 
 ### Subagents (`agents/*.md`)
 
-`agents/orch-implementer.md`, `orch-spec-reviewer.md`, `orch-code-reviewer.md`, `orch-security-reviewer.md`, `orch-explorer.md`, `orch-debugger.md`, `orch-brainstormer.md`, `orch-researcher.md` are native Claude Code subagents. Frontmatter declares:
+The files in `agents/` are native Claude Code subagents. Frontmatter declares:
 
 - `name` — invoked via the Task tool with `subagent_type: <name>`
 - `description` — used by Claude to decide when to dispatch
 - `tools` — comma-separated allow-list
-- `model` — `haiku` | `sonnet` | `opus`
+- `model` — `sonnet` | `opus` | `fable` | a full model ID | `inherit`
+- `effort` — `low` | `medium` | `high` | `xhigh` | `max` (honored for plugin agents; `hooks`, `mcpServers`, and `permissionMode` are not)
 
 Each subagent gets a fresh context window. The orchestrator passes content into the agent's prompt; the agent returns a `Status:` block.
 
@@ -48,22 +49,33 @@ Claude Code reads `~/.claude/CLAUDE.md` (user) and `<project>/CLAUDE.md` (projec
 
 ## Model selection guidance
 
-Per Anthropic recommendations on cost-performance tradeoff:
+**Model and effort are independent axes.** Per Anthropic's guidance ([Choosing a Claude model and effort level in Claude Code](https://claude.com/blog/claude-model-and-effort-level-in-claude-code), 2026-07-07), the model is *"the overall capability range"* — what it knows — while effort is *"how much work Claude does on your request overall including the number of files read, tools used, and how many steps it takes."*
 
-| Task type                                  | Model     |
-|--------------------------------------------|-----------|
-| Classify, route, mechanical edit           | Haiku     |
-| Implementation, debugging, refactoring     | Sonnet    |
-| Design, architecture, multi-file rewrites  | Opus      |
+When an agent fails, ask which one failed: **it didn't know enough → raise the model; it didn't try hard enough (skipped a file, didn't run the tests) → raise the effort.** Don't reach for the model tier to fix a thoroughness problem.
 
-Our agents come pre-configured:
-- `orch-explorer`: Haiku (cheap reads)
-- `orch-implementer`: Sonnet (default)
-- `orch-spec-reviewer`, `orch-code-reviewer`, `orch-security-reviewer`: Sonnet
-- `orch-debugger`, `orch-researcher`: Sonnet
-- `orch-brainstormer`: Opus (design-shaped)
+One invariant is not a preference. **A reviewer must be at least as capable as what it reviews.** Claude Code's advisor tool enforces exactly this rule for its own pairings, and the measured effect is large: an off-the-shelf weak critic moves resolve rate by 0.0/−0.2/+0.8 points, while a frontier critic moves it by +17.4 to +22.2 ([arXiv:2606.21811](https://arxiv.org/abs/2606.21811), Table 1). A cheap reviewer is not a cheap reviewer; it is no reviewer.
 
-Override per dispatch via the envelope's `model:` line.
+Our agents ship pre-configured on that basis:
+
+| Agent | Model | Why |
+|---|---|---|
+| `orch-explorer` | Sonnet | Retrieval, not judgment — no reason to pay for capability the task doesn't need |
+| `orch-implementer` | Opus | Anthropic's stated starting point for coding and agentic work |
+| `orch-spec-reviewer` | Opus | Reviewer tier ≥ implementer tier |
+| `orch-code-reviewer` | Opus | Same |
+| `orch-security-reviewer` | Opus | Same. **Not Fable 5** — its safety classifiers fire on benign security work |
+| `orch-debugger` | Opus | Ambiguous root-cause work |
+| `orch-researcher` | Opus | Opus 5's reliable knowledge cutoff (May 2026) is fresher than Fable 5's (Jan 2026) |
+
+Haiku 4.5 is absent by design: it accepts no `effort` parameter at all, and its reliable knowledge cutoff is Feb 2025.
+
+**Effort is deliberately NOT pinned.** Agents inherit the session's effort level. Two pieces of evidence drove removing the earlier per-agent `effort:` pins: HAL's 21,730-rollout study found **higher reasoning effort reduced accuracy in the majority of runs**, and Anthropic's own guidance is to *"treat effort as a general preference rather than a task-by-task decision"* — with a specific warning that `xhigh`/`max` overthink on structured-output tasks, which is exactly what every reviewer here returns. A pinned value also overrides the user's session preference in both directions. The plugin's own eval suite cannot measure per-agent effort effects at an affordable N, so this follows the external evidence rather than an unmeasured guess.
+
+Effort resolution order: `CLAUDE_CODE_EFFORT_LEVEL` > session level > frontmatter > model default. Setting a level a model doesn't support degrades to the highest supported level rather than erroring.
+
+Per-invocation overrides: the Agent tool accepts `model` but **not** `effort`. Genuine per-task effort selection exists only inside Workflow scripts, via `agent(prompt, {model, effort})`.
+
+**Turn caps.** The five read-only agents carry `maxTurns` (explorer 25, reviewers 30, debugger 40) as a runaway-repetition bound — step repetition is the largest failure mode in the MAST taxonomy (15.7%, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657), N=1642). `orch-implementer` deliberately has **no** cap: its writer mutex is released by a voluntary final-turn action, and a hard cap can strand the mutex (the SubagentStop reaper mitigates this, but the primary bound for writers is the controller-side retry logic, not a turn cap).
 
 ## Optional: MCP (Model Context Protocol) servers
 
@@ -74,7 +86,6 @@ Optional pairings worth considering:
 | Server                | Use case                                                                 |
 |-----------------------|---------------------------------------------------------------------------|
 | `memory` (official)   | Cross-session memory backed by an external server (alternative to ours)  |
-| `sequential-thinking` | Long chain-of-thought scratch space for `orch-debugger` or `orch-brainstormer` |
 | `context7`            | Library documentation lookups during planning                            |
 
 To add one, edit your project's `.mcp.json` (per Claude Code docs). LLM Orchestrator's memory and the MCP `memory` server can coexist — they don't conflict, but they're redundant.
@@ -100,11 +111,11 @@ Claude Code now ships first-party versions of several capabilities this plugin p
 
 | Capability | Native Claude Code feature | What this plugin adds | Rule |
 |---|---|---|---|
-| Verification | `/verify` skill (drives the affected flow end-to-end) | The gate: *when* verification is mandatory (before any done/fixed/passing claim) and the `Verify:` evidence format | Prefer native `/verify` for mechanics; this plugin decides when it must run |
-| Code review | `/code-review` (multi-agent, confidence-filtered; `ultra` for cloud review) and `/security-review` | Stage 1 spec-compliance review (native review doesn't check a diff against a spec), the spec-gates-quality order, and the failure-scenario evidence rule | Native review is an accepted substrate for Stage 2/3 mechanics; Stage 1 and the gating order are this plugin's contract |
+| Verification | `/verify` skill (drives the affected flow end-to-end) | The gate: *when* verification is mandatory (before any done/fixed/passing claim) and the `Verify:` evidence format | Native `/verify` cannot be model-invoked (v2.1.215) and does not run tests or typechecks — it is a manual complement, not a substrate. This plugin owns the gate and the evidence format |
+| Code review | `/code-review` (multi-agent, confidence-filtered; `ultra` for cloud review) and `/security-review` | Stage 1 spec-compliance review (native review doesn't check a diff against a spec), the spec-gates-quality order, and the failure-scenario evidence rule | Native review cannot be model-invoked (v2.1.215), so the plugin's reviewer agents are the only automatable substrate. `/code-review xhigh` is an excellent manual pass. Stage 1 and the gating order are this plugin's contract |
 | Worktree isolation | Per-agent worktree isolation on agent dispatch | Ownership registry with atomic claims, `.orch-worktree` provenance, green-baseline capture, test-gated sequential merge-back | Prefer native isolation for the checkout itself; the registry/baseline/merge-back discipline still applies |
 | Memory | CLAUDE.md hierarchy (native, automatic) plus the assistant's auto-memory directory | Write-side classification (`/remember` → Conventions/Decisions/People/Notes) and recoverable `/forget` | Native surfaces store; the plugin only classifies and soft-deletes |
-| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Haiku variant with `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
+| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Sonnet variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
 | Planning | Native plan mode and Plan agent | Durable spec/plan artifacts under `docs/llm-orchestrator/` with checkbox state that survives `/clear` | Native plan mode for the proposal loop; plugin artifacts for cross-session state |
 | Fan-out orchestration | `Workflow` tool (deterministic scripts, structured schema, resume) | The routing rule (`using-workflows`) and ready-made scripts (`workflows/review-diff.js`) | Already delegation-shaped: the plugin only supplies scripts and the when-to-fan-out policy |
 

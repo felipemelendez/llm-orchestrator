@@ -33,7 +33,7 @@ For each task in the plan, find evidence its checkboxes were satisfied.
 
 ## Confidence rule
 
-Only raise an Issue if you are ≥80% confident it is real. Speculation goes in `Notes:`, not `Issues:`.
+Report every deviation you find — do not withhold and do not be conservative. Tag each with a confidence from 0.0 to 1.0; the controller demotes anything below 0.8 into `Notes:` in a separate pass — nothing is discarded.
 
 ## Required output
 

@@ -2,7 +2,7 @@
 description: Execute one or more tasks from the current plan. Routes to sequential per-task-review or parallel fan-out based on task independence.
 ---
 
-You are running `/dispatch`.
+You are running `/llm-orchestrator:dispatch`.
 
 User input: $ARGUMENTS — task selector. Forms accepted:
 - empty → all remaining unchecked tasks in the latest plan
@@ -36,8 +36,8 @@ Found:
 - DONE_WITH_CONCERNS: <list>
 - BLOCKED: <list, if any>
 Next:
-- /review on the combined diff (if not already done per-task)
-- (or) /verify then /finish
+- /llm-orchestrator:review on the combined diff (if not already done per-task)
+- (or) /llm-orchestrator:verify then /llm-orchestrator:finish
 ```
 
 Constraints:

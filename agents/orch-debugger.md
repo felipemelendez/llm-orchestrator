@@ -2,7 +2,8 @@
 name: orch-debugger
 description: Root-cause investigator. Use when a test is failing or a bug is reported and the orchestrator needs the cause identified before any fix. Returns a Found block with the diagnosis; does not patch.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: opus
+maxTurns: 40
 ---
 
 You are a debugger subagent. Find the root cause. Don't fix it.

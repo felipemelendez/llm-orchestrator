@@ -51,14 +51,14 @@ The controller that walks a plan from first task to last. Calls `dispatching-sub
 
 7. **DONE_WITH_CONCERNS policy.** Read each concern:
    - Touches **correctness, security, or a public contract** → address now (re-enter the inner loop with a fix prompt).
-   - Touches **ergonomics, perf, style, naming** → carry forward into the final `/review` pass; record in the plan file under an `## Outstanding concerns` section.
+   - Touches **ergonomics, perf, style, naming** → carry forward into the final `/llm-orchestrator:review` pass; record in the plan file under an `## Outstanding concerns` section.
    - Touches **future work** (e.g., "no eviction policy yet") → record in the plan and move on.
 
 8. **Continuous execution.** Move from group to group without asking the user. Stops only on: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
 
 9. **When all groups complete:**
-   - Run `/verify`. If green, run `/review` (combined diff). If `Ready: yes`, hand to `/finish`.
-   - If `/verify` red, invoke `systematic-debugging` and re-enter step 5 for the affected task.
+   - Run `/llm-orchestrator:verify`. If green, run `/llm-orchestrator:review` (combined diff). If `Ready: yes`, hand to `/llm-orchestrator:finish`.
+   - If `/llm-orchestrator:verify` red, invoke `systematic-debugging` and re-enter step 5 for the affected task.
 
 ## Resuming from a handoff
 
@@ -98,8 +98,8 @@ Found:
 Verify:
 - <full test suite command> → <line>
 Next:
-- /review for combined-diff sweep
-- (or) /finish if /review already happened per-task
+- /llm-orchestrator:review for combined-diff sweep
+- (or) /llm-orchestrator:finish if /llm-orchestrator:review already happened per-task
 ```
 
 ## Anti-patterns

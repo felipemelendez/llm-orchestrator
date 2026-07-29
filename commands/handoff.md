@@ -3,7 +3,7 @@ description: Write a short handoff note so work resumes cleanly after the contex
 argument-hint: "[slug]"
 ---
 
-You are running '/handoff'.
+You are running '/llm-orchestrator:handoff'.
 
 User input: $ARGUMENTS — optional slug; defaults to the active plan's slug.
 

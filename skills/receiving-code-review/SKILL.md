@@ -11,7 +11,7 @@ Reviews are signal. Treat each issue as a hypothesis, not a verdict.
 
 - Reviewer (human or agent) returns an `Issues:` block.
 - A user pastes "you should change X" feedback.
-- After `/review` returns Critical or Important findings.
+- After `/llm-orchestrator:review` returns Critical or Important findings.
 
 ## The default response
 
@@ -62,7 +62,7 @@ Deferred:
 Verify:
 - <command> → <line>
 Next:
-- Re-run /review on updated diff.
+- Re-run /llm-orchestrator:review on updated diff.
 ```
 
 ## Anti-patterns

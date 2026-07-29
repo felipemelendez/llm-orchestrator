@@ -15,10 +15,10 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ```bash
 cd ~/LLM-Orchestrator
-./tests/validate-skills.sh        # → "OK: 18 skills, 13 commands, 8 agents"
+./tests/validate-skills.sh        # → "OK: 18 skills, 14 commands, 7 agents"
 ./tests/test-portability.sh       # → "7 portability checks passed."
 ./tests/test-lib-resolution.sh    # → "PASS: test-lib-resolution (5 checks)"
-./tests/smoke.sh                  # → "All 65 checks passed."
+./tests/smoke.sh                  # → "All 68 checks passed."
 ```
 
 **Pass criterion:** all four exit 0. If any fails, fix before continuing — Claude Code testing won't tell you anything useful until the mechanics are sound.
@@ -87,7 +87,7 @@ Claude Sonnet 4.6 · prof:standard · mem:0
 (If memory is empty, `mem:` may be absent. If you're in a project with a recent plan, you'll see `plan:<filename>`.)
 
 **Pass:** statusline shows the model name plus `prof:standard`.
-**Fail:** default Claude Code statusline (no `prof:` prefix) → the plugin's `statusLine` entry isn't being read. Check `.claude-plugin/plugin.json`.
+**Fail:** default Claude Code statusline (no `prof:` prefix). `statusLine` is not a plugin-manifest field, so this is opt-in: point `statusLine.command` in your own `.claude/settings.json` at `scripts/statusline.sh`.
 
 ### 2.2 SessionStart hook fired
 
@@ -112,8 +112,8 @@ Should print valid JSON with the protocol body inside `additionalContext`.
 Type `/` and look for the commands:
 
 ```
-/init  /plan  /worktree  /dispatch  /review  /verify  /finish
-/debug  /remember  /forget  /onboard
+/llm-orchestrator:init  /llm-orchestrator:plan  /llm-orchestrator:worktree  /llm-orchestrator:dispatch  /llm-orchestrator:review  /llm-orchestrator:verify  /llm-orchestrator:finish
+/llm-orchestrator:debug  /llm-orchestrator:remember  /llm-orchestrator:forget  /llm-orchestrator:onboard
 ```
 
 **Pass:** all 11 appear in the completion menu.
@@ -164,7 +164,7 @@ The plugin's memory layer writes to Claude Code's native CLAUDE.md (classified o
 ### 4.1 Write a fact
 
 ```
-/remember pnpm not npm
+/llm-orchestrator:remember pnpm not npm
 ```
 
 **Pass:**
@@ -191,7 +191,7 @@ What's our package manager?
 ### 4.3 Write a plugin-config fact (routes to plugin memory)
 
 ```
-/remember research_aggressiveness: high
+/llm-orchestrator:remember research_aggressiveness: high
 ```
 
 **Pass:**
@@ -202,7 +202,7 @@ What's our package manager?
 ### 4.4 Forget with confirmation
 
 ```
-/forget pnpm
+/llm-orchestrator:forget pnpm
 ```
 
 **Pass:**
@@ -215,13 +215,13 @@ What's our package manager?
 ### 4.5 Forget guards (negative tests)
 
 ```
-/forget .*
+/llm-orchestrator:forget .*
 ```
 
 **Pass:** agent refuses — pattern too generic / matches a section header. (`forget.md` step 3 catastrophic-delete guard.)
 
 ```
-/forget xy
+/llm-orchestrator:forget xy
 ```
 
 **Pass:** agent refuses — pattern < 3 chars.
@@ -254,16 +254,16 @@ Add a function that returns the current ISO timestamp.
 
 Then the agent should:
 - Write `docs/llm-orchestrator/specs/2026-XX-XX-iso-timestamp-spec.md`
-- Suggest `/plan`
+- Suggest `/llm-orchestrator:plan`
 
-Run `/plan`. **Pass:**
+Run `/llm-orchestrator:plan`. **Pass:**
 - Writes `docs/llm-orchestrator/plans/2026-XX-XX-iso-timestamp-plan.md`
 - File contains tasks with `Independent:` and per-task `Files:` lines
 
 ### 5.3 Worktree
 
 ```
-/worktree
+/llm-orchestrator:worktree
 ```
 
 **Pass:**
@@ -274,7 +274,7 @@ Run `/plan`. **Pass:**
 ### 5.4 Dispatch
 
 ```
-/dispatch
+/llm-orchestrator:dispatch
 ```
 
 **Watch for:**
@@ -293,13 +293,13 @@ Run `/plan`. **Pass:**
 ### 5.5 Verify + finish
 
 ```
-/verify
+/llm-orchestrator:verify
 ```
 
 **Pass:** agent runs the project's test command (or asks if none exists), reports a `Verify:` block with the actual command output.
 
 ```
-/finish
+/llm-orchestrator:finish
 ```
 
 **Pass:** agent presents the 4-option menu (merge / push PR / keep / discard), recommends one based on the change shape, waits for user choice.
@@ -320,7 +320,7 @@ Set up a plan where task 2 references a file task 1 will create:
 Create a plan for: (1) define a UserRole enum, then (2) add a function that returns the role's display label.
 ```
 
-After `/plan` and `/dispatch`, watch task 2's implementer. It should return `BLOCKED` needing to see UserRole. The orchestrator should:
+After `/llm-orchestrator:plan` and `/llm-orchestrator:dispatch`, watch task 2's implementer. It should return `BLOCKED` needing to see UserRole. The orchestrator should:
 - Read the BLOCKED `Need:`
 - Identify it as branch 1 (missing context) or branch 2 (waiting on sibling)
 - Either paste task 1's output into task 2's envelope OR dispatch task 1 first
@@ -398,10 +398,10 @@ Score the test:
 |--------------------------------------------------------|-------------------------------------------------------|-----------------------------------------------------------------------------------------------|
 | Statusline missing `prof:`                             | Plugin not loaded                                     | `/plugin enable llm-orchestrator`; restart session                                            |
 | Agent replies in free prose, no shapes                 | SessionStart hook not firing or output not reaching context | Run the hook from terminal; check `additionalContext` has the meta-skill                      |
-| `/remember` says "with_lock: command not found"        | `scripts/lib/orch-lock.sh` not on the sourced path    | Verify install — should be at `$CLAUDE_PLUGIN_ROOT/scripts/lib/` or `<project>/.claude/scripts/lib/` |
+| `/llm-orchestrator:remember` says "with_lock: command not found"        | `scripts/lib/orch-lock.sh` not on the sourced path    | Verify install — should be at `$CLAUDE_PLUGIN_ROOT/scripts/lib/` or `<project>/.claude/scripts/lib/` |
 | Hooks don't fire on a `--copy` install                 | `settings.json` missing the hook wiring               | Either install as plugin or hand-edit per `docs/install.md` "Wiring hooks"                    |
 | Subagent dispatch produces free prose, no Status block | `orch-implementer.md` not discovered as an agent      | `/plugin list` should show the plugin enabled; check `agents/` directory exists in install path |
-| `/remember` writes to wrong file                       | Routing branch mis-fired (plugin-config vs user fact) | If fact starts with `research_aggressiveness:` or `declined_mcp:`, it goes to plugin memory by design; everything else goes to CLAUDE.md |
+| `/llm-orchestrator:remember` writes to wrong file                       | Routing branch mis-fired (plugin-config vs user fact) | If fact starts with `research_aggressiveness:` or `declined_mcp:`, it goes to plugin memory by design; everything else goes to CLAUDE.md |
 | Truncation in SessionStart output                      | Meta-skill > 8000 chars                               | Set `ORCH_SESSION_MAX_CHARS=16000` in shell env or `.claude/settings.json`                    |
 
 ---

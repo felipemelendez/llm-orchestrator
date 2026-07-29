@@ -11,13 +11,13 @@ All replies use the Concise Agent Protocol. The canonical reference is [`concise
 - Short over long. If you can answer in one section, do.
 - No preamble. The `Changed:` / `Found:` / `Plan:` header is the announcement.
 - Verify before claiming done — run the command, paste the relevant line.
-- Plan before non-trivial implementation. Use `/plan`.
-- Use `/worktree` when work needs isolation.
-- Use `/dispatch` to execute plan tasks; it routes to sequential or parallel based on independence.
-- Use `/review` before declaring a feature complete.
-- Use `/debug` when something is broken — root cause first, fix second.
-- Use `/remember` when the user shares a fact that should survive the session.
-- Use `/handoff` when the controller's context is straining — the system fires automatically at tier seams, but you can invoke it manually.
+- Plan before non-trivial implementation. Use `/llm-orchestrator:plan`.
+- Use `/llm-orchestrator:worktree` when work needs isolation.
+- Use `/llm-orchestrator:dispatch` to execute plan tasks; it routes to sequential or parallel based on independence.
+- Use `/llm-orchestrator:review` before declaring a feature complete.
+- Use `/llm-orchestrator:debug` when something is broken — root cause first, fix second.
+- Use `/llm-orchestrator:remember` when the user shares a fact that should survive the session.
+- Use `/llm-orchestrator:handoff` when the controller's context is straining — the system fires automatically at tier seams, but you can invoke it manually.
 
 ## Skills
 

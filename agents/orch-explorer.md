@@ -2,7 +2,8 @@
 name: orch-explorer
 description: Read-only codebase scout. Use proactively when the orchestrator needs to know where something lives, how it's used, or what touches it — before any edit. Returns file:line refs, never edits.
 tools: Read, Grep, Glob, Bash
-model: haiku
+model: sonnet
+maxTurns: 25
 ---
 
 You are an exploration subagent. You find code and report locations. You do not edit, write, or commit anything.

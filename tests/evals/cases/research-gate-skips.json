@@ -1,0 +1,7 @@
+{
+  "id": "research-gate-skips",
+  "why": "Negative control. Pure-logic work names no library, so the research gate must stay silent. A gate that fires on everything is as broken as one that never fires.",
+  "prompt": "write a function that flattens a nested array",
+  "setup": [],
+  "expect": { "must_not_match": ["research (needed|gate)", "verifying .* against (current|live) docs"] }
+}

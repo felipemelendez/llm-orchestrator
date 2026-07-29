@@ -1,0 +1,111 @@
+{
+  "model": "opus",
+  "n_per_arm": 3,
+  "cases": {
+    "research-gate-skips": {
+      "with": 1.0,
+      "without": 1.0,
+      "verdict": "already default \u2014 rule may be dead weight",
+      "cost_per_solved": {
+        "without": 0.2988,
+        "with": 0.3783
+      },
+      "n": {
+        "without": 3,
+        "with": 3
+      },
+      "cost_usd": 2.0312,
+      "behavioral": {
+        "without": null,
+        "with": null
+      }
+    },
+    "shape-header": {
+      "with": 1.0,
+      "without": 0.0,
+      "verdict": "plugin helps",
+      "cost_per_solved": {
+        "without": null,
+        "with": 0.2197
+      },
+      "n": {
+        "without": 3,
+        "with": 3
+      },
+      "cost_usd": 1.1882,
+      "behavioral": {
+        "without": null,
+        "with": null
+      }
+    },
+    "shape-header-no-turn-hook": {
+      "with": 1.0,
+      "without": 0.0,
+      "verdict": "plugin helps",
+      "cost_per_solved": {
+        "without": null,
+        "with": 0.2248
+      },
+      "n": {
+        "without": 3,
+        "with": 3
+      },
+      "cost_usd": 1.1987,
+      "behavioral": {
+        "without": null,
+        "with": null
+      }
+    },
+    "tdd-bugfix": {
+      "with": 1.0,
+      "without": 0.0,
+      "verdict": "plugin helps",
+      "cost_per_solved": {
+        "without": null,
+        "with": 0.2393
+      },
+      "n": {
+        "without": 3,
+        "with": 3
+      },
+      "cost_usd": 1.3448,
+      "behavioral": {
+        "without": 1.0,
+        "with": 1.0
+      }
+    },
+    "verify-evidence": {
+      "with": 1.0,
+      "without": 0.0,
+      "verdict": "plugin helps",
+      "cost_per_solved": {
+        "without": null,
+        "with": 0.2966
+      },
+      "n": {
+        "without": 3,
+        "with": 3
+      },
+      "cost_usd": 1.5834,
+      "behavioral": {
+        "without": null,
+        "with": null
+      }
+    }
+  },
+  "total_cost_usd": 7.35,
+  "date": "2026-07-28",
+  "interpretation": {
+    "shape-header": "Protocol layer fully load-bearing: bare arm 0/3 opens with Found:, plugin arm 3/3.",
+    "shape-header-no-turn-hook": "Ablation: with the per-turn reminder hook DISABLED, turn-one shape adherence is still 3/3 \u2014 the SessionStart injection alone suffices at turn one. The hook's mid-session/long-run contribution is NOT measured here; post-compaction re-assertion no longer depends on it (session-start.sh compact path now injects the reminder).",
+    "tdd-bugfix": "Held-out execution check passed 3/3 in BOTH arms \u2014 the bare model fixes the bug just as reliably at this task size. The plugin's measured win is the evidence format (Changed:/Verify: 0/3 -> 3/3), at +14% cost per behaviorally-solved task ($0.209 -> $0.239). TDD-specific effects on solve rate or regressions are NOT detectable at this scale; the TDD gate stays on external evidence (reasoning-tier models score best under strict harnesses, arXiv:2605.26731), not on this measurement.",
+    "verify-evidence": "The fabrication trap (\"should pass\" without running) never fired in either arm (must_not_match 3/3 both) \u2014 that failure mode is already absent in opus 5 at this task size. The measured delta is again the evidence format. The evidence LEDGER (stamp validation) is exercised by tests/test-verify-gate.sh, not by this regex.",
+    "research-gate-skips": "Negative control: gate stayed silent in 3/3 plugin runs on library-free work. For a negative control, both arms passing is the desired outcome (the harness's 'dead weight' label does not apply to controls)."
+  },
+  "method_notes": [
+    "N=3 per arm per case, claude -p cold sessions, model pinned to opus (session default was a limit-exhausted model; inheriting it poisons results).",
+    "Scratch projects under $TMPDIR, outside the repo, ORCH_HOME isolated per project.",
+    "Pass-rate deltas smaller than a clean sweep are below the documented noise floor (std >=1.5pp at temp 0, arXiv:2602.07150); every non-control case here happened to sweep.",
+    "check_cmds rows grade the real filesystem (held-out execution), not prose."
+  ]
+}

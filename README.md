@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/github/license/felipemelendez/llm-orchestrator?color=blue)](./LICENSE) [![Last commit](https://img.shields.io/github/last-commit/felipemelendez/llm-orchestrator)](https://github.com/felipemelendez/llm-orchestrator/commits/main) ![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-blueviolet)
 
-A team of specialized Claude Code subagents — architect, implementer, two reviewers, debugger, explorer, and a researcher that verifies external APIs against current docs before any spec is written. A controller routes work between them: plans tasks, dispatches in parallel where independent, runs two-stage code review on every diff, and recovers from blockers autonomously. Where Claude Code now ships a native mechanism (verification, code review, worktree isolation, memory), the plugin delegates to it and keeps only the policy layer — when a step is mandatory, what counts as evidence, and in what order stages run.
+A team of specialized Claude Code subagents — implementer, spec reviewer, code reviewer, security reviewer, debugger, explorer, and a researcher that verifies external APIs against current docs before any spec is written. A controller routes work between them: plans tasks, dispatches in parallel where independent, runs two-stage code review on every diff, and recovers from blockers autonomously. Where Claude Code now ships a native mechanism (verification, code review, worktree isolation, memory), the plugin delegates to it and keeps only the policy layer — when a step is mandatory, what counts as evidence, and in what order stages run.
 
 **You delegate. The team executes. You review the diff.**
 
@@ -39,13 +39,13 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 |---|---|---|
 | **Research gate** | Verifies the planned approach against current docs (vendor MCPs, Context7, web) and on-disk state before any code is written | Catches deprecated APIs and bad version assumptions before they ship |
 | **Two-stage code review (+ conditional security pass)** | Spec-compliance reviewer gates a code-quality reviewer, each in a fresh subagent context; diffs touching auth/crypto/payments/secrets get a third, security-focused pass. Critical findings must state a concrete failure scenario or they're downgraded. Runs as one parallel, self-checking workflow script when Claude Code's Workflow tool is present; step-by-step anywhere else | Catches bugs implementers miss in their own diffs, without drowning you in false alarms |
-| **Safe parallel dispatch** | Independent tasks fan out to implementers in isolated per-agent worktrees, claimed atomically in an ownership registry; a guard blocks work-destroying git on the shared tree; branches merge back one at a time, test-gated against the captured green baseline | Agents can't clobber each other's work, and a regression is caught before the branch lands |
-| **Autonomous BLOCKED recovery** | When an agent gets stuck, the controller tries four autonomous fixes before paging you: paste the missing context, run the prerequisite task first, split the work, or retry with a stronger model — designed so only the fifth branch reaches you | Blockers get four chances to resolve themselves before costing you attention |
-| **Evidence-based completion** | Every "done" claim must include the output of the command that proves it, using the test runner detected from the project's own manifest files | Stops agents from declaring code finished without actually running the tests |
+| **Safe parallel dispatch + speculative merge queue** | Independent tasks fan out to implementers in isolated per-agent worktrees, claimed atomically in an ownership registry; a guard blocks work-destroying git on the shared tree. Merge-back runs a speculative queue (the Zuul / GitHub-merge-queue discipline): all branches batch onto an isolated integration branch, the suite runs once at the combined tip, and the base only ever fast-forwards to a suite-green SHA — red tips bisect out the regressor and land the tested-green prefix | Agents can't clobber each other's work, N branches land for one suite run instead of N, and the base never holds an untested commit |
+| **Autonomous BLOCKED recovery — resume, not redo** | When an agent gets stuck, the controller tries four autonomous fixes before paging you: send the missing context to the SAME agent (a `SendMessage` resume that keeps its partial work and context), run the prerequisite task first, split the work, or retry with a stronger model — only the fifth branch reaches you. A `PARTIAL` status (with `Progress:`/`Remaining:`) means a stop-condition fired: completed work is kept, never redone | Blockers get four chances to resolve themselves before costing you attention, and partial work survives instead of being thrown away |
+| **Evidence-based completion (unfakeable)** | Every "done" claim must include the output of the command that proves it — and a hook stamps every real, *passing* test/lint/build run into a ledger the model never writes (failing runs are ledgered via the failure event but mint no citable stamp), so a cited `[orch-evidence]` stamp is checked against recorded reality: fabricated stamps fail lookup. Verified end-to-end against a live v2.1.220 session | Stops agents from declaring code finished without actually running the tests — including by inventing plausible output |
 | **Visual brainstorming** | During brainstorming, a local zero-dependency panel server (you open the printed `localhost` URL) renders live HTML mockups; the agent pushes screens and reads your clicks back, iterating before any code is written | Lets you see and react to UI/layout/structure choices instead of parsing them from prose |
 | **One-time onboarding + architecture grounding** | `/llm-orchestrator:onboard` studies the codebase once and records `## Decisions` + `## Conventions` in `./CLAUDE.md` behind a single approval gate; every later spec, implementation, and review silently applies them as constraints, and a diff that breaks a recorded decision is flagged Critical | A new feature can't silently violate an established choice — e.g. adding a network dependency to an offline-first SQLite app |
 | **Context-aware handoff** | On a long task, the agent is nudged once (when context crosses ≈95% of the window) to write a short handoff note; after auto-compaction, a reminder tells the next turn to re-read it, reconcile against the plan, and re-verify | A long run continues cleanly across a compaction instead of drifting on a lossy summary |
-| **CLAUDE.md classification** | `/remember <fact>` appends the fact to your project's CLAUDE.md under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically; `/forget` soft-deletes recoverably | Persistent project memory without organizing it by hand |
+| **CLAUDE.md classification** | `/llm-orchestrator:remember <fact>` appends the fact to your project's CLAUDE.md under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically; `/llm-orchestrator:forget` soft-deletes recoverably | Persistent project memory without organizing it by hand |
 
 The mechanics behind these rows — the protocol grader, toolchain detection, convention detection, the workflow-vs-markdown routing and its `ORCH_WORKFLOWS` override — are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
@@ -57,17 +57,27 @@ Claude Code ships first-party versions of several things this kit does. This plu
 
 | Capability | Native Claude Code | This plugin's layer |
 |---|---|---|
-| Verification | `/verify` runs the mechanics | The gate: no done/fixed/passing claim without pasted evidence |
+| Verification | Native `/verify` skill (manual-only since v2.1.215; builds and runs the app, not the tests) | The gate: no done/fixed/passing claim without pasted evidence, backed by the hook-written evidence ledger |
 | Code review | `/code-review`, `/security-review` | Spec-compliance Stage 1 (native review doesn't check the diff against a spec), spec-gates-quality order, failure-scenario rule for Critical findings |
-| Worktrees | Per-agent isolated worktrees | Atomic ownership registry, green-baseline capture, test-gated merge-back |
-| Memory | CLAUDE.md + auto-memory | Write-side classification (`/remember`) and recoverable `/forget` |
+| Worktrees | Per-agent isolated worktrees | Atomic ownership registry, green-baseline capture, speculative test-gated merge queue |
+| Memory | CLAUDE.md + auto-memory | Write-side classification (`/llm-orchestrator:remember`) and recoverable `/llm-orchestrator:forget` |
 | Planning | Native plan mode | Durable spec/plan artifacts whose checkboxes survive `/clear` |
-| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Haiku variant with a `file:line` output contract |
+| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Sonnet variant with a `file:line` output contract |
 | Fan-out orchestration | `Workflow` tool | The when-to-fan-out policy (`using-workflows`) and ready-made scripts like `workflows/review-diff.js` |
 
 Still exclusively this plugin's ground: the Concise Agent Protocol response shapes, the research gate, TDD and root-cause-first debugging enforcement, and the BLOCKED recovery tree. Full map with the delegation rules: [`docs/anthropic-ecosystem.md`](./docs/anthropic-ecosystem.md).
 
-**Grounding.** The design follows the published evidence rather than habit: methodology-level scaffolding still swings agent results by 20+ points even on frontier Anthropic models (GAIA scaffold comparison, [arXiv:2606.08529](https://arxiv.org/abs/2606.08529)); incorrect or absent verification is a leading cause of multi-agent failure (MAST taxonomy, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657)); LLM code reviewers systematically over-flag correct code, and demanding a concrete failure scenario is the countermeasure ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)); and duplicated mechanics are a liability as the platform absorbs them (Anthropic, [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)). Hence: keep the policy, delegate the mechanics.
+## What is measured, and what is not
+
+The behavioural claims above divide into three honesty classes, per the 2026-07-28 eval run (`tests/evals/results/benchmark.json`, n=3 per arm per case, model pinned to opus, scratch projects isolated outside the repo):
+
+**Measured, plugin-attributable.** Protocol shape (`shape-header`: bare model 0/3 opens with `Found:`, plugin 3/3) and evidence format (`verify-evidence`, `tdd-bugfix`: `Changed:`/`Verify:` 0/3 → 3/3). The research gate's negative control held (3/3 silent on library-free work).
+
+**Measured, and the bare model already does it.** On the micro bugfix task, the held-out execution check passed **3/3 in both arms** — the plugin does not make opus-class models fix small bugs more often; it makes the result *verifiable*, at +14% cost per solved task on that micro-task. The "should pass" fabrication trap never fired in either arm at this task size.
+
+**Unmeasured — labelled, not implied.** The TDD gate's effect on solve rate and regressions (external evidence conflicts: procedural TDD hurt a 30B model, arXiv:2603.17973; the reasoning tier scored best under a strict harness, arXiv:2605.26731 — this repo runs the reasoning tier, so the gate stays); the per-turn protocol reminder beyond turn one (its turn-one ablation measured zero — SessionStart alone sufficed — and post-compaction re-assertion no longer depends on it; it stays for unmeasured mid-session drift); per-agent effort pinning (removed on external evidence: HAL's 21,730 rollouts found higher effort usually reduced accuracy); the review pipeline's false-negative/false-positive rates; the speculative merge queue's wall-clock win on real suites (its correctness is covered by 48 mechanical checks; the 1-run-vs-N arithmetic is construction, not measurement).
+
+**Grounding.** The design follows the published evidence rather than habit: methodology-level scaffolding still swings agent results by 20+ points even on frontier Anthropic models (GAIA scaffold comparison, [arXiv:2606.08529](https://arxiv.org/abs/2606.08529)); incorrect or absent verification is a leading cause of multi-agent failure (MAST taxonomy, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657)); LLM code reviewers systematically over-flag correct code — and prompts asking for more explanation make it *worse*, not better; the paper's own countermeasure is a fix-guided filter that treats a proposed correction as **executable** counterfactual evidence ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)), which the skeptic pass in `workflows/review-diff.js` now implements — every finding carries a proposed fix, and skeptics execute it in a scratch copy where the claim is runnable, labelling survivors `verifiedBy: executed` vs `reasoned`; and duplicated mechanics are a liability as the platform absorbs them (Anthropic, [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)). Hence: keep the policy, delegate the mechanics.
 
 ---
 
@@ -83,7 +93,7 @@ This system makes that collision impossible by construction, not by asking agent
 
 3. **On the shared main project, dangerous git is blocked.** A guard refuses the handful of git commands that silently discard uncommitted work — for the controller and every sub-agent — so neither a confused agent nor a stray cleanup script can wipe *your* uncommitted changes. (A deliberate human override exists for the rare real case.)
 
-**Putting it back together.** Splitting work apart is only half the job; the value is the combined result. The branches are merged back one at a time, running the tests after each merge. If a merge conflicts, fails its tests, or an agent produced nothing, it stops there and tells you exactly what landed and what didn't — never piling a broken piece on top, never discarding work that already merged. A failed step leaves the project clean, with a ready-to-paste command to resume.
+**Putting it back together.** Splitting work apart is only half the job; the value is the combined result. The branches merge back through a speculative queue: all of them are combined on an isolated integration branch and the test suite runs **once** against the combined result — one suite run for N branches, and your working copy only ever moves forward to a state the tests passed on. If the combined result fails, the engine finds the branch that broke it, lands the branches before it that tested green, keeps the failing state on a named branch for inspection, and tells you exactly what landed and what didn't — with a ready-to-paste command for the rest. A suite that is red for environmental reasons (missing untracked dependencies in the fresh worktree) falls back to the classic one-merge-one-test path instead of blaming an innocent branch.
 
 **In one sentence:** split the work so agents can't clobber each other, let each test freely in its own copy, then merge back test-gated — enforced by the filesystem and the test runner, so it holds even if an agent misbehaves.
 
@@ -113,33 +123,31 @@ The gate doesn't replace human review, doesn't verify business logic, and doesn'
 
 ## Meet the team
 
-Eight specialists, each with a single responsibility, a model chosen to match its job, and a fresh context window per dispatch. The controller routes work between them using a `Status:` enum (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT).
+Seven specialists, each with a single responsibility, a model chosen to match its job, and a fresh context window per dispatch. The controller routes work between them using a `Status:` enum (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT).
 
 ```
 You
  ↓
 Controller (the agent you talk to)
  ↓
- ├─ orch-brainstormer   → spec
  ├─ orch-researcher     → verification brief
  ├─ orch-implementer ×N → code (TDD)
  ├─ orch-spec-reviewer       → does the diff match the spec?
  ├─ orch-code-reviewer       → is it idiomatic, safe, minimal?
  ├─ orch-security-reviewer   → injection, auth, secrets, unsafe deps
  ├─ orch-debugger            → root cause
- └─ orch-explorer            → cheap reads (Haiku)
+ └─ orch-explorer            → cheap reads (Sonnet)
 ```
 
 | Agent                  | Model  | Job                                                                  |
 |------------------------|--------|----------------------------------------------------------------------|
-| `orch-brainstormer`    | Opus   | Open-design explorer. Asks 3 clarifying questions, writes the spec.  |
-| `orch-implementer`     | Sonnet | Executes one plan task with TDD. Returns `Status:` block.            |
-| `orch-spec-reviewer`   | Sonnet | Stage 1 of review: does the diff match the spec?                     |
-| `orch-code-reviewer`   | Sonnet | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
-| `orch-debugger`        | Sonnet | Root-cause investigator. Diagnoses bugs; does not patch them.        |
-| `orch-explorer`        | Haiku  | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
-| `orch-researcher`      | Sonnet | Verifies external APIs against current sources before any spec.      |
-| `orch-security-reviewer` | Sonnet | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
+| `orch-implementer`     | Opus   | Executes one plan task with TDD. Returns `Status:` block.            |
+| `orch-spec-reviewer`   | Opus   | Stage 1 of review: does the diff match the spec?                     |
+| `orch-code-reviewer`   | Opus   | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
+| `orch-debugger`        | Opus   | Root-cause investigator. Diagnoses bugs; does not patch them.        |
+| `orch-explorer`        | Sonnet | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
+| `orch-researcher`      | Opus   | Verifies external APIs against current sources before any spec.      |
+| `orch-security-reviewer` | Opus | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
 
 The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 
@@ -157,7 +165,7 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 4. **`writing-plans`.** Breaks the approved spec into bite-sized tasks. Every task lists exact files, complete code stubs where useful, verification steps, and optionally an `Interfaces:` block declaring what it introduces and consumes — the executor prefers declared interfaces over body-scanning for dependency routing. The plan is self-reviewed against the no-placeholder rule; high-stakes plans (security-sensitive, irreversible, 5+ tasks) additionally get a fresh reviewer subagent pass (advisory, capped at 3). Plan committed to `docs/llm-orchestrator/plans/<date>-<slug>.md` — its checkboxes are the durable state and survive `/clear`.
 5. **`executing-plans` → `dispatching-subagents` / `dispatching-parallel-agents`.** Dispatches a fresh-context subagent per task. Independent tasks fan out in parallel; dependent ones serialize. The controller scans plan-task bodies for symbol references that other tasks introduce and downgrades wrongly-claimed independence to sequential.
 6. **`test-driven-development`.** Red-green-refactor inside each implementer: failing test first, watch it fail, write minimal code, watch it pass, commit. If implementation gets written before its test, the skill instructs the implementer to delete it and start over test-first.
-7. **`requesting-code-review`.** Two reviewers in fresh contexts per task. Stage 1 — spec compliance: does the diff match what was specified? Stage 2 — code quality: correct, safe, idiomatic, minimal? Issues raised only at ≥80% confidence; lower-confidence observations land in a separate `Notes:` section.
+7. **`requesting-code-review`.** Two reviewers in fresh contexts per task. Stage 1 — spec compliance: does the diff match what was specified? Stage 2 — code quality: correct, safe, idiomatic, minimal? Reviewers report every finding with a confidence tag and are told explicitly not to be conservative; the controller then demotes anything below 0.8 into a separate `Notes:` section. The filtering is deliberately downstream — a reviewer instructed to withhold follows that literally and loses real bugs.
 8. **`receiving-code-review`.** When the reviewer returns issues, the controller routes through a 5-branch BLOCKED recovery tree (missing context, sibling wait, decomposition, model escalation, genuinely needs the user). Branches 1–4 resolve invisibly; only branch 5 reaches you.
 9. **`verification-before-completion`.** Fires before any "done" claim. Every `Changed:` block must include a `Verify:` line with the actual command run and its output. A per-turn hook reinforces the rule.
 10. **`finishing-a-branch`.** Verifies tests pass, presents merge / PR / keep / discard options, cleans up the worktree. Never destructive without explicit confirmation.
@@ -185,13 +193,13 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 
 Nine layers, each solving a specific failure mode of single-agent AI tooling on real multi-step work:
 
-1. **Memory** — additive to Claude Code's native CLAUDE.md, not a replacement. `/remember` auto-classifies facts into `## Conventions` / `## Decisions` / `## People` / `## Notes` of your project's `./CLAUDE.md`, creating sections as needed. `/forget` soft-deletes matching lines to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable. Concurrent sessions serialize writes through a portable file lock. Alongside CLAUDE.md, the plugin maintains a TTL-pruned doc cache and a brief index under `~/.llm-orchestrator/research/` that surfaces prior researcher verdicts to future tasks on the same library.
+1. **Memory** — additive to Claude Code's native CLAUDE.md, not a replacement. `/llm-orchestrator:remember` auto-classifies facts into `## Conventions` / `## Decisions` / `## People` / `## Notes` of your project's `./CLAUDE.md`, creating sections as needed. `/llm-orchestrator:forget` soft-deletes matching lines to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable. Concurrent sessions serialize writes through a portable file lock. Alongside CLAUDE.md, the plugin maintains a TTL-pruned doc cache and a brief index under `~/.llm-orchestrator/research/` that surfaces prior researcher verdicts to future tasks on the same library.
 2. **Workflow scaffolding** — skills and commands produce durable artifacts (specs, plans, reviews) committed under `docs/llm-orchestrator/`.
 3. **State machine** — the native Task tools plus plan-file checkboxes survive `/clear`. The next session reads the plan file and knows exactly where to resume.
-4. **Dispatch routing + collision-proof isolation** — parallel for independent tasks, sequential for dependent. The controller scans plan-task bodies for symbol references to other tasks and downgrades `Independent: yes` to sequential when it spots a real dependency. Parallel *writers* never share a checkout: each runs in its own git worktree, claimed atomically in an ownership registry (`scripts/orch-worktree-materialize.sh`), and a `PreToolUse` guard blocks the working-tree-destroying git commands for the controller and every sub-agent. Read-only agents (review/research/explore) safely share the tree. See "Safe parallel work" above.
-5. **Autonomous BLOCKED recovery** — when a subagent returns `Status: BLOCKED`, the controller routes through a 5-branch tree (missing context, sibling wait, decomposition, model escalation, or genuinely needs the user). Branches 1–4 happen invisibly; only branch 5 ever reaches you.
-6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Issues raised only when ≥80% confident; lower-confidence observations go into a separate `Notes:` section.
-7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output. A per-turn hook reinforces the rule.
+4. **Dispatch routing + collision-proof isolation** — parallel for independent tasks, sequential for dependent. The controller scans plan-task bodies for symbol references to other tasks and downgrades `Independent: yes` to sequential when it spots a real dependency. Parallel *writers* never share a checkout: each runs in its own git worktree, claimed atomically in an ownership registry (`scripts/orch-worktree-materialize.sh`), and a `PreToolUse` guard blocks the working-tree-destroying git commands for the controller and every sub-agent. Read-only agents (review/research/explore) safely share the tree. Merge-back is a speculative queue: one suite run at the combined tip for the green path, bisect-and-eject on red, and the base only ever fast-forwards to a suite-green SHA. See "Safe parallel work" above.
+5. **Autonomous BLOCKED recovery** — when a subagent returns `Status: BLOCKED`, the controller routes through a 5-branch tree (missing context, sibling wait, decomposition, model escalation, or genuinely needs the user). Missing context is a `SendMessage` **resume** of the same agent — its partial work and context survive; only genuine model escalation pays for a cold re-dispatch. `PARTIAL` returns (a fired `Stop if:`) keep completed work and enumerate the remainder. Branches 1–4 happen invisibly; only branch 5 ever reaches you.
+6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Reviewers report everything with a confidence tag; the controller demotes below 0.8 into `Notes:`. Filtering never happens inside the reviewer. In the workflow path, every finding carries a proposed fix, and the skeptic pass **executes** the fix in a scratch copy where the claim is runnable — a finding whose fix changes nothing observable is refuted (the fix-guided filter from arXiv:2603.00539).
+7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output — validated against a hook-written evidence ledger, so fabricated output fails stamp lookup instead of being trusted. A per-turn hook reinforces the rule.
 8. **Pre-spec verification — the research gate** — described above. Returns `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`; `CONTRADICTED` halts the workflow until the spec is revised.
 9. **Context-aware handoff** — on a long task the controller's context window fills up, which quietly degrades its work. When usage crosses ~950K tokens (≈95% of a 1M window) the agent is reminded once to write a short handoff note (what's done, what's next, the verify command); after Claude Code auto-compacts the conversation, a reminder tells the next turn to re-read that note, trust the plan file's checkboxes, and re-run the tests before continuing. The plan file remains the durable recovery anchor.
 
@@ -203,8 +211,8 @@ Implementation reference with code links and the layer-stack diagram: [`ARCHITEC
 
 The hooks follow three rules so their behavior is predictable without reading the source:
 
-1. **Defaults are permissive.** Out of the box, no hook blocks your turn or rewrites your work. Hooks inject context and grade output; they don't gate it.
-2. **Enforcement is opt-in, always under an `ORCH_STRICT_*` flag.** A hook only blocks when you ask it to: `ORCH_STRICT_PROTOCOL=1` makes the protocol grader block off-shape replies; `ORCH_STRICT_VERIFY=1` makes the Stop hook block a `Changed:` block with no verify evidence; `ORCH_STRICT_RETRY=1` makes the retry-storm breaker block once the controller has repeated essentially the same reply `ORCH_RETRY_CAP_N` times (default 3). Unset, each warns at most. The retry breaker is **off entirely** unless `ORCH_RETRY_CAP=1` (warn-only) or `ORCH_STRICT_RETRY=1` — its threshold is a conservative placeholder until telemetry data can tune it.
+1. **Defaults warn, never block.** Out of the box, no hook blocks your turn. Hooks inject context, grade output, and warn — including the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the evidence-ledger check. The one output-touching exception is the evidence ledger's stamp line, appended to verify-shaped command output so claims become checkable.
+2. **Enforcement is opt-in, always under an `ORCH_STRICT_*` flag.** A hook only blocks when you ask it to: `ORCH_STRICT_PROTOCOL=1` makes the protocol grader block off-shape replies; `ORCH_STRICT_VERIFY=1` blocks a `Changed:` claim whose cited evidence stamp fails ledger lookup, or that has no `Verify:` line at all (a *stampless* `Verify:` gets a soft note only, never a block — custom verify commands fall outside the stamp regex); `ORCH_STRICT_STATUS=1` blocks malformed or empty subagent returns; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3). Unset, each warns at most. One platform-level exception: the prompt-type SubagentStop termination-contract check is evaluated by the harness itself and blocks with a corrective reason when an implementer terminates without an honest Status block — it cannot read `ORCH_*` env and is active in every profile.
 3. **Information capture is opt-in, always under `ORCH_TELEMETRY`.** Nothing about your session is recorded unless `ORCH_TELEMETRY=1`. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for exactly what is and isn't logged.
 
 Two switches cut across all of the above:
@@ -223,7 +231,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "All 65 checks passed."
+./tests/smoke.sh                           # → "All 68 checks passed."
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

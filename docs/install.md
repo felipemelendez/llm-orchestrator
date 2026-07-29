@@ -141,8 +141,23 @@ export ORCH_SESSION_MAX_CHARS=12000     # cap injected context at SessionStart (
 export ORCH_STRICT_RESEARCH=1           # escalate researcher fidelity warnings to blocks (exit 2)
 export ORCH_STRICT_STATUS=1             # block subagent stop on malformed Status block (exit 2)
 export ORCH_STRICT_PROTOCOL=1           # block controller Stop on malformed reply shape (exit 2)
+export ORCH_STRICT_VERIFY=1             # block a Changed: claim whose evidence stamp fails ledger lookup (exit 2)
+export ORCH_STRICT_RETRY=1              # block at the retry-storm threshold instead of warning
+export ORCH_RETRY_CAP=0                 # disable the retry-storm breaker (default on, warn-only)
 export ORCH_ALLOW_NO_VERIFY=1           # let `--no-verify` flags through
 ```
+
+## Optional: statusline
+
+`statusLine` is **not** a plugin-manifest field, so the shipped `scripts/statusline.sh` (model name + `prof:<hook profile>` + memory/plan indicators) is opt-in. Point your own `.claude/settings.json` at it:
+
+```json
+{
+  "statusLine": { "type": "command", "command": "bash /full/path/to/scripts/statusline.sh" }
+}
+```
+
+For a plugin install the script lives under the marketplace cache (`find ~/.claude/plugins -name statusline.sh -path '*llm-orchestrator*'`); for a `--copy` install it is at `.claude/scripts/statusline.sh`.
 
 ## Cross-harness
 

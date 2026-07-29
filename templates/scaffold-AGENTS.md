@@ -9,10 +9,10 @@ This project uses LLM Orchestrator's subagent roles. When a coding agent dispatc
 | orch-code-reviewer | Stage 2 review: is the code correct, safe, idiomatic, minimal?          |
 | orch-explorer      | Read-only codebase scout. Returns `file:line` refs.                     |
 | orch-debugger      | Root-cause investigator. Diagnoses; does not fix.                       |
-| orch-brainstormer  | Open-design explorer. Writes a spec file.                               |
 
 Each subagent returns exactly one Status from this set:
 - `DONE` — task complete, verified.
+- `PARTIAL` — stopped at a `Stop if:` condition; see `Progress:` / `Remaining:`.
 - `DONE_WITH_CONCERNS` — complete but flagged issues; see `Concerns:` block.
 - `BLOCKED` — cannot proceed; see `Need:` block.
 - `NEEDS_CONTEXT` — missing info; see `Ask:` block.

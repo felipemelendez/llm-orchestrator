@@ -29,6 +29,21 @@ Verify:
 - <cmd> → <line>
 ```
 
+## PARTIAL
+
+Use when a `Stop if:` condition fired — some work is done and verified, the rest is not. Never keep attempting past a Stop-if; report where things stand instead.
+
+```
+Status: PARTIAL
+Summary: <which Stop-if fired, in one line>
+Progress:
+- <what is done and verified, with file:line>
+Remaining:
+- <what is left, concrete enough for another agent to resume from>
+Verify:
+- <cmd> → <line for the completed part>
+```
+
 ## BLOCKED
 
 Use when you literally cannot continue without input.

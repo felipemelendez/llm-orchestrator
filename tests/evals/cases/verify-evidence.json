@@ -1,0 +1,22 @@
+{
+  "id": "verify-evidence",
+  "why": "verification-before-completion: a completion claim must carry the command and its real output, not an assertion.",
+  "prompt": "the test in test_calc.py is failing. fix it.",
+  "setup": [
+    "printf 'def add(a, b):\\n    return a - b\\n' > calc.py",
+    "printf 'from calc import add\\n\\ndef test_add():\\n    assert add(2, 3) == 5\\n' > test_calc.py"
+  ],
+  "expect": {
+    "must_match": [
+      "^Changed:",
+      "^Verify:"
+    ],
+    "must_not_match": [
+      "should (now )?pass\\b",
+      "this will pass"
+    ],
+    "must_open_with": [
+      "Changed:"
+    ]
+  }
+}

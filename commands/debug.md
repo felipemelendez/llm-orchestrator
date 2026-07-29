@@ -2,7 +2,7 @@
 description: Root-cause-first debugging. Thin wrapper that invokes the systematic-debugging skill with a small gathering step.
 ---
 
-You are running `/debug`.
+You are running `/llm-orchestrator:debug`.
 
 User input: $ARGUMENTS (optional — failing command, file path, or symptom)
 

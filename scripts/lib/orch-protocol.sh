@@ -140,11 +140,12 @@ orch_grade_reply() {
 #
 # Reads the reply from stdin. Finds a line whose first characters are
 # "Status: <ENUM>" (line-anchored). Validates that the enum-implied
-# sub-block is present:
+# sub-block(s) are present:
 #   DONE              → requires a "Summary:" line
 #   DONE_WITH_CONCERNS → requires a "Concerns:" line
 #   BLOCKED           → requires a "Need:" line
 #   NEEDS_CONTEXT     → requires an "Ask:" line
+#   PARTIAL           → requires "Progress:" AND "Remaining:" lines
 #
 # Returns 0 (PASS) with a one-line reason, or 1 (FAIL) with reason.
 # Bash 3.2 compatible.
@@ -159,10 +160,10 @@ orch_grade_status_block() {
   # Find a line-leading Status: with a valid enum value.
   # Must start at column 0 (^Status:).
   local status_line
-  status_line=$(printf '%s\n' "$input" | grep -m1 '^Status:[[:space:]]*\(DONE\|DONE_WITH_CONCERNS\|BLOCKED\|NEEDS_CONTEXT\)' || true)
+  status_line=$(printf '%s\n' "$input" | grep -m1 '^Status:[[:space:]]*\(DONE\|DONE_WITH_CONCERNS\|BLOCKED\|NEEDS_CONTEXT\|PARTIAL\)' || true)
 
   if [[ -z "$status_line" ]]; then
-    printf 'FAIL: no line-leading Status: with valid enum (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT)\n'
+    printf 'FAIL: no line-leading Status: with valid enum (DONE|DONE_WITH_CONCERNS|BLOCKED|NEEDS_CONTEXT|PARTIAL)\n'
     return 1
   fi
 
@@ -170,29 +171,31 @@ orch_grade_status_block() {
   local enum
   enum=$(printf '%s\n' "$status_line" | sed 's/^Status:[[:space:]]*//' | sed 's/[[:space:]].*//')
 
-  # Determine required sub-block header.
-  local required_header
+  # Determine required sub-block header(s) — space-separated list.
+  local required_headers
   case "$enum" in
-    DONE)               required_header="Summary:" ;;
-    DONE_WITH_CONCERNS) required_header="Concerns:" ;;
-    BLOCKED)            required_header="Need:" ;;
-    NEEDS_CONTEXT)      required_header="Ask:" ;;
+    DONE)               required_headers="Summary:" ;;
+    DONE_WITH_CONCERNS) required_headers="Concerns:" ;;
+    BLOCKED)            required_headers="Need:" ;;
+    NEEDS_CONTEXT)      required_headers="Ask:" ;;
+    PARTIAL)            required_headers="Progress: Remaining:" ;;
     *)
       printf 'FAIL: unrecognized Status enum: %s\n' "$enum"
       return 1
       ;;
   esac
 
-  # Check that the required sub-block header appears as a line start.
-  local found_block
-  found_block=$(printf '%s\n' "$input" | grep -m1 "^${required_header}" || true)
+  # Check that every required sub-block header appears as a line start.
+  local required_header found_block
+  for required_header in $required_headers; do
+    found_block=$(printf '%s\n' "$input" | grep -m1 "^${required_header}" || true)
+    if [[ -z "$found_block" ]]; then
+      printf 'FAIL: Status: %s requires a "%s" line\n' "$enum" "$required_header"
+      return 1
+    fi
+  done
 
-  if [[ -z "$found_block" ]]; then
-    printf 'FAIL: Status: %s requires a "%s" line\n' "$enum" "$required_header"
-    return 1
-  fi
-
-  printf 'PASS: Status: %s with %s is valid\n' "$enum" "$required_header"
+  printf 'PASS: Status: %s with %s is valid\n' "$enum" "$required_headers"
   return 0
 }
 

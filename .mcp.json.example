@@ -7,7 +7,7 @@
       "args": ["-y", "@modelcontextprotocol/server-memory"]
     },
     "sequential-thinking": {
-      "_description": "Long chain-of-thought scratch space, useful for orch-debugger and orch-brainstormer.",
+      "_description": "Long chain-of-thought scratch space, useful for orch-debugger and orch-debugger.",
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
     },

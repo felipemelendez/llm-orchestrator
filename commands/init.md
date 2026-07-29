@@ -2,7 +2,7 @@
 description: Initialize LLM Orchestrator conventions in the current project. Adds CLAUDE.md, AGENTS.md, .gitignore entries, and the docs/llm-orchestrator/ scaffold without overwriting existing files.
 ---
 
-You are running `/init` for LLM Orchestrator.
+You are running `/llm-orchestrator:init` for LLM Orchestrator.
 
 User input: $ARGUMENTS (optional — accepts `--force` to overwrite existing scaffolding)
 
@@ -45,8 +45,8 @@ Verify:
 - ls docs/llm-orchestrator/
 - head -20 CLAUDE.md
 Next:
-- /remember any project-specific conventions
-- Use the `brainstorming` skill or `/plan` when you have a spec
+- /llm-orchestrator:remember any project-specific conventions
+- Use the `brainstorming` skill or `/llm-orchestrator:plan` when you have a spec
 ```
 
 Constraints:

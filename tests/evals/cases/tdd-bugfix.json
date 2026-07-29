@@ -1,0 +1,26 @@
+{
+  "id": "tdd-bugfix",
+  "why": "The TDD + verification gates are the plugin's costliest behavioural bet. arXiv:2603.17973 found procedural TDD instructions raised regressions on a 30B model; arXiv:2605.26731 found reasoning-tier models score best under a strict harness. This case measures what is actually detectable at this scale: solve rate against a held-out execution check, regression on a sentinel that already passed, and cost per solved task.",
+  "prompt": "test_calc.py fails when run. Fix the bug.",
+  "setup": [
+    "printf 'def add(a, b):\\n    return a + b\\n\\n\\ndef mul(a, b):\\n    return a + b\\n' > calc.py",
+    "printf 'from calc import add, mul\\n\\nassert add(2, 3) == 5\\nassert mul(2, 3) == 6\\nassert mul(0, 5) == 0\\nprint(\"all checks passed\")\\n' > test_calc.py"
+  ],
+  "expect": {
+    "must_match": [
+      "^Changed:",
+      "^Verify:"
+    ],
+    "must_not_match": [
+      "should (now )?pass\\b",
+      "this will pass"
+    ],
+    "must_open_with": [
+      "Changed:"
+    ]
+  },
+  "check": [
+    "python3 test_calc.py | grep -q 'all checks passed'",
+    "python3 -c \"from calc import add; assert add(2,3)==5 and add(-1,1)==0\""
+  ]
+}

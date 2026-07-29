@@ -123,9 +123,10 @@ if [[ ",${DISABLED}," == *",orch-handoff-nudge,"* ]] || [[ "${PROFILE}" == "mini
   PRESSURE_DISABLED=1
 fi
 
-# Compact path — emit the lean recovery note only (no meta-skill body). The
-# per-turn hook re-asserts the protocol after compaction, so re-injecting the
-# ~8K meta body here would only risk the 10,000-char additionalContext cap.
+# Compact path — emit the lean recovery note plus the canonical per-turn
+# protocol reminder (NOT the ~8K meta body, which would risk the 10,000-char
+# additionalContext cap). The reminder is included here so protocol survival
+# across compaction does not depend on the per-turn hook being enabled.
 # The newest-handoff path is derived live (a pointer, never the artifact body).
 if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
   PROJ="${CLAUDE_PROJECT_DIR:-${PWD}}"
@@ -139,6 +140,11 @@ if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
     [[ -n "${_newest}" ]] && NEWEST="${_newest}"
   fi
 
+  # Canonical protocol reminder (single source: concise-agent-protocol.md).
+  CANON_FILE="${ROOT}/concise-agent-protocol.md"
+  PROTOCOL_CORE=""
+  [[ -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk '/<!-- orch-turn-reminder-start -->/{f=1;next} /<!-- orch-turn-reminder-end -->/{f=0} f' "${CANON_FILE}" 2>/dev/null)
+
   NOTE="
 
 ---
@@ -147,7 +153,9 @@ if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
 Before continuing or claiming any work done:
 - Reconcile against the plan file's checkboxes and TaskList — they are authoritative over any handoff artifact. Re-run the verification baseline if it looks stale.
 - Newest handoff artifact: ${NEWEST}. If its frontmatter slug does not match the active plan, discard it and rebuild from the plan file and git history.
-- If all plan tasks are checked, stop and report — do not invent work."
+- If all plan tasks are checked, stop and report — do not invent work.
+
+${PROTOCOL_CORE}"
 
   if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
     printf 'orch-dry-run[session-start]: would inject post-compaction recovery note (%s chars)\n' "${#NOTE}" >&2

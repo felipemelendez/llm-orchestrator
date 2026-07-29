@@ -36,12 +36,19 @@ fire() {
 SAME=$(mk_transcript "Status: trying the same fix again. It still fails the same way.")
 DIFF=$(mk_transcript "Status: a different approach this time, exploring the parser.")
 
-printf '%s== Default OFF: identical replies never warn ==%s\n' "$DIM" "$RESET"
+printf '%s== Default ON: warns at the 3rd identical reply with no env set ==%s\n' "$DIM" "$RESET"
+H=$(mktemp -d)
+d1=$(fire "$H" "$SAME"); d2=$(fire "$H" "$SAME"); d3=$(fire "$H" "$SAME")
+if [[ "${d1#*|}" == "" && "${d2#*|}" == "" ]] && printf '%s' "${d3#*|}" | grep -q 'orch-retry-cap'; then
+  ok "ORCH_RETRY_CAP unset → enabled by default, warns on the 3rd identical reply"
+else fail "default on" "d1='$d1' d2='$d2' d3='$d3'"; fi
+
+printf '\n%s== ORCH_RETRY_CAP=0 disables ==%s\n' "$DIM" "$RESET"
 H=$(mktemp -d); off_ok=1
 for i in 1 2 3 4 5; do
-  out=$(fire "$H" "$SAME"); [[ "${out#*|}" == "" ]] || off_ok=0
+  out=$(fire "$H" "$SAME" ORCH_RETRY_CAP=0); [[ "${out#*|}" == "" ]] || off_ok=0
 done
-[[ "$off_ok" == "1" ]] && ok "ORCH_RETRY_CAP unset → silent across 5 identical replies" || fail "default off" "warned while disabled"
+[[ "$off_ok" == "1" ]] && ok "ORCH_RETRY_CAP=0 → silent across 5 identical replies" || fail "explicit off" "warned while disabled"
 
 printf '\n%s== Enabled, N=3: warns on the 3rd identical reply, not before ==%s\n' "$DIM" "$RESET"
 H=$(mktemp -d)
@@ -74,6 +81,55 @@ d2=$(fire "$H" "$SAME" ORCH_STRICT_RETRY=1 ORCH_RETRY_CAP_N=2 ORCH_HOOK_DRY_RUN=
 if [[ "${d2%%|*}" == "0" ]] && printf '%s' "${d2#*|}" | grep -q 'orch-dry-run\[orch-retry-cap\]'; then
   ok "dry-run: logs intent, exit 0 even under strict"
 else fail "dry-run" "d2='$d2'"; fi
+
+printf '\n%s== SubagentStop: consecutive identical tool actions in the agent transcript ==%s\n' "$DIM" "$RESET"
+# Layout mirrors the real harness: main transcript <dir>/main.jsonl, subagent
+# file at <dir>/main/subagents/agent-<id>.jsonl.
+mk_agent_jsonl() { # <path> <mode: repeat|varied>
+  local path="$1" mode="$2"
+  python3 - "$path" "$mode" <<'PY'
+import json, sys
+path, mode = sys.argv[1], sys.argv[2]
+def turn(name, inp):
+    return json.dumps({"type": "assistant", "message": {"role": "assistant",
+        "content": [{"type": "tool_use", "name": name, "input": inp}]}})
+lines = []
+if mode == "repeat":
+    for _ in range(4):
+        lines.append(turn("Bash", {"command": "npm test"}))
+else:
+    lines.append(turn("Bash", {"command": "npm test"}))
+    lines.append(turn("Read", {"file_path": "/x/a.ts"}))
+    lines.append(turn("Bash", {"command": "npm test"}))
+    lines.append(turn("Bash", {"command": "npm run lint"}))
+open(path, "w").write("\n".join(lines) + "\n")
+PY
+}
+SUBBASE=$(mktemp -d)
+: > "$SUBBASE/main.jsonl"
+mkdir -p "$SUBBASE/main/subagents"
+mk_agent_jsonl "$SUBBASE/main/subagents/agent-a123.jsonl" repeat
+mk_agent_jsonl "$SUBBASE/main/subagents/agent-b456.jsonl" varied
+
+sub_fire() { # <agent_id> [env...]
+  local aid="$1"; shift
+  local err rc
+  err=$(printf '{"hook_event_name":"SubagentStop","transcript_path":"%s","agent_id":"%s"}' "$SUBBASE/main.jsonl" "$aid" \
+        | env ORCH_HOME="$(mktemp -d)" "$@" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+  printf '%s|%s' "$rc" "$err"
+}
+out=$(sub_fire a123)
+if [[ "${out%%|*}" == "0" ]] && printf '%s' "${out#*|}" | grep -q 'step repetition'; then
+  ok "4× identical Bash action → step-repetition warn (exit 0)"
+else fail "subagent repeat warn" "out='$out'"; fi
+out=$(sub_fire a123 ORCH_STRICT_RETRY=1)
+if [[ "${out%%|*}" == "2" ]]; then ok "same under strict → exit 2 (reason fed back to the agent)"
+else fail "subagent strict" "out='$out'"; fi
+out=$(sub_fire b456)
+if [[ "${out%%|*}" == "0" && "${out#*|}" == "" ]]; then
+  ok "varied actions (interleaved repeats, no consecutive run) → silent"
+else fail "subagent varied" "out='$out'"; fi
+rm -rf "$SUBBASE"
 
 printf '\n'
 if (( FAIL == 0 )); then

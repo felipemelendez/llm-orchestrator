@@ -10,8 +10,8 @@ The branch is green. Now what?
 ## Preconditions
 
 Before this skill runs:
-- `/verify` has been run; tests pass.
-- `/review` has been run; verdict is yes or with-fixes already addressed.
+- `/llm-orchestrator:verify` has been run; tests pass.
+- `/llm-orchestrator:review` has been run; verdict is yes or with-fixes already addressed.
 - **Regression check passes.** Run:
   ```
   orch_regression_check <project-dir>

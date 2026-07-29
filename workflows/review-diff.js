@@ -29,6 +29,11 @@ const securitySensitive = a.security_sensitive === true
 const CONFIDENCE_FLOOR = 0.8
 const VERIFY_BATCHES = 4 // hard cap on skeptic agents, so a noisy diff can't blow the budget
 
+// Every finding carries a `fix` — the minimal concrete correction. That is not
+// decoration: the skeptic pass executes the proposed fix as COUNTERFACTUAL
+// evidence where the claim is runnable (arXiv:2603.00539's fix-guided
+// verification filter — the paper's measured countermeasure, FNR 54.8%→16.3%
+// on HumanEval). A finding whose fix changes nothing observable is refuted.
 const FINDINGS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -44,13 +49,17 @@ const FINDINGS_SCHEMA = {
           severity: { type: 'string', enum: ['critical', 'important', 'minor'] },
           confidence: { type: 'number' },
           claim: { type: 'string' },
+          fix: { type: 'string' },
         },
-        required: ['file', 'line', 'severity', 'confidence', 'claim'],
+        required: ['file', 'line', 'severity', 'confidence', 'claim', 'fix'],
       },
     },
   },
   required: ['findings'],
 }
+
+const FIX_RULE =
+  ' For each finding, "fix" is the minimal concrete correction — name the file:line and the exact change. The verifier EXECUTES your fix as counterfactual evidence where the claim is runnable, so a finding without a workable fix will not survive.'
 
 const isBlocking = (f) => f.severity === 'critical' || f.severity === 'important'
 const passesFloor = (f) => typeof f.confidence === 'number' && f.confidence >= CONFIDENCE_FLOOR
@@ -58,11 +67,12 @@ const passesFloor = (f) => typeof f.confidence === 'number' && f.confidence >= C
 // --- Stage 1: spec compliance (the gate) ----------------------------------
 phase('Spec')
 const stage1 = await agent(
-  `You are the spec-compliance reviewer. Assume any implementer report is optimistic — re-derive everything from the diff and the spec yourself.\n\nSPEC:\n${specText}\n\nPLAN:\n${planText}\n\nDIFF:\n${diff}\n\nReturn findings in BOTH directions: (a) under-building — a spec Goal with no evidence in the diff; (b) over-building — anything in the diff not traceable to a spec Goal (an extra feature, unused abstraction, "while I was here" change, or a new file/flag the spec didn't call for) is scope creep and a finding, even if useful. Only raise a finding if at least 80% confident it is real; omit weaker observations. Severity: critical = breaks a contract/spec requirement; important = meaningful gap OR over-building beyond the spec; minor = nit.`,
+  `You are the spec-compliance reviewer. Assume any implementer report is optimistic — re-derive everything from the diff and the spec yourself.\n\nSPEC:\n${specText}\n\nPLAN:\n${planText}\n\nDIFF:\n${diff}\n\nReturn findings in BOTH directions: (a) under-building — a spec Goal with no evidence in the diff; (b) over-building — anything in the diff not traceable to a spec Goal (an extra feature, unused abstraction, "while I was here" change, or a new file/flag the spec didn't call for) is scope creep and a finding, even if useful. Report EVERY deviation you find — do not withhold and do not be conservative. Tag each finding with a confidence from 0.0 to 1.0; this script filters, not you. Severity: critical = breaks a contract/spec requirement; important = meaningful gap OR over-building beyond the spec; minor = nit.${FIX_RULE}`,
   { agentType: 'llm-orchestrator:orch-spec-reviewer', schema: FINDINGS_SCHEMA, label: 'spec-compliance', phase: 'Spec' }
 )
 
-const specFindings = (stage1?.findings || []).filter(passesFloor)
+const specAll = stage1?.findings || []
+const specFindings = specAll.filter(passesFloor)
 const specBlocks = specFindings.filter(isBlocking)
 
 // Early-exit: if the diff does not implement the spec, do NOT pay for the
@@ -87,28 +97,30 @@ const stage23 = await parallel(
   [
     () =>
       agent(
-        `You are the code-quality reviewer. Judge correctness, safety, idiom, minimalism, and test coverage of this diff against the project's conventions.\n\nCONVENTIONS:\n${conventions}\n\nDIFF:\n${diff}\n\nOnly raise a finding if at least 80% confident it is real. A critical finding must state the concrete failure scenario in its claim (the specific inputs or state that produce the wrong behavior); if you cannot construct one, use severity important or omit it.`,
+        `You are the code-quality reviewer. Judge correctness, safety, idiom, minimalism, and test coverage of this diff against the project's conventions.\n\nCONVENTIONS:\n${conventions}\n\nDIFF:\n${diff}\n\nReport EVERY issue you find — do not withhold and do not be conservative. Tag each finding with a confidence from 0.0 to 1.0; this script filters, not you. A critical finding must state the concrete failure scenario in its claim (the specific inputs or state that produce the wrong behavior); if you cannot construct one, use severity important or omit it.${FIX_RULE}`,
         { agentType: 'llm-orchestrator:orch-code-reviewer', schema: FINDINGS_SCHEMA, label: 'code-quality', phase: 'Quality+Security' }
       ),
     securitySensitive
       ? () =>
           agent(
-            `You are the security reviewer. This diff matched the security-sensitive token set. Look for injection (SQL/command/path), missing auth checks, exposed secrets/credentials, crypto misuse, unsafe deserialization, SSRF/CSRF, and sensitive data in logs.\n\nDIFF:\n${diff}\n\nOnly raise a finding if at least 80% confident it is real. A critical finding must name the concrete attack input or exposure path in its claim; if you cannot state one, use severity important or omit it.`,
+            `You are the security reviewer. This diff matched the security-sensitive token set. Look for injection (SQL/command/path), missing auth checks, exposed secrets/credentials, crypto misuse, unsafe deserialization, SSRF/CSRF, and sensitive data in logs.\n\nDIFF:\n${diff}\n\nReport EVERY issue you find — do not withhold and do not be conservative. Tag each finding with a confidence from 0.0 to 1.0; this script filters, not you. A critical finding must name the concrete attack input or exposure path in its claim; if you cannot state one, use severity important or omit it.${FIX_RULE}`,
             { agentType: 'llm-orchestrator:orch-security-reviewer', schema: FINDINGS_SCHEMA, label: 'security', phase: 'Quality+Security' }
           )
       : null,
   ].filter(Boolean)
 )
 
-const otherFindings = stage23
-  .filter(Boolean)
-  .flatMap((r) => r.findings || [])
-  .filter(passesFloor)
+const otherAll = stage23.filter(Boolean).flatMap((r) => r.findings || [])
+const otherFindings = otherAll.filter(passesFloor)
 
-// Candidate pool = all confidence-passing findings from stages 1-3.
+// Reviewers report everything and tag confidence; the filtering happens HERE, once.
+// Sub-floor findings are demoted to notes, never discarded — a finding the reviewer
+// was unsure about is still a finding a human may want to scan.
+const allFindings = specAll.concat(otherAll)
 const pool = specFindings.concat(otherFindings)
-const toVerify = pool.filter(isBlocking) // skeptics only judge critical+important
-const minorNotes = pool.filter((f) => !isBlocking(f)) // minors skip verify -> Notes
+const toVerify = pool.filter(isBlocking)                       // skeptics judge critical+important
+const belowFloor = allFindings.filter((f) => !passesFloor(f))  // low-confidence -> Notes
+const minorNotes = pool.filter((f) => !isBlocking(f)).concat(belowFloor)
 
 // --- Verify: bounded adversarial refute pass -------------------------------
 phase('Verify')
@@ -133,20 +145,29 @@ if (toVerify.length > 0) {
           properties: {
             index: { type: 'number' },
             refuted: { type: 'boolean' },
+            method: { type: 'string', enum: ['executed', 'reasoned'] },
             reason: { type: 'string' },
           },
-          required: ['index', 'refuted', 'reason'],
+          required: ['index', 'refuted', 'method', 'reason'],
         },
       },
     },
     required: ['verdicts'],
   }
 
+  // Fix-guided verification (arXiv:2603.00539): where the claim is runnable,
+  // the skeptic EXECUTES the reviewer's proposed fix as counterfactual
+  // evidence instead of arguing about a prose scenario — the same paper finds
+  // that asking for more explanation *increases* misjudgement. Prose refutation
+  // is the fallback for non-runnable findings (style, missing tests,
+  // architecture), and stays labelled as such (method: "reasoned").
   const results = await parallel(
     batches.map((batch, bi) => () => {
-      const listed = batch.map((f, i) => `[${i}] (${f.severity}) ${f.file}:${f.line} — ${f.claim}`).join('\n')
+      const listed = batch
+        .map((f, i) => `[${i}] (${f.severity}) ${f.file}:${f.line} — CLAIM: ${f.claim}\n    PROPOSED FIX: ${f.fix || '(none given)'}`)
+        .join('\n')
       return agent(
-        `You are a skeptical verifier. For each finding below, try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak or you cannot confirm it from the diff. A critical finding whose claim states no concrete failure scenario or attack path is weak evidence by definition — refute it unless the diff itself makes the scenario obvious.\n\nDIFF:\n${diff}\n\nFINDINGS:\n${listed}\n\nReturn one verdict per finding by its [index].`,
+        `You are a skeptical verifier with shell access. For each finding below, decide refuted true/false.\n\nPREFER EXECUTION (method: "executed"): when the claim is demonstrable by running code — a reproduction snippet, the file's own tests, a typecheck — verify it counterfactually. NEVER modify the repository or its git state: copy the affected file(s) into a fresh temp dir (mktemp -d), build the minimal reproduction the claim implies, run it against the ORIGINAL code, then apply the finding's PROPOSED FIX in the temp copy and run it again. The finding survives (refuted=false) only if the original actually RAN and misbehaved AND the fixed version behaves. If original and fixed both ran and behave the SAME, the finding is refuted — the fix changed nothing observable, so the claim was noise. IMPORTANT: "could not execute" is NOT equivalence — if the reproduction fails to run at all (missing dependencies, config, import errors unrelated to the claim), you learned nothing; do NOT mark executed and do NOT refute on that basis — drop to the reasoned fallback instead. method: "executed" asserts the original demonstrably ran. Put the commands you ran and the observed outputs in reason.\n\nFALLBACK (method: "reasoned"): when the finding is not runnable (style, missing test coverage, architectural concerns, or execution was impossible in this environment), try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak or you cannot confirm it from the diff. A critical finding whose claim states no concrete failure scenario or attack path is weak evidence by definition — refute it unless the diff itself makes the scenario obvious. Do not pad reasons: run code or cite the diff line.\n\nDIFF:\n${diff}\n\nFINDINGS:\n${listed}\n\nReturn one verdict per finding by its [index].`,
         { agentType: 'llm-orchestrator:orch-code-reviewer', schema: VERDICT_SCHEMA, label: `verify:${bi}`, phase: 'Verify' }
       ).then((v) => ({ batch, verdicts: v?.verdicts || [] }))
     })
@@ -155,8 +176,12 @@ if (toVerify.length > 0) {
   const survivors = []
   for (const r of results.filter(Boolean)) {
     const refuted = new Set(r.verdicts.filter((v) => v.refuted).map((v) => v.index))
+    const methodOf = {}
+    for (const v of r.verdicts) methodOf[v.index] = v.method
     r.batch.forEach((f, i) => {
-      if (!refuted.has(i)) survivors.push(f)
+      // verifiedBy makes the evidence strength visible downstream: "executed"
+      // survived a real counterfactual run; "reasoned" survived only argument.
+      if (!refuted.has(i)) survivors.push({ ...f, verifiedBy: methodOf[i] || 'reasoned' })
     })
   }
   confirmed = survivors

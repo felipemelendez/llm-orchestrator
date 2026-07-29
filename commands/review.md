@@ -2,7 +2,7 @@
 description: Two-stage review of the current diff, with optional Stage 3 security review when the diff touches auth/crypto/payments/secrets. Stage 1 — spec compliance. Stage 2 — code quality. Stage 3 — security (conditional).
 ---
 
-You are running `/review`.
+You are running `/llm-orchestrator:review`.
 
 User input: $ARGUMENTS (optional — base ref, defaults to origin/main or the project's default branch)
 
@@ -29,7 +29,7 @@ Steps:
 4. Stage 1 — spec compliance:
    - Dispatch the native `orch-spec-reviewer` agent (or, if unavailable, a generic subagent with `templates/spec-reviewer-prompt.md`).
    - Pass: spec content (pasted), plan content (pasted), diff (pasted).
-   - Confidence threshold: ≥80% to raise an Issue.
+   - Reviewer reports everything with a 0.0–1.0 confidence tag; you filter below 0.8 into `Notes:`.
 
 5. If Stage 1 verdict is `no`, or `with-fixes` with at least one Critical: stop. Report and return to implementer.
 
@@ -56,7 +56,7 @@ Steps:
      single source of truth; never re-derive it in the workflow script.
    - Run `workflows/review-diff.js` with `args = {specText, planText, conventions, diff,
      security_sensitive}`. It reproduces the Stage-1-gates-Stage-2 ordering (early-exits when the
-     diff fails spec compliance), filters findings at ≥80% confidence, and runs a bounded
+     diff fails spec compliance), demotes findings below 0.8 confidence to `Notes:`, and runs a bounded
      adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, earlyExit}`.
    - Build the report below from that return, then continue at step 9.
 
@@ -77,7 +77,7 @@ Issues:
 Verdict:
 - yes | no | with-fixes — <one line>
 Next:
-- Fix Critical (if any), then /verify, then /finish.
+- Fix Critical (if any), then /llm-orchestrator:verify, then /llm-orchestrator:finish.
 ```
 
 Constraints:

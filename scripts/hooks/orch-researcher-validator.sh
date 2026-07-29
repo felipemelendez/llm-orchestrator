@@ -255,7 +255,7 @@ fi
 
 if [[ "${STRICT}" == "1" ]]; then
   ESCAPED=$(printf '%s' "${WARNING}" | json_escape)
-  printf '{"decision":"block","reason":%s}\n' "${ESCAPED}"
+  printf '{"decision":"block","reason":%s}\n' "${ESCAPED}" | tee /dev/stderr
   exit 2
 fi
 

@@ -1,6 +1,6 @@
 {
   "name": "llm-orchestrator",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Agent orchestration toolkit. Concise responses, structured plans, isolated worktrees, two-stage reviews, project memory, evidence-based verification.",
   "author": {
     "name": "Felipe Melendez"
@@ -8,9 +8,5 @@
   "homepage": "https://github.com/felipemelendez/llm-orchestrator",
   "repository": "https://github.com/felipemelendez/llm-orchestrator",
   "license": "MIT",
-  "keywords": ["agents", "orchestration", "skills", "concise", "memory", "tdd", "review"],
-  "statusLine": {
-    "type": "command",
-    "command": "bash $CLAUDE_PLUGIN_ROOT/scripts/statusline.sh"
-  }
+  "keywords": ["agents", "orchestration", "skills", "concise", "memory", "tdd", "review"]
 }

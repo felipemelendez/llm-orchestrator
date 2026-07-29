@@ -66,7 +66,7 @@ These are durable. We will never:
 - Ship a proprietary runtime.
 - Enable telemetry by default.
 - Accept more than ~40 first-party skills (cap stated in the philosophy bullets above).
-- Add background observers. Memory should be something the user opts into via `/remember`, not something that happens to them.
+- Add background observers. Memory should be something the user opts into via `/llm-orchestrator:remember`, not something that happens to them.
 
 If your proposed contribution conflicts with a non-goal, open an issue first — these are durable but discussable.
 

@@ -88,7 +88,7 @@ Changed:
 Verify:
 - cd .worktrees/<slug> && pnpm test → 142 passed
 Next:
-- /dispatch task 1 against this worktree
+- /llm-orchestrator:dispatch task 1 against this worktree
 ```
 
 ## Anti-patterns

@@ -36,6 +36,8 @@ Files:
 - create: <path>
 - modify: <path>:<line-range>
 - test: <path>
+Done when: <observable end state — e.g. "`<cmd>` prints `<line>` and all sub-steps are complete">
+Stop if: <abort conditions — e.g. "2 consecutive failed fix attempts on the same test; any edit needed outside Files. Return PARTIAL or BLOCKED, don't keep trying">
 Interfaces (optional; authoritative for dependency routing when present):
 - introduces: <symbols/endpoints/schemas/files this task creates>
 - consumes: <what this task needs that another task introduces, or "nothing">
@@ -52,6 +54,8 @@ Independent: yes
 Owner: implementer
 Files:
 - modify: <path>
+Done when: <...>
+Stop if: <...>
 
 Sub-steps:
 - [ ] ...

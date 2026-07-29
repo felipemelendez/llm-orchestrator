@@ -87,12 +87,18 @@ Verify after each step:
 ### 6. Status — subagent → controller
 
 ```
-Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
+Status: DONE | DONE_WITH_CONCERNS | PARTIAL | BLOCKED | NEEDS_CONTEXT
 
 Summary:
 - <one-line outcome>
 
 Concerns: (only if DONE_WITH_CONCERNS)
+- ...
+
+Progress: (only if PARTIAL — what is done and verified)
+- ...
+
+Remaining: (only if PARTIAL — what is left, concrete enough to resume from)
 - ...
 
 Need: (only if BLOCKED)
@@ -101,6 +107,8 @@ Need: (only if BLOCKED)
 Ask: (only if NEEDS_CONTEXT)
 - ...
 ```
+
+`PARTIAL` exists so a fired `Stop if:` condition has an honest exit: completed work is reported and kept, the remainder is enumerated, and nothing is silently redone or silently claimed.
 
 ## Rules
 
@@ -143,3 +151,15 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 ## Linting
 
 The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's last reply against the six shapes after every turn (non-blocking by default; set `ORCH_STRICT_PROTOCOL=1` to block on failure). `scripts/protocol-lint.sh` is a standalone CLI for the same check. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block).
+
+## Per-turn reminder (single source)
+
+The `UserPromptSubmit` hook injects the text between the markers below on every turn. Edit it HERE — the hook extracts this block at runtime and only falls back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
+
+<!-- orch-turn-reminder-start -->
+LLM Orchestrator — every turn:
+- Invoke the matching skill first: bug/investigate → systematic-debugging; build/design → brainstorming; library+version → research-classifier; approved spec → writing-plans; diff ready → requesting-code-review; claiming done/fixed/passing → verification-before-completion; remember/forget → managing-memory. Read-heavy sweeps → dispatch the explorer subagent.
+- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:".
+- "Changed:" blocks REQUIRE a "Verify:" line (real command + its output). "Where is / what files / find X" → "Found:". "Best approach / how should we" → "Plan:" with "Risks:".
+- Cite file:line. No preamble, no trailing summary; lead with the answer in one plain sentence.
+<!-- orch-turn-reminder-end -->

@@ -30,7 +30,7 @@ description: One-line summary of what the command does. Triggers, not workflow.
 
 A command is a workflow wrapper. The skill is the discipline. Most commands open by invoking one skill, then call out to others as needed.
 
-Example: `/review` invokes `requesting-code-review`, which dispatches subagents for spec-compliance then code-quality, plus an optional third security pass when the diff touches security-sensitive code.
+Example: `/llm-orchestrator:review` invokes `requesting-code-review`, which dispatches subagents for spec-compliance then code-quality, plus an optional third security pass when the diff touches security-sensitive code.
 
 ## When to add a command
 
@@ -46,7 +46,7 @@ Example: `/review` invokes `requesting-code-review`, which dispatches subagents 
 ## Naming
 
 - Lowercase, hyphenated. Match the file name to the command.
-- Short. `/plan`, not `/create-implementation-plan`.
+- Short. `/llm-orchestrator:plan`, not `/create-implementation-plan`.
 
 ## Adding a command
 
@@ -61,14 +61,14 @@ The validator checks the `description:` field on every command. Body validation 
 
 | Command            | What it does                                                            |
 |--------------------|--------------------------------------------------------------------------|
-| `/onboard`         | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. Run this first on an existing project before any feature work. |
-| `/init`            | Add LLM Orchestrator conventions to a project.                          |
-| `/plan`            | Turn an approved spec into a checklist-shaped plan.                     |
-| `/worktree`        | Create an isolated git worktree.                                        |
-| `/dispatch`        | Run a focused subagent with a constructed context envelope.             |
-| `/review`          | Two-stage review (spec + code quality), plus an optional security pass on sensitive diffs. |
-| `/debug`           | Root-cause debugging.                                                   |
-| `/verify`          | Run tests/lint/typecheck and report evidence.                           |
-| `/finish`          | Decide between merge / PR / keep / discard.                             |
-| `/remember`        | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
-| `/forget`          | Soft-delete matching lines from CLAUDE.md or plugin memory.             |
+| `/llm-orchestrator:onboard`         | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. Run this first on an existing project before any feature work. |
+| `/llm-orchestrator:init`            | Add LLM Orchestrator conventions to a project.                          |
+| `/llm-orchestrator:plan`            | Turn an approved spec into a checklist-shaped plan.                     |
+| `/llm-orchestrator:worktree`        | Create an isolated git worktree.                                        |
+| `/llm-orchestrator:dispatch`        | Run a focused subagent with a constructed context envelope.             |
+| `/llm-orchestrator:review`          | Two-stage review (spec + code quality), plus an optional security pass on sensitive diffs. |
+| `/llm-orchestrator:debug`           | Root-cause debugging.                                                   |
+| `/llm-orchestrator:verify`          | Run tests/lint/typecheck and report evidence.                           |
+| `/llm-orchestrator:finish`          | Decide between merge / PR / keep / discard.                             |
+| `/llm-orchestrator:remember`        | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
+| `/llm-orchestrator:forget`          | Soft-delete matching lines from CLAUDE.md or plugin memory.             |

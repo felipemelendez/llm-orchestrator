@@ -552,6 +552,7 @@ fi
 # Cache TTL tests.
 printf '\n%s== Cache TTL frontmatter tests ==%s\n' "$DIM" "$RESET"
 
+OLD35="$(date -v-35d +%Y%m%d%H%M 2>/dev/null || date -d "35 days ago" +%Y%m%d%H%M)"
 CACHE=$TMP/cache
 mkdir -p "$CACHE/research/cache"
 
@@ -559,7 +560,7 @@ mkdir -p "$CACHE/research/cache"
 cat > "$CACHE/research/cache/no-fm.md" <<'EOF'
 # old cache, no fm
 EOF
-touch -t 202604200000 "$CACHE/research/cache/no-fm.md"
+touch -t "$OLD35" "$CACHE/research/cache/no-fm.md"
 
 # old + 90-day TTL → don't prune
 cat > "$CACHE/research/cache/long.md" <<'EOF'
@@ -568,7 +569,7 @@ cache_ttl_days: 90
 ---
 # stable lib
 EOF
-touch -t 202604200000 "$CACHE/research/cache/long.md"
+touch -t "$OLD35" "$CACHE/research/cache/long.md"
 
 # old + 7-day TTL → prune
 cat > "$CACHE/research/cache/short.md" <<'EOF'
@@ -577,7 +578,7 @@ cache_ttl_days: 7
 ---
 # volatile
 EOF
-touch -t 202604200000 "$CACHE/research/cache/short.md"
+touch -t "$OLD35" "$CACHE/research/cache/short.md"
 
 # fresh + no fm → don't prune
 cat > "$CACHE/research/cache/fresh.md" <<'EOF'

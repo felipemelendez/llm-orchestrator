@@ -2,7 +2,7 @@
 description: Run the project's verification (tests, lint, typecheck) and report evidence. No assertion without output.
 ---
 
-You are running `/verify`.
+You are running `/llm-orchestrator:verify`.
 
 User input: $ARGUMENTS (optional — a specific test file or filter to focus on)
 
@@ -40,8 +40,8 @@ Verify:
 - lint: <last line>
 - test: <pass/fail count>
 Next:
-- If all green: /review.
-- If failure: /debug.
+- If all green: /llm-orchestrator:review.
+- If failure: /llm-orchestrator:debug.
 ```
 
 Constraints:

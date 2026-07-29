@@ -7,8 +7,8 @@ description: Use when the user says "remember", "save this", "I told you before"
 
 A thin layer over Claude Code's native CLAUDE.md. We don't reinvent persistence — Claude Code already loads `CLAUDE.md` (project / user / local / managed) automatically at session start. What this skill adds:
 
-1. **Auto-classification on `/remember`** — facts route into `## Conventions`, `## Decisions`, `## People`, or `## Notes` sections of the right CLAUDE.md.
-2. **Soft-delete via `/forget`** — removed lines move to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable.
+1. **Auto-classification on `/llm-orchestrator:remember`** — facts route into `## Conventions`, `## Decisions`, `## People`, or `## Notes` sections of the right CLAUDE.md.
+2. **Soft-delete via `/llm-orchestrator:forget`** — removed lines move to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable.
 3. **Plugin-internal memory** at `~/.llm-orchestrator/memory/<project-hash>.md` for research-gate state that doesn't belong in user-facing CLAUDE.md — `## Research config` (aggressiveness knob) and `declined_mcp:` entries.
 
 Two native surfaces, two owners: **CLAUDE.md** is the *user's* curated memory — that's what this skill writes to. The harness may also keep an *assistant-owned* auto-memory directory (Claude Code persists the model's own notes across sessions); this skill never writes there, and facts the user asks to remember belong in CLAUDE.md, not in assistant notes.
@@ -25,7 +25,7 @@ Two native surfaces, two owners: **CLAUDE.md** is the *user's* curated memory �
 
 `<project-hash>` is 12 hex chars of SHA-1 over (in order) git remote URL → repo root → `pwd`. Computed by `scripts/lib/orch-project.sh`.
 
-## How `/remember` routes
+## How `/llm-orchestrator:remember` routes
 
 Three branches in priority order:
 
@@ -50,7 +50,7 @@ CLAUDE.md is loaded by Claude Code automatically; the SessionStart hook does not
 - People: check `git log --since="3 months" --format='%an' | sort -u` to see who's still active.
 - Decisions: trust unless the codebase obviously contradicts.
 
-If a fact is stale, `/forget` it (with confirmation) and `/remember` the corrected version.
+If a fact is stale, `/llm-orchestrator:forget` it (with confirmation) and `/llm-orchestrator:remember` the corrected version.
 
 ## What goes in memory
 
@@ -62,17 +62,17 @@ If a fact is stale, `/forget` it (with confirmation) and `/remember` the correct
 
 What does NOT:
 - Raw tool inputs/outputs (privacy).
-- Anything secret (passwords, tokens, PII) — `/remember` refuses credential-shaped strings.
+- Anything secret (passwords, tokens, PII) — `/llm-orchestrator:remember` refuses credential-shaped strings.
 - Things derivable from the repo (file lists, function signatures).
 - Verbose narrative ("we spent an hour debugging…").
 
 ## Concurrent safety
 
-`/remember` and `/forget` write under the portable lock helper at `scripts/lib/orch-lock.sh`. It uses `flock` where available (Linux), or `mkdir`-based locking as a portable fallback (macOS, any POSIX). Two parallel sessions writing the same file serialize without corruption.
+`/llm-orchestrator:remember` and `/llm-orchestrator:forget` write under the portable lock helper at `scripts/lib/orch-lock.sh`. It uses `flock` where available (Linux), or `mkdir`-based locking as a portable fallback (macOS, any POSIX). Two parallel sessions writing the same file serialize without corruption.
 
 ## Soft-delete
 
-`/forget` writes the removed lines to `~/.llm-orchestrator/memory/.trash/<slug>-<ts>.md` before removing them from the source — regardless of whether the source is project CLAUDE.md, user CLAUDE.md, or plugin memory. Recovery:
+`/llm-orchestrator:forget` writes the removed lines to `~/.llm-orchestrator/memory/.trash/<slug>-<ts>.md` before removing them from the source — regardless of whether the source is project CLAUDE.md, user CLAUDE.md, or plugin memory. Recovery:
 
 ```bash
 ls -1t ~/.llm-orchestrator/memory/.trash/
@@ -81,7 +81,7 @@ ls -1t ~/.llm-orchestrator/memory/.trash/
 
 ## Trash and cache retention
 
-The Stop hook prunes `~/.llm-orchestrator/memory/.trash/*.md` older than `ORCH_SESSION_RETENTION_DAYS` (default 90) every turn. CLAUDE.md files are never auto-pruned — they accumulate until you `/forget`.
+The Stop hook prunes `~/.llm-orchestrator/memory/.trash/*.md` older than `ORCH_SESSION_RETENTION_DAYS` (default 90) every turn. CLAUDE.md files are never auto-pruned — they accumulate until you `/llm-orchestrator:forget`.
 
 The research cache is pruned separately at `ORCH_RESEARCH_RETENTION_DAYS` (default 30); per-file TTL overrides are honored via `cache_ttl_days:` frontmatter.
 
@@ -102,12 +102,12 @@ Each `declined_mcp` entry is one line: the MCP name, the signal it was suggested
 - `research_aggressiveness: standard` (default) — triggers on library + (version OR security OR architectural verb).
 - `research_aggressiveness: low` — triggers only on version pins, security keywords, or explicit `/llm-orchestrator:research`.
 
-Set via `/remember research_aggressiveness: high`. The gate hook reads on every trigger — no restart needed.
+Set via `/llm-orchestrator:remember research_aggressiveness: high`. The gate hook reads on every trigger — no restart needed.
 
 ## Commands
 
-- `/remember <fact>` — append to the right CLAUDE.md (or plugin memory for research config) under the inferred section
-- `/forget <pattern>` — soft-delete matching lines from wherever they live
+- `/llm-orchestrator:remember <fact>` — append to the right CLAUDE.md (or plugin memory for research config) under the inferred section
+- `/llm-orchestrator:forget <pattern>` — soft-delete matching lines from wherever they live
 
 ## Cross-session continuity
 

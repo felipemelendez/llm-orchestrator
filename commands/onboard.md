@@ -2,7 +2,7 @@
 description: One-time codebase onboarding — study architecture once, seed CLAUDE.md, never re-ask. Idempotent: skips if already onboarded.
 ---
 
-You are running `/onboard`.
+You are running `/llm-orchestrator:onboard`.
 
 User input: $ARGUMENTS (ignored — onboarding is parameter-free)
 
@@ -134,7 +134,7 @@ Changed:
 Verify:
 - grep -A 20 "## Decisions" ./CLAUDE.md
 Next:
-- /plan or /dispatch to start feature work — decisions are now read silently per task.
+- /llm-orchestrator:plan or /llm-orchestrator:dispatch to start feature work — decisions are now read silently per task.
 ```
 
 ## Constraints

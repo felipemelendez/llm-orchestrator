@@ -82,13 +82,13 @@ if should_run structural; then
   check_out "validate-skills passes" "OK:" "${ROOT}/tests/validate-skills.sh"
   check_out "research-classifier curated examples pass" "All 15 classifier checks passed" \
             "${ROOT}/tests/test-research-classifier.sh"
-  check_out "research-brief + orch-researcher contract pass" "All 41 brief/agent checks passed" \
+  check_out "research-brief + orch-researcher contract pass" "All 42 brief/agent checks passed" \
             "${ROOT}/tests/test-research-brief.sh"
   check_out "research-gate sniffer + validator + cache TTL pass" "gate/validator/TTL checks passed" \
             "${ROOT}/tests/test-research-gate.sh"
   check_out "protocol grader fixture tests pass" "All 14 checks passed" \
             bash "${ROOT}/tests/test-protocol-grader.sh"
-  check_out "protocol hook e2e tests pass" "All 25 checks passed" \
+  check_out "protocol hook e2e tests pass" "All 33 checks passed" \
             bash "${ROOT}/tests/test-protocol-hooks.sh"
   check_out "detect toolchain + cache tests pass" "All 45 detect checks passed" \
             bash "${ROOT}/tests/test-detect.sh"
@@ -106,6 +106,10 @@ if should_run structural; then
             bash "${ROOT}/tests/test-verify-gate.sh"
   check_out "retry-cap tests pass" "PASS: test-retry-cap" \
             bash "${ROOT}/tests/test-retry-cap.sh"
+  check_out "protocol single-source drift tests pass" "PASS: test-protocol-drift" \
+            bash "${ROOT}/tests/test-protocol-drift.sh"
+  check_out "evidence-ledger contract tests pass" "PASS: test-evidence-ledger" \
+            bash "${ROOT}/tests/test-evidence-ledger.sh"
 fi
 
 # ------------------------------------------------------------
@@ -149,7 +153,7 @@ if should_run hooks; then
   if [[ $rc -eq 0 ]]; then ok "Guard allows clean commit (exit 0)"
   else fail "Guard allows clean commit" "expected exit 0, got $rc"; fi
 
-  # SubagentStop — markdown transcript with Status block
+  # SubagentStop — markdown transcript with Status block (implementer contract)
   cat > /tmp/orch-smoke-transcript.md <<'EOF'
 Doing the thing.
 Status: DONE
@@ -157,7 +161,7 @@ Summary: ok
 Verify:
 - pnpm test → 1 passed
 EOF
-  rc=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.md\"}" | \
+  rc=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.md\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
        bash "${ROOT}/scripts/hooks/subagent-stop.sh" >/dev/null 2>&1; echo $?)
   if [[ "$rc" == "0" ]]; then ok "SubagentStop accepts markdown Status block"
   else fail "SubagentStop markdown transcript" "exit $rc"; fi
@@ -165,19 +169,27 @@ EOF
   # SubagentStop — JSONL transcript with escaped \n
   echo '{"role":"assistant","content":"work done.\nStatus: DONE\nSummary: ok"}' \
     > /tmp/orch-smoke-transcript.jsonl
-  rc=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.jsonl\"}" | \
+  rc=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.jsonl\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
        bash "${ROOT}/scripts/hooks/subagent-stop.sh" >/dev/null 2>&1; echo $?)
   if [[ "$rc" == "0" ]]; then ok "SubagentStop accepts JSONL escaped-newline Status block"
   else fail "SubagentStop JSONL transcript" "exit $rc"; fi
 
-  # SubagentStop — missing Status block warns but does not block
+  # SubagentStop — implementer without Status block warns but does not block
   echo "no status block here" > /tmp/orch-smoke-transcript.md
-  out=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.md\"}" | \
+  out=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.md\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
         bash "${ROOT}/scripts/hooks/subagent-stop.sh" 2>&1)
   rc=$?
-  if [[ "$rc" == "0" ]] && [[ "$out" == *"without a Status:"* ]]; then
+  if [[ "$rc" == "0" ]] && [[ "$out" == *"without a valid Status"* ]]; then
     ok "SubagentStop warns on missing Status block (exit 0)"
   else fail "SubagentStop missing-Status behavior" "exit=$rc out=$out"; fi
+
+  # SubagentStop — empty final message = premature termination → warns
+  out=$(echo "{\"agent_type\":\"llm-orchestrator:orch-implementer\",\"last_assistant_message\":\"\"}" | \
+        bash "${ROOT}/scripts/hooks/subagent-stop.sh" 2>&1)
+  rc=$?
+  if [[ "$rc" == "0" ]] && [[ "$out" == *"premature termination"* ]]; then
+    ok "SubagentStop treats an empty subagent return as failure, not success"
+  else fail "SubagentStop empty-return inversion" "exit=$rc out=$out"; fi
 
   # orch-stop — prunes old trash entries
   mkdir -p /tmp/orch-smoke-prune/memory/.trash
@@ -404,12 +416,16 @@ for event, matchers in d['hooks'].items():
         if 'hooks' not in m or not isinstance(m['hooks'], list):
             print(f'{event}_missing_inner_hooks_array'); sys.exit(1)
         for h in m['hooks']:
-            if h.get('type') != 'command' or 'command' not in h:
-                print(f'{event}_inner_hook_malformed'); sys.exit(1)
+            t = h.get('type')
+            if t == 'command' and 'command' in h:
+                continue
+            if t == 'prompt' and 'prompt' in h:
+                continue
+            print(f'{event}_inner_hook_malformed'); sys.exit(1)
 print('ok')
 " 2>&1)
   if [[ "$HOOK_FMT_OK" == "ok" ]]; then
-    ok "hooks.json uses nested hooks:[{type,command}] schema"
+    ok "hooks.json uses nested hooks:[{type,command|prompt}] schema"
   else
     fail "hooks.json schema" "$HOOK_FMT_OK — plugin hooks need {matcher,hooks:[{type:'command',command:'...'}]}"
   fi

@@ -3,7 +3,7 @@ description: Remove matching lines from CLAUDE.md or plugin memory. Soft-deletes
 argument-hint: "[pattern]"
 ---
 
-You are running `/forget`.
+You are running `/llm-orchestrator:forget`.
 
 User input: $ARGUMENTS
 
@@ -17,7 +17,7 @@ Steps:
 
 3. **Catastrophic-delete guard:** refuse patterns of length < 3 characters, or patterns that match a `## ` section header. These would nuke too much.
 
-4. **Build the candidate file list.** /forget doesn't ask the user where the fact lives — it searches everywhere a fact could be:
+4. **Build the candidate file list.** /llm-orchestrator:forget doesn't ask the user where the fact lives — it searches everywhere a fact could be:
    ```bash
    CANDIDATES=()
    # Project-scope native memory
@@ -100,4 +100,4 @@ Constraints:
 - Always show matches grouped by file before deleting.
 - Always require literal `forget` confirmation.
 - Always soft-delete to trash first.
-- The user doesn't have to know which file the fact lives in — `/forget` searches everywhere.
+- The user doesn't have to know which file the fact lives in — `/llm-orchestrator:forget` searches everywhere.

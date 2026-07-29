@@ -18,7 +18,7 @@ Two fixed trigger points only — never every turn:
 - **Trigger A — pre-spec**: between `brainstorming` step 1 (read the room) and step 2 (clarifying questions). Input: the user's raw task text.
 - **Trigger B — pre-plan**: at `writing-plans` step 0, before any plan file is written. Input: the spec's `## Approach` section.
 
-Don't invoke for arbitrary user messages, for `/llm-orchestrator:debug`, `/verify`, `/finish`, or any non-design conversation. The hook layer enforces this; the classifier itself only checks signals against the input it receives.
+Don't invoke for arbitrary user messages, for `/llm-orchestrator:debug`, `/llm-orchestrator:verify`, `/llm-orchestrator:finish`, or any non-design conversation. The hook layer enforces this; the classifier itself only checks signals against the input it receives.
 
 ## Signal heuristics
 

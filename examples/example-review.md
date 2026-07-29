@@ -39,4 +39,4 @@ Verdict:
 ## Combined verdict
 
 - Ready to merge: with-fixes
-- Next: address Important in src/middleware/rate-limit.ts:20, then /verify and /finish.
+- Next: address Important in src/middleware/rate-limit.ts:20, then /llm-orchestrator:verify and /llm-orchestrator:finish.

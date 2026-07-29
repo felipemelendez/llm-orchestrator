@@ -36,6 +36,11 @@ Existing code (only what's needed):
 - Command: `<cmd>`
 - Expected: `<line>`
 
+## Termination
+
+- Done when: <the observable end state — e.g. "`<cmd>` exits green and every sub-step above is complete". This is the ONLY path to DONE.>
+- Stop if: <the abort conditions — e.g. "2 consecutive failed fix attempts on the same test", "a file outside scope needs editing", "more than N tool calls". When one fires, stop trying and return PARTIAL (progress worth keeping) or BLOCKED (cannot proceed) — do not keep attempting.>
+
 ## Return
 
 Reply with one of:
@@ -58,6 +63,17 @@ Changed:
 - ...
 Verify:
 - ...
+```
+
+```
+Status: PARTIAL
+Summary: <one line — which Stop-if fired>
+Progress:
+- <what is done and verified>
+Remaining:
+- <what is left, concrete enough to resume from>
+Verify:
+- <cmd> → <line for the completed part>
 ```
 
 ```

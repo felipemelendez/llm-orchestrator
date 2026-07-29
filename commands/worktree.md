@@ -2,7 +2,7 @@
 description: Create an isolated git worktree for the current task. Marks provenance so cleanup is safe.
 ---
 
-You are running `/worktree`.
+You are running `/llm-orchestrator:worktree`.
 
 User input: $ARGUMENTS (optional — branch name)
 
@@ -41,7 +41,7 @@ Changed:
 Verify:
 - (cd .worktrees/<slug> && <test-cmd>)
 Next:
-- /dispatch task 1 against this worktree
+- /llm-orchestrator:dispatch task 1 against this worktree
 ```
 
 Constraints:

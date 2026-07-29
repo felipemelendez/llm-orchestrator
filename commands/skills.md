@@ -2,7 +2,7 @@
 description: List the orchestrator's skills and commands with their trigger conditions, so you can see what is available and when each fires.
 ---
 
-You are running `/skills`.
+You are running `/llm-orchestrator:skills`.
 
 User input: $ARGUMENTS (optional — a keyword to filter by, matched against skill/command names and descriptions)
 

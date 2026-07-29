@@ -27,7 +27,7 @@ Skip this skill for one-line fixes, typos, or mechanical chores.
    - Call `orch_arch_cached "$PWD"`; also read the `## Decisions` and `## Conventions` sections of `./CLAUDE.md`. Treat every entry as a constraint the spec must not break.
    - Acknowledge them in ONE line before proposing options, e.g. "Honoring recorded decisions: offline-first via SQLite; data access through the repository layer." This is informational, not a question — if a decision is now wrong, the user can say so.
    - On a cache miss (rc nonzero) with no recorded decisions: apply whatever `## Decisions`/`## Conventions` exist, and at most add one line — "Tip: run `/llm-orchestrator:onboard` once to capture this codebase's architectural decisions." Never a question or interactive prompt.
-   - Do not dispatch `orch-explorer`, do not propose `/remember`, do not ask the user anything. Codebase study and decision capture happen once via `/llm-orchestrator:onboard`, not per task.
+   - Do not dispatch `orch-explorer`, do not propose `/llm-orchestrator:remember`, do not ask the user anything. Codebase study and decision capture happen once via `/llm-orchestrator:onboard`, not per task.
 
 2. **Ask up to 3 questions, one at a time.** Multiple choice when possible. Stop asking the moment the picture is clear.
 3. **Propose 2 options.** Each option has: one-line summary, one-line tradeoff. Mark a recommended option.
