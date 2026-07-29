@@ -6,8 +6,6 @@ A team of specialized Claude Code subagents — implementer, spec reviewer, code
 
 **You delegate. The team executes. You review the diff.**
 
----
-
 ## Quick Start
 
 In a Claude Code session, run these one at a time (let the first finish before the second):
@@ -31,8 +29,6 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 
 **Model recommendation:** Run Claude Code's controller on **Opus** (or whatever is the latest, most-capable Claude Code model). The orchestrator is tuned for the best available model — multi-stage research, parallel dispatch, two-stage review, and the handoff layer all benefit from Opus-class reasoning. The handoff nudge's ~950K-token (≈95%) default assumes Opus's 1M-token context window; lower `ORCH_CONTEXT_HANDOFF_TOKENS` if you run the controller on a smaller-window model (e.g. Haiku).
 
----
-
 ## What it does
 
 | Feature | What it does | Why it matters |
@@ -48,8 +44,6 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **CLAUDE.md classification** | `/llm-orchestrator:remember <fact>` appends the fact to your project's CLAUDE.md under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically; `/llm-orchestrator:forget` soft-deletes recoverably | Persistent project memory without organizing it by hand |
 
 The mechanics behind these rows — the protocol grader, toolchain detection, convention detection, the workflow-vs-markdown routing and its `ORCH_WORKFLOWS` override — are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
-
----
 
 ## What's native vs. what this adds
 
@@ -89,13 +83,7 @@ Fair question — from the outside they look similar (skills, agents, workflows)
 
 **When to choose which.** They compose: this plugin alongside an instruction library is a sensible setup, and both neighbors are better choices for what they're best at — Superpowers for a battle-tested skill catalog with a big community, ECC for cross-harness breadth. Choose LLM Orchestrator for the thing written guidance alone cannot provide: delegating multi-step work and trusting the *result* — claims that are verifiable and failures that are recoverable — rather than trusting the model's compliance.
 
----
-
-
-
 **Grounding.** The design follows the published evidence rather than habit: methodology-level scaffolding still swings agent results by 20+ points even on frontier Anthropic models (GAIA scaffold comparison, [arXiv:2606.08529](https://arxiv.org/abs/2606.08529)); incorrect or absent verification is a leading cause of multi-agent failure (MAST taxonomy, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657)); LLM code reviewers systematically over-flag correct code — and prompts asking for more explanation make it *worse*, not better; the paper's own countermeasure is a fix-guided filter that treats a proposed correction as **executable** counterfactual evidence ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)), which the skeptic pass in `workflows/review-diff.js` now implements — every finding carries a proposed fix, and skeptics execute it in a scratch copy where the claim is runnable, labelling survivors `verifiedBy: executed` vs `reasoned`; and duplicated mechanics are a liability as the platform absorbs them (Anthropic, [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)). Hence: keep the policy, delegate the mechanics.
-
----
 
 ## Safe parallel work — agents can't overwrite each other
 
@@ -112,8 +100,6 @@ This system makes that collision impossible by construction, not by asking agent
 **Putting it back together.** Splitting work apart is only half the job; the value is the combined result. The branches merge back through a speculative queue: all of them are combined on an isolated integration branch and the test suite runs **once** against the combined result — one suite run for N branches, and your working copy only ever moves forward to a state the tests passed on. If the combined result fails, the engine finds the branch that broke it, lands the branches before it that tested green, keeps the failing state on a named branch for inspection, and tells you exactly what landed and what didn't — with a ready-to-paste command for the rest. A suite that is red for environmental reasons (missing untracked dependencies in the fresh worktree) falls back to the classic one-merge-one-test path instead of blaming an innocent branch.
 
 **In one sentence:** split the work so agents can't clobber each other, let each test freely in its own copy, then merge back test-gated — enforced by the filesystem and the test runner, so it holds even if an agent misbehaves.
-
----
 
 ## The research gate
 
@@ -134,8 +120,6 @@ Verification questions split into two kinds, and the authoritative source is dif
 - **LOCAL_STATE — "what is."** What's installed, what's in a config file, what an on-disk artifact actually contains. Routed to local `Read`, `Grep`, `Bash`. No MCP is more authoritative than the file itself for state questions.
 
 The gate doesn't replace human review, doesn't verify business logic, and doesn't catch bugs in your own code — only stale knowledge about external API surfaces.
-
----
 
 ## Meet the team
 
@@ -169,8 +153,6 @@ The controller — the agent you interact with — holds state via the native Ta
 
 Adding a role (`orch-refactorer`, `orch-security-reviewer`, `orch-test-writer`) is one new markdown file in `agents/` plus wiring it into a workflow skill or template — `./tests/validate-skills.sh` then confirms shape.
 
----
-
 ## The workflow
 
 Each phase is a skill the controller invokes before acting. Mandatory checks, not suggestions — the controller scans for the relevant skill at every step and refuses to skip.
@@ -186,8 +168,6 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 9. **`verification-before-completion`.** Fires before any "done" claim. Every `Changed:` block must include a `Verify:` line with the actual command run and its output. A per-turn hook reinforces the rule.
 10. **`finishing-a-branch`.** Verifies tests pass, presents merge / PR / keep / discard options, cleans up the worktree. Never destructive without explicit confirmation.
 
----
-
 ## When to use / when not to use
 
 **This trades tokens for correctness.** Every non-trivial task runs research, planning, fresh-context reviews, and verification — that costs more tokens than a single-prompt edit, on purpose. It's built for substantial work where getting it right matters more than minimizing spend: multi-step features, refactors, anything you want to delegate and trust. If you're optimizing for low token cost on small tasks, a lighter setup is the better fit — the overhead won't pay off.
@@ -202,8 +182,6 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 **Don't use it for:**
 
 - One-line fixes or single-file edits — orchestration overhead exceeds the value
-
----
 
 ## How it works
 
@@ -221,8 +199,6 @@ Nine layers, each solving a specific failure mode of single-agent AI tooling on 
 
 Implementation reference with code links and the layer-stack diagram: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
----
-
 ## Hook precedence
 
 The hooks follow three rules so their behavior is predictable without reading the source:
@@ -237,8 +213,6 @@ Two switches cut across all of the above:
 - **`ORCH_HOOK_DRY_RUN=1`** makes every hook log what it *would* inject or block to stderr and then do nothing. Use it to tune behavior safely before turning a strict flag on.
 
 When two flags conflict, the safer reading wins: a strict flag beats a disable flag, and dry-run beats an enforcement action.
-
----
 
 ## Install from source
 
@@ -263,13 +237,9 @@ Other modes:
 
 Full installation guide: [`docs/install.md`](./docs/install.md). Slash command reference, agent roster, and response-protocol details: [`AGENTS.md`](./AGENTS.md), [`concise-agent-protocol.md`](./concise-agent-protocol.md).
 
----
-
 ## Contributing
 
 Small, opinionated kit. New skills, slash commands, and subagent roles welcome. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the scaffolding pattern, test discipline, and issue format.
-
----
 
 ## License
 
