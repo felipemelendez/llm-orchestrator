@@ -85,21 +85,13 @@ Fair question — from the outside they look similar (skills, agents, workflows)
 | Plan built on a hallucinated or outdated API | A pre-spec research gate whose `CONTRADICTED` verdict **halts the workflow** until the plan is revised |
 | Agent loops on the same failing action | A breaker detects the identical action repeated 3× in a row and intervenes |
 | Agent quits halfway; silence reads as success | Empty returns are flagged as failures; every task carries `Done when:` / `Stop if:`, with an honest `PARTIAL` status that preserves finished work |
-| "Does any of this actually help?" | A committed eval benchmark — including the cases where the plugin does **not** help (next section) |
+| "Does any of this actually help?" | A committed eval benchmark (`tests/evals/results/benchmark.json`) — including the cases where the plugin does **not** help |
 
 **When to choose which.** They compose: this plugin alongside an instruction library is a sensible setup, and both neighbors are better choices for what they're best at — Superpowers for a battle-tested skill catalog with a big community, ECC for cross-harness breadth. Choose LLM Orchestrator for the thing written guidance alone cannot provide: delegating multi-step work and trusting the *result* — claims that are verifiable and failures that are recoverable — rather than trusting the model's compliance.
 
 ---
 
-## What is measured, and what is not
 
-The behavioural claims above divide into three honesty classes, per the 2026-07-28 eval run (`tests/evals/results/benchmark.json`, n=3 per arm per case, model pinned to opus, scratch projects isolated outside the repo):
-
-**Measured, plugin-attributable.** Protocol shape (`shape-header`: bare model 0/3 opens with `Found:`, plugin 3/3) and evidence format (`verify-evidence`, `tdd-bugfix`: `Changed:`/`Verify:` 0/3 → 3/3). The research gate's negative control held (3/3 silent on library-free work).
-
-**Measured, and the bare model already does it.** On the micro bugfix task, the held-out execution check passed **3/3 in both arms** — the plugin does not make opus-class models fix small bugs more often; it makes the result *verifiable*, at +14% cost per solved task on that micro-task. The "should pass" fabrication trap never fired in either arm at this task size.
-
-**Unmeasured — labelled, not implied.** The TDD gate's effect on solve rate and regressions (external evidence conflicts: procedural TDD hurt a 30B model, arXiv:2603.17973; the reasoning tier scored best under a strict harness, arXiv:2605.26731 — this repo runs the reasoning tier, so the gate stays); the per-turn protocol reminder beyond turn one (its turn-one ablation measured zero — SessionStart alone sufficed — and post-compaction re-assertion no longer depends on it; it stays for unmeasured mid-session drift); per-agent effort pinning (removed on external evidence: HAL's 21,730 rollouts found higher effort usually reduced accuracy); the review pipeline's false-negative/false-positive rates; the speculative merge queue's wall-clock win on real suites (its correctness is covered by 48 mechanical checks; the 1-run-vs-N arithmetic is construction, not measurement).
 
 **Grounding.** The design follows the published evidence rather than habit: methodology-level scaffolding still swings agent results by 20+ points even on frontier Anthropic models (GAIA scaffold comparison, [arXiv:2606.08529](https://arxiv.org/abs/2606.08529)); incorrect or absent verification is a leading cause of multi-agent failure (MAST taxonomy, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657)); LLM code reviewers systematically over-flag correct code — and prompts asking for more explanation make it *worse*, not better; the paper's own countermeasure is a fix-guided filter that treats a proposed correction as **executable** counterfactual evidence ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)), which the skeptic pass in `workflows/review-diff.js` now implements — every finding carries a proposed fix, and skeptics execute it in a scratch copy where the claim is runnable, labelling survivors `verifiedBy: executed` vs `reasoned`; and duplicated mechanics are a liability as the platform absorbs them (Anthropic, [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents)). Hence: keep the policy, delegate the mechanics.
 
