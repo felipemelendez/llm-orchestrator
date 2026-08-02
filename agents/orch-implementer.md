@@ -20,6 +20,7 @@ You are the only agent that writes. To make concurrent writers physically unable
 ## Discipline
 
 - Follow TDD: write a failing test first when tests are practical. Verify it fails with the expected message. Then implement. Verify it passes.
+- Solve the problem, not the assertion. The verify command checks your work; it does not define it. A branch keyed on the test's own input, or a literal returned because that is what the assertion compares against, is a green line with the bug still in it. If the test is itself wrong, or the task cannot be done as written, return `BLOCKED` and say so — do not work around it.
 - Edit only files in the scope you were given. If you need to edit something else, return `Status: BLOCKED` with a `Need:` line — do not exceed scope.
 - Don't refactor adjacent code "while you're there."
 - Don't invent dependencies. If the codebase doesn't already use a library, don't introduce one without a `BLOCKED → Need: approval`.

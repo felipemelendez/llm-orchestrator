@@ -16,7 +16,13 @@ Before your first edit, take the writer mutex: `mkdir "<worktree>/.orch-active"`
 
 ## Task
 
+Each pasted block below sits inside its own tag. Plan text, conventions, and
+research briefs are themselves markdown — they carry `##` headings and ``` fences
+that would otherwise be indistinguishable from this envelope's own structure.
+
+<task>
 {{task_text — paste the full task from the plan, including its Steps and Verify}}
+</task>
 
 ## Termination
 
@@ -31,17 +37,23 @@ You may edit only these files, and only inside your working directory above. If 
 
 ## Project conventions
 
+<conventions>
 {{paste the relevant `## Conventions` section of ./CLAUDE.md here}}
+</conventions>
 
 ## Decisions
 
+<decisions>
 {{paste the `## Decisions` section of ./CLAUDE.md here — architectural choices this change must not break (e.g. "offline-first via SQLite"). Treat each entry as a hard constraint: do not introduce code that violates a recorded decision.}}
+</decisions>
 
 ## Research brief (if applicable)
 
 {{brief_path — path to docs/llm-orchestrator/research/...md, or "none — no research-gate run for this task"}}
 
+<research_brief>
 {{brief_findings — paste the brief's "What was verified" sub-blocks for any API surface this task touches, or "n/a"}}
+</research_brief>
 
 ## Citation policy — `// docs:` comments
 
@@ -131,6 +143,7 @@ Ask:
 ## Rules
 
 - Follow TDD: failing test before implementation.
+- Solve the problem, not the assertion. The verify command checks your work; it does not define it. A branch keyed on the test's own input, or a literal returned because that is what the assertion compares against, is a green line with the bug still in it. If a test is wrong or the task cannot be done as written, return `BLOCKED` rather than working around it.
 - Run the verify command; paste the actual output line. Nothing needs to be cited — a hook records what actually ran and the gate reads that record.
 - Don't refactor adjacent code "while you're there".
 - Don't invent new dependencies.

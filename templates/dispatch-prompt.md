@@ -10,22 +10,22 @@ Role: <implementer | explorer | spec-reviewer | code-reviewer | debugger>
 
 ## Context
 
-Paste the relevant content directly. Do not reference paths.
+Paste the content directly; don't reference paths. Give each paste its own tag.
+A spec or a source file carries ``` fences and `##` headings of its own, so
+markdown delimiters alone leave the agent unable to tell where your envelope
+ends and the pasted file begins.
 
-Spec section:
-```
+<spec_section>
 <paste>
-```
+</spec_section>
 
-Plan task:
-```
+<plan_task>
 <paste>
-```
+</plan_task>
 
-Existing code (only what's needed):
-```
-<paste>
-```
+<existing_code>
+<paste — only what's needed>
+</existing_code>
 
 ## Constraints
 - Do not edit files outside scope.

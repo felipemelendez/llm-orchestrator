@@ -51,6 +51,8 @@ Inputs to the reviewer:
 - The plan (paste, don't reference)
 - `git diff <base>..HEAD`
 
+Each paste goes in its own tag — `<spec>`, `<plan>`, `<diff>` — as the templates in `templates/` do. A diff carries the ``` fences and `##` headings of every markdown file it touches, so a fence is not a boundary the reviewer can rely on.
+
 ### Stage 2 — Code quality
 
 Question: is the code correct, safe, idiomatic, and minimal?

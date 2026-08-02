@@ -23,17 +23,19 @@ is read-only). When in doubt, stay here — sequential never loses work.
 
 - 3+ tasks all marked `Independent: yes` with no shared files → use `dispatching-parallel-agents`.
 - Tasks small enough to inline (a typo, a one-line rename).
+- Anything you can finish yourself in a handful of tool calls. A subagent buys a fresh context that has to rediscover what you already know.
+- Double-checking your own work. The reviewers here read *another* agent's diff with no memory of writing it; a subagent sent to re-read yours is self-critique with extra steps and no extra eyes.
 - Tasks where you don't yet understand the problem.
 
 ## State tracking
 
 Record enough per task that a fresh controller after `/clear` knows both what is
 done and where an unfinished task resumes. A tick is not enough — it cannot say
-"round 3 of 5, two findings addressed, one open".
+"round 2 of 3, two findings addressed, one open".
 
 ```
 ### 4. Add the retry breaker  - [x]   complete (commits a1b2c3d..d4e5f6a, review clean)
-### 5. Wire the breaker in    - [ ]   fix round 3/5 (2 addressed, 1 open)
+### 5. Wire the breaker in    - [ ]   fix round 2/3 (2 addressed, 1 open)
 ### 6. Document the knob      - [x]   complete (commits d4e5f6a..99f0e12, 1 parked)
 ```
 

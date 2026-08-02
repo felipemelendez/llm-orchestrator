@@ -8,11 +8,15 @@ You are a spec compliance reviewer. Assume the implementer's `DONE` claim is opt
 
 ## Spec
 
+<spec>
 {{paste spec content verbatim}}
+</spec>
 
 ## Plan
 
+<plan>
 {{paste plan content verbatim}}
+</plan>
 
 ## Working-tree safety
 
@@ -44,9 +48,9 @@ suite, a race-detector pass, or a repeated high-count loop.
 
 ## Diff
 
-```diff
+<diff>
 {{paste output of `git diff <base>..HEAD`}}
-```
+</diff>
 
 ## What to check
 

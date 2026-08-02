@@ -69,6 +69,16 @@ def retry(fn, attempts=3, backoff="exponential", jitter=True, on_retry=None):
 
 No options the test did not ask for, no refactoring of neighbouring code, no improvements you noticed on the way. Those are separate cycles.
 
+**Least code is not narrowest code.** The test is one example of a behavior; write the rule it is an example of, not a branch that recognises the example. `if n == 3: return True` passes and generalizes to nothing — a green line bought by moving the bug out of the test's line of sight.
+
+| Passes the test | Solves the problem |
+|---|---|
+| `if path == "tests/fixtures/a.json"` | handle any path |
+| returning the literal the assertion expects | compute it |
+| a branch keyed on the test's input value | the rule that input is an instance of |
+
+Fewer options is the goal. Fewer inputs handled correctly is not.
+
 ## Verify green
 
 Run it again. Confirm:
@@ -78,6 +88,8 @@ Run it again. Confirm:
 - The output is clean — no new warnings, no stack traces that "don't matter".
 
 If it still fails, fix the code. Editing the assertion to match the code you wrote is how a suite stops meaning anything.
+
+If the test itself is wrong — it asserts something the spec does not ask for, or the task cannot be done as written — say so and stop. A wrong test is a finding to report, not an obstacle to route around, and every route around it (the edited assertion, the special case, the `skip`) leaves a suite that lies.
 
 ## Refactor
 
@@ -135,6 +147,7 @@ If verification fails, this is not a `Changed:` reply. Report `Found:` with the 
 
 - Writing the code first and the test after. Tests written after pass on the first run, which proves nothing, and they are shaped by the code that already exists — so they cover the cases you remembered rather than the ones you would have discovered.
 - Editing the assertion until it passes.
+- Special-casing the test's own input so the assertion goes green.
 - Asserting on a mock's behavior instead of the code's.
 - Skipping the red run because the test "obviously" fails.
 - Adding tests at the end for coverage. A test that exists to satisfy a number costs maintenance forever and catches nothing.

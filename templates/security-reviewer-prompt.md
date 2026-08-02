@@ -36,9 +36,9 @@ suite, a race-detector pass, or a repeated high-count loop.
 
 ## Diff
 
-```diff
+<diff>
 {{paste output of `git diff <base>..HEAD`}}
-```
+</diff>
 
 ## What to check
 

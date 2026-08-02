@@ -36,17 +36,21 @@ suite, a race-detector pass, or a repeated high-count loop.
 
 ## Diff
 
-```diff
+<diff>
 {{paste output of `git diff <base>..HEAD`}}
-```
+</diff>
 
 ## Project conventions
 
+<conventions>
 {{paste relevant section of CLAUDE.md — voice, formatting, frameworks, banned patterns}}
+</conventions>
 
 ## Decisions
 
+<decisions>
 {{paste the `## Decisions` section of ./CLAUDE.md here — recorded architectural choices (e.g. "offline-first via SQLite")}}
+</decisions>
 
 ## What to check
 
