@@ -50,6 +50,7 @@ Before the first dispatch, `TaskCreate` one task per plan task. Mark each `in_pr
 ```
 For each task:
   1. Dispatch the orch-implementer agent with templates/implementer-prompt.md.
+     - Declare the isolation mode in the working-directory slot: a worktree path, or the exact line `shared checkout; controller-partitioned file ownership` plus the task's exclusive files, or the exact line `main checkout — you are the only writer` for a solo sequential task. A writer envelope declaring neither mode fails closed (BLOCKED).
      - Paste the task text, the files-in-scope list, and the Verify command.
      - Paste the relevant `## Conventions` section of ./CLAUDE.md into the conventions slot.
      - Paste the `## Decisions` section of ./CLAUDE.md into the decisions slot.
@@ -126,7 +127,7 @@ When an implementer returns `BLOCKED`, route by what they `Need:`:
 
 Don't try (1) → (5) blindly. Pick one based on what the `Need:` line says.
 
-**Stale-mutex corner.** If a dispatch returns `BLOCKED — Need: a worktree not already being written by another agent` and no implementer is currently running in that worktree, the previous holder died without releasing. The reaper hook usually frees it at that agent's stop; if it could not (ambiguous parallel case), release by hand — `rmdir <worktree>/.orch-active` — and re-dispatch.
+**Stale-mutex corner.** If a dispatch returns `BLOCKED — Need: a worktree not already being written by another agent` and no implementer is currently running in that worktree, the previous holder died without releasing. The reaper hook usually frees it at that agent's stop; if it could not (ambiguous parallel case), release by hand — `rmdir <worktree>/.orch-active` — and re-dispatch. But first check the shape of what is at the path: a held mutex is only ever a *directory* created by `mkdir`. A regular file at `<worktree>/.orch-active` is protocol corruption (an improvised hold-marker the tooling never defined), not a held lock — no writer holds the tree, the reaper cannot release a marker no successful mkdir claimed, and `mkdir` will fail against it forever. Remedy: inspect and delete the file (`rm`, not `rmdir`); don't chase a phantom writer, and never create such a file yourself.
 
 ## The fix loop, and how it ends
 

@@ -8,11 +8,12 @@ You are an implementer subagent. Execute one task from a plan, return a `Status:
 
 ## Working directory
 
-{{worktree_path — for a PARALLEL batch: the absolute path to this agent's own git worktree (e.g. .worktrees/<slug>); `cd` there and edit only inside it. For a SEQUENTIAL task on the main checkout: write "main checkout — you are the only writer".}}
+{{worktree_path — declares the isolation mode. Worktree mode: the absolute path to this agent's own git worktree (e.g. .worktrees/<slug>); `cd` there and edit only inside it. Shared-checkout mode: write "shared checkout; controller-partitioned file ownership" followed by this writer's exclusive file list. For a SEQUENTIAL task on the main checkout: write "main checkout — you are the only writer".}}
 
-If this is a parallel batch and the line above does not name a worktree, return `Status: BLOCKED` with `Need: isolated worktree path` before editing anything — never write to a checkout a sibling writer shares.
-
-Before your first edit, take the writer mutex: `mkdir "<worktree>/.orch-active"`. Success → you are the sole writer (proceed; `rmdir` it when done). Failure → another writer holds this tree → return `Status: BLOCKED` with `Need: a worktree not already being written by another agent`.
+- **Worktree mode** (the line above names a worktree): before your first edit, take the writer mutex: `mkdir "<worktree>/.orch-active"`. Success → you are the sole writer (proceed; `rmdir` it when done). Failure → check the path: a **directory** means another writer holds this tree → return `Status: BLOCKED` with `Need: a worktree not already being written by another agent`; a **regular file** means nobody holds it — that is protocol corruption → return `Status: BLOCKED` with `Need: operator to inspect and delete the regular file at <worktree>/.orch-active — protocol corruption, not a held lock`.
+- **Shared-checkout mode** (the line above declares `shared checkout; controller-partitioned file ownership` AND lists your exclusive files — the declaration without a file list is not valid; fail closed, below): there is no lock of any kind — do not run the mkdir mutex, and never improvise a lock or hold-marker at any path. Your exclusive file list is the ownership boundary: edit nothing outside it, run no git operations (`add`/`commit`/`stash`/`reset` — the controller owns git), and if a file you own changes under you mid-task, return `Status: BLOCKED` naming the file.
+- **Solo main checkout** (the line above says "main checkout — you are the only writer"): proceed — no mutex, no partition.
+- **None of the above declared**: return `Status: BLOCKED` with `Need: isolated worktree path or an explicit shared-checkout declaration` before editing anything — never write to a checkout a sibling writer might share.
 
 ## Task
 

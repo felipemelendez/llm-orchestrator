@@ -23,12 +23,19 @@ Steps:
    - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with per-task two-stage review).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
 
-   Before any parallel batch, satisfy that skill's hard precondition: **no two
-   agents ever write the same working tree at the same time.** Run
+   Before any parallel batch, satisfy that skill's hard precondition: **every
+   writer envelope declares its isolation mode.** Default: run
    `scripts/orch-worktree-materialize.sh` first and give each agent its own
-   worktree. "Never dispatch two implementers against the same file" is weaker
-   than this and does not substitute for it — two agents in one checkout race on
-   every file, not just the ones they both edit.
+   worktree. Only when the project rules out worktrees, use the declared
+   shared-checkout mode ("Steps — shared-checkout writers" in
+   `dispatching-parallel-agents`): the exact line
+   `shared checkout; controller-partitioned file ownership` plus that writer's
+   exclusive files, pairwise-disjoint lists across writers, a stated writer
+   cap, and no locks or hold-markers from anyone. "Never dispatch two implementers against the same
+   file" alone is weaker than either mode and does not substitute for one —
+   undeclared writers in one checkout race on every file, not just the ones
+   they both edit. An envelope declaring neither mode dispatches a writer that
+   fails closed (BLOCKED).
 
    For a multi-tier plan, drive it through `executing-plans` rather than calling
    the dispatch skills directly: it owns the post-group assertions and the

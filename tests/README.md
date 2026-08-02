@@ -117,7 +117,7 @@ each is also runnable on its own. Every one exits non-zero on failure.
 | `test-protocol-grader.sh`, `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
 | `test-evidence-ledger.sh`, `test-verify-gate.sh` | what the ledger records, and what the Stop gate does and does not say |
 | `test-guard-no-verify.sh`, `test-destructive-git-guard.sh` | the two PreToolUse guards — both fail-open and false-positive directions |
-| `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh` | worktree lifecycle and mutex ownership |
+| `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |
 | `test-detect.sh`, `test-lib-resolution.sh`, `test-telemetry.sh`, `test-retry-cap.sh`, `test-hook-latency.sh` | toolchain detection, lib lookup, opt-in telemetry, retry breaker, per-hook latency budget |
 

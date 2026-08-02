@@ -173,7 +173,10 @@ if [[ -d "$ROOT/agents" ]]; then
     # The implementer must NOT carry maxTurns: its .orch-active mutex is
     # released by a voluntary final-turn rmdir, and a hard cap can strand it
     # (the reaper mitigates but does not license the cap; maxTurns may also
-    # reset on SendMessage resume, so it is not a real bound).
+    # reset on SendMessage resume, so it is not a real bound). That mutex
+    # rationale is worktree-mode-only — shared-checkout mode takes no lock —
+    # but the rule stays unconditional: the agent file cannot vary per
+    # envelope, and any given dispatch may be worktree mode.
     if [[ "$(basename "$file")" == "orch-implementer.md" && -n "$fm_maxturns" ]]; then
       echo "FAIL: orch-implementer.md must not set maxTurns (strands the writer mutex on cap)"
       fail=1

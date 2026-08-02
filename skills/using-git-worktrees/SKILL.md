@@ -46,6 +46,8 @@ When dispatching a writing subagent through a harness that offers per-agent work
 
    The two **real mechanical guards** are: (a) at create time, `git worktree add`'s own refusal of a duplicate path/branch plus the registry's atomic `mkdir` claim (see `orch-worktree-materialize.sh`); (b) at write time, the implementer's atomic `mkdir <worktree>/.orch-active` mutex — two writers handed the same path can never both proceed, because `mkdir` has exactly one winner. Both fail loudly; neither relies on a writer reading and obeying a text file.
 
+   The mutex guard only means something when the thing at the path is what the protocol defines: a *directory* created by `mkdir`. A **regular file** at an `.orch-active` path is **protocol corruption**, not a held lock — a hold-marker something improvised outside the protocol (a controller once dropped one at the repo root and blocked every obedient writer). `mkdir` fails against it forever, no writer owns it, and the reaper refuses to remove what no successful mkdir claimed. Operator remedy: inspect and delete the file (`rm`, not `rmdir`). The implementer's BLOCKED message distinguishes "held by a writer (directory)" from "corrupted (file)" so nobody chases a phantom writer.
+
 5. **Add to .gitignore if needed.**
    ```
    grep -q '^\.worktrees/' .gitignore || echo '.worktrees/' >> .gitignore

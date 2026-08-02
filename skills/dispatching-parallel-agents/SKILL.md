@@ -9,12 +9,15 @@ Send N agents in one batch. Collect N returns. Then review.
 
 ## The isolation invariant — read this first
 
-**No two agents ever write the same working tree at the same time.** Concurrent writes to one checkout race and clobber each other (a parallel agent running `git stash`/`reset`/`add` on the shared tree once silently destroyed in-flight work). So parallelism is allowed in exactly two safe shapes:
+**No two agents ever write the same file at the same time, and no undeclared writers ever share a tree.** Concurrent writes to one checkout race and clobber each other (a parallel agent running `git stash`/`reset`/`add` on the shared tree once silently destroyed in-flight work). So parallelism is allowed in exactly three safe shapes:
 
 - **Read-only fan-out** — reviewers, explorers, researchers. They only read, run tests read-only, and report; they **never** edit files or mutate git. Safe to run together on the shared checkout.
-- **Isolated writers** — each writing agent works in its **own git worktree** (a separate directory on its own branch), so its edits and commits cannot touch the shared tree or another agent's. You merge the branches back **sequentially** afterward.
+- **Isolated writers** — each writing agent works in its **own git worktree** (a separate directory on its own branch), so its edits and commits cannot touch the shared tree or another agent's. You merge the branches back **sequentially** afterward. This is the default for parallel writers.
+- **Declared shared-checkout writers** — only when the project rules out worktrees (an owner wants one visible tree, or waves stack on uncommitted sibling diffs a private worktree cannot see). Concurrent writers share the checkout under an explicit, controller-partitioned file-ownership discipline — see the shared-checkout steps below.
 
-Never run two writers concurrently on the same checkout. If you can't isolate the writers, run them sequentially (`dispatching-subagents`).
+Never run two writers concurrently on one checkout *undeclared*. If you can't isolate the writers and won't declare a shared-checkout partition, run them sequentially (`dispatching-subagents`).
+
+Every writer envelope MUST declare its mode: a worktree path (worktree mode) or the shared-checkout declaration plus an exclusive file list. An envelope with neither dispatches a writer that fails closed (`BLOCKED`).
 
 ## When this applies
 
@@ -25,7 +28,7 @@ Never run two writers concurrently on the same checkout. If you can't isolate th
 ## When this does NOT apply
 
 - Tasks have dependencies → `dispatching-subagents`.
-- Writers you can't (or won't) isolate in worktrees → run sequential.
+- Writers you can't (or won't) isolate in worktrees, on a project that hasn't ruled worktrees out → run sequential.
 - Fewer than 3 independent tasks → sequential; coordination cost wins.
 - You haven't understood the problem → don't parallelize confusion.
 
@@ -63,6 +66,17 @@ Never run two writers concurrently on the same checkout. If you can't isolate th
    ```
    On non-zero, read the report: `CONFLICT` means the independence check was wrong (reconcile by hand), `TEST_FAILED` leaves the base at the named SHA (the merge is NOT auto-undone — inspect or revert), `EMPTY` means a writer produced nothing (that task isn't done). Resolve the named slug, then run the printed `Re-run:` command for the rest. If the project has no test runner, pass `--allow-no-tests` (the run is reported UNVERIFIED).
 
+## Steps — shared-checkout writers (declared)
+
+Only when the project rules out worktrees. The partition replaces the mutex, and nothing mechanical enforces it (the guard blocks destructive git but not `add`/`commit` or `Edit`) — so every requirement below is load-bearing, not ceremony.
+
+1. **Declare the mode in every writer envelope** — the exact line `shared checkout; controller-partitioned file ownership`, followed by that writer's exclusive file list.
+2. **Partition the files.** Exclusive lists must be pairwise disjoint across concurrent writers — verify before dispatch; two tasks sharing a file run sequentially instead. The lists are the only ownership boundary there is.
+3. **State a writer cap** (e.g. "max 3 concurrent writers") in the plan, and hold it.
+4. **No locks, no hold-markers — from anyone.** Writers take no mutex, and the controller creates none either: never drop a hold-marker at `<repo>/.orch-active` or any mutex path. A regular FILE at a mutex path is what actually broke the field deployment: `mkdir` fails against it forever, the reaper cannot release a marker no successful mkdir claimed, and the stale residue blocks every obedient writer while training the rest to bypass the lock.
+5. **Writers do not mutate git.** No `add`/`commit`/`stash`/`reset` from writers — index and tree are shared; the controller owns all git operations.
+6. **Triage and review** as in the isolated-writer steps. Nothing to merge — work lands directly in the shared tree.
+
 ## Sizing
 
 - Sweet spot: 3–5 parallel agents. More than 8 → re-think the decomposition.
@@ -88,7 +102,7 @@ Next:
 
 ## Anti-patterns
 
-- **Parallel writers on the same checkout** — the cardinal sin; isolate them in worktrees or go sequential.
+- **Undeclared parallel writers on the same checkout** — the cardinal sin; isolate them in worktrees, declare a shared-checkout partition, or go sequential.
 - A read-only agent that edits files or runs `git stash`/`reset`/`checkout` — it isn't read-only. The guard blocks the *destructive* git (stash/reset/clean/checkout/restore), but it does NOT block `git add`/`commit` or `Edit`/`Write` tool calls — so the envelope must forbid those too. Isolation (separate worktrees) is the real protection; the guard is only the backstop.
 - Parallel agents on the same file, even in separate worktrees (merge conflicts).
 - Trusting a `DONE` without a matching `Verify:`.

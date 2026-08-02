@@ -110,6 +110,8 @@ if should_run structural; then
             bash "${ROOT}/tests/test-evidence-ledger.sh"
   check_out "worktree reaper ownership tests pass" "PASS: test-worktree-reaper" \
             bash "${ROOT}/tests/test-worktree-reaper.sh"
+  check_out "writer-mutex mode contract tests pass" "PASS: test-writer-mutex-modes" \
+            bash "${ROOT}/tests/test-writer-mutex-modes.sh"
   check_out "no-verify guard tests pass" "PASS: test-guard-no-verify" \
             bash "${ROOT}/tests/test-guard-no-verify.sh"
   check_out "destructive-git guard tests pass" "PASS: test-destructive-git-guard" \

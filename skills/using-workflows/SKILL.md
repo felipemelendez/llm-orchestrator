@@ -27,8 +27,10 @@ of genuinely independent plan tasks, high-stakes multi-source research.
 
 ## The isolation invariant (applies inside scripts too)
 
-The same rule as `dispatching-parallel-agents`: **no two agents write the same working tree at
-once.** It does not relax just because the fan-out is scripted.
+The worktree half of `dispatching-parallel-agents`' invariant applies here unweakened: **no two
+agents write the same working tree at once.** A scripted fan-out has no writer envelope in which
+to declare a shared-checkout partition, so writer isolation stays mandatory — it does not relax
+just because the fan-out is scripted.
 
 - **Read-only fan-out** (review, research, explore) — the agents only read and report. Safe to
   `parallel()`/`pipeline()` on the shared checkout. `workflows/review-diff.js` is this shape.

@@ -5,6 +5,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added — explicit writer-isolation modes (worktree / shared-checkout)
+
+A field incident (2026-08-02): a project with a standing no-worktrees ruling
+left every writer contending for one repo-wide `.orch-active` lock, and a
+controller improvised a "hold" as a regular FILE at the mutex path. `mkdir`
+fails against a file forever, the reaper had no successful-mkdir claim to
+release, one obedient implementer stopped dead on the stale residue and the
+other seats learned to bypass the lock — the worst state for a safety
+mechanism. The mutex's guarantee ("two writers on one tree can never both
+proceed") only means anything when each writer has its own tree to lock, so
+the two situations are now explicit modes instead of one implicit rule:
+
+- **Worktree mode** (envelope names a worktree path): unchanged — atomic
+  mkdir mutex on entry, rmdir on finish, BLOCKED on failure.
+- **Shared-checkout mode** (envelope declares `shared checkout;
+  controller-partitioned file ownership` + an exclusive file list): no lock
+  of any kind; the file list is the ownership boundary. Controllers must
+  keep the lists pairwise disjoint, state a writer cap, keep writers off
+  git mutation, and never create hold-markers.
+- **No mode declared** (no worktree path, no shared-checkout declaration, no
+  solo main-checkout statement): fail closed (BLOCKED) — the pre-existing
+  default, now applied to every writer envelope rather than only parallel
+  batches.
+
+A regular FILE at an `.orch-active` path is now first-class **protocol
+corruption**: the implementer's BLOCKED message distinguishes "held by a
+writer (directory)" from "corrupted (file)" so nobody chases a phantom
+writer, the reaper reports it loudly (repo root included) instead of listing
+it as a held mutex, and the operator remedy (inspect + `rm`) is documented
+in the stale-mutex corner and the worktrees skill. Pinned by
+`tests/test-writer-mutex-modes.sh` (34 checks, wired into smoke). Twice
+adversarially reviewed (two-stage agent review, then the review-diff workflow
+with an executing skeptic pass); the confirmed findings — a corruption-scan
+cwd blind spot, a PASS-over-failures guard in the new test, a solo-envelope
+ambiguity, and a "main checkout" literal drift between skill and template —
+are all fixed and pinned.
+
 A correctness and attention pass. The trigger was a reviewer subagent that saw
 `[orch-evidence <hash> exit=0] (cite this line in your Verify: block)` appended
 to a grep result, correctly refused to obey an imperative arriving through a

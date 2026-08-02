@@ -56,8 +56,19 @@ SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:spac
 CWD=$(printf '%s' "${INPUT}" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 [[ -n "${CWD}" ]] || CWD="${CLAUDE_PROJECT_DIR:-${PWD}}"
 
+CORRUPT_SEEN=""
+corrupt() { # corrupt <path> — loud report, once per path, for a non-directory at a mutex path
+  # newline-delimited dedupe: a space-delimited set is poisoned by paths with spaces
+  printf '%s\n' "${CORRUPT_SEEN}" | grep -qxF -- "$1" && return 0
+  CORRUPT_SEEN="${CORRUPT_SEEN}${1}
+"
+  printf 'orch-worktree-reaper: %s is a regular file (or other non-directory), not a mutex directory — protocol corruption (a held mutex is only ever a directory created by mkdir; something improvised a hold-marker there). No writer holds that tree and mkdir will fail against it forever. Inspect and delete it by hand: rm '\''%s'\''\n' "$1" "$1" >&2
+}
+is_corrupt() { [[ -L "$1" || ( -e "$1" && ! -d "$1" ) ]]; } # symlinks included: mkdir never creates one
+
 reap() { # reap <mutex-dir> <how>
   local dir="$1" how="$2"
+  if is_corrupt "${dir}"; then corrupt "${dir}"; return 1; fi
   [[ -d "${dir}" ]] || return 1
   if rmdir "${dir}" 2>/dev/null; then
     printf 'orch-worktree-reaper: released abandoned writer mutex %s (matched via %s) — the implementer stopped without releasing it; the worktree is dispatchable again.\n' "${dir}" "${how}" >&2
@@ -76,6 +87,21 @@ resolve() { # resolve <path> → absolute (against CWD when relative); refuses $
 }
 
 REAPED=0
+
+# --- 0. corruption scan — always, before any reap-and-exit path --------------
+# A regular FILE at a mutex path (repo root included — a controller once
+# improvised a "hold" file there) is not a held lock and must never be listed
+# as one. Report it loudly even when this invocation goes on to reap something
+# else — the early exits below would otherwise swallow the report. The remedy
+# is the operator's rm; corrupt() dedupes per path. Derive the checkout root
+# from git so a subdirectory cwd cannot hide the repo-root path; fall back to
+# the cwd, then strip any worktree suffix.
+BASE="${CWD}"
+TOP=$(git -C "${CWD}" rev-parse --show-toplevel 2>/dev/null) && [[ -n "${TOP}" ]] && BASE="${TOP}"
+case "${BASE}" in */.worktrees/*) BASE="${BASE%%/.worktrees/*}" ;; esac
+for p in "${BASE}/.orch-active" "${BASE}"/.worktrees/*/.orch-active; do
+  is_corrupt "${p}" && corrupt "${p}"
+done
 
 # --- 1. mutex map (exact, per agent_id) -------------------------------------
 if [[ -n "${AGENT_ID}" && -n "${SESSION_ID}" ]]; then
@@ -150,10 +176,14 @@ if [[ -n "${LAM}" ]] && printf '%s' "${LAM}" | grep -qE '^Status:[[:space:]]*(DO
 fi
 
 # --- Nothing provable: report, never guess ----------------------------------
-if [[ -d "${CWD}/.worktrees" ]]; then
-  LEFT=$(ls -d "${CWD}"/.worktrees/*/.orch-active 2>/dev/null || true)
+# (corruption was already reported by the scan at the top)
+if [[ -d "${BASE}/.worktrees" ]]; then
+  LEFT=""
+  for p in "${BASE}"/.worktrees/*/.orch-active; do
+    [[ -d "${p}" && ! -L "${p}" ]] && LEFT="${LEFT}${p} "
+  done
   if [[ -n "${LEFT}" ]]; then
-    printf 'orch-worktree-reaper: mutex(es) still held (%s) — could not prove ownership by the stopped agent, so nothing was reaped (a live sibling may hold one). If a later dispatch returns BLOCKED after ALL implementers finished, release by hand: rmdir <path>\n' "$(printf '%s' "${LEFT}" | tr '\n' ' ')" >&2
+    printf 'orch-worktree-reaper: mutex(es) still held (%s) — could not prove ownership by the stopped agent, so nothing was reaped (a live sibling may hold one). If a later dispatch returns BLOCKED after ALL implementers finished, release by hand: rmdir <path>\n' "${LEFT}" >&2
   fi
 fi
 
