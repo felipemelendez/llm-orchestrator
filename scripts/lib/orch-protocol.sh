@@ -25,11 +25,27 @@ ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 # orch_extract_last_assistant_text <transcript_path>
 #
 # Parses a JSONL transcript (one JSON object per line) using python3.
-# Finds the LAST object where role=="assistant" (or type=="assistant").
-# Handles content as:
-#   - a plain string: {"role":"assistant","content":"..."}
-#   - an array of blocks: {"role":"assistant","content":[{"type":"text","text":"..."},...]}
-#     (concatenates all text-type blocks)
+# Finds the LAST assistant entry that carries non-empty text.
+#
+# REAL TRANSCRIPT SHAPE. Claude Code writes assistant entries as
+#   {"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[...]}}
+# — the content is NESTED under "message". An earlier version read only the
+# top-level "content" key, so on every real transcript it extracted nothing and
+# every consumer bailed at its `[[ -n "${REPLY}" ]] || exit 0` guard. That
+# silently disabled the protocol grader, the verify gate, and the retry cap's
+# Stop path: they ran on every turn, found no reply, and passed. A gate that
+# always passes looks exactly like a gate that never trips, which is why this
+# survived. tests/test-protocol-hooks.sh now fixtures both shapes.
+#
+# Handles content as a plain string or an array of blocks (text blocks joined).
+# Both the nested and top-level shapes are accepted; nested wins.
+#
+# SIDECHAIN ENTRIES ARE SKIPPED. Subagent turns are written into the same
+# transcript with "isSidechain": true. Grading the controller's Stop event
+# against a subagent's last message judges the wrong agent against the wrong
+# contract.
+#
+#
 # Prints the extracted text to stdout (with JSON escape sequences decoded).
 # Prints nothing if no assistant message is found.
 # Never fails (exits 0 always).
@@ -51,15 +67,28 @@ try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            role = obj.get('role') or obj.get('type') or ''
+            if obj.get('isSidechain') is True:
+                continue
+            msg = obj.get('message') if isinstance(obj.get('message'), dict) else None
+            role = obj.get('role') or obj.get('type') or (msg.get('role') if msg else '') or ''
             if role != 'assistant':
                 continue
-            content = obj.get('content', '')
+            content = None
+            if msg is not None and msg.get('content') is not None:
+                content = msg.get('content')       # real transcripts
+            else:
+                content = obj.get('content', '')   # flat fixtures / other producers
+            text = ''
             if isinstance(content, str):
-                last_text = content
+                text = content
             elif isinstance(content, list):
-                parts = [b.get('text', '') for b in content if isinstance(b, dict) and b.get('type') == 'text']
-                last_text = ''.join(parts)
+                text = ''.join(b.get('text', '') for b in content
+                               if isinstance(b, dict) and b.get('type') == 'text')
+            # The LAST assistant entry wins even when its text is empty (a pure
+            # tool_use turn). Falling back to an earlier entry would grade the
+            # PREVIOUS reply as if it were this one — bleed-through. Silence is
+            # the safe answer: every consumer exits 0 on an empty reply.
+            last_text = text
 except Exception:
     pass
 
@@ -149,6 +178,79 @@ orch_grade_reply() {
 #
 # Returns 0 (PASS) with a one-line reason, or 1 (FAIL) with reason.
 # Bash 3.2 compatible.
+# (Definition follows orch_strip_fenced / orch_has_section below.)
+
+# orch_strip_fenced <text>
+# Prints <text> with the contents of ``` fenced blocks removed.
+#
+# A protocol header quoted inside a code fence is an EXAMPLE, not a claim. The
+# grader already honours this for Verify: (see below); the verify gate did not,
+# so a `Found:` reply that quoted the protocol's own `Changed:` sample tripped
+# the completion gate against itself. Strip once, then match.
+orch_strip_fenced() {
+  printf '%s\n' "$1" | awk '
+    # ``` and ~~~ fences, plus 4-space/tab indented code blocks. A Changed:
+    # sample quoted in any of those is an example; the gate used to fire on the
+    # tilde and indented forms and warn a reply that changed nothing.
+    /^[[:space:]]*(```|~~~)/ { infence = !infence; next }
+    infence { next }
+    /^(    |\t)/ { next }
+    { print }
+  '
+}
+
+# orch_has_section <header-name> <text>
+# True when <text> contains a line-leading "<header-name>:" section that has
+# CONTENT — either on the same line, or on the following non-blank line(s).
+#
+# The protocol writes sub-sections both ways, and both are correct:
+#     Verify: npm test → 142 passed
+# and
+#     Verify:
+#     - `npm test` → 142 passed
+# A same-line-only test (`^Verify:[[:space:]]*\S`) reads the second form as an
+# empty Verify: and nags a reply that did everything right. Measured against a
+# real transcript before this existed: the verify gate's first live firing was
+# a false positive on exactly that shape.
+#
+# A following line that is itself a protocol header ends the section — so a
+# bare "Verify:" directly above "Next:" is correctly treated as empty.
+orch_has_section() {
+  local header="$1" text="$2"
+  printf '%s\n' "${text}" | awk -v h="${header}" '
+    BEGIN { found = 0; insec = 0 }
+    {
+      line = $0
+      # Accept `Verify:`, `**Verify:**`, `- Verify:`, `## Verify:` — all the
+      # same section. Rejecting the decorated forms made the gate harsher on the
+      # better-formatted reply.
+      if (line ~ "^[[:space:]]*([-*][[:space:]]*)?(#{1,6}[[:space:]]*)?[*_]{0,2}" h "[*_]{0,2}:") {
+        rest = line
+        sub("^[[:space:]]*([-*][[:space:]]*)?(#{1,6}[[:space:]]*)?[*_]{0,2}" h "[*_]{0,2}:[*_]{0,2}[[:space:]]*", "", rest)
+        if (rest ~ /[^[:space:]]/) { found = 1; exit }
+        insec = 1
+        next
+      }
+      if (insec) {
+        if (line ~ /^[[:space:]]*$/) next
+        # A peer sub-section ends this one. Narrowing this list to top-level
+        # shape headers removed a false accusation but bought a false ALL-CLEAR,
+        # which is the worse direction: `Verify:` followed by `Next: ship it`
+        # was accepted as evidence and the gate went silent on a reply that had
+        # verified nothing. Peers end the section; the residual cost is that an
+        # unusual `Verify:` / `Summary: <output>` reads as empty.
+        if (line ~ "^[[:space:]]*(Changed|Found|Blocked|Issues|Plan|Status|Recommendation|Verify|Why|Next|Notes|Risks|Summary|Concerns|Need|Ask|Progress|Remaining):") { insec = 0; next }
+        # A bare fence delimiter is formatting, not content: `Verify:` followed
+        # by an empty ``` block is not evidence.
+        if (line ~ /^[[:space:]]*(```|~~~)[[:space:]]*[A-Za-z0-9_-]*[[:space:]]*$/) next
+        if (line ~ /^[[:space:]]*[-*][[:space:]]*$/) next
+        found = 1; exit
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  '
+}
+
 orch_grade_status_block() {
   local input
   if [[ -n "${1:-}" && -f "$1" ]]; then
@@ -172,10 +274,16 @@ orch_grade_status_block() {
   enum=$(printf '%s\n' "$status_line" | sed 's/^Status:[[:space:]]*//' | sed 's/[[:space:]].*//')
 
   # Determine required sub-block header(s) — space-separated list.
+  # DONE and DONE_WITH_CONCERNS are completion claims, so they carry the
+  # verification burden: the implementer contract (agents/orch-implementer.md)
+  # requires a Verify: block with a real command and its real output. This
+  # grader used to require only Summary:/Concerns:, which is why a DONE with no
+  # Verify: at all passed deterministically and had to be caught by an LLM
+  # validator on every implementer return. Deterministic, free, and earlier.
   local required_headers
   case "$enum" in
-    DONE)               required_headers="Summary:" ;;
-    DONE_WITH_CONCERNS) required_headers="Concerns:" ;;
+    DONE)               required_headers="Summary: Verify:" ;;
+    DONE_WITH_CONCERNS) required_headers="Concerns: Verify:" ;;
     BLOCKED)            required_headers="Need:" ;;
     NEEDS_CONTEXT)      required_headers="Ask:" ;;
     PARTIAL)            required_headers="Progress: Remaining:" ;;
@@ -185,12 +293,13 @@ orch_grade_status_block() {
       ;;
   esac
 
-  # Check that every required sub-block header appears as a line start.
-  local required_header found_block
+  # Every required sub-block must be present AND carry content — on its own
+  # line or the line below (orch_has_section). A bare "Verify:" with nothing
+  # under it is not evidence.
+  local required_header
   for required_header in $required_headers; do
-    found_block=$(printf '%s\n' "$input" | grep -m1 "^${required_header}" || true)
-    if [[ -z "$found_block" ]]; then
-      printf 'FAIL: Status: %s requires a "%s" line\n' "$enum" "$required_header"
+    if ! orch_has_section "${required_header%:}" "$input"; then
+      printf 'FAIL: Status: %s requires a "%s" line with content\n' "$enum" "$required_header"
       return 1
     fi
   done

@@ -1,6 +1,6 @@
 ---
 name: verification-before-completion
-description: You MUST use this before claiming any work is done, fixed, passing, or ready to merge. Forces a real run of the verifying command first.
+description: Use when about to claim work is done, fixed, passing, or ready to merge — it forces a real run of the verifying command first. Not for reporting a failure honestly, which needs no gate. Runs last, after any review skill.
 ---
 
 # Verification before completion
@@ -52,7 +52,22 @@ Before claiming, run through these in order:
 - "No output" is fine *only* if the command's success signal is silence (e.g., `tsc --noEmit`).
 - A `git diff --quiet && echo clean` is fine for "no uncommitted changes".
 
-**The evidence stamp.** When the evidence-ledger hook is active, verify-shaped commands (test/lint/typecheck/build) print a final `[orch-evidence <stamp> exit=N]` line. Copy that line into the `Verify:` block verbatim. The stamp is minted by a hook and recorded in a ledger the model never writes, so the gate can check a claim against recorded reality instead of trusting the text: a made-up stamp fails lookup, and a stamp from a failing run carries its non-zero exit with it. Evidence without a stamp is still accepted (custom scripts fall outside the stamp regex) — but a stamped command's stamp is not optional.
+**A regression test is only proved by watching it fail.** "I added a test that captures the
+bug" is the most common unverifiable claim on a bugfix. The cycle that proves it:
+
+1. Write the test. Run it — it should pass against the fixed code.
+2. Revert the fix (not the test). Run again — it **must** fail, and fail on the assertion.
+3. Restore the fix. Run again — green.
+
+Paste the failing output from step 2. A test that has only ever been green may be asserting
+something the bug never violated, and it will not catch the regression when it returns.
+
+**A subagent's `DONE` is verified against `git diff`, not against its report.** The report is
+a claim about the work; the diff is the work.
+
+**How this is checked.** A hook records every verify-shaped command the harness actually executed — command, exit code, and whether the run had substance — in a ledger the model never writes. The gate reads that ledger for the current turn. Nothing needs to be cited and nothing is appended to your tool output; you run the command and paste what it printed, exactly as you would anyway.
+
+Two things the record catches that a `Verify:` line cannot: a claim of success over a run that actually failed, and a green run that executed zero tests. `exit 0` is not evidence — a filter matching no tests exits 0. If the run did not cover the change, that is a `Found:`, not a `Changed:`.
 
 ## What does NOT count
 

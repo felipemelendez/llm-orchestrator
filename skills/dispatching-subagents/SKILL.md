@@ -27,6 +27,20 @@ is read-only). When in doubt, stay here — sequential never loses work.
 
 ## State tracking
 
+Record enough per task that a fresh controller after `/clear` knows both what is
+done and where an unfinished task resumes. A tick is not enough — it cannot say
+"round 3 of 5, two findings addressed, one open".
+
+```
+### 4. Add the retry breaker  - [x]   complete (commits a1b2c3d..d4e5f6a, review clean)
+### 5. Wire the breaker in    - [ ]   fix round 3/5 (2 addressed, 1 open)
+### 6. Document the knob      - [x]   complete (commits d4e5f6a..99f0e12, 1 parked)
+```
+
+After a compaction, trust the plan file and `git log` over your own
+recollection. A controller that lost its place and re-dispatched an already
+completed sequence is the most expensive failure available to you.
+
 Before the first dispatch, `TaskCreate` one task per plan task. Mark each `in_progress` via `TaskUpdate` when you dispatch, `completed` when the inner loop finishes. This is your state board.
 
 ## Inner loop (per task)
@@ -66,9 +80,10 @@ For each task:
 
   4. Read the verdict:
      - Ready: yes          → go to step 5
-     - Ready: with-fixes   → Critical issues → re-dispatch implementer with the fix list
-                             Important/Minor only → record and continue to step 5
-     - Ready: no           → re-dispatch implementer with the full issue list
+     - Ready: with-fixes   → Critical present → enter the fix loop below
+                             Important only  → enter the fix loop below
+                             Minor only      → record in the plan file, continue to step 5
+     - Ready: no           → enter the fix loop below
 
   5. Dispatch orch-code-reviewer with templates/code-reviewer-prompt.md.
      - Paste the diff and the relevant CLAUDE.md section.
@@ -111,12 +126,64 @@ Don't try (1) → (5) blindly. Pick one based on what the `Need:` line says.
 
 **Stale-mutex corner.** If a dispatch returns `BLOCKED — Need: a worktree not already being written by another agent` and no implementer is currently running in that worktree, the previous holder died without releasing. The reaper hook usually frees it at that agent's stop; if it could not (ambiguous parallel case), release by hand — `rmdir <worktree>/.orch-active` — and re-dispatch.
 
+## The fix loop, and how it ends
+
+A review that finds something starts a loop. The loop needs a bound, an
+escalation, and a disposition for what survives — otherwise a single contested
+finding runs until the context does.
+
+**Three rounds per task, maximum.**
+
+- **Rounds 1–2** — resume the same implementer by `agentId` with the open
+  findings pasted verbatim. It keeps the files it read and the reasoning it
+  formed; a cold re-dispatch pays to rederive all of it.
+- **Round 3** — dispatch a *fresh* implementer one model tier up: "a prior
+  implementer attempted this task twice; you own it now." Two failed resumes is
+  evidence the context is not the problem.
+
+The bound is deliberately tight. A longer budget buys a few more contested
+findings at the cost of a round of implementer plus reviewer each time, and the
+thing that was missing here was never a bigger budget — it was knowing what to
+do with a finding that survives.
+
+**Re-review only the fix.** Diff from the head the previous review saw, not from
+the task base. For each open finding, the reviewer returns exactly one of
+`ADDRESSED` or `NOT ADDRESSED` — and *attempted* is not addressed; the specific
+defect has to be gone. New breakage introduced by the fix diff joins the open
+list. Anything the reviewer notices outside the fix range is recorded and does
+not extend this loop; a reviewer discovering fresh material on untouched code is
+how a bounded loop becomes an unbounded one.
+
+**At the cap, stop dispatching and adjudicate.** Every still-open finding gets
+exactly one disposition, recorded in the plan file:
+
+| Disposition | When |
+|---|---|
+| `parked — contested — ruling: <why the code stands>` | The finding is wrong or arguable, and you can say why. |
+| `parked — real, not load-bearing — ruling: deferred` | Real, but nothing later builds on it. |
+| `BLOCKED` | Real **and** load-bearing — a later task depends on it, or it exposes a defect in the plan. Stop and report to the user with the finding, the plan text it collides with, and the fix history. |
+
+Adjudicate only at the cap. Adjudicating early to end a loop is pre-judging with
+a different name. A finding that is silently dropped is the one failure mode
+this section exists to prevent, so every disposition is a written line.
+
+**Never fix a finding yourself in the controller session.** Your context is for
+coordination, and a controller fix skips review entirely.
+
+## After the last task
+
+One fix wave, not one fixer per finding. Dispatch a single implementer with the
+complete findings list from the final review — per-finding fixers each rebuild
+the same context and re-run the same suite, and that cost exceeds the tasks
+themselves. Then exactly one scoped re-review of the fix diff. There is no
+second wave; anything still open goes through the adjudication table above.
+
 ## Continuous execution
 
 Run all tasks in the set without pausing to ask the user. The only acceptable stops are:
 - All tasks `DONE` or `DONE_WITH_CONCERNS`.
 - An unresolvable `BLOCKED` (after the recovery tree).
-- A reviewer's `no` verdict that the implementer can't fix in 2 attempts.
+- A reviewer's `no` verdict that survives the three-round fix loop and adjudicates to `BLOCKED`.
 
 If you find yourself wanting to ask "should I proceed?" — the answer is yes.
 
@@ -153,7 +220,19 @@ Next:
 - /llm-orchestrator:verify, then /llm-orchestrator:finish
 ```
 
+## Dispatch hygiene
+
+Paste what the task needs: the task text, its interfaces, the conventions and
+decisions it must honour, and the plan's global constraints. Nothing else.
+
+Do not accumulate. Pasting "state after tasks 1–3" into task 4, and 1–4 into
+task 5, ends with a dispatch that is almost entirely history the implementer
+cannot act on. Paste-don't-reference applies to what the task needs, not to
+everything that has happened.
+
 ## Anti-patterns
+
+- Computing a task's diff with `HEAD~1`. A task is often several commits; `HEAD~1` silently reviews only the last one. Diff from the recorded task base.
 
 - Dispatching the spec-reviewer before the implementer is DONE.
 - Running both review stages from a single subagent.

@@ -26,7 +26,7 @@ Skills live in `skills/<name>/SKILL.md`. Two-key frontmatter (`name`, `descripti
 ## Workspace
 
 This repo *is* LLM Orchestrator. When editing here:
-- Keep skill bodies under 200 lines.
+- Keep skill bodies under 250 lines (target 150). `tests/validate-skills.sh` enforces the 250.
 - Add new skills only if not already covered.
 - Update `AGENTS.md` and `ARCHITECTURE.md` when shape changes.
 - Run `./tests/validate-skills.sh` before commits.

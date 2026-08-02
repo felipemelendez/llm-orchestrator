@@ -32,6 +32,30 @@ Never blanket-agree. Never silently ignore.
 4. For each Minor: decide — fix now or note as follow-up.
 5. For each item, decide which of the four responses applies.
 
+## Understand everything before implementing anything
+
+If any item is unclear, stop — and do not implement the ones you *did*
+understand. Findings are frequently related: a partial fix built on partial
+understanding is how a review round produces new findings.
+
+Ask about the unclear items, then work the whole set.
+
+## Check it before you accept it
+
+Evidence is required to disagree, so it must also be required to agree — an
+unchecked suggestion is accepted on the reviewer's authority, not its merit.
+Before implementing, confirm:
+
+- It is correct for *this* codebase, not in general.
+- It does not break existing behaviour.
+- There is no reason the current implementation is the way it is.
+- It holds across the platforms and versions this project supports.
+- The reviewer had the context to judge — an external reviewer often does not.
+
+When the reviewer suggests "implementing this properly", grep for actual usage
+first. Building out dead surface is the most common bad suggestion on
+agent-written code; if nothing calls it, the answer is to delete it.
+
 ## Pushing back
 
 Pushback is fine. Required form:
@@ -43,6 +67,28 @@ Disagreed:
 ```
 
 Push back with evidence, not opinion. If you don't have evidence, ask.
+
+## Legitimate grounds for pushback
+
+- It breaks existing functionality.
+- The reviewer lacked context you have.
+- It violates YAGNI — nothing needs it.
+- It is wrong for this stack or this platform.
+- A legacy or compatibility reason explains the current shape.
+- It conflicts with a recorded architectural decision (`## Decisions` in
+  ./CLAUDE.md). Do not implement over a recorded decision — stop and raise the
+  conflict; one of the two is out of date and the user decides which.
+
+If you push back and turn out to be wrong, state the correction plainly and
+implement. No apology, no defence of why you pushed back — both cost words and
+neither changes the code.
+
+## Working through a batch
+
+Blocking items first, then the simple mechanical ones (typos, imports), then
+the ones needing real thought. Reply to a GitHub review thread on the thread
+itself — `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies` — not as
+a new top-level PR comment, which detaches the answer from the question.
 
 ## Output shape
 

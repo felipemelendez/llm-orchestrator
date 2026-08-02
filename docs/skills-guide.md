@@ -35,7 +35,7 @@ description: Use when a spec is approved and you need a step-by-step implementat
 - Sentences, not paragraphs.
 - Tables when comparing options.
 - Code blocks for response shapes and commands.
-- Length target: under 200 lines. If it's longer, the skill is doing too much.
+- Length target: under 250 lines (aim for 150). If it's longer, the skill is doing too much.
 
 ## Description rule (the one that matters)
 

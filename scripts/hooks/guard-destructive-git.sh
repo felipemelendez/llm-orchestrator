@@ -25,25 +25,49 @@
 #
 # Reads the JSON event from stdin; exit 0 to allow, exit 2 to block.
 
-set -euo pipefail
+# NO `set -e` HERE, DELIBERATELY. A blocking guard that aborts mid-script exits
+# non-zero-but-not-2, which Claude Code treats as a non-blocking hook error — the
+# command then RUNS. Measured: a single invalid-UTF-8 byte in the command made
+# BSD sed exit 1 with "RE error: illegal byte sequence", `set -e` aborted before
+# the block decision was computed, and a hard reset carrying that byte was
+# ALLOWED. Every failure path in a guard has to fall through to the block logic,
+# not out of the script. The seds also run under LC_ALL=C so bytes stay bytes.
+set -uo pipefail
 
 if [[ "${ORCH_ALLOW_DESTRUCTIVE_GIT:-0}" == "1" ]]; then
   exit 0
 fi
 
-INPUT=$(cat || true)
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=scripts/lib/orch-json.sh
+[[ -f "${HOOK_DIR}/../lib/orch-json.sh" ]] && source "${HOOK_DIR}/../lib/orch-json.sh"
 
-# We scan the whole event payload, not just the extracted command value. This is
-# deliberate and fail-CLOSED: a buggy command-extractor could drop part of a real
-# destructive command and let it through (fail-open) — far worse than the rare
-# false positive where a non-command JSON field happens to contain a blocked
-# pattern. Blocking a benign command is recoverable; missing `git reset --hard`
-# is not. In Claude Code's payload the non-command fields are not user-controlled,
-# so the false-positive surface is small in practice.
+# Guarded on a non-tty stdin: run interactively without a redirect, a bare
+# `cat` blocks forever. A hook that can hang is worse than one that learns less.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
+
+# --- What we scan -------------------------------------------------------------
+# The whole event payload, unless we can decode the command out of it exactly.
+#
+# Scanning the raw payload was a deliberate fail-CLOSED choice, made when the
+# only available extractor was a grep that could plausibly drop part of a real
+# command. With a real JSON decode that risk is gone, and the cost of the old
+# choice was measurable: `grep -rn "git reset --hard" scripts/` — reading the
+# guard's own source — was hard-blocked, as was any command whose model-written
+# `description` mentioned a blocked verb.
+#
+# Quoted text is then neutralised, because a pattern inside quotes is an
+# ARGUMENT, not an invocation — UNLESS the command can re-enter a shell
+# (`bash -c "..."`, `$(...)`, backticks), where quoted text becomes code again.
+# In that case the raw command is scanned. Both fallbacks are toward blocking.
+SRC="${INPUT}"
+declare -f orch_scan_source >/dev/null 2>&1 && SRC=$(orch_scan_source "${INPUT}")
 
 # Work on a copy with `commit-graph` / `--grep=` neutralized so they can't
 # false-match a subcommand below (mirrors the commit-guard approach).
-SCAN=$(printf '%s' "${INPUT}" | sed -E 's/commit-graph/COMMITGRAPH/g')
+SCAN=$(printf '%s' "${SRC}" | LC_ALL=C tr -c '[:print:][:space:]' ' ' \
+       | LC_ALL=C sed -E 's/commit-graph/COMMITGRAPH/g')
 
 # --- Normalize: strip git GLOBAL options that take an argument, so the
 # subcommand becomes adjacent to `git`. Looped to collapse stacked globals
@@ -51,7 +75,7 @@ SCAN=$(printf '%s' "${INPUT}" | sed -E 's/commit-graph/COMMITGRAPH/g')
 _i=0
 while [[ ${_i} -lt 5 ]]; do
   PREV="${SCAN}"
-  SCAN=$(printf '%s' "${SCAN}" | sed -E \
+  SCAN=$(printf '%s' "${SCAN}" | LC_ALL=C sed -E \
     -e 's/(git)[[:space:]]+-C[[:space:]]+[^[:space:]]+/\1/g' \
     -e 's/(git)[[:space:]]+-c[[:space:]]+[^[:space:]]+/\1/g' \
     -e 's/(git)[[:space:]]+--git-dir[=[:space:]][^[:space:]]+/\1/g' \
@@ -76,18 +100,62 @@ RELAX=0
 #     interpreter, or command/process substitution). Deny-by-default.
 # Flatten newlines/tabs first so a multi-line command can't hide a retarget token
 # from the line-oriented grep (e.g. `git -C\n/main reset --hard`).
-_RAW=$(printf '%s' "${INPUT}" | tr '\n\r\t' '   ')
+# The DECODED command when we have it. Scanning the raw payload meant a
+# model-written `description` containing a backtick — routine in Claude Code —
+# refused the worktree relaxation, so the relaxation almost never applied.
+# Falls back to the payload, which is the conservative direction (no relax).
+_RAW_SRC="${INPUT}"
+declare -f orch_json_field >/dev/null 2>&1 && _DEC=$(orch_json_field "${INPUT}" tool_input.command) && [[ -n "${_DEC}" ]] && _RAW_SRC="${_DEC}"
+_RAW=$(printf '%s' "${_RAW_SRC}" | tr '\n\r\t' '   ')
 if ! grep -qE '(^|[^[:alnum:]_])cd[[:space:]]|(^|[^[:alnum:]_])pushd[[:space:]]|(^|[^[:alnum:]_])env[[:space:]]|[[:space:]]-C[[:space:]]|--git-dir|--work-tree|--chdir|GIT_DIR=|GIT_WORK_TREE=|(^|[^[:alnum:]_])(bash|sh|zsh|python[0-9.]*|perl|ruby|node)[[:space:]]|[$]\(|`|<\(' <<< "${_RAW}"; then
   # (2) in_our_worktree: $PWD is the command's execution dir (Claude Code runs the
   #     hook there). A linked worktree's .git is a FILE (a directory on the main
   #     checkout); the .orch-worktree marker means we created it. BOTH required, so
   #     a spoofed marker on the main checkout cannot pass (main's .git is a dir).
-  if [[ -f "${PWD}/.git" && -f "${PWD}/.orch-worktree" ]]; then
+  # A REAL linked worktree's .git file reads `gitdir: <main>/.git/worktrees/<name>`.
+  # Both file tests alone were forgeable: `mkdir /tmp/fake; printf 'gitdir:
+  # <MAIN>/.git\n' > /tmp/fake/.git; touch /tmp/fake/.orch-worktree` satisfied
+  # them, and `git reset --hard HEAD~2` there dropped two commits on the SHARED
+  # checkout — no cd, no -C, so the deny-by-default retarget grep never fired.
+  # Requiring the gitdir to point INSIDE .git/worktrees/ rejects that forgery:
+  # a pointer that does resolve there resolves to a real registered worktree,
+  # which is the only place the relaxation was ever meant to apply.
+  if [[ -f "${PWD}/.git" && -f "${PWD}/.orch-worktree" ]] \
+     && grep -qE '^gitdir:[[:space:]]*.*/\.git/worktrees/[^[:space:]/]+/?$' "${PWD}/.git" 2>/dev/null; then
     RELAX=1
   fi
 fi
 
+# The RAW decoded command, for the rules below that must see through quoting.
+RAWCMD="${INPUT}"
+declare -f orch_json_field >/dev/null 2>&1 && _RC=$(orch_json_field "${INPUT}" tool_input.command) && [[ -n "${_RC}" ]] && RAWCMD="${_RC}"
+RAWCMD=$(printf '%s' "${RAWCMD}" | LC_ALL=C tr -c '[:print:][:space:]' ' ' | tr '\n\r\t' '   ')
+
 reason=""
+
+# --- git re-entering itself ----------------------------------------------
+# These rules scan RAWCMD, not SCAN. They exist to catch a payload that quoting
+# hides, and tokenization replaces precisely that payload with a placeholder —
+# `git -c alias.zz='"'"'reset --hard'"'"' zz` scanned as `git -c __ORCH_ARG__ zz`
+# and was allowed. A rule about hidden text has to read the text.
+# `git -c alias.X=<anything> X` defines an alias inline and then runs it, and an
+# alias body beginning with `!` is arbitrary shell. Measured: `git -c
+# alias.pwn='!rm -rf .git' pwn` destroyed the repository while scanning as the
+# innocuous `git -c __ORCH_ARG__ pwn` — the guard's own `-c` stripper deleted the
+# payload before any rule saw it. There is no legitimate agent use for defining
+# an alias inline, so the FORM is blocked, not its contents.
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]*alias\.' <<< "${RAWCMD}"; then
+  reason="git -c alias.<name>=... — defines an alias inline and runs it; an alias body starting with '!' is arbitrary shell, and the option normalizer cannot see through it"
+fi
+# The same escape without an alias: verbs whose whole purpose is to run a command.
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(submodule[[:space:]]+foreach|bisect[[:space:]]+run|filter-branch|rebase([[:space:]]+[^[:space:]]+)*[[:space:]]+(-x|--exec)|difftool([[:space:]]+[^[:space:]]+)*[[:space:]]+--extcmd|(-c[[:space:]]*[^[:space:]]*(pager|editor|extcmd|hooksPath)=))' <<< "${RAWCMD}"; then
+  reason="git subcommand that executes an arbitrary command (submodule foreach / bisect run / filter-branch / rebase --exec / difftool --extcmd / a -c pager|editor|extcmd|hooksPath override) — this is a shell re-entry point the guard cannot see through"
+fi
+# Plumbing that overwrites the working tree exactly like `reset --hard`. No rule
+# covered these: measured, both reverted a tracked file with uncommitted work.
+if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(read-tree([[:space:]]+[^[:space:]]+)*[[:space:]]+(--reset|-u)|checkout-index([[:space:]]+[^[:space:]]+)*[[:space:]]+(-f|--force))' <<< "${SCAN}"; then
+  reason="git read-tree --reset / checkout-index -f — plumbing equivalents of 'reset --hard': they overwrite tracked files, discarding uncommitted work"
+fi
 
 # --- ALWAYS-BLOCKED stash sub-forms (even inside a worktree): drop/clear/branch
 # destroy entries on the repo-global stash stack (shared by the main checkout AND
@@ -127,11 +195,25 @@ fi
 # --- git checkout <ref> / git switch <branch> (BRANCH SWITCH) — overwrites every
 # tracked file that differs between branches, clobbering uncommitted work in the
 # shared tree. Allow ONLY pure branch creation: `checkout -b/-B`, `switch -c/-C`.
+# Evaluated PER SEGMENT. The creation exception describes a single invocation,
+# so testing it against the whole compound command let any co-occurring `-b`
+# disarm the rule: `git checkout -b tmp && git checkout main` was ALLOWED, and
+# a branch switch overwrites every differing tracked file. Even `echo 'git
+# checkout -b x'; git checkout main` passed, lending a flag from inside a
+# quoted string to the next command. Segmentation is the fix; a command the
+# splitter cannot divide falls back to being tested whole (the old behaviour).
 if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git[[:space:]]+(checkout|switch)([[:space:]]|$)' <<< "${SCAN}"; then
-  if ! grep -qE 'git[[:space:]]+checkout[[:space:]]+-[bB]([[:space:]]|$)' <<< "${SCAN}" \
-     && ! grep -qE 'git[[:space:]]+switch[[:space:]]+-[cC]([[:space:]]|$)' <<< "${SCAN}"; then
-    reason="git checkout/switch <branch> — a branch switch overwrites every differing tracked file, discarding uncommitted work on the main checkout (only 'checkout -b' / 'switch -c' creation allowed; switches allowed inside an isolated .orch-worktree)"
-  fi
+  _segs="${SCAN}"
+  declare -f orch_shell_segments >/dev/null 2>&1 && _segs=$(orch_shell_segments "${SCAN}")
+  while IFS= read -r _seg; do
+    [[ -n "${_seg}" ]] || continue
+    grep -qE 'git[[:space:]]+(checkout|switch)([[:space:]]|$)' <<< "${_seg}" || continue
+    if ! grep -qE 'git[[:space:]]+checkout[[:space:]]+-[bB]([[:space:]]|$)' <<< "${_seg}" \
+       && ! grep -qE 'git[[:space:]]+switch[[:space:]]+-[cC]([[:space:]]|$)' <<< "${_seg}"; then
+      reason="git checkout/switch <branch> — a branch switch overwrites every differing tracked file, discarding uncommitted work on the main checkout (only 'checkout -b' / 'switch -c' creation allowed; switches allowed inside an isolated .orch-worktree)"
+      break
+    fi
+  done <<< "${_segs}"
 fi
 
 # --- git restore — allow ONLY a pure --staged (unstage) restore; block anything

@@ -1,6 +1,6 @@
 # Test suite
 
-Three scripts. Run them in this order before any commit:
+The suites below. Run them in this order before any commit:
 
 ```bash
 ./tests/validate-skills.sh     # 1. structural: frontmatter, names, length
@@ -33,7 +33,7 @@ Checks per **agent** (`agents/<name>.md`):
 - `description` present
 - `model:` (if set) is one of `haiku | sonnet | opus`
 
-Output: `OK: 16 skills, 11 commands, 8 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
+Output: `OK: 18 skills, 14 commands, 7 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
 
 ### `test-portability.sh` — shell portability scanner
 
@@ -104,14 +104,34 @@ Add to `validate-skills.sh` when:
 Add to `test-portability.sh` when:
 - You discover another GNU/Linux-only construct that the team's reviewers caught.
 
-## CI integration (future)
+## The full suite
 
-These scripts are designed to run in CI. A simple `.github/workflows/test.yml` would be:
+`tests/smoke.sh` runs the structural checks and shells out to the suites below;
+each is also runnable on its own. Every one exits non-zero on failure.
 
-```yaml
-- run: ./tests/validate-skills.sh
-- run: ./tests/test-portability.sh
-- run: ./tests/smoke.sh
-```
+| Suite | Covers |
+|---|---|
+| `validate-skills.sh` | skill/command/agent frontmatter, length cap, reference resolution |
+| `validate-workflows.sh` | `workflows/*.js` parse + `meta` shape |
+| `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
+| `test-protocol-grader.sh`, `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
+| `test-evidence-ledger.sh`, `test-verify-gate.sh` | what the ledger records, and what the Stop gate does and does not say |
+| `test-guard-no-verify.sh`, `test-destructive-git-guard.sh` | the two PreToolUse guards — both fail-open and false-positive directions |
+| `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh` | worktree lifecycle and mutex ownership |
+| `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |
+| `test-detect.sh`, `test-lib-resolution.sh`, `test-telemetry.sh`, `test-retry-cap.sh`, `test-hook-latency.sh` | toolchain detection, lib lookup, opt-in telemetry, retry breaker, per-hook latency budget |
 
-All three exit non-zero on failure; CI fails the build automatically.
+**Isolation is a hard requirement for new suites.** Use `mktemp -d` for both the
+scratch dir and `ORCH_HOME`, and clean up with a `trap`. Suites used to share
+fixed `/tmp` paths, so two concurrent runs deleted each other's fixtures
+mid-suite and the research-gate suite failed intermittently — a flake that reads
+exactly like a real bug and costs a day.
+
+## CI integration
+
+`.github/workflows/ci.yml` runs `validate-skills.sh`, `smoke.sh`, and the
+safety-critical suites directly (guards, evidence ledger, verify gate, reaper,
+protocol drift, worktree integrate) — directly, so a break is attributed to the
+suite rather than to smoke. CI runs on Linux; several defects in this area were
+BSD-vs-GNU differences that passed silently on one platform, so run the suite
+locally on macOS too.

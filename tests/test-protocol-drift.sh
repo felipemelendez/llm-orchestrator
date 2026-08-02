@@ -45,11 +45,11 @@ printf '%s' "$BLOCK" | grep -q 'REQUIRE a "Verify:"' && ok "reminder block state
 # Hook output (canonical present) vs hook output (canonical hidden → fallback)
 # must be identical — the embedded fallback may not drift from the source.
 extract_ctx() { python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'; }
-LIVE=$(bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 mkdir -p "$TMP/x/hooks"
 cp "${ROOT}/scripts/hooks/user-prompt-submit.sh" "$TMP/x/hooks/"
-FALLBACK=$(bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
+FALLBACK=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
 if [[ -n "$LIVE" && "$LIVE" == "$FALLBACK" ]]; then
   ok "hook fallback is byte-identical to the canonical block"
 else

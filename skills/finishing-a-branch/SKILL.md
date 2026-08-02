@@ -13,8 +13,9 @@ Before this skill runs:
 - `/llm-orchestrator:verify` has been run; tests pass.
 - `/llm-orchestrator:review` has been run; verdict is yes or with-fixes already addressed.
 - **Regression check passes.** Run:
-  ```
-  orch_regression_check <project-dir>
+  ```bash
+  orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+  L=$(orch_lib orch-regression.sh) && . "$L" && orch_regression_check <project-dir>
   ```
   If it returns nonzero (a previously-green suite now fails), **refuse to merge or open a PR** and report what regressed. Fix the regression first. This check is never destructive — it only reads and runs tests.
 
@@ -29,7 +30,14 @@ git rev-parse --git-common-dir
 git status --porcelain                    # clean tree?
 ```
 
-If HEAD is detached, you only get options 3 and 4 below.
+If HEAD is detached, drop options 1 and 4 — there is no branch to merge and none to
+delete. Options 2 and 3 still apply — push with `git push origin HEAD:refs/heads/<new-branch>` and open the PR from
+there. Removing the PR route from a detached HEAD strands the work in a state only the
+reflog can recover.
+
+Also confirm this is a worktree and not a submodule before treating it as one:
+`git rev-parse --show-superproject-working-tree` returns a path inside a submodule, where
+`GIT_DIR != GIT_COMMON_DIR` is true for a different reason.
 
 ## Options (always present this menu)
 
@@ -44,11 +52,22 @@ If HEAD is detached, you only get options 3 and 4 below.
 
 ### 1. Merge
 - Confirm base branch with user.
-- `git checkout <base> && git merge --no-ff <branch>`
-- If the branch lived in a worktree marked `.orch-worktree`, offer cleanup after merge.
+- `git checkout <base> && git pull --ff-only` — the point of this step is that base moved,
+  so merge into the current base, not a stale local copy.
+- `git merge --no-ff <branch>`
+- **Run the suite on the merged tree.** The branch was green in isolation; base has moved
+  since. A merge that conflicts textually is loud, and one that conflicts semantically is
+  silent — this is the only step that catches the second kind.
+- If it fails: stop. Leave the branch and the worktree exactly where they are and report what
+  broke. Nothing has been pushed, so the merge is local and recoverable (`git merge --abort`,
+  or reset the base branch to its pre-merge commit).
+- Only once green: offer cleanup if the branch lived in a worktree marked `.orch-worktree`,
+  then `git branch -d <branch>`.
 
 ### 2. PR
-- `git push -u origin <branch>`
+- `git push -u origin <branch>` (detached HEAD: `git push origin HEAD:refs/heads/<new-branch>`)
+- A rejected push means the remote moved while you worked. Investigate before doing anything
+  else; force-push only if the user asks for it in those words.
 - `gh pr create` — title from branch name, body from latest commit + plan link.
 - Do not cleanup the worktree (the user may need to push more commits).
 

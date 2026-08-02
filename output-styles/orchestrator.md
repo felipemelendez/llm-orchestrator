@@ -87,7 +87,9 @@ Verify after each step:
 
 ### Status (subagent → controller)
 ```
-Status: DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_CONTEXT
+Status: DONE | DONE_WITH_CONCERNS | PARTIAL | BLOCKED | NEEDS_CONTEXT
+
+Verify: (required for DONE and DONE_WITH_CONCERNS — a real command and its real output)
 Summary:
 - <one-line outcome>
 Concerns: | Need: | Ask:

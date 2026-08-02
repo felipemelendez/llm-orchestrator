@@ -6,9 +6,14 @@ Run the research gate explicitly on: $ARGUMENTS
 
 Skip the classifier — the user asked for this directly, so treat it as `RESEARCH_NEEDED`.
 
-1. Dispatch the `orch-researcher` subagent with `templates/research-brief.md`. Paste the
-   question, the target library or API surface, and any version pinned in the project's
-   manifest or lockfile. Do not pass a file path — paste the content.
+1. Dispatch the `orch-researcher` subagent with the envelope in
+   `templates/researcher-prompt.md`. Fill in all eight slots — the agent returns
+   `BLOCKED` on a missing field, and four of them (Trigger point, Stakes,
+   Capability survey, Cache root) come from you, not from the classifier. Do not
+   pass a file path — paste the filled-in content.
+
+   (`templates/research-brief.md` is the shape of the brief the researcher
+   *writes*, not the prompt it *receives*. This command used to point at it.)
 
 2. The researcher returns exactly one outcome:
    - `VERIFIED` — sources confirm the approach. Proceed; cite the brief.

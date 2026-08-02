@@ -89,7 +89,7 @@ on_signal() {
     if [[ -n "${in_merge}" ]]; then
       STOPPED="${CUR_SLUG} — ABORTED (signal) — in-progress merge aborted, base clean"
     elif [[ -n "${PRE}" && "$(git rev-parse HEAD 2>/dev/null)" != "${PRE}" ]]; then
-      STOPPED="${CUR_SLUG} — ABORTED (signal; untested commit at $(git rev-parse --short HEAD 2>/dev/null)) — base holds a merge whose tests did not finish; treat as TEST_FAILED (inspect/revert)"
+      STOPPED="${CUR_SLUG} — ABORTED (signal) — base moved to $(git rev-parse --short HEAD 2>/dev/null) before the interrupt; that commit passed its suite, later slugs did not run"
     else
       STOPPED="${CUR_SLUG} — ABORTED (signal) — no merge in progress, base clean"
     fi
@@ -116,23 +116,38 @@ do_serial() {
     fi
 
     PRE="$(git rev-parse HEAD)"   # record pre-merge HEAD so on_signal can tell committed-vs-clean
-    if ! git merge --no-ff -m "integrate ${slug}" "${branch}" >/dev/null 2>&1; then
+    # --no-commit: stage the merge, run the suite against it, and only then let
+    # it become part of the branch. Committing first and testing afterwards left
+    # a RED merge on the base every time a branch broke the suite — the exact
+    # thing the "base only ever moves to a suite-green SHA" invariant forbids.
+    if ! git merge --no-ff --no-commit "${branch}" >/dev/null 2>&1; then
       git merge --abort >/dev/null 2>&1 || true
       STOPPED="${slug} — CONFLICT — overlapping changes; merge aborted, base clean"
       PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
     fi
-    mergesha="$(git rev-parse --short HEAD)"
 
     if [[ ${UNVERIFIED} -eq 1 ]]; then
       testline="UNVERIFIED"
+      git commit -q --no-edit -m "integrate ${slug}" >/dev/null 2>&1 || true
+      mergesha="$(git rev-parse --short HEAD)"
     else
       TESTOUT="$(mktemp)"
       if eval "${TESTCMD}" >"${TESTOUT}" 2>&1; then
         testline="$(grep -v '^[[:space:]]*$' "${TESTOUT}" | tail -1 | cut -c1-80)"; [[ -n "${testline}" ]] || testline="passed"
         rm -f "${TESTOUT}"; TESTOUT=""
+        # Green: only now does the merge join the branch.
+        if ! git commit -q --no-edit -m "integrate ${slug}" >/dev/null 2>&1; then
+          git merge --abort >/dev/null 2>&1 || true
+          STOPPED="${slug} — COMMIT_FAILED — the suite passed but the merge commit could not be created; base clean"
+          PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
+        fi
+        mergesha="$(git rev-parse --short HEAD)"
       else
         rm -f "${TESTOUT}"; TESTOUT=""
-        STOPPED="${slug} — TEST_FAILED — base at ${mergesha}; '${TESTCMD}' failed (base NOT reset — inspect or revert)"
+        # Red: discard the staged merge. The base is left exactly where it was,
+        # so there is nothing to inspect or revert and no red commit to explain.
+        git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
+        STOPPED="${slug} — TEST_FAILED — '${TESTCMD}' failed against the merged tree; the merge was discarded and the base is unchanged at $(git rev-parse --short HEAD)"
         PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
       fi
     fi
@@ -249,6 +264,32 @@ do_speculative() {
   # (0 = base, assumed green per the regression baseline); hi a tested-red one.
   local land_idx=${merged_count}   # 1-based count of slugs to land
   local fail_line=""
+
+# checkout_or_abort <ref> <what> — move HEAD, or stop speculating.
+#
+# `git checkout` fails whenever the working tree is dirty in a way the move
+# would clobber, and a test suite that rewrites a tracked file (snapshots,
+# lockfiles, format-on-test, any generated artifact) makes that the NORMAL
+# case rather than an exotic one. Discarding the status here does not lose a
+# little accuracy — it makes every subsequent measurement describe a tree the
+# engine is no longer standing in, while the diagnostics keep naming the tree
+# it meant to be in. The observed result was a confident "red at the BASE,
+# not attributable to any branch" for a green base with one clearly guilty
+# branch, followed by a serial fallback that put a red commit on the base.
+#
+# Speculation is an optimisation. When it cannot be performed honestly the
+# right move is to stop speculating, not to guess.
+checkout_or_abort() {
+  local ref="$1" what="$2" err
+  if err=$(git -C "${INT_WT}" checkout -q "${ref}" 2>&1); then
+    return 0
+  fi
+  printf 'orch-integrate: could not check out %s (%s) inside the integration worktree: %s\n' \
+    "${what}" "${ref}" "${err}" >&2
+  printf 'orch-integrate: the suite likely modifies a tracked file, so every further measurement here would describe the wrong tree. Abandoning speculation and falling back to --serial, which tests on the real base checkout.\n' >&2
+  return 1
+}
+
   if [[ ${merged_count} -gt 0 && ${UNVERIFIED} -eq 0 ]]; then
     if testline="$(spec_test <"/dev/null")"; then
       : # tip green → land everything that merged
@@ -258,7 +299,12 @@ do_speculative() {
       # generated files), and a suite red for environmental reasons must not
       # eject an innocent branch. Environmental/pre-existing red → serial
       # fallback, which tests on the real base checkout.
-      git -C "${INT_WT}" checkout -q "${base_sha}" >/dev/null 2>&1
+      if ! checkout_or_abort "${base_sha}" "the base state"; then
+        trap - EXIT INT TERM HUP
+        spec_cleanup_int
+        do_serial
+        return
+      fi
       if ! spec_test >/dev/null </dev/null; then
         printf 'orch-integrate: suite is red at the BASE state inside the integration worktree — environmental (untracked deps?) or pre-existing failure, not attributable to any branch. Falling back to --serial (tests run on the base checkout).\n' >&2
         trap - EXIT INT TERM HUP
@@ -266,13 +312,26 @@ do_speculative() {
         do_serial
         return
       fi
-      git -C "${INT_WT}" checkout -q "${INT_BR}" >/dev/null 2>&1
+      if ! checkout_or_abort "${INT_BR}" "the integration tip"; then
+        trap - EXIT INT TERM HUP
+        spec_cleanup_int
+        do_serial
+        return
+      fi
       # lo can only advance via an explicitly GREEN test at MSHA[lo-1], so the
       # salvage point needs no re-test; capture the green suite line as we go.
       local lo=0 hi=${merged_count} mid green_line="" green_out=""
       while (( hi - lo > 1 )); do
         mid=$(( (lo + hi) / 2 ))
-        git -C "${INT_WT}" checkout -q "${MSHA[$((mid-1))]}" >/dev/null 2>&1
+        # A failed checkout mid-bisect would re-measure the previous tree and
+        # attribute its result to `mid` — the bisect would converge on an
+        # innocent branch. Stop instead.
+        if ! checkout_or_abort "${MSHA[$((mid-1))]}" "bisect step ${mid}"; then
+          trap - EXIT INT TERM HUP
+          spec_cleanup_int
+          do_serial
+          return
+        fi
         if green_out="$(spec_test </dev/null)"; then lo=${mid}; green_line="${green_out}"; else hi=${mid}; fi
       done
       land_idx=${lo}

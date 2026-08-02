@@ -60,11 +60,16 @@ PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
 [[ -f "${PROJ_LIB}" ]] && source "${PROJ_LIB}"
 
 # Read the hook event JSON from stdin.
-INPUT=$(cat || true)
+# Guarded on a non-tty stdin: run interactively without a redirect, a bare
+# `cat` blocks forever. A hook that can hang is worse than one that learns less.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
 
 # Extract fields without jq. last_assistant_message needs real JSON decoding
 # (it contains escapes); the scalar fields are safe to grab with grep.
 IN_FILE=$(mktemp) || exit 0
+# trap, not just a trailing rm: killed at the hook timeout, a plain rm never runs.
+trap 'rm -f "${IN_FILE}" 2>/dev/null' EXIT
 printf '%s' "${INPUT}" > "${IN_FILE}"
 # First output char is a sentinel: "1" = the field exists in the input (its
 # emptiness is then a REAL observation), "0" = old harness without the field.
@@ -116,15 +121,24 @@ emit() { # emit <warn-text> → warn or block per strict/dry-run, then exit
   exit 0
 }
 
-# --- Check 1: empty return = premature termination (all agents) -------------
+# --- Check 1: empty return = premature termination --------------------------
 # Only when emptiness is a real observation: the harness sent the
 # last_assistant_message field (empty), or a transcript existed and yielded
 # nothing. An old harness with neither field nor transcript stays fail-open.
+#
+# Scoped to PLUGIN agents. The message tells the receiver to return a Status
+# block — a contract only this plugin's agents were given. Firing it at a
+# built-in Explore or Plan agent, or any third-party agent that happens to run
+# in this session, hands an unexplained directive to something that has no idea
+# what a Status block is and cannot comply.
 _STRIPPED="$(printf '%s' "${ASSISTANT_TEXT}" | tr -d '[:space:]')"
 if [[ -z "${_STRIPPED}" ]]; then
-  if [[ "${HAS_LAM}" == "1" || ( -n "${TRANSCRIPT:-}" && -f "${TRANSCRIPT:-/nonexistent}" ) ]]; then
-    emit "orch-subagent-stop: subagent '${AGENT_TYPE:-unknown}' finished with NO final message — premature termination. Do not treat this as success: return an explicit Status block (DONE with Verify:, PARTIAL with Progress:/Remaining:, or BLOCKED with Need:) describing where the work stands."
-  fi
+  case "${AGENT_TYPE}" in
+    *orch-implementer|*orch-explorer|*orch-debugger|*orch-researcher|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
+      if [[ "${HAS_LAM}" == "1" || ( -n "${TRANSCRIPT:-}" && -f "${TRANSCRIPT:-/nonexistent}" ) ]]; then
+        emit "orch-subagent-stop: subagent '${AGENT_TYPE:-unknown}' finished with NO final message — premature termination. Do not treat this as success: return an explicit Status block (DONE with Verify:, PARTIAL with Progress:/Remaining:, or BLOCKED with Need:) describing where the work stands."
+      fi ;;
+  esac
   exit 0
 fi
 
@@ -133,7 +147,7 @@ case "${AGENT_TYPE}" in
   *orch-implementer)
     GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_status_block 2>&1)
     if [[ $? -ne 0 ]]; then
-      emit "orch-subagent-stop: implementer finished without a valid Status block (${GRADE_OUTPUT}). Expected DONE (Summary:) | DONE_WITH_CONCERNS (Concerns:) | BLOCKED (Need:) | NEEDS_CONTEXT (Ask:) | PARTIAL (Progress: + Remaining:) at the start of a line."
+      emit "orch-subagent-stop: implementer finished without a valid Status block (${GRADE_OUTPUT}). Expected DONE (Summary: + Verify:) | DONE_WITH_CONCERNS (Concerns: + Verify:) | BLOCKED (Need:) | NEEDS_CONTEXT (Ask:) | PARTIAL (Progress: + Remaining:) at the start of a line. A completion claim carries the verification burden: Verify: needs a real command and its real output, not an assertion."
     fi
     # --- Check 3: evidence cross-check on completion claims (warn-only) -----
     if printf '%s' "${ASSISTANT_TEXT}" | grep -qE '^Status:[[:space:]]*(DONE|DONE_WITH_CONCERNS)\b' \
@@ -144,9 +158,9 @@ case "${AGENT_TYPE}" in
       if [[ ${EV_RC} -eq 1 ]]; then
         printf 'orch-subagent-stop: implementer DONE claim fails evidence check — %s Controller: do NOT trust this DONE; re-verify before marking the task complete.\n' "${EV_REASON}" >&2
       fi
-      # rc 2 (stampless) stays silent here — the Verify: presence rule and the
-      # controller-side gate already cover it; nagging every legacy-format
-      # return would be noise.
+      # A return that cites no stamp is silent by construction: citation is
+      # opt-in (ORCH_EVIDENCE_MARKER=1) and the ledger is read directly by the
+      # controller-side gate. Only a stamp that contradicts the ledger speaks.
     fi
     ;;
   *orch-researcher)

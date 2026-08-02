@@ -505,7 +505,7 @@ else
 PKGEOF
 
   # Call with a very short timeout so the test doesn't hang.
-  FALLBACK_OUT=$(ORCH_LOCK_TIMEOUT=0 orch_detect_cached "$LOCK_DIR" 2>/tmp/lock-fallback-stderr.txt)
+  FALLBACK_OUT=$(ORCH_LOCK_TIMEOUT=0 orch_detect_cached "$LOCK_DIR" 2>"$TMP/lock-fallback-stderr.txt")
   FALLBACK_STDERR=$(cat /tmp/lock-fallback-stderr.txt)
 
   # Must not return silently empty — must emit detection output.

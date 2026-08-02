@@ -9,7 +9,7 @@ User input: $ARGUMENTS (optional — base ref, defaults to origin/main or the pr
 Steps:
 
 1. Invoke `requesting-code-review`. Consult `using-workflows` to route: if the Workflow tool is
-   available (and `ORCH_WORKFLOWS` is not `0`), prefer the accelerated path in step 7a; otherwise
+   available, prefer the accelerated path in step 7a; otherwise
    run the canonical ordered stages (steps 4–8). The two paths are not behaviorally identical.
 
 2. Determine the base ref:
@@ -57,7 +57,7 @@ Steps:
    - Run `workflows/review-diff.js` with `args = {specText, planText, conventions, diff,
      security_sensitive}`. It reproduces the Stage-1-gates-Stage-2 ordering (early-exits when the
      diff fails spec compliance), demotes findings below 0.8 confidence to `Notes:`, and runs a bounded
-     adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, earlyExit}`.
+     adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, earlyExit, stagesRun, incomplete, failedDimensions}`. If `incomplete` is true a reviewer died — report that plainly and do not present the result as a clean review, however few findings came back.
    - Build the report below from that return, then continue at step 9.
 
 8. Merge all `Issues:` blocks (from whichever stages ran) into one report.
@@ -75,7 +75,7 @@ Issues:
 - Important: <count>
 - Minor: <count>
 Verdict:
-- yes | no | with-fixes — <one line>
+- Ready: yes | no | with-fixes — <one line>
 Next:
 - Fix Critical (if any), then /llm-orchestrator:verify, then /llm-orchestrator:finish.
 ```

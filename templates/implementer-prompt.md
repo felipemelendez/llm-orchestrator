@@ -131,7 +131,7 @@ Ask:
 ## Rules
 
 - Follow TDD: failing test before implementation.
-- Run the verify command; paste the actual output line. If the output ends with an `[orch-evidence <stamp> exit=N]` line, copy it into `Verify:` verbatim — the controller validates the stamp against the hook-written ledger.
+- Run the verify command; paste the actual output line. Nothing needs to be cited — a hook records what actually ran and the gate reads that record.
 - Don't refactor adjacent code "while you're there".
 - Don't invent new dependencies.
 - Don't write commentary outside the Status block.

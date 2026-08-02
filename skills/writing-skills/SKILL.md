@@ -59,17 +59,63 @@ Optional: a small table when comparing options.
 - One short sentence per bullet.
 - Concrete file/line refs over abstract nouns.
 
-## TDD for skills
+## Match the form to the failure
 
-Before you ship a skill, test it on a real subagent:
+The shape of the guidance should match the shape of the thing going wrong.
 
-1. Write the skill body.
-2. Construct a prompt that should trigger it (paste the user's likely message).
-3. Dispatch a subagent with no context other than the skill file.
-4. Did the subagent follow the steps? Produce the right shape?
-5. If not, the skill is wrong — fix it. Don't add words to the prompt to compensate.
+| The failure | The form that fixes it |
+|---|---|
+| A rule gets skipped under pressure | A prohibition |
+| The output has the wrong shape | A positive recipe: what the output **is**, and its parts in order |
+| A required element gets omitted | A structural slot in a template they fill in |
+| Behaviour should depend on context | A conditional keyed to something observable |
 
-When the subagent succeeds without coaching, the skill is ready.
+Row two is the one that gets written wrong. Told "don't do X", a model produces
+measurably *more* X than one given a recipe for the right shape — and in
+measurement, worse than no guidance at all. If you catch yourself writing a
+prohibition about output shape, write the recipe instead.
+
+Two authoring rules that follow:
+
+- **No nuance clauses.** "Don't do X unless it matters" reopens the negotiation
+  you just closed. A single hedge appended to a working recipe degrades it from
+  consistent to noisy.
+- **Exemption clauses do not scope.** "This limit does not apply to code blocks"
+  still suppresses code blocks. If part of the output must be exempt, restructure
+  so the rule cannot reach it.
+
+## Testing a skill
+
+Write the body, then test it the way you would test code — but the first run is
+the control, not the skill.
+
+Run a **no-guidance control first.** Give a fresh agent the realistic task
+without the skill. If the failure you are writing against does not appear, there
+is nothing to fix — stop, and do not author the guidance. Most over-instruction
+starts here.
+
+If it does appear: five or more fresh-context runs per variant, the guidance in
+its real host context, and read every flagged result by hand — a template echo
+looks exactly like a hit until you read it.
+
+**Variance is the metric.** Five different interpretations across five runs
+means the wording is not binding. Tighten the form; do not add words.
+
+When a skill fails in real use, ask the agent that failed how it should have
+been written. Three answers, three different fixes:
+
+- "It was clear, I chose not to follow it" — not a documentation problem.
+- "It should have said X" — add X verbatim.
+- "I did not see that section" — an organisation problem; move it earlier.
+
+## Cross-references
+
+Link with a relative markdown path, never `@`. The `@` form force-loads the file
+immediately, spending context before anything needs it.
+
+Keep references one level deep. Agents preview a nested reference with something
+like `head -100` and act on a partial read. A reference file over 100 lines
+carries a table of contents.
 
 ## Output shape
 
@@ -86,5 +132,5 @@ Verify:
 - Skills that duplicate another skill 90%.
 - Skills that exist to enforce one rule (make it a hook or a lint instead).
 - Skills with paragraphs instead of bullets.
-- Skills that grow past 200 lines (split or trim).
+- Skills that grow past 250 lines (split or trim; target 150).
 - Description fields that summarize the body instead of stating triggers.

@@ -43,7 +43,20 @@ Existing code (only what's needed):
 
 ## Return
 
-Reply with one of:
+**The shape depends on the role.** Only the implementer returns a `Status:`
+block; asking a read-only role for one gets you a contract it was never given.
+
+| Role | Returns |
+|---|---|
+| implementer | the `Status:` enum below |
+| explorer, debugger | `Found:` → `Recommendation:` → `Next:` |
+| spec-reviewer, code-reviewer | `Issues:` → `Notes:` → `Verdict:` (`Ready: yes \| no \| with-fixes`) |
+
+`Done when:` / `Stop if:` still apply to every role — but `PARTIAL` is an
+implementer outcome. A read-only role that hits a `Stop if:` says so in its own
+shape (`Found:` with what it got to, or `Verdict:` with what it could not judge).
+
+Implementers reply with one of:
 
 ```
 Status: DONE

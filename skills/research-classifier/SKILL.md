@@ -9,7 +9,7 @@ The cheapest, most-aggressive-to-skip gate before research fires. Bias toward SK
 
 Two reference files carry the detail this body points to:
 - [`STRATEGY.md`](./STRATEGY.md) — aggressiveness tuning, the stakes ladder, the capability survey, and the MCP-nudge rules.
-- [`EXAMPLES.md`](./EXAMPLES.md) — the curated input→outcome table the smoke test checks.
+- [`EXAMPLES.md`](./EXAMPLES.md) — the curated input→outcome table, kept in sync by hand (see Examples).
 
 ## When to invoke
 
@@ -65,6 +65,10 @@ Triggers matched:
 Reason: <one line — why this passes the gate>
 ```
 
+This covers four of the eight fields `orch-researcher` requires. Build the rest
+of the envelope with `templates/researcher-prompt.md` before dispatching — the
+agent returns `BLOCKED` on a missing field.
+
 When research should skip:
 
 ```
@@ -93,7 +97,9 @@ When the classifier returns `RESEARCH_SKIP`, show nothing — it's an automatic 
 
 ## Examples
 
-The curated input→outcome table lives in [`EXAMPLES.md`](./EXAMPLES.md). `tests/test-research-classifier.sh` checks those cases as ground truth; if a heuristic change moves any of them, the test fails — surface it before merge.
+The curated input→outcome table lives in [`EXAMPLES.md`](./EXAMPLES.md), as documentation for a human reader.
+
+It is **not** wired to the test. `tests/test-research-classifier.sh` hardcodes its cases and never opens `EXAMPLES.md`, so editing that file alone changes nothing and fails nothing. Keep the two in sync by hand, and when you add a case that matters, add it to the test as well.
 
 ## Anti-patterns
 

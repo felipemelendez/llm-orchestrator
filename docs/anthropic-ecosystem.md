@@ -53,13 +53,13 @@ Claude Code reads `~/.claude/CLAUDE.md` (user) and `<project>/CLAUDE.md` (projec
 
 When an agent fails, ask which one failed: **it didn't know enough → raise the model; it didn't try hard enough (skipped a file, didn't run the tests) → raise the effort.** Don't reach for the model tier to fix a thoroughness problem.
 
-One invariant is not a preference. **A reviewer must be at least as capable as what it reviews.** Claude Code's advisor tool enforces exactly this rule for its own pairings, and the measured effect is large: an off-the-shelf weak critic moves resolve rate by 0.0/−0.2/+0.8 points, while a frontier critic moves it by +17.4 to +22.2 ([arXiv:2606.21811](https://arxiv.org/abs/2606.21811), Table 1). A cheap reviewer is not a cheap reviewer; it is no reviewer.
+One invariant is not a preference. **A reviewer must be at least as capable as what it reviews.** Claude Code's advisor tool enforces exactly this rule for its own pairings, and the measured effect is large: an off-the-shelf weak critic moves resolve rate by 0.0/−0.2/+0.8 points, while a frontier critic moves it by +17.4 to +22.2 ([arXiv:2606.21811](https://arxiv.org/abs/2606.21811), Table 1). An **off-the-shelf** cheap reviewer is not a cheap reviewer; it is no reviewer — which is the case an agent roster actually faces. Note the paper's own thesis runs the other way: it is titled *Steer, Don't Solve: Training Small Critic Models for Large Code Agents*, and a **trained** 8B critic yields +3.0–5.2 points at 30–92× lower cost. Capability parity is what this plugin chooses given untrained critics, not what the paper concludes in general.
 
 Our agents ship pre-configured on that basis:
 
 | Agent | Model | Why |
 |---|---|---|
-| `orch-explorer` | Sonnet | Retrieval, not judgment — no reason to pay for capability the task doesn't need |
+| `orch-explorer` | Opus | Retrieval that MISSES is indistinguishable from code that isn't there — a scout's false negative silently narrows every decision downstream of it |
 | `orch-implementer` | Opus | Anthropic's stated starting point for coding and agentic work |
 | `orch-spec-reviewer` | Opus | Reviewer tier ≥ implementer tier |
 | `orch-code-reviewer` | Opus | Same |
@@ -69,9 +69,9 @@ Our agents ship pre-configured on that basis:
 
 Haiku 4.5 is absent by design: it accepts no `effort` parameter at all, and its reliable knowledge cutoff is Feb 2025.
 
-**Effort is deliberately NOT pinned.** Agents inherit the session's effort level. Two pieces of evidence drove removing the earlier per-agent `effort:` pins: HAL's 21,730-rollout study found **higher reasoning effort reduced accuracy in the majority of runs**, and Anthropic's own guidance is to *"treat effort as a general preference rather than a task-by-task decision"* — with a specific warning that `xhigh`/`max` overthink on structured-output tasks, which is exactly what every reviewer here returns. A pinned value also overrides the user's session preference in both directions. The plugin's own eval suite cannot measure per-agent effort effects at an affordable N, so this follows the external evidence rather than an unmeasured guess.
+**Effort is deliberately NOT pinned.** Agents inherit the session's effort level. Two pieces of evidence drove removing the earlier per-agent `effort:` pins: HAL's 21,730-rollout study found **higher reasoning effort reduced accuracy in the majority of runs**, and Anthropic's own guidance is to *"treat effort as a general preference rather than a task-by-task decision"*. The model-configuration docs additionally note that `max` "may show diminishing returns and is prone to overthinking" — `max` only, with no claim about structured output. (An earlier version of this line attributed an `xhigh`/`max`-overthinks-on-structured-output warning to the blog above; the blog contains no such warning and in fact says the opposite — that effort "generally won't artificially inflate usage for simple tasks" and that overthinking is trained against.) A pinned value also overrides the user's session preference in both directions. The plugin's own eval suite cannot measure per-agent effort effects at an affordable N, so this follows the external evidence rather than an unmeasured guess.
 
-Effort resolution order: `CLAUDE_CODE_EFFORT_LEVEL` > session level > frontmatter > model default. Setting a level a model doesn't support degrades to the highest supported level rather than erroring.
+Effort resolution order: `CLAUDE_CODE_EFFORT_LEVEL` > frontmatter > session level > model default. Per the official docs, frontmatter effort "applies when that skill or subagent is active, overriding the session level" but not the environment variable. (This page previously listed session above frontmatter — inverted, and contradicting its own argument two paragraphs up that a pinned value overrides the user's session preference.) Setting a level a model doesn't support degrades to the highest supported level rather than erroring.
 
 Per-invocation overrides: the Agent tool accepts `model` but **not** `effort`. Genuine per-task effort selection exists only inside Workflow scripts, via `agent(prompt, {model, effort})`.
 
@@ -102,7 +102,7 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## What we deliberately don't use
 
-- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log tool outputs, arguments, prompts, or transcripts. The one opt-in, event-only exception is skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
+- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log prompts or transcripts, and nothing is transmitted. Two local exceptions, both stated plainly rather than hidden behind "no capture": the evidence ledger (on by default under `standard`) records the first 160 characters of each verify-shaped command with its exit code and a substance verdict derived from the output; and skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
 - **Background MCP observers** — same reason.
 
 ## Native equivalents and division of labor
@@ -115,7 +115,7 @@ Claude Code now ships first-party versions of several capabilities this plugin p
 | Code review | `/code-review` (multi-agent, confidence-filtered; `ultra` for cloud review) and `/security-review` | Stage 1 spec-compliance review (native review doesn't check a diff against a spec), the spec-gates-quality order, and the failure-scenario evidence rule | Native review cannot be model-invoked (v2.1.215), so the plugin's reviewer agents are the only automatable substrate. `/code-review xhigh` is an excellent manual pass. Stage 1 and the gating order are this plugin's contract |
 | Worktree isolation | Per-agent worktree isolation on agent dispatch | Ownership registry with atomic claims, `.orch-worktree` provenance, green-baseline capture, test-gated sequential merge-back | Prefer native isolation for the checkout itself; the registry/baseline/merge-back discipline still applies |
 | Memory | CLAUDE.md hierarchy (native, automatic) plus the assistant's auto-memory directory | Write-side classification (`/remember` → Conventions/Decisions/People/Notes) and recoverable `/forget` | Native surfaces store; the plugin only classifies and soft-deletes |
-| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Sonnet variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
+| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Opus variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
 | Planning | Native plan mode and Plan agent | Durable spec/plan artifacts under `docs/llm-orchestrator/` with checkbox state that survives `/clear` | Native plan mode for the proposal loop; plugin artifacts for cross-session state |
 | Fan-out orchestration | `Workflow` tool (deterministic scripts, structured schema, resume) | The routing rule (`using-workflows`) and ready-made scripts (`workflows/review-diff.js`) | Already delegation-shaped: the plugin only supplies scripts and the when-to-fan-out policy |
 

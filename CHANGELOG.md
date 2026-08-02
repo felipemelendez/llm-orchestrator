@@ -3,6 +3,280 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+A correctness and attention pass. The trigger was a reviewer subagent that saw
+`[orch-evidence <hash> exit=0] (cite this line in your Verify: block)` appended
+to a grep result, correctly refused to obey an imperative arriving through a
+data channel, and escalated it. Chasing that one report surfaced a cluster of
+hooks that were dead, firing falsely, or talking to agents that had no idea what
+they were being told.
+
+The through-line: **a mechanism that is wrong, or that speaks when it knows
+nothing, costs more than one that does not exist** — it trains agents to
+discount the channel it shares with the accurate signals.
+
+### Fixed — mechanisms that were silently dead
+
+- **`orch_extract_last_assistant_text` read the wrong key.** Real transcripts
+  nest assistant content under `message.content`; it read top-level `content`.
+  Measured against a live transcript: 0 entries with top-level content, 538 with
+  nested. Every consumer bailed at its `[[ -n "${REPLY}" ]] || exit 0` guard, so
+  the **protocol grader, the verify gate, and the retry cap's Stop path had never
+  once fired**. A gate that always passes is indistinguishable from a gate that
+  never trips, which is why this survived. Sidechain (subagent) entries are now
+  skipped so the controller's Stop event is not graded against a subagent's reply.
+- **`orch-researcher-validator.sh` filtered on `subagent_type`.** The field is
+  `agent_type`, and plugin values are namespaced (`llm-orchestrator:orch-researcher`).
+  All 264 lines, plus the brief-index write enforcement, were unreachable.
+- **The evidence ledger ignored every multi-line command.** The verify-command
+  regex anchors on `(^|[;&|])` but was compiled without `re.MULTILINE`, so `^`
+  matched only offset 0 and a newline is not in that class. `cd /tmp && npm test`
+  recorded a row; the identical two-line form recorded nothing.
+- **The research gate never saw past line one.** The prompt was grepped out of
+  the event JSON and never decoded, so a newline stayed as the characters `\` and
+  `n` — and `n` is a word character, which kills the `\b` in every signal pattern.
+  Multi-line prompts, the normal shape of a spec, bypassed the gate entirely.
+
+### Fixed — mechanisms that were wrong
+
+- **The worktree reaper released a live sibling's writer mutex.** It reaped every
+  `.worktrees/<slug>` mentioned anywhere in a success-shaped final message, so a
+  `DONE` saying "I left `.worktrees/sibling` alone, another implementer is still
+  writing there" unlocked the sibling — two writers in one tree, the exact
+  corruption the mutex prevents — then bailed via its first-success `exit 0` with
+  its own mutex still held. Ownership now comes from evidence only: the agent's
+  own CWD, or a single unambiguous mention. Anything else reports and refuses.
+- **The destructive-git guard was disarmed by a co-occurring `-b`.** The
+  `checkout -b` / `switch -c` creation exception was tested against the whole
+  compound command, so `git checkout -b tmp && git checkout main` was **allowed**
+  — and a branch switch overwrites every differing tracked file. Even
+  `echo 'git checkout -b x'; git checkout main` passed, lending a flag from
+  inside a quoted string. The rule is now evaluated per shell segment.
+- **Both PreToolUse guards scanned the raw payload.** `grep -rn -- '--no-verify'
+  scripts/` — a read-only search, and the likeliest benign hit a guard will ever
+  see — was hard-blocked, as was a clean `git commit` whose model-written
+  `description` field mentioned the flag. They now decode `tool_input.command`
+  and treat quoted text as the argument it is, except where the command can
+  re-enter a shell (`bash -c`, `eval`, `$(...)`), which still blocks. Every
+  fallback is toward blocking.
+- **The verify gate rejected the protocol's own canonical shape.** It required
+  `Verify:` content on the same line; the protocol writes it both ways. Its first
+  live firing after the extractor fix was a false positive on a correct reply.
+  `orch_has_section` now accepts either form, and a `Changed:` quoted inside a
+  code fence no longer trips the gate against itself.
+- **`ORCH_SIG_VERSION` fired on any decimal.** "add a null check to line 3.2" and
+  "replace the 2.5 second timeout" both compelled a research detour. Ordinal
+  nouns and unit suffixes are now erased before the version test — written
+  without `\b`, which BSD sed does not support and silently ignored.
+- **Bare `npm` compelled research.** The subcommand group was optional, so
+  `npm test` triggered a full classifier round trip.
+
+### Removed — channels that were wrong more often than right
+
+- **`RESEARCH_UNCERTAIN` notices.** The "structural hint" list included `api`,
+  `cli`, `plugin`, `module`, `server` — words in most engineering requests — and
+  the library name was the first capitalized token not on a stop list. Measured:
+  *possible library **Felipe***, ***Bash***, ***CLI***, ***Monday***, ***API***.
+  Its own code comment promised that plain proper nouns "must NOT fire." Every
+  one did. Confident signals still fire; guesses no longer speak.
+- **The `[orch-evidence ...]` marker, by default.** It rewrote Bash stdout, and
+  when `tool_response` carried no literal `stdout` string it **replaced the
+  command's real output with the marker alone**. Its parenthetical was an
+  instruction in a data channel, which well-behaved agents correctly refuse — the
+  mechanism selected against its own adoption. And it reached all seven agents
+  while only the implementer's prompt explained it. The hook is now append-only
+  and cannot touch tool output; `ORCH_EVIDENCE_MARKER=1` restores an inert
+  marker for cross-agent transport.
+- **The "Red flags — thoughts that mean STOP" table** in `using-orchestrator` —
+  a rationalization table, which `writing-skills` and `CLAUDE.md` both ban,
+  sitting in the skill that establishes those rules. Replaced by the precedence
+  list, which addresses the failure that actually occurs: two skills matching at
+  once with no stated order.
+- **The `ORCH_WORKFLOWS` toggle** — documented in two places, read by no code, absent from `templates/settings.json` where the real knobs are declared. A documented switch that does nothing is worse than none: it gets set, and then trusted.
+
+### Changed
+
+- **Verification is checked by turn window, not by citation.** The gate asks the
+  ledger whether a verify command ran green since this turn began. This is
+  strictly stronger than a cited stamp: a model cannot opt out by declining to
+  cite, and cannot reuse a stale green from an earlier turn. The three prompts
+  that taught stamp citation now say the simpler true thing — run the command,
+  paste the output.
+- **The ledger records `substance`.** `exit 0` is not evidence: `swift test`
+  exits 0 on "Test run with 0 tests in 0 suites passed". A green run that
+  reported zero tests is now flagged. Silence is *not* flagged — `tsc` and
+  `eslint` print nothing on success, and calling that "verified nothing" put a
+  false note on every clean typecheck.
+- **Absence of evidence is silent.** A project may verify with a command outside
+  the regex; a gate that fires when it knows nothing is how agents learn to tune
+  it out. Only a contradicted claim (hard) or a hollow green (soft) speaks.
+- **`orch_grade_status_block` requires `Verify:` on DONE.** It required only
+  `Summary:`, so a DONE with no verification passed deterministically and had to
+  be caught by a 30-second LLM validator on every implementer return. That
+  validator is now scoped to the one thing a grep cannot judge: whether an
+  existing `Verify:` contains output or an assertion.
+- **The per-turn reminder carries the precedence rule instead of restating
+  SessionStart.** Every bullet in it was already in the eager block. The agent
+  was reminded of the trigger ambiguity on 100% of turns and of its resolution
+  on 0%.
+- **Six skill descriptions** moved from `You MUST use this...` (unbounded: "ANY
+  bug", "any feature", "before claiming any work") to `Use when X. Not for Y.`
+  Those imperatives were what manufactured the trigger collisions. The linter no
+  longer blesses the exception it banned in prose.
+- **The empty-return warning is scoped to plugin agents** — it told the receiver
+  to return a Status block, a contract only these agents have.
+- `orch-explorer` is Opus: a scout's false negative silently narrows every
+  decision downstream of it. `AGENTS.md` and `docs/anthropic-ecosystem.md` now
+  agree with the frontmatter.
+
+### Fixed — found by adversarial review, after the first round of fixes
+
+Three adversarial passes ran against the changed tree; each found defects the
+tests did not, including in code written that same day. Recorded because the
+pattern matters more than any single bug: **every one came from a plausible
+model of the shell that a shell does not share.**
+
+- **Quote-blanking was unsound.** The first fix treated quoted text as data.
+  `git -C "." reset --hard` blanked to `git -C   reset --hard`, whereupon the
+  guard's own `-C` stripper ate `reset` and it ran — confirmed to wipe a tree.
+  So did `git reset "--hard"`, `git "checkout" main`, and
+  `echo "don't"; git reset --hard; echo "won't"` (the apostrophes PAIRED and
+  blanked the command between them). Rewritten on `shlex` tokenization, which
+  resolves quoting the way the shell does. 34 fail-opens closed.
+- **`git` re-enters itself.** `git -c alias.pwn='!rm -rf .git' pwn` destroyed a
+  repository while scanning as `git -c __ORCH_ARG__ pwn` — the option normalizer
+  deleted the payload before any rule saw it. Same class: `submodule foreach`,
+  `bisect run`, `rebase --exec`, `difftool --extcmd`, `filter-branch`. Also
+  added `read-tree --reset` and `checkout-index -f`, hard-reset equivalents no
+  rule covered.
+- **A newline is a command separator; shlex thinks it is whitespace.** Two
+  commands on two lines collapsed into one segment, so the `checkout -b`
+  exemption from the first covered the real branch switch in the second — the
+  hole the per-segment fix had just closed for `&&` and `;`, reopened for the
+  way a model most naturally writes two commands.
+- **`{a,b}` is one token to shlex and two words to bash.** `git {reset,--hard}`
+  and `rm {-rf,.git}` executed while matching nothing.
+- **A guard must never abort.** `set -e` plus one invalid-UTF-8 byte made BSD sed
+  exit 1, which Claude Code reads as a non-blocking hook error — so the command
+  ran. `set -e` removed from both guards; every failure path now falls through
+  to the block logic.
+- **The `.orch-worktree` marker was forgeable.** A hand-written `.git` file
+  pointing at the main gitdir plus a touched marker relaxed the guard on a
+  directory that resolved to the main repository, and a hard reset there dropped
+  two commits on the shared checkout. The gitdir must now point inside
+  `.git/worktrees/`.
+- **The gate could say "your evidence is wrong" but never "you have no
+  evidence".** A wholly invented `Verify:` block passed silently — warn AND
+  strict — whenever the ledger was empty, and half of common runners
+  (`./gradlew test`, `poetry run pytest`, `swift test`, `npx jest`) minted no
+  row at all. Added the unbacked-claim check and widened the regex.
+- **Printing is not running.** `pytest --version` and `pytest --collect-only`
+  exit 0 having verified nothing and minted green rows that satisfied a claim of
+  "40 passed". So did `npm ci` and `npm run build`. All excluded.
+- **A heredoc body is not a command.** `cat <<EOF > CHANGELOG.md` whose body
+  said "pytest -q now passes" minted a green row — and chained after a real red
+  run, that laundered the failure. Writing a changelog that names the test
+  command is ordinary post-fix behaviour.
+- **Two false accusations that punished good work.** Pasting `make` output was
+  blocked (make echoes its recipe, so `pytest -q` appeared at a command position
+  and read as an unbacked claim), and so was honestly disclosing a suite that
+  was *not* run — the model's cheapest fix would have been to delete the honest
+  sentence. The rule is now: warn only when NOTHING the section names is backed.
+- **A reply that documents the marker format** was accused of citing a
+  fabricated stamp — which fired on any turn editing `orch-evidence.sh` itself.
+
+### Added — closing the gap against the skill catalog this one descends from
+
+A skill-by-skill content comparison against `superpowers@6.2.0` found real
+technique missing here, most of it in the skills that matter most for
+test-driven work. Ported in this catalog's register — the operational content,
+not the coercive framing.
+
+- **The red phase is now verifiable, which nothing else does.** "If you didn't
+  watch the test fail, you don't know if it tests the right thing" is stated in
+  every TDD guide and enforced by none, because checking it needs a record of
+  what ran. The ledger already kept one; nothing read it as a *sequence*.
+  `orch_evidence_red_first` asks whether the suite was ever seen failing before
+  it was seen passing, and the gate says so when a turn changed a test file and
+  the suite was only ever green. A test written after the code passes on its
+  first run — so does a test that asserts nothing, never executes, or mirrors
+  the implementation back at itself, and a green suite hides all four. Soft and
+  scoped to turns that touched a test path: a docs turn has no red phase to skip.
+- **`test-driven-development` rebuilt** (66 → 140 lines) around the verify-red
+  step: fails rather than errors, the failure message is the one you predicted,
+  and it fails because the behaviour is missing. Plus what a first-run pass
+  means, minimal-green with a worked over-engineering counter-example, and a
+  new `writing-good-tests.md` reference — name the break, derive expectations by
+  hand (mirror assertions), no change detectors, mock at the right level, the
+  mutation check.
+- **`systematic-debugging`** (65 → 104): trace the bad *value* to its origin
+  rather than reading the stack one level; instrument before the dangerous
+  operation, with `console.error` in tests because a logger may be suppressed;
+  compare against the closest working analogue and enumerate every difference;
+  bisect test files to find a polluter; condition-based waiting instead of a
+  sleep; architectural-failure signals reachable before strike three; and a
+  legitimate no-root-cause exit.
+- **`dispatching-subagents`** — the largest structural gap. The fix loop had one
+  exit ("2 attempts") and no disposition for a finding it could not fix. Now:
+  five rounds, resume for 1–3 and a fresh implementer one tier up for 4–5,
+  re-review scoped to the fix diff with per-finding `ADDRESSED` / `NOT ADDRESSED`
+  ("attempted" is not addressed), and adjudication at the cap into parked-with-
+  ruling or `BLOCKED`. Every disposition is written down; a silently dropped
+  finding is the failure this prevents. Plus one fix wave after the final review
+  rather than one fixer per finding, durable per-task state with commit ranges
+  so a controller after `/clear` knows where a mid-loop task resumes, no
+  controller-side fixes, and no accumulated history in later dispatches.
+- **Reviewer envelopes carry a read-only clause.** `dispatching-parallel-agents`
+  already asserted the envelope must forbid the reviewer mutating the checkout;
+  no envelope did. Also added: how far to look outside the diff (a named risk,
+  one focused check), don't re-run what the implementer already ran, a
+  `⚠️ Cannot verify from diff` channel distinct from low confidence, and the
+  `plan-mandated` label for when the plan asks for something the rubric calls a
+  defect.
+- **`finishing-a-branch`** — the merged tree is now tested before cleanup. A
+  branch green in isolation while base moved is the classic semantic conflict,
+  and the regression check ran only as a precondition. Detached HEAD keeps the
+  PR route (`git push origin HEAD:refs/heads/<new>`); dropping it stranded the
+  work. Submodule guard added, here and in `using-git-worktrees`.
+- **`verification-before-completion`** — a regression test is proved by reverting
+  the fix and watching it fail, with that output pasted.
+- Also: task right-sizing and a global-constraints block in `writing-plans`;
+  scope-decomposition before questioning in `brainstorming`; understand-all-
+  before-implementing-any and legitimate pushback grounds in
+  `receiving-code-review`; match-the-form-to-the-failure and the no-guidance
+  control in `writing-skills`; a subagent stop-block in `using-orchestrator`.
+
+**Not ported, deliberately:** six rationalization tables, the Iron Law framing,
+and the persuasion-principles reference. The strongest argument against them is
+in the source catalog itself — its own skill-authoring guidance reports that a
+prohibition produces *more* of the unwanted output than a positive recipe, and
+worse than no guidance at all. That finding is ported; the style it argues
+against is not.
+
+### Added
+
+- `scripts/lib/orch-json.sh` — `orch_json_field`, `orch_scan_source`,
+  `orch_scan_is_tokenized`, `orch_shell_segments`. One place that decodes a hook
+  payload correctly, and the only place that decides what a shell will do.
+- `templates/researcher-prompt.md` — the researcher's dispatch envelope. Its
+  contract requires eight fields and returns `BLOCKED` without them. All three
+  dispatch sites are now fixed: `commands/research.md` pointed at the *output
+  artifact* template and supplied two fields, and the two automatic triggers
+  (`brainstorming` Trigger A, `writing-plans` Trigger B) named no envelope at
+  all. The research gate was specified to fail.
+- `tests/test-worktree-reaper.sh` (10 checks) and `tests/test-guard-no-verify.sh`
+  (14 checks); regression cases added to the evidence-ledger, verify-gate,
+  protocol-hooks, research-gate and destructive-git suites. Test isolation fixed
+  throughout — suites shared fixed `/tmp` paths, so concurrent runs deleted each
+  other's fixtures mid-suite and the research-gate suite failed intermittently.
+- Verdict rules and a structured-output section on the three reviewer agents —
+  they lived only in the template variants, and the native agent is the
+  preferred dispatch path.
+- `orch-code-reviewer` may write inside a fresh `mktemp -d`. The skeptic pass
+  told it to execute a counterfactual while its own prompt said "never edit
+  files", so the executed check silently degraded to a reasoned one.
+
 ## [0.6.0] - 2026-07-28
 
 A platform-drift and failure-mode pass, targeted at the largest unaddressed clusters in the MAST multi-agent failure taxonomy (arXiv:2503.13657, N=1642: step repetition 15.7%, unaware-of-termination 12.4%, reasoning-action mismatch 13.2%, premature termination 6.2%), and at making verification something the model cannot narrate its way past.

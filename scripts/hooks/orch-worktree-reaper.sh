@@ -45,7 +45,10 @@ PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
 # shellcheck source=scripts/lib/orch-project.sh
 [[ -f "${PROJ_LIB}" ]] && source "${PROJ_LIB}"
 
-INPUT=$(cat || true)
+# Guarded on a non-tty stdin: run interactively without a redirect, a bare
+# `cat` blocks forever. A hook that can hang is worse than one that learns less.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
 [[ -n "${INPUT}" ]] || exit 0
 
 AGENT_ID=$(printf '%s' "${INPUT}" | grep -oE '"agent_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
@@ -96,6 +99,8 @@ fi
 
 # --- 2. worktree named in a SUCCESS-shaped final message --------------------
 IN_FILE=$(mktemp) || exit 0
+# trap, not just a trailing rm: killed at the hook timeout, a plain rm never runs.
+trap 'rm -f "${IN_FILE}" 2>/dev/null' EXIT
 printf '%s' "${INPUT}" > "${IN_FILE}"
 LAM=$(python3 - "${IN_FILE}" <<'PYEOF' 2>/dev/null || true
 import json, sys
@@ -107,11 +112,40 @@ except Exception:
 PYEOF
 )
 rm -f "${IN_FILE}" 2>/dev/null
+# A path MENTIONED in a message is not a path the agent HELD. This used to reap
+# every `.worktrees/<slug>` appearing anywhere in a success-shaped return, so a
+# DONE that said "I left .worktrees/sibling alone, another implementer is still
+# writing there" released the sibling's mutex — two writers in one tree, the
+# exact corruption the mutex exists to prevent — and then bailed out via the
+# first-success `exit 0` with its OWN mutex still held. The BLOCKED carve-out
+# above was added for precisely this reason; success returns name siblings just
+# as routinely.
+#
+# Ownership is now taken only from evidence, in order:
+#   1. the agent's CWD is inside a worktree  → it held that one;
+#   2. the message names exactly ONE worktree → no sibling to confuse it with.
+# Anything ambiguous falls through to the report-and-refuse branch below.
 if [[ -n "${LAM}" ]] && printf '%s' "${LAM}" | grep -qE '^Status:[[:space:]]*(DONE|DONE_WITH_CONCERNS|PARTIAL)\b'; then
-  for slugpath in $(printf '%s' "${LAM}" | grep -oE '\.worktrees/[A-Za-z0-9._-]+' | sort -u); do
-    abs=$(resolve "${slugpath}") || continue
-    [[ -d "${abs}/.orch-active" ]] && reap "${abs}/.orch-active" "final-message path (success status)" && REAPED=1
-  done
+  OWNED=""
+  OWNED_HOW=""
+  case "${CWD}" in
+    */.worktrees/*)
+      OWNED=$(printf '%s' "${CWD}" | sed -E 's#(.*/\.worktrees/[^/]+).*#\1#')
+      OWNED_HOW="the agent's own working directory" ;;
+  esac
+  if [[ -z "${OWNED}" ]]; then
+    MENTIONED=$(printf '%s' "${LAM}" | grep -oE '\.worktrees/[A-Za-z0-9._-]+' | sort -u)
+    if [[ -n "${MENTIONED}" && $(printf '%s\n' "${MENTIONED}" | grep -c .) -eq 1 ]]; then
+      OWNED=$(resolve "${MENTIONED}") || OWNED=""
+      OWNED_HOW="the only worktree named in a success-shaped final message"
+    elif [[ -n "${MENTIONED}" ]]; then
+      printf 'orch-worktree-reaper: final message names %s worktrees — cannot tell which this agent held, so nothing was reaped (releasing a sibling a LIVE implementer is writing is the corruption the mutex prevents). Release by hand if a later dispatch returns BLOCKED after ALL implementers finished.\n' \
+        "$(printf '%s\n' "${MENTIONED}" | grep -c .)" >&2
+    fi
+  fi
+  if [[ -n "${OWNED}" && -d "${OWNED}/.orch-active" ]]; then
+    reap "${OWNED}/.orch-active" "${OWNED_HOW}" && REAPED=1
+  fi
   [[ ${REAPED} -eq 1 ]] && exit 0
 fi
 

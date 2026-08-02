@@ -6,6 +6,14 @@ Spec: docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md
 ## Goal
 - one line
 
+## Global constraints
+
+Project-wide requirements every task inherits. One line each, values copied
+verbatim from the spec. Pasted into every dispatch envelope; write "none" if
+there are none.
+
+- <version floor / dependency limit / naming or copy rule / platform target>
+
 ## Files (overview)
 - create: <path>
 - modify: <path>:<line-range>

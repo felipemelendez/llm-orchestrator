@@ -110,6 +110,18 @@ const stage23 = await parallel(
   ].filter(Boolean)
 )
 
+// A dimension that CRASHED is not a dimension that found nothing. parallel()
+// resolves a failed thunk to null, so `.filter(Boolean)` silently converted a
+// dead security reviewer into a clean security review. Track the losses and
+// refuse to report a clean result while any dimension is missing.
+const dimensionNames = ['code-quality'].concat(securitySensitive ? ['security'] : [])
+const failedDimensions = stage23
+  .map((r, i) => (r ? null : dimensionNames[i]))
+  .filter(Boolean)
+if (failedDimensions.length) {
+  log(`WARNING: ${failedDimensions.join(', ')} did not return — this review is INCOMPLETE`)
+}
+
 const otherAll = stage23.filter(Boolean).flatMap((r) => r.findings || [])
 const otherFindings = otherAll.filter(passesFloor)
 
@@ -167,7 +179,7 @@ if (toVerify.length > 0) {
         .map((f, i) => `[${i}] (${f.severity}) ${f.file}:${f.line} — CLAIM: ${f.claim}\n    PROPOSED FIX: ${f.fix || '(none given)'}`)
         .join('\n')
       return agent(
-        `You are a skeptical verifier with shell access. For each finding below, decide refuted true/false.\n\nPREFER EXECUTION (method: "executed"): when the claim is demonstrable by running code — a reproduction snippet, the file's own tests, a typecheck — verify it counterfactually. NEVER modify the repository or its git state: copy the affected file(s) into a fresh temp dir (mktemp -d), build the minimal reproduction the claim implies, run it against the ORIGINAL code, then apply the finding's PROPOSED FIX in the temp copy and run it again. The finding survives (refuted=false) only if the original actually RAN and misbehaved AND the fixed version behaves. If original and fixed both ran and behave the SAME, the finding is refuted — the fix changed nothing observable, so the claim was noise. IMPORTANT: "could not execute" is NOT equivalence — if the reproduction fails to run at all (missing dependencies, config, import errors unrelated to the claim), you learned nothing; do NOT mark executed and do NOT refute on that basis — drop to the reasoned fallback instead. method: "executed" asserts the original demonstrably ran. Put the commands you ran and the observed outputs in reason.\n\nFALLBACK (method: "reasoned"): when the finding is not runnable (style, missing test coverage, architectural concerns, or execution was impossible in this environment), try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak or you cannot confirm it from the diff. A critical finding whose claim states no concrete failure scenario or attack path is weak evidence by definition — refute it unless the diff itself makes the scenario obvious. Do not pad reasons: run code or cite the diff line.\n\nDIFF:\n${diff}\n\nFINDINGS:\n${listed}\n\nReturn one verdict per finding by its [index].`,
+        `You are a skeptical verifier with shell access. For each finding below, decide refuted true/false.\n\nPREFER EXECUTION (method: "executed"): when the claim is demonstrable by running code — a reproduction snippet, the file's own tests, a typecheck — verify it counterfactually. NEVER modify the repository or its git state: copy the affected file(s) into a fresh temp dir (mktemp -d), build the minimal reproduction the claim implies, run it against the ORIGINAL code, then apply the finding's PROPOSED FIX in the temp copy and run it again. The finding survives (refuted=false) only if the original actually RAN and misbehaved AND the fixed version behaves. If original and fixed both ran and behave the SAME, the finding is refuted — the fix changed nothing observable, so the claim was noise. IMPORTANT: "could not execute" is NOT equivalence — if the reproduction fails to run at all (missing dependencies, config, import errors unrelated to the claim), you learned nothing; do NOT mark executed and do NOT refute on that basis — drop to the reasoned fallback instead. method: "executed" asserts the original demonstrably ran. Put the commands you ran and the observed outputs in reason.\n\nFALLBACK (method: "reasoned"): when the finding is not runnable (style, missing test coverage, architectural concerns, or execution was impossible in this environment), try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak — a claim the diff does not support. But being UNABLE to determine is not the same as weak evidence: if you cannot tell either way from the diff, leave refuted=false and say so in reason. Uncertainty must never clear a blocker. A critical finding whose claim states no concrete failure scenario or attack path is weak evidence by definition — refute it unless the diff itself makes the scenario obvious. Do not pad reasons: run code or cite the diff line.\n\nDIFF:\n${diff}\n\nFINDINGS:\n${listed}\n\nReturn one verdict per finding by its [index].`,
         { agentType: 'llm-orchestrator:orch-code-reviewer', schema: VERDICT_SCHEMA, label: `verify:${bi}`, phase: 'Verify' }
       ).then((v) => ({ batch, verdicts: v?.verdicts || [] }))
     })
@@ -195,4 +207,8 @@ return {
   confirmed,
   notes: minorNotes,
   stagesRun,
+  // Non-empty ⇒ a reviewer died. The caller must not treat this as an approval,
+  // regardless of how few findings came back.
+  incomplete: failedDimensions.length > 0,
+  failedDimensions,
 }

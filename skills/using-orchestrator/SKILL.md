@@ -6,9 +6,11 @@ description: Use when starting any session in an LLM Orchestrator project. Estab
 <!-- ORCH:EAGER:START -->
 # Using LLM Orchestrator
 
-This is the meta-skill. SessionStart injects the core below; the rest of this file (instruction priority, working rules, red flags, the full routing table, and subagent dispatch) is reference — open the full `using-orchestrator` skill when you need to decide which skill applies.
+This is the meta-skill. SessionStart injects the core below; the rest of this file (instruction priority, working rules, skill precedence, the full routing table, and subagent dispatch) is reference — open the full `using-orchestrator` skill when you need to decide which skill applies.
 
-**Invoke relevant skills before responding.** When a trigger clearly matches the user's message, invoke the skill first; if it turns out not to apply, discard it — but skipping a check that should have happened is the failure mode. Common triggers: investigate / bug / test failure → `systematic-debugging`; build / design / new feature → `brainstorming`; library + version + design verb → `research-classifier`; approved spec → `writing-plans`; diff ready → `requesting-code-review`; about to claim done/fixed/passing → `verification-before-completion`; remember / save / forget → `managing-memory`.
+**If you were dispatched as a subagent to run one task, stop here.** Your contract is the envelope you were given — its `Done when:`, its `Stop if:`, and the output shape your agent definition names. Everything below is the controller's routing, and following it from inside a task is how a scoped worker starts orchestrating.
+
+**Invoke relevant skills before responding.** When a trigger clearly matches the user's message, invoke the skill first; if it turns out not to apply, discard it — but skipping a check that should have happened is the failure mode. Common triggers: investigate / bug / test failure → `systematic-debugging`; build / design / new feature → `brainstorming`; library + version + design verb → `research-classifier`; approved spec → `writing-plans`; diff ready → `requesting-code-review`; about to claim done/fixed/passing → `verification-before-completion`; remember / save / forget → `managing-memory`. For a read-heavy sweep (many files, many naming conventions), dispatch the explorer subagent instead of doing the reads inline — you want its conclusion, not its file dumps.
 
 ## Response shape — the hard rule
 
@@ -72,20 +74,17 @@ The reader is a human engineer, not another agent. Clarity beats cleverness.
 - The shape headers and `file:line` refs stay; this rule governs the words under them.
 - Be brief: the fewest lines that fully answer. Stop when the question is answered. Default to a few bullets, not three screens. Expand only when asked.
 
-## Red flags — thoughts that mean STOP
+## Precedence when two skills match
 
-These thoughts often precede an under-invocation. When one comes up, check whether a skill applies before acting on it.
+Run them in this order:
 
-| Thought                                  | Reality                                                                   |
-|------------------------------------------|----------------------------------------------------------------------------|
-| "This is just a simple question"         | Questions are tasks. Check for a matching skill before answering.         |
-| "I already know how to do this"          | The skill exists because the default approach fails in non-obvious ways.  |
-| "Invoking the skill is overkill here"    | The check is cheap. Skipping is what's expensive.                         |
-| "I can do this in one step"              | If a skill applies, invoke it. Decide after.                              |
-| "I'll just take a quick look first"      | Looking IS a task. `systematic-debugging` or the explorer subagent covers it. |
-| "The user wants speed, not process"      | Speed without the protocol is what produced past failures. Use it.        |
-| "This doesn't need a plan"               | If it has 3+ steps or touches a library, write a plan. `writing-plans`.   |
-| "I'll skip review, the diff is small"    | Small diffs hide real issues. Run `requesting-code-review` before declaring done. |
+1. **Process** — `brainstorming`, `systematic-debugging`, `research-classifier`
+2. **Implementation** — `test-driven-development`, `writing-plans`, `dispatching-*`
+3. **Verification** — `requesting-code-review`, `verification-before-completion`, `finishing-a-branch`
+
+So "the auth test is failing, fix it" is `systematic-debugging` first (find the cause), then `test-driven-development` (capture it in a test), then `verification-before-completion`. A failing test you just wrote is the red phase, not a bug — that one starts at tier 2.
+
+This section used to be a "Red flags — thoughts that mean STOP" table pairing each rationalization with its rebuttal. It was a rationalization table, which `writing-skills` and `CLAUDE.md` both ban, sitting in the skill that establishes those rules. It also solved the wrong problem: the failure it guarded against was rarely an agent talking itself out of a skill, it was two skills matching at once with no stated order. That is what the list above fixes.
 
 ## When to invoke other skills
 

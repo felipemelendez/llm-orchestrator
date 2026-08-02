@@ -56,8 +56,14 @@ while IFS= read -r dir; do
   if [[ -z "$fm_desc" ]]; then
     echo "FAIL: $file missing description"
     fail=1
-  elif [[ "$fm_desc" != Use\ when* && "$fm_desc" != You\ MUST* ]]; then
-    echo "FAIL: $file description must start with 'Use when' or 'You MUST' (got: ${fm_desc:0:40}...)"
+  # 'You MUST' was accepted here as an exemption, which put the ban in the prose
+  # (writing-skills, CLAUDE.md) and the blessing in the enforcement. An
+  # unbounded imperative in a description is what manufactures trigger
+  # collisions — "ANY bug", "any feature", "before claiming any work" all fire
+  # at once with no stated precedence. 'Use when X. Not for Y.' forces the
+  # author to draw the boundary.
+  elif [[ "$fm_desc" != Use\ when* ]]; then
+    echo "FAIL: $file description must start with 'Use when' (got: ${fm_desc:0:40}...)"
     fail=1
   fi
 

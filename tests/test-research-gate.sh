@@ -30,7 +30,12 @@ fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((
 #   compel  — hook emits classifier-guidance JSON on stdout (no RESEARCH_UNCERTAIN)
 #   uncertain — hook emits a RESEARCH_UNCERTAIN notice as JSON on stdout
 #   skip    — hook emits nothing on stdout
-_gate_stdout() { printf '{"prompt":"%s"}' "$1" | bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>/dev/null; }
+# Isolated state root. The gate and its siblings write under ORCH_HOME; without
+# this they touch the developer's real ~/.llm-orchestrator, which made
+# concurrent suite runs interfere with each other's cache assertions.
+GATE_HOME=$(mktemp -d)
+trap 'rm -rf "$GATE_HOME"' EXIT
+_gate_stdout() { printf '{"prompt":"%s"}' "$1" | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-research-gate.sh" 2>/dev/null; }
 
 _gate_classify() {
   local stdout_out="$1"
@@ -150,12 +155,33 @@ expect_sniffer "build a sam raimi style UI"                              "skip"
 expect_sniffer "sam deploy the function"                                 "compel"
 expect_sniffer "aws sam build the stack"                                 "compel"
 
-printf '\n%s== RESEARCH_UNCERTAIN cry-wolf guard ==%s\n' "$DIM" "$RESET"
-# These must NOT emit RESEARCH_UNCERTAIN — plain proper nouns in no-signal context.
+printf '\n%s== RESEARCH_UNCERTAIN was REMOVED — uncertainty is silent ==%s\n' "$DIM" "$RESET"
+# The notice fired on any capitalized token co-occurring with a design verb and
+# a "structural hint" whose list included api/cli/plugin/module/server — words
+# in most engineering requests. Measured, it named Felipe, Bash, CLI, Monday and
+# API as libraries to go research. A channel that is wrong most of the time
+# teaches the agent to discount it, which costs the accurate compels that share
+# it. Confident signals still fire; guesses no longer speak.
 expect_skip "Set up Monday morning standup"
 expect_skip "Build the London office"
-# Known-good UNCERTAIN: design verb + unknown proper noun WITH structural hint.
-expect_uncertain "set up Frobnicator integration"
+expect_skip "set up Frobnicator integration"
+expect_skip "implement the server that Felipe described"
+expect_skip "wire up the Bash tool guard in the plugin"
+expect_skip "add a CLI flag for verbose output"
+expect_skip "add caching to the API client"
+
+printf '\n%s== decimal noise is not a version ==%s\n' "$DIM" "$RESET"
+expect_skip "add a null check to line 3.2 of the parser"
+expect_skip "replace the 2.5 second timeout with 5 seconds"
+expect_sniffer "Migrate to Python 3.12" "compel"
+
+printf '\n%s== npm needs a dependency-changing subcommand ==%s\n' "$DIM" "$RESET"
+# The subcommand group was optional, so the bare token `npm` compelled — which
+# meant `npm test`, plausibly the most common thing a user types, did too.
+expect_skip "npm test"
+expect_skip "npm run lint"
+expect_sniffer "npm install @tanstack/react-query" "compel"
+expect_sniffer "pnpm add zod" "compel"
 
 printf '\n%s== Sniffer curated tests (question-shape — Fix 1) ==%s\n' "$DIM" "$RESET"
 # Installed-version lookups — compel without design verb
@@ -176,8 +202,13 @@ expect_sniffer "Is mocha still supported?"                             "compel"
 # Validator tests.
 printf '\n%s== Validator tests ==%s\n' "$DIM" "$RESET"
 
-TMP=/tmp/orch-research-gate-test
-rm -rf "$TMP"
+# mktemp, not a fixed path. This was /tmp/orch-research-gate-test, wiped with
+# `rm -rf` at the start of every run — so two overlapping runs deleted each
+# other's fixture state mid-suite. Observed as a flake in the cache-miss and
+# compounding-loop checks while other suites ran concurrently: the same suite
+# failed twice and then passed six times in a row, unchanged.
+TMP=$(mktemp -d)
+trap 'rm -rf "$GATE_HOME" "$TMP"' EXIT
 mkdir -p "$TMP/briefs" "$TMP/transcripts"
 
 cat > "$TMP/briefs/clean-verified.md" <<'EOF'
@@ -216,7 +247,7 @@ validator_case() {
   printf '{"role":"assistant","content":"Status: %s\\nBrief: %s"}\n' "$status" "$brief" > "$transcript"
   local output rc got
   output=$(printf '{"subagent_type":"orch-researcher","transcript_path":"%s"}' "$transcript" \
-           | bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+           | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
   rc=$?
   if [[ "$expect" == "silent" ]]; then
     if [[ "$rc" == "0" && -z "$output" ]]; then
@@ -283,7 +314,7 @@ validator_case "NOT_APPLICABLE soft-pedaling CONTRADICTED" "NOT_APPLICABLE" "$TM
 T_OTHER="$TMP/transcripts/other.jsonl"
 echo '{"role":"assistant","content":"Status: DONE"}' > "$T_OTHER"
 out=$(printf '{"subagent_type":"orch-implementer","transcript_path":"%s"}' "$T_OTHER" \
-      | bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+      | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
 rc=$?
 if [[ "$rc" == "0" && -z "$out" ]]; then
   ok "Different subagent → silent pass"
@@ -295,7 +326,7 @@ fi
 T_STRICT="$TMP/transcripts/strict.jsonl"
 printf '{"role":"assistant","content":"Status: VERIFIED\\nBrief: %s"}\n' "$TMP/briefs/sneaky-verified.md" > "$T_STRICT"
 out=$(printf '{"subagent_type":"orch-researcher","transcript_path":"%s"}' "$T_STRICT" \
-      | ORCH_STRICT_RESEARCH=1 bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+      | ORCH_HOME="$GATE_HOME" ORCH_STRICT_RESEARCH=1 bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
 rc=$?
 if [[ "$rc" == "2" && "$out" == *"block"* ]]; then
   ok "Strict mode (ORCH_STRICT_RESEARCH=1) blocks with exit 2"
@@ -607,9 +638,8 @@ rm -rf "$TMP"
 
 printf '\n%s== Uncertain-signal (RESEARCH_UNCERTAIN) tests ==%s\n' "$DIM" "$RESET"
 
-# UNCERTAIN: design verb + unknown cap token with structural hint ("integration"
-# suffix accepted as hint for tools that look like tech nouns).
-expect_uncertain "set up Frobnicator integration"
+# RESEARCH_UNCERTAIN removed — see the cry-wolf section above.
+expect_skip "set up Frobnicator integration"
 
 # NEGATIVE: plain no-signal prompt → silent.
 expect_skip "fix the typo in the readme"

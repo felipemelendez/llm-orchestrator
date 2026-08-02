@@ -44,12 +44,34 @@ fi
 source "${SIGNALS_FILE}"
 
 # Read the hook event JSON from stdin.
-INPUT=$(cat || true)
+# Guarded on a non-tty stdin: run interactively without a redirect, a bare
+# `cat` blocks forever. A hook that can hang is worse than one that learns less.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
 
-# Pull the user prompt text out of the JSON event. Tolerant of missing field.
-PROMPT=$(printf '%s' "${INPUT}" | grep -oE '"prompt"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' \
-         | sed -E 's/^"prompt"[[:space:]]*:[[:space:]]*"//; s/"$//' \
-         | head -1)
+# Pull the user prompt text out of the JSON event.
+#
+# It must be JSON-DECODED, not just grepped out. A grepped value keeps its
+# escapes, so a newline stays as the two characters `\` and `n` — and `n` is a
+# word character, which kills the `\b` anchor in every signal pattern below.
+# The result: this gate saw only the first line of any prompt. A multi-line
+# prompt (the normal shape of a spec, the exact case the gate exists for) went
+# straight through. Measured before the fix: "add stripe checkout to the app"
+# compelled; "Quick question.\nadd stripe checkout to the app" was silent.
+#
+# The grep path is kept as a fallback for a python3-less environment; it is the
+# old, line-one-only behaviour, which is degraded but not wrong.
+JSON_LIB="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}/../lib/orch-json.sh"
+# shellcheck source=scripts/lib/orch-json.sh
+[[ -f "${JSON_LIB}" ]] && source "${JSON_LIB}"
+
+PROMPT=""
+declare -f orch_json_field >/dev/null 2>&1 && PROMPT=$(orch_json_field "${INPUT}" prompt)
+if [[ -z "${PROMPT}" ]]; then
+  PROMPT=$(printf '%s' "${INPUT}" | grep -oE '"prompt"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' \
+           | sed -E 's/^"prompt"[[:space:]]*:[[:space:]]*"//; s/"$//' \
+           | head -1)
+fi
 
 if [[ -z "${PROMPT}" ]]; then
   exit 0
@@ -76,7 +98,7 @@ if (( should_compel == 0 )); then
        || printf '%s' "${PROMPT}" | grep -qE "${ORCH_SIG_LIBRARY_STRUCTURAL_DOTTED}"; then
       should_compel=1
       matched_signal="design verb + library mention"
-    elif printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_VERSION}"; then
+    elif printf '%s' "${LOWER}" | sed -E "s/${ORCH_SIG_VERSION_NOISE}/ /g" | grep -qE "${ORCH_SIG_VERSION}"; then
       should_compel=1
       matched_signal="design verb + version-shaped token"
     elif printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_SECURITY}"; then
@@ -102,7 +124,12 @@ fi
 # These are explicit tool commands, not natural language, so they carry enough
 # signal on their own (e.g. "sam deploy ...", "npm install ...", "terraform plan").
 if (( should_compel == 0 )); then
-  PKG_MANAGER_DIRECT='\b(npm(\s+(i|install))?|pnpm\s+add|yarn\s+add|pip3?\s+install|poetry\s+add|cargo\s+add|go\s+get|gem\s+install|bundle\s+add|composer\s+require|apt(-get)?\s+install|brew\s+install)\b|\b(terraform|kubectl|helm|ansible|pulumi|cdk|serverless)\s+\w+|\baws\s+sam\s+\w+|\bsam\s+(build|deploy|init|local|package|publish|validate)\b'
+  # `npm` REQUIRES a dependency-changing subcommand. The subcommand group used
+  # to be optional — `npm(\s+(i|install))?` — so the bare token `npm` compelled
+  # a full research round trip, which meant `npm test` did, and `npm test` is
+  # plausibly the most common thing a user types in this project. Only commands
+  # that actually pull in or move a dependency carry research-worthy signal.
+  PKG_MANAGER_DIRECT='\b(npm\s+(i|install|add|update|upgrade)|pnpm\s+(add|update)|yarn\s+(add|upgrade)|pip3?\s+install|poetry\s+add|cargo\s+add|go\s+get|gem\s+install|bundle\s+add|composer\s+require|apt(-get)?\s+install|brew\s+install)\b|\b(terraform|kubectl|helm|ansible|pulumi|cdk|serverless)\s+\w+|\baws\s+sam\s+\w+|\bsam\s+(build|deploy|init|local|package|publish|validate)\b'
   if printf '%s' "${LOWER}" | grep -qE "${PKG_MANAGER_DIRECT}"; then
     should_compel=1
     matched_signal="package-manager or IaC direct invocation"
@@ -131,42 +158,28 @@ if (( should_compel == 0 )); then
   fi
 fi
 
-# Fail-loud on uncertainty: design verb + unrecognized capitalized proper-noun
-# that co-occurs with a structural hint (quote, dotted form, package-manager
-# verb, or known tech-suffix like "integration"/"sdk"/"api"/"plugin"/"lib").
-# Plain proper nouns in everyday English ("Monday", "London") must NOT fire.
-# Emit ONE notice — do not block (exit 0 so the agent still proceeds).
+# REMOVED: the RESEARCH_UNCERTAIN notice.
+#
+# It fired when a design verb co-occurred with any capitalized token and a
+# "structural hint" — but the hint list included `api`, `cli`, `plugin`,
+# `module`, `server`, `adapter`, words that appear in most engineering
+# requests, and the token was just the first capitalized word not on a ~40-word
+# stop list. The comment above it promised that plain proper nouns "must NOT
+# fire." Measured, they all did:
+#
+#   "implement the server that Felipe described" → possible library Felipe
+#   "wire up the Bash tool guard in the plugin"  → possible library Bash
+#   "add a CLI flag for verbose output"          → possible library CLI
+#   "build the Monday report generator plugin"   → possible library Monday
+#   "add caching to the API client"              → possible library API
+#
+# Every one of those told the agent to go research a library that does not
+# exist. A notice that is wrong most of the time does not degrade to neutral —
+# it teaches the agent to discount the channel, which costs the accurate
+# compels that share it. The confident signals below (explicit library names,
+# version tokens, package-manager invocations, advisory and deprecation
+# queries) still fire; uncertainty is now silent.
 if (( should_compel == 0 )); then
-  if printf '%s' "${LOWER}" | grep -qE "${ORCH_SIG_DESIGN_VERB}"; then
-    # Only emit when the prompt also carries a structural hint that suggests the
-    # cap token is a tech artifact rather than a common proper noun.
-    # Hints: a quote char, a dotted identifier, a package-manager verb nearby,
-    # or one of the explicit tech-context suffixes in the same sentence.
-    STRUCTURAL_HINT=0
-    printf '%s' "${LOWER}" | grep -qE "['\"]|[a-z][.][a-z]|\b(npm|pnpm|yarn|pip3?|poetry|cargo|gem|brew)\b" \
-      && STRUCTURAL_HINT=1
-    printf '%s' "${LOWER}" | grep -qE "\b(integration|sdk|plugin|lib|framework|module|package|api|client|server|cli|driver|adapter|connector|extension)\b" \
-      && STRUCTURAL_HINT=1
-    if (( STRUCTURAL_HINT == 1 )); then
-      # Exclude common sentence-starters and design verbs themselves.
-      CAP_TOKEN=$(printf '%s' "${PROMPT}" \
-        | grep -oE '\b[A-Z][a-zA-Z0-9]{2,}\b' \
-        | grep -vE "^(I|In|The|This|An?|My|Our|We|It|If|When|For|To|Run|Add|Fix|Set|Get|Use|Build|Make|Let|Do|Can|Is|Are|How|What|Which|From|With|By|New|Old|All|More|Less|Just|Now|No|Yes|Ok|So)$" \
-        | grep -viE "^(Add|Implement|Build|Wire|Wiring|Integrate|Integrating|Migrate|Migrating|Migration|Upgrade|Upgrading|Refactor|Create|Introduce|Replace|Switch)$" \
-        | head -1 || true)
-      if [[ -n "${CAP_TOKEN}" ]]; then
-        # Emit as additionalContext, not stderr: exit-0 stderr from a
-        # UserPromptSubmit hook never reaches the model, so a stderr notice
-        # here would be a silent no-op. CAP_TOKEN is strictly alphanumeric
-        # (grepped as [A-Z][a-zA-Z0-9]{2,}), so it is JSON-safe unescaped.
-        if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
-          printf 'orch-dry-run[research-gate]: would inject RESEARCH_UNCERTAIN notice for %s\n' "${CAP_TOKEN}" >&2
-        else
-          printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"LLM Orchestrator research-gate: RESEARCH_UNCERTAIN — possible library %s with a design verb but no confident signal. If the task depends on that library'"'"'s current API, run /llm-orchestrator:research to verify before planning."}}\n' "${CAP_TOKEN}"
-        fi
-      fi
-    fi
-  fi
   exit 0
 fi
 

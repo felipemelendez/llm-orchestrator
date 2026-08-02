@@ -16,11 +16,11 @@ Subagents:
 
 | `subagent_type`        | Model  | Used by                | Purpose                                                          |
 |------------------------|--------|------------------------|------------------------------------------------------------------|
-| `orch-explorer`        | sonnet | `/llm-orchestrator:plan`, `/llm-orchestrator:debug`      | Read-only codebase search; returns file:line refs                |
+| `orch-explorer`        | opus   | `/llm-orchestrator:onboard`      | Read-only codebase search; returns `Found:` with file:line refs   |
 | `orch-implementer`     | opus   | `/llm-orchestrator:dispatch`            | Executes one task from a plan; returns `Status:` block           |
 | `orch-spec-reviewer`   | opus   | `/llm-orchestrator:review` stage 1      | "Does the diff match the spec/plan?"                             |
 | `orch-code-reviewer`   | opus   | `/llm-orchestrator:review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
-| `orch-debugger`        | opus   | `/llm-orchestrator:debug`               | Root-cause investigation before any edit                         |
+| `orch-debugger`        | opus   | `/llm-orchestrator:debug` (dispatch it when the investigation is read-heavy; the command's default path runs `systematic-debugging` in-context) | Root-cause investigation before any edit; returns `Found:` |
 | `orch-researcher`      | opus   | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
 | `orch-security-reviewer` | opus   | `/llm-orchestrator:review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps) |
 
@@ -40,10 +40,12 @@ for when a workflow is preferred over the inline markdown path.
 
 ## Status enum
 
-Every subagent returns exactly one Status:
+The **implementer** returns exactly one Status block. The read-only agents do not: the explorer and debugger return `Found:`, the three reviewers return `Issues:` + `Verdict:`, and the researcher returns its own four-outcome Status (`VERIFIED` / `COULDN'T_VERIFY` / `CONTRADICTED` / `NOT_APPLICABLE`). Each agent's own file is the contract; this page used to claim all seven returned the enum below, which left a controller waiting on a `Status:` that five of them never emit.
 
-- `DONE` — task complete, verified.
-- `DONE_WITH_CONCERNS` — complete but flagged issues; see `Concerns:` block.
+The implementer's enum:
+
+- `DONE` — task complete, verified. Requires a `Verify:` block with the command and its output; the SubagentStop grader rejects a DONE without one.
+- `DONE_WITH_CONCERNS` — complete but flagged issues; see `Concerns:` block. Also requires `Verify:`.
 - `PARTIAL` — a `Stop if:` condition fired mid-task; see `Progress:` / `Remaining:` blocks. The controller resumes or re-dispatches with the remainder — completed work is never redone.
 - `BLOCKED` — cannot proceed; see `Need:` block.
 - `NEEDS_CONTEXT` — missing info from the controller; see `Ask:` block.

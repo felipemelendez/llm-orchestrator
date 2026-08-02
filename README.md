@@ -41,13 +41,13 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Two-stage code review (+ conditional security pass)** | Spec-compliance reviewer gates a code-quality reviewer, each in a fresh subagent context; diffs touching auth/crypto/payments/secrets get a third, security-focused pass. Critical findings must state a concrete failure scenario or they're downgraded. Runs as one parallel, self-checking workflow script when Claude Code's Workflow tool is present; step-by-step anywhere else | Catches bugs implementers miss in their own diffs, without drowning you in false alarms |
 | **Safe parallel dispatch + speculative merge queue** | Independent tasks fan out to implementers in isolated per-agent worktrees, claimed atomically in an ownership registry; a guard blocks work-destroying git on the shared tree. Merge-back runs a speculative queue (the Zuul / GitHub-merge-queue discipline): all branches batch onto an isolated integration branch, the suite runs once at the combined tip, and the base only ever fast-forwards to a suite-green SHA — red tips bisect out the regressor and land the tested-green prefix | Agents can't clobber each other's work, N branches land for one suite run instead of N, and the base never holds an untested commit |
 | **Autonomous BLOCKED recovery — resume, not redo** | When an agent gets stuck, the controller tries four autonomous fixes before paging you: send the missing context to the SAME agent (a `SendMessage` resume that keeps its partial work and context), run the prerequisite task first, split the work, or retry with a stronger model — only the fifth branch reaches you. A `PARTIAL` status (with `Progress:`/`Remaining:`) means a stop-condition fired: completed work is kept, never redone | Blockers get four chances to resolve themselves before costing you attention, and partial work survives instead of being thrown away |
-| **Evidence-based completion (unfakeable)** | Every "done" claim must include the output of the command that proves it — and a hook stamps every real, *passing* test/lint/build run into a ledger the model never writes (failing runs are ledgered via the failure event but mint no citable stamp), so a cited `[orch-evidence]` stamp is checked against recorded reality: fabricated stamps fail lookup. Verified end-to-end against a live v2.1.220 session | Stops agents from declaring code finished without actually running the tests — including by inventing plausible output |
+| **Evidence-based completion** | Every "done" claim must include the output of the command that proves it — and a hook records every real test/lint/build run into a ledger the model never writes. The Stop gate reads that ledger for the current turn: it asks whether a verify command actually ran green since this turn began, so the model is not in the loop at all — nothing to cite, nothing appended to its tool output, and a stale green from an earlier turn does not count. The ledger also records *why* a run was green, so `exit 0` on a suite that executed zero tests is reported rather than accepted | Stops agents from declaring code finished without actually running the tests — including by inventing plausible output, and including when the tests ran but covered nothing |
 | **Visual brainstorming** | During brainstorming, a local zero-dependency panel server (you open the printed `localhost` URL) renders live HTML mockups; the agent pushes screens and reads your clicks back, iterating before any code is written | Lets you see and react to UI/layout/structure choices instead of parsing them from prose |
 | **One-time onboarding + architecture grounding** | `/llm-orchestrator:onboard` studies the codebase once and records `## Decisions` + `## Conventions` in `./CLAUDE.md` behind a single approval gate; every later spec, implementation, and review silently applies them as constraints, and a diff that breaks a recorded decision is flagged Critical | A new feature can't silently violate an established choice — e.g. adding a network dependency to an offline-first SQLite app |
 | **Context-aware handoff** | On a long task, the agent is nudged once (when context crosses ≈95% of the window) to write a short handoff note; after auto-compaction, a reminder tells the next turn to re-read it, reconcile against the plan, and re-verify | A long run continues cleanly across a compaction instead of drifting on a lossy summary |
 | **CLAUDE.md classification** | `/llm-orchestrator:remember <fact>` appends the fact to your project's CLAUDE.md under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically; `/llm-orchestrator:forget` soft-deletes recoverably | Persistent project memory without organizing it by hand |
 
-The mechanics behind these rows — the protocol grader, toolchain detection, convention detection, the workflow-vs-markdown routing and its `ORCH_WORKFLOWS` override — are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+The mechanics behind these rows — the protocol grader, toolchain detection, convention detection, and the workflow-vs-markdown routing — are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
 
@@ -62,7 +62,7 @@ Claude Code ships first-party versions of several things this kit does. This plu
 | Worktrees | Per-agent isolated worktrees | Atomic ownership registry, green-baseline capture, speculative test-gated merge queue |
 | Memory | CLAUDE.md + auto-memory | Write-side classification (`/llm-orchestrator:remember`) and recoverable `/llm-orchestrator:forget` |
 | Planning | Native plan mode | Durable spec/plan artifacts whose checkboxes survive `/clear` |
-| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Sonnet variant with a `file:line` output contract |
+| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Opus variant with a `file:line` output contract |
 | Fan-out orchestration | `Workflow` tool | The when-to-fan-out policy (`using-workflows`) and ready-made scripts like `workflows/review-diff.js` |
 
 Still exclusively this plugin's ground: the Concise Agent Protocol response shapes, the research gate, TDD and root-cause-first debugging enforcement, and the BLOCKED recovery tree. Full map with the delegation rules: [`docs/anthropic-ecosystem.md`](./docs/anthropic-ecosystem.md).
@@ -79,7 +79,7 @@ Fair question — from the outside they look similar (skills, agents, workflows)
 
 | The failure | What this plugin does about it — mechanically |
 |---|---|
-| Agent claims tests passed without running them | A hook stamps every real test run into a ledger the model never writes; a cited `[orch-evidence]` stamp is validated against it, so invented evidence fails lookup. Verified end-to-end against a live v2.1.220 session |
+| Agent claims tests passed without running them | A hook records every real test run into a ledger the model never writes; the Stop gate reads that ledger for the current turn rather than trusting the reply, so invented evidence has nothing behind it and a stale green does not carry over |
 | Two agents write the same files at once | Atomic per-worktree locks plus a guard that physically blocks work-destroying git commands — for the controller *and* every subagent |
 | Broken parallel work reaches your branch | A speculative merge queue tests the combined result and only ever fast-forwards your branch to a state the suite passed on |
 | Plan built on a hallucinated or outdated API | A pre-spec research gate whose `CONTRADICTED` verdict **halts the workflow** until the plan is revised |
@@ -139,7 +139,7 @@ The gate doesn't replace human review, doesn't verify business logic, and doesn'
 
 ## Meet the team
 
-Seven specialists, each with a single responsibility, a model chosen to match its job, and a fresh context window per dispatch. The controller routes work between them using a `Status:` enum (DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT).
+Seven specialists, each with a single responsibility, a model chosen to match its job, and a fresh context window per dispatch. The controller routes work between them by output shape — the implementer returns a `Status:` enum (DONE / DONE_WITH_CONCERNS / PARTIAL / BLOCKED / NEEDS_CONTEXT), the read-only agents return `Found:` or `Issues:`.
 
 ```
 You
@@ -152,7 +152,7 @@ Controller (the agent you talk to)
  ├─ orch-code-reviewer       → is it idiomatic, safe, minimal?
  ├─ orch-security-reviewer   → injection, auth, secrets, unsafe deps
  ├─ orch-debugger            → root cause
- └─ orch-explorer            → cheap reads (Sonnet)
+ └─ orch-explorer            → read-only sweeps (Opus — a scout's false negative silently narrows every downstream decision)
 ```
 
 | Agent                  | Model  | Job                                                                  |
@@ -161,7 +161,7 @@ Controller (the agent you talk to)
 | `orch-spec-reviewer`   | Opus   | Stage 1 of review: does the diff match the spec?                     |
 | `orch-code-reviewer`   | Opus   | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
 | `orch-debugger`        | Opus   | Root-cause investigator. Diagnoses bugs; does not patch them.        |
-| `orch-explorer`        | Sonnet | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
+| `orch-explorer`        | opus | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
 | `orch-researcher`      | Opus   | Verifies external APIs against current sources before any spec.      |
 | `orch-security-reviewer` | Opus | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
 
@@ -215,7 +215,7 @@ Nine layers, each solving a specific failure mode of single-agent AI tooling on 
 4. **Dispatch routing + collision-proof isolation** — parallel for independent tasks, sequential for dependent. The controller scans plan-task bodies for symbol references to other tasks and downgrades `Independent: yes` to sequential when it spots a real dependency. Parallel *writers* never share a checkout: each runs in its own git worktree, claimed atomically in an ownership registry (`scripts/orch-worktree-materialize.sh`), and a `PreToolUse` guard blocks the working-tree-destroying git commands for the controller and every sub-agent. Read-only agents (review/research/explore) safely share the tree. Merge-back is a speculative queue: one suite run at the combined tip for the green path, bisect-and-eject on red, and the base only ever fast-forwards to a suite-green SHA. See "Safe parallel work" above.
 5. **Autonomous BLOCKED recovery** — when a subagent returns `Status: BLOCKED`, the controller routes through a 5-branch tree (missing context, sibling wait, decomposition, model escalation, or genuinely needs the user). Missing context is a `SendMessage` **resume** of the same agent — its partial work and context survive; only genuine model escalation pays for a cold re-dispatch. `PARTIAL` returns (a fired `Stop if:`) keep completed work and enumerate the remainder. Branches 1–4 happen invisibly; only branch 5 ever reaches you.
 6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Reviewers report everything with a confidence tag; the controller demotes below 0.8 into `Notes:`. Filtering never happens inside the reviewer. In the workflow path, every finding carries a proposed fix, and the skeptic pass **executes** the fix in a scratch copy where the claim is runnable — a finding whose fix changes nothing observable is refuted (the fix-guided filter from arXiv:2603.00539).
-7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output — validated against a hook-written evidence ledger, so fabricated output fails stamp lookup instead of being trusted. A per-turn hook reinforces the rule.
+7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output — checked against a hook-written evidence ledger scoped to the current turn. The model cites nothing; the gate reads the record. A `Verify:` naming a command the harness never ran this turn is caught, as is a run that failed, or one that exited 0 having executed no tests.
 8. **Pre-spec verification — the research gate** — described above. Returns `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`; `CONTRADICTED` halts the workflow until the spec is revised.
 9. **Context-aware handoff** — on a long task the controller's context window fills up, which quietly degrades its work. When usage crosses ~950K tokens (≈95% of a 1M window) the agent is reminded once to write a short handoff note (what's done, what's next, the verify command); after Claude Code auto-compacts the conversation, a reminder tells the next turn to re-read that note, trust the plan file's checkboxes, and re-run the tests before continuing. The plan file remains the durable recovery anchor.
 
@@ -227,9 +227,9 @@ Implementation reference with code links and the layer-stack diagram: [`ARCHITEC
 
 The hooks follow three rules so their behavior is predictable without reading the source:
 
-1. **Defaults warn, never block.** Out of the box, no hook blocks your turn. Hooks inject context, grade output, and warn — including the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the evidence-ledger check. The one output-touching exception is the evidence ledger's stamp line, appended to verify-shaped command output so claims become checkable.
-2. **Enforcement is opt-in, always under an `ORCH_STRICT_*` flag.** A hook only blocks when you ask it to: `ORCH_STRICT_PROTOCOL=1` makes the protocol grader block off-shape replies; `ORCH_STRICT_VERIFY=1` blocks a `Changed:` claim whose cited evidence stamp fails ledger lookup, or that has no `Verify:` line at all (a *stampless* `Verify:` gets a soft note only, never a block — custom verify commands fall outside the stamp regex); `ORCH_STRICT_STATUS=1` blocks malformed or empty subagent returns; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3). Unset, each warns at most. One platform-level exception: the prompt-type SubagentStop termination-contract check is evaluated by the harness itself and blocks with a corrective reason when an implementer terminates without an honest Status block — it cannot read `ORCH_*` env and is active in every profile.
-3. **Information capture is opt-in, always under `ORCH_TELEMETRY`.** Nothing about your session is recorded unless `ORCH_TELEMETRY=1`. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for exactly what is and isn't logged.
+1. **Defaults warn, never block.** Out of the box, no hook blocks your turn. Hooks inject context, grade output, and warn — including the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the evidence-ledger check. **No hook modifies tool output.** The evidence ledger is append-only; the stamp line that used to be injected into Bash stdout is off by default (`ORCH_EVIDENCE_MARKER=1` restores an inert form for cross-agent evidence transport).
+2. **Enforcement is opt-in, always under an `ORCH_STRICT_*` flag.** A hook only blocks when you ask it to: `ORCH_STRICT_PROTOCOL=1` makes the protocol grader block off-shape replies; `ORCH_STRICT_VERIFY=1` blocks a `Changed:` claim in three cases — its `Verify:` names a verify-shaped command the harness has no green record of running this turn, a verify run this turn failed and was never re-run green, or there is no `Verify:` section at all. A `Verify:` naming a command outside the verify-shape regex (a project's own script) is never blocked and never warned: there the gate genuinely knows nothing. A green run that executed zero tests gets a soft note, never a block; `ORCH_STRICT_STATUS=1` blocks malformed or empty subagent returns; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3). Unset, each warns at most. One platform-level exception: the prompt-type SubagentStop termination-contract check is evaluated by the harness itself and blocks with a corrective reason when an implementer terminates without an honest Status block — it cannot read `ORCH_*` env and is active in every profile.
+3. **Local-only state, and one default-on record.** Nothing leaves your machine. Skill telemetry is opt-in (`ORCH_TELEMETRY=1`, off by default). The evidence ledger is **on** under the `standard` profile and writes, per verify-shaped command, its first 160 characters plus exit code, timestamp, and a one-word substance verdict derived from the output — all under `~/.llm-orchestrator/state/`, pruned after 7 days, never transmitted. `ORCH_HOOK_PROFILE=minimal` or `ORCH_DISABLED_HOOKS=orch-evidence-ledger` turns it off. See [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 Two switches cut across all of the above:
 
@@ -247,7 +247,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "All 68 checks passed."
+./tests/smoke.sh                           # → "71 passed, 0 failed."
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

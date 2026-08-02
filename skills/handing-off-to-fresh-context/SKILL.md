@@ -10,7 +10,7 @@ Leave a brief note so a fresh session (or the same session after compaction) can
 ## When to use
 
 - At a clean stopping point — a step finished, tests green, nothing in flight. Best moment.
-- When the handoff-nudge hook tells you to (it fires once when context first crosses ~800K tokens).
+- When the handoff-nudge hook tells you to (it fires once when context first crosses 950K tokens).
 - When the user runs `/llm-orchestrator:handoff`.
 
 ## When NOT to use

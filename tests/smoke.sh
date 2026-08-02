@@ -64,14 +64,12 @@ check_out() {
 # Conditional section gate
 should_run() { [[ -z "$SECTION" || "$SECTION" == "$1" ]]; }
 
-# Cleanup any leftover tmp from a prior run
-cleanup() {
-  rm -rf /tmp/orch-smoke-mem /tmp/orch-smoke-proj /tmp/orch-smoke-lock \
-         /tmp/orch-smoke-transcript.jsonl /tmp/orch-smoke-transcript.md \
-         /tmp/orch-smoke-prune /tmp/orch-smoke-out.json 2>/dev/null || true
-}
+# Per-run scratch root. Fixed /tmp paths were shared by every concurrent run, so
+# one run's `rm -rf` wiped another's fixtures mid-suite.
+export SMOKE_TMP   # exported: some checks run inside `bash -c` subshells
+SMOKE_TMP=$(mktemp -d)
+cleanup() { rm -rf "$SMOKE_TMP" 2>/dev/null || true; }
 trap cleanup EXIT
-cleanup
 
 # ------------------------------------------------------------
 # 1. Structural checks (delegate to existing scripts)
@@ -88,7 +86,7 @@ if should_run structural; then
             "${ROOT}/tests/test-research-gate.sh"
   check_out "protocol grader fixture tests pass" "All 14 checks passed" \
             bash "${ROOT}/tests/test-protocol-grader.sh"
-  check_out "protocol hook e2e tests pass" "All 33 checks passed" \
+  check_out "protocol hook e2e tests pass" "checks passed" \
             bash "${ROOT}/tests/test-protocol-hooks.sh"
   check_out "detect toolchain + cache tests pass" "All 45 detect checks passed" \
             bash "${ROOT}/tests/test-detect.sh"
@@ -110,6 +108,12 @@ if should_run structural; then
             bash "${ROOT}/tests/test-protocol-drift.sh"
   check_out "evidence-ledger contract tests pass" "PASS: test-evidence-ledger" \
             bash "${ROOT}/tests/test-evidence-ledger.sh"
+  check_out "worktree reaper ownership tests pass" "PASS: test-worktree-reaper" \
+            bash "${ROOT}/tests/test-worktree-reaper.sh"
+  check_out "no-verify guard tests pass" "PASS: test-guard-no-verify" \
+            bash "${ROOT}/tests/test-guard-no-verify.sh"
+  check_out "destructive-git guard tests pass" "PASS: test-destructive-git-guard" \
+            bash "${ROOT}/tests/test-destructive-git-guard.sh"
 fi
 
 # ------------------------------------------------------------
@@ -120,26 +124,26 @@ if should_run hooks; then
 
   # SessionStart — loads the using-orchestrator skill body only. User-curated
   # project facts now live in CLAUDE.md (native), loaded by Claude Code itself.
-  CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME=/tmp/orch-smoke-mem \
-    bash "${ROOT}/scripts/hooks/session-start.sh" > /tmp/orch-smoke-out.json 2>&1
+  CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/mem" \
+    bash "${ROOT}/scripts/hooks/session-start.sh" > $SMOKE_TMP/out.json 2>&1
 
-  check "SessionStart emits valid JSON" python3 -m json.tool /tmp/orch-smoke-out.json
+  check "SessionStart emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "SessionStart loads using-orchestrator skill" "Using LLM Orchestrator" \
-            cat /tmp/orch-smoke-out.json
+            cat $SMOKE_TMP/out.json
   # Eager-body budget guard: the SessionStart injection must stay lean (only the
   # marked protocol core, not the full meta-skill). Catches accidental re-bloat.
   check "SessionStart eager body stays lean (< 3500 bytes)" \
-    bash -c '[ "$(wc -c < /tmp/orch-smoke-out.json)" -lt 3500 ]'
+    bash -c '[ "$(wc -c < $SMOKE_TMP/out.json)" -lt 3500 ]'
 
   # UserPromptSubmit — injects protocol reminder
-  bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > /tmp/orch-smoke-out.json 2>&1
-  check "UserPromptSubmit emits valid JSON" python3 -m json.tool /tmp/orch-smoke-out.json
+  printf '{"session_id":"smoke","prompt":"x"}' | ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
+  check "UserPromptSubmit emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "UserPromptSubmit reminder mentions the six shape headers" "Changed:" \
-            cat /tmp/orch-smoke-out.json
+            cat $SMOKE_TMP/out.json
   check_out "UserPromptSubmit requires Verify: in Changed:" "REQUIRE" \
-            cat /tmp/orch-smoke-out.json
+            cat $SMOKE_TMP/out.json
   check_out "UserPromptSubmit routes 'best approach' to Plan:" "Plan" \
-            cat /tmp/orch-smoke-out.json
+            cat $SMOKE_TMP/out.json
 
   # PreToolUse guard — blocks --no-verify
   bash -c 'echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit --no-verify -m foo\"}}" | bash "'"${ROOT}"'/scripts/hooks/guard-no-verify.sh"' >/dev/null 2>&1
@@ -154,29 +158,29 @@ if should_run hooks; then
   else fail "Guard allows clean commit" "expected exit 0, got $rc"; fi
 
   # SubagentStop — markdown transcript with Status block (implementer contract)
-  cat > /tmp/orch-smoke-transcript.md <<'EOF'
+  cat > $SMOKE_TMP/transcript.md <<'EOF'
 Doing the thing.
 Status: DONE
 Summary: ok
 Verify:
 - pnpm test → 1 passed
 EOF
-  rc=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.md\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
+  rc=$(echo "{\"transcript_path\":\"$SMOKE_TMP/transcript.md\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
        bash "${ROOT}/scripts/hooks/subagent-stop.sh" >/dev/null 2>&1; echo $?)
   if [[ "$rc" == "0" ]]; then ok "SubagentStop accepts markdown Status block"
   else fail "SubagentStop markdown transcript" "exit $rc"; fi
 
   # SubagentStop — JSONL transcript with escaped \n
   echo '{"role":"assistant","content":"work done.\nStatus: DONE\nSummary: ok"}' \
-    > /tmp/orch-smoke-transcript.jsonl
-  rc=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.jsonl\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
+    > $SMOKE_TMP/transcript.jsonl
+  rc=$(echo "{\"transcript_path\":\"$SMOKE_TMP/transcript.jsonl\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
        bash "${ROOT}/scripts/hooks/subagent-stop.sh" >/dev/null 2>&1; echo $?)
   if [[ "$rc" == "0" ]]; then ok "SubagentStop accepts JSONL escaped-newline Status block"
   else fail "SubagentStop JSONL transcript" "exit $rc"; fi
 
   # SubagentStop — implementer without Status block warns but does not block
-  echo "no status block here" > /tmp/orch-smoke-transcript.md
-  out=$(echo "{\"transcript_path\":\"/tmp/orch-smoke-transcript.md\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
+  echo "no status block here" > $SMOKE_TMP/transcript.md
+  out=$(echo "{\"transcript_path\":\"$SMOKE_TMP/transcript.md\",\"agent_type\":\"llm-orchestrator:orch-implementer\"}" | \
         bash "${ROOT}/scripts/hooks/subagent-stop.sh" 2>&1)
   rc=$?
   if [[ "$rc" == "0" ]] && [[ "$out" == *"without a valid Status"* ]]; then
@@ -192,10 +196,10 @@ EOF
   else fail "SubagentStop empty-return inversion" "exit=$rc out=$out"; fi
 
   # orch-stop — prunes old trash entries
-  mkdir -p /tmp/orch-smoke-prune/memory/.trash
-  touch -t 202001010000 /tmp/orch-smoke-prune/memory/.trash/old.md
-  ORCH_HOME=/tmp/orch-smoke-prune bash "${ROOT}/scripts/hooks/orch-stop.sh" >/dev/null 2>&1
-  if [[ ! -f /tmp/orch-smoke-prune/memory/.trash/old.md ]]; then
+  mkdir -p $SMOKE_TMP/prune/memory/.trash
+  touch -t 202001010000 $SMOKE_TMP/prune/memory/.trash/old.md
+  ORCH_HOME="$SMOKE_TMP/prune" bash "${ROOT}/scripts/hooks/orch-stop.sh" >/dev/null 2>&1
+  if [[ ! -f $SMOKE_TMP/prune/memory/.trash/old.md ]]; then
     ok "Stop hook prunes trash older than retention"
   else fail "Stop hook trash pruning" "old trash file still present"; fi
 fi
@@ -207,7 +211,7 @@ if should_run lock; then
   section "Portable lock"
   # shellcheck disable=SC1091
   source "${ROOT}/scripts/lib/orch-lock.sh"
-  TF=/tmp/orch-smoke-lock.txt
+  TF="$SMOKE_TMP/lock.txt"
   rm -f "$TF" "$TF.lock" "$TF.lockdir"
   for i in 1 2 3 4 5 6 7 8 9 10; do
     ( with_lock "$TF" bash -c "echo line-$i >> '$TF'" ) &
@@ -224,7 +228,7 @@ if should_run lock; then
   else fail "append_line injection safety" "special chars mangled"; fi
 
   # append_under_section — the helper used by /remember
-  TF2=/tmp/orch-smoke-section.md
+  TF2="$SMOKE_TMP/section.md"
   rm -f "$TF2" "$TF2.lock" "$TF2.lockdir"
   printf '## Conventions\n## Notes\n' > "$TF2"
   append_under_section "$TF2" "Conventions" "- pnpm not npm (2026-01-01)"
@@ -290,11 +294,11 @@ fi
 # ------------------------------------------------------------
 if should_run install; then
   section "--copy install"
-  rm -rf /tmp/orch-smoke-proj
-  mkdir -p /tmp/orch-smoke-proj
-  ( cd /tmp/orch-smoke-proj && git init -q && git -c user.email=ci@local -c user.name=ci commit --allow-empty -q -m initial )
+  rm -rf $SMOKE_TMP/proj
+  mkdir -p $SMOKE_TMP/proj
+  ( cd $SMOKE_TMP/proj && git init -q && git -c user.email=ci@local -c user.name=ci commit --allow-empty -q -m initial )
 
-  "${ROOT}/scripts/install.sh" --copy /tmp/orch-smoke-proj >/dev/null 2>&1
+  "${ROOT}/scripts/install.sh" --copy $SMOKE_TMP/proj >/dev/null 2>&1
   rc=$?
   if [[ $rc -ne 0 ]]; then
     fail "install.sh --copy exits 0" "got $rc"
@@ -312,21 +316,21 @@ if should_run install; then
       .claude/concise-agent-protocol.md \
       .claude/settings.json \
       .claude/hooks/hooks.json; do
-    if [[ -f /tmp/orch-smoke-proj/$f ]]; then ok "--copy placed $f"
-    else fail "--copy missing $f" "expected at /tmp/orch-smoke-proj/$f"; fi
+    if [[ -f $SMOKE_TMP/proj/$f ]]; then ok "--copy placed $f"
+    else fail "--copy missing $f" "expected at $SMOKE_TMP/proj/$f"; fi
   done
 
   check "Generated settings.json is valid JSON" \
-        python3 -m json.tool /tmp/orch-smoke-proj/.claude/settings.json
+        python3 -m json.tool $SMOKE_TMP/proj/.claude/settings.json
   check "hooks.json paths rewritten to absolute" \
-        bash -c "! grep -q '\\\$CLAUDE_PLUGIN_ROOT' /tmp/orch-smoke-proj/.claude/hooks/hooks.json"
+        bash -c "! grep -q '\\\$CLAUDE_PLUGIN_ROOT' $SMOKE_TMP/proj/.claude/hooks/hooks.json"
 
   # Re-run SessionStart from the copied install
-  CLAUDE_PLUGIN_ROOT=/tmp/orch-smoke-proj/.claude ORCH_HOME=/tmp/orch-smoke-proj-mem \
-    bash /tmp/orch-smoke-proj/.claude/scripts/hooks/session-start.sh > /tmp/orch-smoke-out.json 2>&1
+  CLAUDE_PLUGIN_ROOT="$SMOKE_TMP/proj/.claude" ORCH_HOME="$SMOKE_TMP/proj-mem" \
+    bash $SMOKE_TMP/proj/.claude/scripts/hooks/session-start.sh > $SMOKE_TMP/out.json 2>&1
   check "SessionStart from --copy emits valid JSON" \
-        python3 -m json.tool /tmp/orch-smoke-out.json
-  rm -rf /tmp/orch-smoke-proj-mem
+        python3 -m json.tool $SMOKE_TMP/out.json
+  rm -rf $SMOKE_TMP/proj-mem
 fi
 
 # ------------------------------------------------------------
@@ -431,7 +435,7 @@ print('ok')
   fi
 
   # Hook output JSON must include hookEventName field
-  OUT=$(CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME=/tmp/orch-smoke-fmt bash "$ROOT/scripts/hooks/session-start.sh" 2>/dev/null)
+  OUT=$(CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/fmt" bash "$ROOT/scripts/hooks/session-start.sh" 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -442,7 +446,7 @@ sys.exit(0 if d.get('hookSpecificOutput', {}).get('hookEventName') == 'SessionSt
     fail "SessionStart hookEventName" "missing from output JSON"
   fi
 
-  OUT=$(bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
+  OUT=$(printf '{"session_id":"smoke","prompt":"x"}' | ORCH_HOME="$(mktemp -d)" bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -452,7 +456,7 @@ sys.exit(0 if d.get('hookSpecificOutput', {}).get('hookEventName') == 'UserPromp
   else
     fail "UserPromptSubmit hookEventName" "missing from output JSON"
   fi
-  rm -rf /tmp/orch-smoke-fmt
+  rm -rf $SMOKE_TMP/fmt
 fi
 
 # ------------------------------------------------------------

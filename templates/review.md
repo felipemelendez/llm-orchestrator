@@ -40,5 +40,5 @@ Verdict:
 
 ## Combined verdict
 
-- Ready to merge: yes | no | with-fixes
+- Ready: yes | no | with-fixes
 - Next: <one-line>

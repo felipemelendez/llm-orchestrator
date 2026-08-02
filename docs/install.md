@@ -133,6 +133,40 @@ Disable individual hooks without changing profile:
 export ORCH_DISABLED_HOOKS=orch-guard
 ```
 
+
+### Re-running the suite at Stop (stronger, and opt-in)
+
+The evidence ledger reads a *record* of what ran. Claude Code also supports
+`type: "agent"` hooks, which spawn a subagent with the full toolkit and up to 50
+tool-use turns — an agent hook on `Stop` can run the suite itself. Re-executing
+beats reading a record on the one axis that matters: the agent cannot forge a
+run that happens after it stops.
+
+It is not shipped on by default because it costs a subagent on every turn, and
+for most work the ledger's turn-window check is enough. Add it when the repo
+warrants the spend:
+
+```jsonc
+// .claude/settings.json
+{
+  "hooks": {
+    "Stop": [
+      { "hooks": [
+        { "type": "agent",
+          "prompt": "The assistant has finished a turn. If its final message contains a 'Changed:' block, run this project's test suite and report whether it passes. Return {\"ok\": true} if it passes or if there was no Changed: block. Return {\"ok\": false, \"reason\": \"...\"} with the failing output if it does not.",
+          "timeout": 300 }
+      ] }
+    ]
+  }
+}
+```
+
+Note the difference from the `type: "prompt"` hook this plugin already ships on
+`SubagentStop`: a prompt hook is a single cheap-model call with no tools. It can
+judge whether a `Verify:` block contains pasted output or an assertion — which is
+exactly what it is used for here — but it cannot execute anything. Only an agent
+hook can.
+
 Other knobs:
 
 ```
@@ -141,7 +175,8 @@ export ORCH_SESSION_MAX_CHARS=12000     # cap injected context at SessionStart (
 export ORCH_STRICT_RESEARCH=1           # escalate researcher fidelity warnings to blocks (exit 2)
 export ORCH_STRICT_STATUS=1             # block subagent stop on malformed Status block (exit 2)
 export ORCH_STRICT_PROTOCOL=1           # block controller Stop on malformed reply shape (exit 2)
-export ORCH_STRICT_VERIFY=1             # block a Changed: claim whose evidence stamp fails ledger lookup (exit 2)
+export ORCH_STRICT_VERIFY=1             # block a Changed: whose Verify: has no green ledger record this turn (exit 2)
+export ORCH_EVIDENCE_MARKER=1           # append an inert [orch-evidence ...] line to verify output (off by default)
 export ORCH_STRICT_RETRY=1              # block at the retry-storm threshold instead of warning
 export ORCH_RETRY_CAP=0                 # disable the retry-storm breaker (default on, warn-only)
 export ORCH_ALLOW_NO_VERIFY=1           # let `--no-verify` flags through

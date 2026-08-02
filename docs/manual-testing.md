@@ -286,7 +286,7 @@ Run `/llm-orchestrator:plan`. **Pass:**
 - Plan file's `- [ ]` heading-level checkboxes ticked
 
 **Pass criteria:**
-- Subagents return `Status:` blocks with one of DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT
+- The implementer returns a `Status:` block with one of DONE / DONE_WITH_CONCERNS / PARTIAL / BLOCKED / NEEDS_CONTEXT (DONE and DONE_WITH_CONCERNS also require `Verify:`). The read-only agents return `Found:` or `Issues:` instead.
 - The orchestrator routes correctly (re-dispatches on with-fixes, ticks the box on DONE)
 - The agent doesn't ask the user "ready to proceed?" between tasks — continuous execution
 

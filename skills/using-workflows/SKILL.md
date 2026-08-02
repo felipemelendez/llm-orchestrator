@@ -51,10 +51,14 @@ There is no deterministic shell signal for whether the Workflow tool is present 
 made by the model at read time), so do not write a shell capability probe — it would assert a
 capability it cannot verify. Instead:
 
-1. If the `Workflow` tool is available (and the user has not set `ORCH_WORKFLOWS=0`), run the
-   preferred workflow path.
-2. If the tool is absent, errors, or the user set `ORCH_WORKFLOWS=0`, run the canonical markdown
-   path for that skill. Set `ORCH_WORKFLOWS=1` to force-prefer where a skill leaves it optional.
+1. If the `Workflow` tool is available, run the preferred workflow path.
+2. If the tool is absent or errors, run the canonical markdown path for that skill.
+
+There is no `ORCH_WORKFLOWS` switch. This section used to document `=0` / `=1`
+overrides; no code anywhere reads that variable, and it is absent from
+`templates/settings.json`, which declares the ORCH knobs that are real. A
+documented toggle that does nothing is worse than none — it gets set, and then
+trusted.
 
 The two paths are **not** claimed equivalent: the workflow path adds structured findings and an
 adversarial verify pass the prose path does not reproduce step-for-step. The markdown path is the

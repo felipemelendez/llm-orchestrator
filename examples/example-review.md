@@ -38,5 +38,5 @@ Verdict:
 
 ## Combined verdict
 
-- Ready to merge: with-fixes
+- Ready: with-fixes
 - Next: address Important in src/middleware/rate-limit.ts:20, then /llm-orchestrator:verify and /llm-orchestrator:finish.

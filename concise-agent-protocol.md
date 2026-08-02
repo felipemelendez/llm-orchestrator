@@ -65,7 +65,7 @@ Issues:
 - Minor: <file:line — ...>
 
 Verdict:
-- Ready to merge: yes | no | with-fixes
+- Ready: yes | no | with-fixes
 - One-line reason
 ```
 
@@ -91,6 +91,9 @@ Status: DONE | DONE_WITH_CONCERNS | PARTIAL | BLOCKED | NEEDS_CONTEXT
 
 Summary:
 - <one-line outcome>
+
+Verify: (required for DONE and DONE_WITH_CONCERNS)
+- <the command you ran, and the output it printed>
 
 Concerns: (only if DONE_WITH_CONCERNS)
 - ...
@@ -156,10 +159,11 @@ The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's la
 
 The `UserPromptSubmit` hook injects the text between the markers below on every turn. Edit it HERE — the hook extracts this block at runtime and only falls back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
 
+**Keep it short, and keep it non-redundant with SessionStart.** This text is paid for on every single turn. The `using-orchestrator` eager block already teaches the six shapes and the trigger list at session start; repeating them here bought nothing and taught the agent that this corpus repeats itself, which is what trains skimming. What belongs here is the part an agent cannot get anywhere else at the moment it needs it: the **precedence** that resolves two skills firing at once. Previously the agent was reminded of the ambiguity on 100% of turns and of its resolution on 0%.
+
 <!-- orch-turn-reminder-start -->
 LLM Orchestrator — every turn:
-- Invoke the matching skill first: bug/investigate → systematic-debugging; build/design → brainstorming; library+version → research-classifier; approved spec → writing-plans; diff ready → requesting-code-review; claiming done/fixed/passing → verification-before-completion; remember/forget → managing-memory. Read-heavy sweeps → dispatch the explorer subagent.
-- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:".
-- "Changed:" blocks REQUIRE a "Verify:" line (real command + its output). "Where is / what files / find X" → "Found:". "Best approach / how should we" → "Plan:" with "Risks:".
-- Cite file:line. No preamble, no trailing summary; lead with the answer in one plain sentence.
+- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
+- When two skills both match, run them in this order: process (brainstorming, systematic-debugging, research-classifier) → implementation (test-driven-development, writing-plans, dispatching-*) → verification (requesting-code-review, verification-before-completion, finishing-a-branch).
+- Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.
 <!-- orch-turn-reminder-end -->

@@ -29,9 +29,26 @@ MAINDIR="$TMP/main"; mkdir -p "$MAINDIR"
 WT="$TMP/wt"
 
 # rc of the guard for a command string, run from the MAIN checkout (RELAX off).
-rc_for()    { printf '{"tool_input":{"command":"%s"}}' "$1" | ( cd "$MAINDIR" && bash "$GUARD" ) >/dev/null 2>&1; echo $?; }
+# The payload is built with a real JSON encoder: hand-interpolating a command
+# that contains quotes produced INVALID JSON, which the guard correctly treats
+# as undecodable and falls back to a raw scan — so quote-related cases were
+# testing the fallback, not the rule. Written to a file rather than piped, so
+# `pipefail` cannot turn a hook's early exit (SIGPIPE on the writer) into a
+# fake non-zero result.
+_PAYLOAD="$(mktemp)"
+trap 'rm -f "$_PAYLOAD"' EXIT
+_mkpayload() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "
+import json, sys
+print(json.dumps({'tool_name':'Bash','tool_input':{'command':sys.argv[1]}}))" "$1" > "$_PAYLOAD"
+  else
+    printf '{"tool_input":{"command":"%s"}}' "$1" > "$_PAYLOAD"
+  fi
+}
+rc_for()    { _mkpayload "$1"; ( cd "$MAINDIR" && bash "$GUARD" < "$_PAYLOAD" ) >/dev/null 2>&1; echo $?; }
 # ...and run from inside one of our marked worktrees (RELAX eligible).
-rc_for_wt() { printf '{"tool_input":{"command":"%s"}}' "$1" | ( cd "$WT" && bash "$GUARD" ) >/dev/null 2>&1; echo $?; }
+rc_for_wt() { _mkpayload "$1"; ( cd "$WT" && bash "$GUARD" < "$_PAYLOAD" ) >/dev/null 2>&1; echo $?; }
 
 blocks()    { local cmd="$1"; [[ "$(rc_for "$cmd")" == "2" ]] && ok "BLOCK: $cmd" || fail "BLOCK: $cmd" "expected exit 2"; }
 allows()    { local cmd="$1"; [[ "$(rc_for "$cmd")" == "0" ]] && ok "ALLOW: $cmd" || fail "ALLOW: $cmd" "expected exit 0"; }
@@ -157,6 +174,75 @@ touch "$WT/.orch-worktree"
 # the main checkout still blocks the same worktree-local commands
 blocks "git stash"
 blocks "git reset --hard"
+
+printf '\n%s== REGRESSION: the creation exception is per-segment, not per-payload ==%s\n' "$DIM" "$RESET"
+# The `checkout -b` / `switch -c` exception describes ONE invocation. Tested
+# against the whole compound command, any co-occurring `-b` disarmed the rule
+# and a real branch switch — which overwrites every differing tracked file —
+# was allowed through.
+blocks 'git checkout -b tmp && git checkout main'
+blocks 'git switch -c tmp; git switch main'
+blocks "echo 'git checkout -b x' ; git checkout main"
+allows 'git checkout -b feature/x'
+allows 'git switch -c feature/y'
+
+printf '\n%s== REGRESSION: quoted patterns are arguments, not invocations ==%s\n' "$DIM" "$RESET"
+# Scanning the raw payload blocked read-only searches for the guard's own
+# patterns — the most likely benign hit there is. A shell re-entry point
+# (bash -c, $(), backticks) turns quoted text back into code, so those still block.
+allows 'grep -rn "git reset --hard" scripts/'
+allows "git log --grep='git reset --hard'"
+allows 'rg "git clean -fd" docs/'
+blocks 'bash -c "git reset --hard"'
+blocks 'sh -c "git clean -fd"'
+blocks 'eval "git reset --hard"'
+
+printf '\n%s== REGRESSION: a model-written description never blocks a clean command ==%s\n' "$DIM" "$RESET"
+DESC_RC=$(python3 -c "
+import json
+print(json.dumps({'tool_name':'Bash','tool_input':{
+  'command':'git commit -m fix',
+  'description':'commit the fix without git reset --hard'}}))" \
+  | bash "$GUARD" >/dev/null 2>&1; echo $?)
+[[ "$DESC_RC" == "0" ]] && ok "pattern only in the description → allowed" || fail "description-only block" "expected 0, got $DESC_RC"
+
+printf '\n%s== REGRESSION: git re-entering itself ==%s\n' "$DIM" "$RESET"
+# `git -c alias.X=<body> X` defines an alias inline and runs it; a body starting
+# with `!` is arbitrary shell. Measured: one such command destroyed a repository
+# while scanning as `git -c __ORCH_ARG__ pwn` — the guard's own -c stripper
+# deleted the payload before any rule saw it. These rules read the RAW command,
+# because a rule about text that quoting hides has to read the text.
+blocks "git -c alias.zz=reset zz --hard"
+blocks "git -c alias.zz='reset --hard' zz"
+blocks "git -c alias.pwn='!rm -rf .git' pwn"
+blocks "git -c alias.bd='branch -D' bd other"
+blocks "git submodule foreach 'touch /tmp/x'"
+blocks "git bisect run ./script.sh"
+blocks "git rebase --exec 'touch /tmp/x' main"
+blocks "git difftool -y --extcmd='touch /tmp/x' HEAD -- f"
+blocks "git filter-branch --tree-filter 'touch /tmp/x' HEAD"
+# Plumbing equivalents of a hard reset, previously covered by no rule at all.
+blocks "git read-tree --reset -u HEAD"
+blocks "git checkout-index -f -a"
+
+printf '\n%s== REGRESSION: brace expansion is real word-splitting ==%s\n' "$DIM" "$RESET"
+# `{a,b}` is one opaque token to shlex and two words to bash.
+blocks "git {reset,--hard}"
+blocks "git {clean,-fdx}"
+blocks "git {checkout,-f,other}"
+blocks "git {branch,-D,other}"
+blocks "git {restore,.}"
+blocks "rm {-rf,.git}"
+
+printf '\n%s== REGRESSION: a newline separates commands ==%s\n' "$DIM" "$RESET"
+# shlex treats a newline as ordinary whitespace, so two commands collapsed into
+# one segment and the `checkout -b` creation exemption from the first covered
+# the real branch switch in the second — the hole the per-segment fix closed for
+# `&&` and `;`, reopened for the way a model most naturally writes two commands.
+blocks "$(printf 'git checkout -b tmp\ngit checkout main')"
+blocks "$(printf 'git switch -c tmp\ngit switch main')"
+blocks "$(printf 'git checkout -b a\ngit checkout -b b\ngit checkout main')"
+allows "$(printf 'cd sub\nnpm test')"
 
 printf '\n%s== ORCH_ALLOW_DESTRUCTIVE_GIT=1 overrides (lets it through) ==%s\n' "$DIM" "$RESET"
 OVR=$(printf '{"tool_input":{"command":"git reset --hard"}}' | ORCH_ALLOW_DESTRUCTIVE_GIT=1 bash "$GUARD" >/dev/null 2>&1; echo $?)

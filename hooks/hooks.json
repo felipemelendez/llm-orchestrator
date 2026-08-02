@@ -48,6 +48,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-config-protection.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -114,7 +124,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "You are validating an implementer subagent's final message — the last_assistant_message field of this hook input: $ARGUMENTS. The implementer's termination contract: its final message must contain a line-leading 'Status:' block, one of DONE or DONE_WITH_CONCERNS (with a Verify: line quoting a command it actually ran and that command's output), PARTIAL (with Progress: and Remaining: lines), BLOCKED (with a Need: line), or NEEDS_CONTEXT (with an Ask: line). Return {\"ok\": true} when the contract is met. Return {\"ok\": false, \"reason\": \"...\"} ONLY when the message shows premature or unaware termination: it trails off mid-work with no Status block, or it claims DONE while its Verify: is missing, empty, or an assertion like 'should pass' instead of pasted command output. The reason must instruct the agent to either finish and verify, or return an honest PARTIAL (Progress:/Remaining:) or BLOCKED (Need:) block — never to fabricate success. When in doubt, return {\"ok\": true}.",
+            "prompt": "You are validating an implementer subagent's final message — the last_assistant_message field of this hook input: $ARGUMENTS. Structure has ALREADY been checked deterministically by subagent-stop.sh: the presence of a line-leading Status: block, a valid enum, and a non-empty Verify: section on DONE/DONE_WITH_CONCERNS are all verified for free before you run. Do not re-check any of that. You are here for the one thing a grep cannot judge: whether a Verify: section that EXISTS actually contains pasted command output, rather than an assertion standing in for it — 'should pass', 'tests look fine', 'this will work', a described command with no result, or output that plainly does not correspond to the command named. Return {\"ok\": true} when the Verify: content is real evidence. Return {\"ok\": false, \"reason\": \"...\"} only for a DONE or DONE_WITH_CONCERNS whose Verify: is assertion rather than evidence. The reason must instruct the agent to run the command and paste its output, or to return an honest PARTIAL (Progress:/Remaining:) or BLOCKED (Need:) block — never to fabricate success. When in doubt, return {\"ok\": true}.",
             "timeout": 30
           }
         ]

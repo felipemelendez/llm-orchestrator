@@ -19,9 +19,20 @@ Steps:
 3. Use `TaskCreate` (native Claude Code task tool) to create one task per resolved plan task, in plan order. This is your state board for the rest of the run.
 
 4. Decide routing per task by reading its `Independent:` line:
-   - All selected tasks `Independent: yes` and no shared files → invoke `dispatching-parallel-agents` (one batch, no per-task review).
+   - All selected tasks `Independent: yes` and no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 7 does per-task review for high-risk surface and a combined-diff review otherwise).
    - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with per-task two-stage review).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
+
+   Before any parallel batch, satisfy that skill's hard precondition: **no two
+   agents ever write the same working tree at the same time.** Run
+   `scripts/orch-worktree-materialize.sh` first and give each agent its own
+   worktree. "Never dispatch two implementers against the same file" is weaker
+   than this and does not substitute for it — two agents in one checkout race on
+   every file, not just the ones they both edit.
+
+   For a multi-tier plan, drive it through `executing-plans` rather than calling
+   the dispatch skills directly: it owns the post-group assertions and the
+   tier-boundary handoff that routing straight to a dispatch skill skips.
 
 5. Follow the invoked skill exactly. After each task completes, mark its task `completed` via `TaskUpdate` and tick the plan checkbox in the plan file.
 

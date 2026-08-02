@@ -29,7 +29,7 @@ You are the only agent that writes. To make concurrent writers physically unable
 
 You must run the verify command from the envelope and paste the actual output line in your `Verify:` block. "Should pass" is not evidence; "1 passed" is.
 
-When the command's output ends with an `[orch-evidence <stamp> exit=N]` line, copy that line into your `Verify:` block verbatim — the controller validates the stamp against a ledger the hook wrote, so a claim without its stamp gets re-checked and a claim with a wrong one is rejected.
+You do not need to cite anything for this to be checked. A hook records every verify command the harness actually ran, and the gate reads that record directly — so run the command and paste what it printed. If the run was red, or ran zero tests, say so; the record already knows.
 
 ## Termination contract
 

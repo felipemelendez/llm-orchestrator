@@ -29,8 +29,12 @@ When dispatching a writing subagent through a harness that offers per-agent work
    If they differ, you're already in a worktree.
 
 2. **Pick the directory.** Priority:
-   - `.worktrees/<slug>` (project-local; preferred)
-   - `~/.llm-orchestrator/worktrees/<project>/<slug>` (fallback)
+   - `.worktrees/<slug>` — project-local, and the only path the tooling creates.
+     `scripts/orch-worktree-materialize.sh` hardcodes `${PWD}/.worktrees/`; a
+     `~/.llm-orchestrator/worktrees/...` fallback was documented here but never
+     implemented, and the reaper only looks under `.worktrees/`. If the
+     project-local path is unusable, stop and say so rather than inventing a
+     location nothing else knows about.
 
 3. **Add the worktree — on a unique path and a unique branch.** Never point two writers at the same directory or the same branch.
    ```
@@ -55,9 +59,22 @@ When dispatching a writing subagent through a harness that offers per-agent work
 
 7. **Run baseline tests and record.** Capture the green state before any edits and persist it so the regression guard can compare later.
    ```
-   orch_regression_baseline <worktree-dir>
+   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+   L=$(orch_lib orch-regression.sh) && . "$L" && orch_regression_baseline <worktree-dir>
    ```
    This detects the test command, runs it, and writes `~/.llm-orchestrator/toolchain/<hash>/baseline.md`. If the suite is not green at this point, stop — do not proceed with edits until the baseline is clean.
+
+## A submodule is not a worktree
+
+`GIT_DIR != GIT_COMMON_DIR` is true inside a git submodule as well as inside a
+linked worktree, so that comparison alone misidentifies one as the other. Check
+before acting:
+
+```bash
+git rev-parse --show-superproject-working-tree   # non-empty ⇒ you are in a submodule
+```
+
+Inside a submodule, worktree creation and cleanup are the wrong operations.
 
 ## Cleanup
 

@@ -18,11 +18,41 @@ if [[ "${PROFILE}" == "minimal" ]]; then
   exit 0
 fi
 
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+
+# --- turn boundary --------------------------------------------------------
+# Record when this user turn began. The Stop-hook verify gate asks the evidence
+# ledger "did a verify command run green since this epoch?" — which is how a
+# completion claim gets checked without the model citing anything, and what
+# stops a stale green from an earlier turn counting as evidence for this one.
+# Best-effort: absence just means the gate treats the window as unknown (soft).
+#
+# Guarded on a non-tty stdin. This hook did not read stdin at all before; under
+# the harness it is always piped, but a bare `bash user-prompt-submit.sh` in a
+# terminal (or a test that forgets to redirect) would block in `cat` forever.
+# A hook that can hang is worse than one that learns less.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
+if [[ -n "${INPUT}" && "${ORCH_HOOK_DRY_RUN:-0}" != "1" ]]; then
+  _SID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
+  if [[ -n "${_SID}" ]]; then
+    _EV_LIB="${HOOK_DIR}/../lib/orch-evidence.sh"
+    _PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
+    # shellcheck source=scripts/lib/orch-project.sh
+    [[ -f "${_PROJ_LIB}" ]] && source "${_PROJ_LIB}"
+    # shellcheck source=scripts/lib/orch-evidence.sh
+    if [[ -f "${_EV_LIB}" ]]; then
+      source "${_EV_LIB}"
+      _TS=$(orch_turn_start_path "${_SID}")
+      mkdir -p "$(dirname "${_TS}")" 2>/dev/null && date +%s > "${_TS}" 2>/dev/null
+    fi
+  fi
+fi
+
 # The reminder's single source is concise-agent-protocol.md — the marked
 # "Per-turn reminder" block. Extract it at runtime; the embedded copy below is
 # ONLY the fallback for a broken install (canonical file unreadable), and
 # tests/test-protocol-drift.sh fails if the two ever diverge.
-HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 CANON="${HOOK_DIR}/../../concise-agent-protocol.md"
 REMINDER=""
 if [[ -f "${CANON}" ]]; then
@@ -30,10 +60,9 @@ if [[ -f "${CANON}" ]]; then
 fi
 if [[ -z "${REMINDER}" ]]; then
   REMINDER='LLM Orchestrator — every turn:
-- Invoke the matching skill first: bug/investigate → systematic-debugging; build/design → brainstorming; library+version → research-classifier; approved spec → writing-plans; diff ready → requesting-code-review; claiming done/fixed/passing → verification-before-completion; remember/forget → managing-memory. Read-heavy sweeps → dispatch the explorer subagent.
-- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:".
-- "Changed:" blocks REQUIRE a "Verify:" line (real command + its output). "Where is / what files / find X" → "Found:". "Best approach / how should we" → "Plan:" with "Risks:".
-- Cite file:line. No preamble, no trailing summary; lead with the answer in one plain sentence.'
+- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
+- When two skills both match, run them in this order: process (brainstorming, systematic-debugging, research-classifier) → implementation (test-driven-development, writing-plans, dispatching-*) → verification (requesting-code-review, verification-before-completion, finishing-a-branch).
+- Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.'
 fi
 
 # Native shell JSON escape — no python3 dependency.

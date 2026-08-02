@@ -79,14 +79,20 @@ printf '%s' "$OUT" | grep -qE '^Re-run:.*[[:space:]]d([[:space:]]|$)' && ok "Re-
 
 printf '\n%s== unconditional test failure → environmental fallback to serial ==%s\n' "$DIM" "$RESET"
 # --test false is red even at the base state inside the integration worktree,
-# so the speculative engine must NOT blame a branch: it falls back to serial,
-# whose contract (failing merge stays on base, never auto-reset) applies.
+# so the speculative engine must NOT blame a branch: it falls back to serial.
+# Serial stages the merge with --no-commit and runs the suite against it, so a
+# red suite discards the merge and the base is byte-identical to where it began.
+# This case previously asserted the opposite — that the failing merge STAYS on
+# the base — which is how a red commit reached the default branch while the
+# engine's own docs promised the base only ever moves to a green SHA.
 mat e; mk e fe.txt eee
 OUT="$(bash "$INTEG" --test false "$SID" e 2>&1)"; rc=$?
 [[ $rc -ne 0 ]] && ok "test failure → non-zero" || fail "testfail exit"
 printf '%s' "$OUT" | grep -q 'TEST_FAILED' && ok "report flags TEST_FAILED" || fail "TEST_FAILED flag" "out=$OUT"
 printf '%s' "$OUT" | grep -q 'Falling back to --serial' && ok "base-state red → declared environmental, serial fallback" || fail "env fallback declared" "out=$OUT"
-[[ -f fe.txt ]] && ok "serial contract: merge commit stays on base (no auto reset --hard)" || fail "merge was undone"
+[[ -f fe.txt ]] && fail "red merge landed on base" "fe.txt present — the failing merge was committed" \
+  || ok "serial contract: a red suite discards the merge; the base is unchanged"
+printf '%s' "$OUT" | grep -q 'the base is unchanged at' && ok "the report says the base is unchanged" || fail "unchanged-base wording" "out=$OUT"
 
 printf '\n%s== speculative green path: N branches, ONE suite run ==%s\n' "$DIM" "$RESET"
 CNT="${TMP}/cnt-green"; : > "$CNT"
@@ -131,11 +137,12 @@ OUT="$(bash "$INTEG" --allow-no-tests "$SID" g 2>&1)"; rc=$?
 printf '%s' "$OUT" | grep -q 'UNVERIFIED' && ok "report warns UNVERIFIED" || fail "UNVERIFIED warn" "out=$OUT"
 [[ -f fg.txt ]] && ok "--allow-no-tests: change actually landed on base" || fail "allow-no-tests change missing"
 
-printf '\n%s== white-box: on_signal reports a committed-but-untested merge correctly ==%s\n' "$DIM" "$RESET"
-# Source the engine (BASH_SOURCE guard skips main), simulate the window where a
-# signal arrives after a merge committed but before its test finished: PRE is the
-# pre-merge HEAD, a new commit exists (HEAD moved), no MERGE_HEAD. on_signal must
-# report 'untested commit', NOT 'base clean'. Deterministic (no timing).
+printf '\n%s== white-box: on_signal after an interrupted slug ==%s\n' "$DIM" "$RESET"
+# The committed-but-untested window no longer exists: the merge is staged with
+# --no-commit and only committed once its suite passes, so an interrupt during
+# the test finds a MERGE_HEAD and aborts it. What remains reachable is an
+# interrupt after a slug's merge has legitimately landed green — HEAD past PRE,
+# no MERGE_HEAD — which must report the moved base rather than 'base clean'.
 WB="$(cd "${REPO}" && SCRIPT="${INTEG}" bash -c '
   . "${SCRIPT}"
   CUR_SLUG=xx; CUR_IDX=0; RAW=(xx)
@@ -143,7 +150,7 @@ WB="$(cd "${REPO}" && SCRIPT="${INTEG}" bash -c '
   git commit --allow-empty -qm "simulated committed merge"   # HEAD moves past PRE, no MERGE_HEAD
   on_signal
 ')"
-printf '%s' "$WB" | grep -q 'untested commit' && ok "on_signal flags an untested committed merge (not 'base clean')" || fail "signal untested-commit" "got: ${WB}"
+printf '%s' "$WB" | grep -q 'base moved to' && ok "on_signal reports the moved base (not 'base clean')" || fail "signal moved-base" "got: ${WB}"
 git reset -q --hard HEAD~1 2>/dev/null || true   # undo the simulated commit (test scaffolding only)
 
 printf '\n%s== --no-remove keeps the worktree ==%s\n' "$DIM" "$RESET"

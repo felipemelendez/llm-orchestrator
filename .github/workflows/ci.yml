@@ -41,3 +41,27 @@ jobs:
 
       - name: Portability tests
         run: bash tests/test-portability.sh
+
+      # Safety-critical guards and the verification path. These run on Linux
+      # here and on macOS locally, which is the point: several defects in this
+      # area were BSD-vs-GNU differences that passed silently on one platform.
+      - name: Destructive-git guard tests
+        run: bash tests/test-destructive-git-guard.sh
+
+      - name: No-verify guard tests
+        run: bash tests/test-guard-no-verify.sh
+
+      - name: Worktree reaper ownership tests
+        run: bash tests/test-worktree-reaper.sh
+
+      - name: Evidence ledger contract tests
+        run: bash tests/test-evidence-ledger.sh
+
+      - name: Verify gate tests
+        run: bash tests/test-verify-gate.sh
+
+      - name: Protocol single-source drift tests
+        run: bash tests/test-protocol-drift.sh
+
+      - name: Worktree integrate tests
+        run: bash tests/test-worktree-integrate.sh

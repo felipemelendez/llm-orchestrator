@@ -1,6 +1,6 @@
 ---
 name: requesting-code-review
-description: You MUST use this when a diff is ready — before merge, before a PR, or before claiming any feature done. Runs the two-stage review plus an optional security pass. Do not use mid-task on incomplete diffs.
+description: Use when a diff is complete and about to be merged, opened as a PR, or called done. Runs the two-stage review plus an optional security pass. Not for mid-task or incomplete diffs.
 ---
 
 # Requesting code review
@@ -31,7 +31,7 @@ order, and the evidence rules below.
 2. Run `workflows/review-diff.js`, passing `args = {specText, planText, conventions, diff,
    security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1 (preserving the
    early-exit below), demotes findings below 0.8 confidence to `Notes:`, and verifies the rest with a bounded
-   skeptic pass. It returns `{confirmed, notes, earlyExit}`.
+   skeptic pass. It returns `{confirmed, notes, earlyExit, stagesRun, incomplete, failedDimensions}`. `incomplete: true` means a reviewer did not return — that is never an approval.
 3. Write the review artifact from that return, using the same report shape as the canonical path.
 
 ### Fallback path (no Workflow tool) — canonical
@@ -97,7 +97,7 @@ Issues:
   - <file:line> — ...
 
 Verdict:
-- Ready to merge: yes | no | with-fixes
+- Ready: yes | no | with-fixes
 - <one-line reason>
 ```
 

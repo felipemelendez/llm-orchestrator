@@ -21,7 +21,7 @@ Steps:
 
 4. Create directories:
    ```bash
-   mkdir -p docs/llm-orchestrator/{specs,plans,reviews}
+   mkdir -p docs/llm-orchestrator/{specs,plans,reviews,research,handoffs}
    ```
 
 5. Ensure `.gitignore` contains (only if not already present):

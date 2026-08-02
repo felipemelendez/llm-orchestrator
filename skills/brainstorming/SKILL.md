@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: You MUST use this before any creative work — building a feature, adding functionality, designing a system, or changing behavior — before any code is written. Do not use for one-line fixes, mechanical chores, or when an approved spec already exists.
+description: Use when starting creative work — a new feature, added functionality, a system design, or a behavior change — before any code is written. Not for one-line fixes, mechanical chores, or when an approved spec already exists.
 ---
 
 # Brainstorming
@@ -15,16 +15,47 @@ Short, structured exploration. No code yet.
 
 Skip this skill for one-line fixes, typos, or mechanical chores.
 
+## Before you spend questions
+
+If the request describes several independent subsystems — "a platform with chat,
+file storage, billing and analytics" — say so immediately. Refining the details
+of something that needs decomposing first wastes the questions and produces a
+spec nobody can execute. Each sub-project gets its own spec, plan and
+implementation cycle.
+
+Cover architecture, components, data flow, error handling and testing. The spec
+format below has no slot for error handling or testing, so those are the two that
+get forgotten and then get built badly — put them in `## Approach` explicitly.
+
+**Cut ruthlessly.** Remove anything from every candidate approach that the goals
+do not require. Over-building is far cheaper to prevent here than to catch in
+review, and the reviewer will reject anything it cannot trace to a Goal.
+
+**Cleanup inside the work is in scope; unrelated refactoring is not.** Where
+existing code you must touch has problems, include the targeted improvement in
+the design — the way a competent engineer improves code they are working in. Say
+so explicitly, because anything not traceable to a Goal reads as scope creep
+downstream.
+
+**The terminal state is `writing-plans`.** When the spec is approved, invoke
+that and nothing else. Do not slide from a design conversation into a UI, MCP,
+or framework skill — those are implementation, and implementation follows a plan.
+
 ## Steps
 
 1. **Read the room.** Glance at the project (`ls`, `README`, `CLAUDE.md`) so questions are specific.
 
 1.5. **Research gate (Trigger A).** If the user's task mentions a library, framework, SDK, security-sensitive domain, or version-shaped token — or the UserPromptSubmit hook signalled this is research-relevant — invoke the `research-classifier` skill against the raw task text BEFORE asking clarifying questions. Two outcomes:
    - `RESEARCH_SKIP` → proceed to step 2 silently.
-   - `RESEARCH_NEEDED` → announce briefly ("Found: research needed (<libraries>). Running pre-spec verification."), dispatch `orch-researcher`, wait for the brief. If outcome is `CONTRADICTED`, surface the contradiction inline and revise the framing before proceeding. If `VERIFIED` or `COULDN'T_VERIFY`, fold the findings into your clarifying questions (e.g., "docs show pattern X is current — do you want that or the older pattern?").
+   - `RESEARCH_NEEDED` → announce briefly ("Found: research needed (<libraries>). Running pre-spec verification."), dispatch `orch-researcher` with the eight-field envelope in `templates/researcher-prompt.md` (it returns `BLOCKED` on a missing field), wait for the brief. If outcome is `CONTRADICTED`, surface the contradiction inline and revise the framing before proceeding. If `VERIFIED` or `COULDN'T_VERIFY`, fold the findings into your clarifying questions (e.g., "docs show pattern X is current — do you want that or the older pattern?").
 
 1.7. **Architecture grounding (surface, don't ask).** Skip for greenfield projects or trivial edits. For existing codebases with a non-trivial change, apply known decisions as spec constraints. No questions, no dispatching — but state which decisions you're honoring so the user can catch a stale one.
-   - Call `orch_arch_cached "$PWD"`; also read the `## Decisions` and `## Conventions` sections of `./CLAUDE.md`. Treat every entry as a constraint the spec must not break.
+   - Load the library, then call it (the function is not in scope until sourced):
+     ```bash
+     orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+     L=$(orch_lib orch-arch.sh) && . "$L" && orch_arch_cached "$PWD"
+     ```
+     Also read the `## Decisions` and `## Conventions` sections of `./CLAUDE.md`. Treat every entry as a constraint the spec must not break.
    - Acknowledge them in ONE line before proposing options, e.g. "Honoring recorded decisions: offline-first via SQLite; data access through the repository layer." This is informational, not a question — if a decision is now wrong, the user can say so.
    - On a cache miss (rc nonzero) with no recorded decisions: apply whatever `## Decisions`/`## Conventions` exist, and at most add one line — "Tip: run `/llm-orchestrator:onboard` once to capture this codebase's architectural decisions." Never a question or interactive prompt.
    - Do not dispatch `orch-explorer`, do not propose `/llm-orchestrator:remember`, do not ask the user anything. Codebase study and decision capture happen once via `/llm-orchestrator:onboard`, not per task.

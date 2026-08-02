@@ -37,7 +37,9 @@ HANDOFF_STATE_DIR="${HOME_DIR}/handoff"
 # and retry-cap fingerprints: session-scoped, prune after 7 days.
 STATE_DIR="${HOME_DIR}/state"
 if [[ -d "${STATE_DIR}" ]]; then
-  find "${STATE_DIR}" \( -name 'evidence.*.tsv' -o -name 'mutex-map.*.tsv' -o -name 'retry-cap*' \) -type f -mtime +7 -delete 2>/dev/null || true
+  # briefs-index accumulates a row per research pass and was pruned by nothing.
+  [[ -d "${HOME_DIR}/research/briefs-index" ]] && find "${HOME_DIR}/research/briefs-index" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
+  find "${STATE_DIR}" \( -name 'evidence.*.tsv' -o -name 'mutex-map.*.tsv' -o -name 'retry-cap*' -o -name 'turn-start.*' \) -type f -mtime +7 -delete 2>/dev/null || true
 fi
 # Research cache uses its own (shorter) retention since docs change faster than sessions.
 # Per-library overrides are honored: a cache file with `cache_ttl_days: <N>` in

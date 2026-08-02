@@ -35,15 +35,31 @@ if [[ ",${DISABLED}," == *",orch-researcher-validator,"* ]] || [[ "${PROFILE}" =
   exit 0
 fi
 
-INPUT=$(cat || true)
+# Guarded on a non-tty stdin: run interactively without a redirect, a bare
+# `cat` blocks forever. A hook that can hang is worse than one that learns less.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
 
-# Filter by subagent_type. Only validate orch-researcher.
-SUBAGENT=$(printf '%s' "${INPUT}" | grep -oE '"subagent_type"[[:space:]]*:[[:space:]]*"[^"]*"' \
+# Filter by agent type. Only validate orch-researcher.
+#
+# The SubagentStop payload field is `agent_type`, not `subagent_type`, and for
+# plugin agents the value is NAMESPACED (`llm-orchestrator:orch-researcher`) —
+# which is why hooks.json matches implementers with `(^|:)orch-implementer$`.
+# This script read `subagent_type` and demanded an exact unnamespaced match, so
+# it never fired once: every check in this file, and its brief-index
+# write-enforcement side effect, was unreachable. `subagent_type` is retained
+# as a fallback only so a differently-shaped payload still resolves.
+SUBAGENT=$(printf '%s' "${INPUT}" | grep -oE '"agent_type"[[:space:]]*:[[:space:]]*"[^"]*"' \
            | sed -E 's/.*"([^"]+)"$/\1/' | head -1)
-
-if [[ "${SUBAGENT}" != "orch-researcher" ]]; then
-  exit 0
+if [[ -z "${SUBAGENT}" ]]; then
+  SUBAGENT=$(printf '%s' "${INPUT}" | grep -oE '"subagent_type"[[:space:]]*:[[:space:]]*"[^"]*"' \
+             | sed -E 's/.*"([^"]+)"$/\1/' | head -1)
 fi
+
+case "${SUBAGENT}" in
+  orch-researcher|*:orch-researcher) : ;;
+  *) exit 0 ;;
+esac
 
 # Locate the transcript file.
 TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' \

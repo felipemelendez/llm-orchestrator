@@ -209,12 +209,53 @@ fi
 out=$(python3 -c "
 import json
 print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
-                  'last_assistant_message': 'Status: DONE\nSummary: done via field'}))" \
+                  'last_assistant_message': 'Status: DONE\nSummary: done via field\nVerify: npm test → 12 passed'}))" \
       | bash "$SUBAGENT" 2>&1); rc=$?
 if [[ $rc -eq 0 && -z "$out" ]]; then
   ok "(j3) valid DONE via last_assistant_message field → silent exit 0"
 else
   fail "(j3) DONE via field" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j3b) DONE is a completion claim, so it carries the verification burden. A
+# DONE with no Verify: used to pass deterministically and had to be caught by an
+# LLM validator on every implementer return; it is now caught here, for free.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
+                  'last_assistant_message': 'Status: DONE\nSummary: done via field'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if printf '%s' "$out" | grep -q 'requires a "Verify:" line'; then
+  ok "(j3b) DONE without Verify: → warned deterministically"
+else
+  fail "(j3b) DONE without Verify" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j3c) A Verify: whose evidence sits on the FOLLOWING line is valid protocol.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
+                  'last_assistant_message': 'Status: DONE\nSummary: ok\nVerify:\n- \`npm test\` → 12 passed'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if [[ $rc -eq 0 && -z "$out" ]]; then
+  ok "(j3c) multi-line Verify: block accepted (content on the next line)"
+else
+  fail "(j3c) multi-line Verify" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
+# (j3d) A bare Verify: with nothing under it is not evidence. Note the section
+# ends at a TOP-LEVEL shape header, not at any sub-label: `Verify:` followed by
+# `Summary: npm test → 40 passed` is evidence, and treating a sub-label as a
+# terminator warned replies that had pasted exactly what was asked for.
+out=$(python3 -c "
+import json
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
+                  'last_assistant_message': 'Status: DONE\nSummary: ok\nVerify:\n\n```\n```'}))" \
+      | bash "$SUBAGENT" 2>&1); rc=$?
+if printf '%s' "$out" | grep -q 'requires a "Verify:" line'; then
+  ok "(j3d) empty Verify: section → still warned"
+else
+  fail "(j3d) empty Verify" "exit=$rc out=$(printf '%s' "$out" | head -1)"
 fi
 
 # (j4) reviewer scoping: Issues: reply is that agent's valid shape; prose is not.
