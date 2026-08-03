@@ -144,6 +144,16 @@ allows "git reset --help"
 allows "git clean --help"
 allows "git checkout -q -b newbranch"
 allows "git switch --create newbranch"
+# ...but --force revokes the creation exemption. Measured against git 2.54:
+# `git checkout -b safe` carried an uncommitted edit over intact, while
+# `git checkout -f -b forced` silently discarded it. Plain creation is safe
+# only because git refuses to clobber; -f removes exactly that protection, so
+# it must not ride along inside the exemption.
+blocks "git checkout -f -b newbranch main"
+blocks "git checkout --force -b newbranch"
+blocks "git switch -f -c newbranch"
+blocks "git switch --force --create newbranch"
+blocks "git switch --discard-changes main"
 allows "git checkout -b feat/x main"
 allows "git branch -d merged-topic"
 allows "git branch --list"

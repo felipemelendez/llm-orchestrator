@@ -316,12 +316,27 @@ def classify_destructive(inv, relax):
         if has_long(flags, "force") or has_short(flags, "f"):
             return "git clean -f — deletes untracked files irrecoverably"
     if sub in ("checkout", "switch"):
-        # Pure branch CREATION is the documented exception. Git itself refuses a
-        # creation or a plain switch that would clobber local changes, so the
-        # data-loss forms are -f/--force and an explicit path discard.
+        # --force REVOKES the creation exemption. Measured against git 2.54:
+        #
+        #   git checkout -b safe        -> "Switched to a new branch"; the
+        #                                  uncommitted edit CARRIED OVER intact
+        #   git checkout -f -b forced   -> "Switched to a new branch"; the
+        #                                  uncommitted edit was GONE
+        #
+        # Plain creation is safe precisely because git refuses (or carries the
+        # work over) rather than clobber; -f is the flag that removes that
+        # protection, so it cannot ride along inside the exemption. Same for
+        # `switch --force`/`-f` and `--discard-changes`.
+        forcing = (has_short(flags, "f") or has_long(flags, "force")
+                   or has_long(flags, "discard-changes"))
+        # Pure branch CREATION is the documented exception.
         creating = (has_short(flags, "b") or has_short(flags, "B")
                     or has_long(flags, "create") or has_long(flags, "force-create")
                     or (sub == "switch" and (has_short(flags, "c") or has_short(flags, "C"))))
+        if forcing:
+            return ("git %s --force — discards uncommitted changes to every "
+                    "differing tracked file, including alongside -b/-c branch "
+                    "creation" % sub)
         if creating:
             return None
         if sub == "checkout" and (inv.pathspec or pos == ["."]):
