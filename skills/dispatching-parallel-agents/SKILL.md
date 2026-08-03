@@ -48,7 +48,7 @@ Every writer envelope MUST declare its mode: a worktree path (worktree mode) or 
    SID="$(bash "$MAT" --sid)"                      # reads the persisted session id
    bash "$MAT" "$SID" <slug1> <slug2> <slug3>
    ```
-   It prints one `<slug>\t<path>\t<branch>` line per worktree. **If it exits non-zero, do NOT dispatch** — it found a conflict (duplicate slug, path/branch exists, slug already claimed) and created nothing. Paste each printed `<path>` into the matching writer envelope as its working directory. Distinctness is now enforced by the engine, not a manual `uniq` — and the implementer still self-defends (atomic `.orch-active` mutex on entry; `BLOCKED` if handed no worktree).
+   It prints one `<slug>\t<path>\t<branch>` line per worktree. **If it exits non-zero, do NOT dispatch** — it found a conflict (duplicate slug, path/branch exists, slug already claimed) and created nothing. Paste each printed `<path>` into the matching writer envelope as its working directory. Distinctness is now enforced by the engine, not a manual `uniq` — and the implementer still self-defends (atomic `.orch-active` mutex on entry; `BLOCKED` if handed neither a worktree nor a shared-checkout declaration).
 3. **`TaskCreate` the set**, mark `in_progress`.
 4. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its worktree path. Each is self-contained.
 5. **Send in parallel**, one message. **Wait for all N returns** before any follow-up.
