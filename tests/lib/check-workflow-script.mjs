@@ -37,7 +37,13 @@ if (!file) {
 
 const src = readFileSync(file, "utf8");
 
-const declMatch = src.match(/export\s+const\s+meta\s*=\s*/);
+// Anchored to the start of a LINE, and `[ \t]` rather than `\s` so the match
+// cannot span a newline (which shifted every reported error line by one).
+// Unanchored, this matched the phrase inside a comment or a string — and this
+// very file, plus the skill that documents the required form to authors,
+// contain it — so the scanner would parse the COMMENT's example object and
+// reject a perfectly valid script with "meta is not a pure literal".
+const declMatch = src.match(/^[ \t]*export[ \t]+const[ \t]+meta[ \t]*=[ \t]*/m);
 if (!declMatch) {
   process.stderr.write("no 'export const meta =' declaration found\n");
   process.exit(1);
@@ -51,23 +57,41 @@ if (src[start] !== "{") {
   process.exit(1);
 }
 
-// Walk to the matching close brace, honouring strings, template literals, and
-// comments so a `}` inside any of them does not end the object early.
-let depth = 0, i = start, end = -1, quote = null, inLine = false, inBlock = false;
+// Walk to the matching close brace, honouring strings, template literals,
+// regex literals, and comments so a `}` inside any of them does not end the
+// object early. Regex state matters: a meta containing `/["']/g` left the
+// walker inside a phantom string and reported "literal is not closed", and
+// `/[}]/` ended the object early. A `/` starts a regex only where a value is
+// expected — after `(,{[:=` or an operator — never after a value.
+let depth = 0, i = start, end = -1, quote = null;
+let inLine = false, inBlock = false, inRegex = false, inClass = false;
+let prevSignificant = "";
 for (; i < src.length; i++) {
   const c = src[i], next = src[i + 1];
   if (inLine) { if (c === "\n") inLine = false; continue; }
   if (inBlock) { if (c === "*" && next === "/") { inBlock = false; i++; } continue; }
+  if (inRegex) {
+    if (c === "\\") { i++; continue; }
+    if (inClass) { if (c === "]") inClass = false; continue; }
+    if (c === "[") { inClass = true; continue; }
+    if (c === "/") { inRegex = false; prevSignificant = "/"; }
+    continue;
+  }
   if (quote) {
     if (c === "\\") { i++; continue; }
-    if (c === quote) quote = null;
+    if (c === quote) { quote = null; prevSignificant = "'"; }
     continue;
   }
   if (c === "/" && next === "/") { inLine = true; i++; continue; }
   if (c === "/" && next === "*") { inBlock = true; i++; continue; }
+  if (c === "/" && "({[,:=|&!?+-*%~^<>".includes(prevSignificant)) {
+    inRegex = true;
+    continue;
+  }
   if (c === '"' || c === "'" || c === "`") { quote = c; continue; }
   if (c === "{") depth++;
   else if (c === "}") { depth--; if (depth === 0) { end = i; break; } }
+  if (!/\s/.test(c)) prevSignificant = c;
 }
 if (end === -1) {
   process.stderr.write("meta object literal is not closed\n");

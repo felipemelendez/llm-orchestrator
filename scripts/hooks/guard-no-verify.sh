@@ -89,6 +89,19 @@ fi
 # Scan the RAW command for the FORM; there is no legitimate agent use for it.
 RAWCMD="${INPUT}"
 declare -f orch_json_field >/dev/null 2>&1 && _RC=$(orch_json_field "${INPUT}" tool_input.command) && [[ -n "${_RC}" ]] && RAWCMD="${_RC}"
+# Runs on the FALLBACK path only, and that is now sound. This rule reads raw
+# text because tokenization replaces an alias body with a placeholder, so it
+# covers a payload the token rules cannot see. It briefly ran unconditionally
+# after review found `FOO=1 bash -c "git -c alias.zz='commit --no-verify' zz"`
+# slipping through — but the ROOT CAUSE was that an env-assignment word
+# consumed the command position, so `bash` was never recognised as an
+# interpreter and the classifier reported a confident allow. With that fixed
+# in both tokenizers the command lands on this path and is blocked here, and
+# a command the classifier DID parse has its alias form caught by the
+# classifier's own `-c alias.` rule. Running it unconditionally instead cost a
+# real false positive: writing a commit message that quotes the alias form was
+# blocked, which is the "punishes looking for the thing it guards against"
+# shape this file exists to avoid.
 if [[ ${CLASSIFIED} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]*alias\.' <<< "${RAWCMD}"; then
   HIT=1
 fi

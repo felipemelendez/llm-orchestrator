@@ -147,6 +147,66 @@ else
 fi
 rm -rf "${T5}.lockdir" "${T5}".lockdir.stale.* 2>/dev/null
 
+printf '\n%s== the timeout is reachable even when a steal can never succeed ==%s\n' "$DIM" "$RESET"
+# The steal branches used to `continue` without advancing `waited` or
+# sleeping, so on any iteration that ATTEMPTED a steal the timeout check was
+# unreachable and nothing slept: a steal that can never succeed spun forever
+# at 100% CPU instead of returning 1. Reproduced with a read-only parent
+# directory, where both mkdir and mv fail with EACCES.
+T6DIR="${TMP}/ro"; mkdir -p "$T6DIR"
+T6="${T6DIR}/t6"; : > "$T6"
+DEADPID2=999999
+while kill -0 "$DEADPID2" 2>/dev/null; do DEADPID2=$((DEADPID2+1)); done
+mkdir "${T6}.lockdir"; printf '%s\n' "$DEADPID2" > "${T6}.lockdir/pid"
+chmod a-w "$T6DIR"
+( run_locked 2 600 "$T6" true >/dev/null 2>&1 ) &
+SPINNER=$!
+SPUN=0
+for _ in $(seq 1 60); do
+  kill -0 "$SPINNER" 2>/dev/null || { SPUN=1; break; }
+  perl -e 'select(undef,undef,undef,0.25)' 2>/dev/null || sleep 1
+done
+if [[ $SPUN -eq 1 ]]; then
+  ok "an impossible steal times out instead of spinning forever"
+else
+  kill -9 "$SPINNER" 2>/dev/null
+  fail "unbounded spin" "with_lock never returned with ORCH_LOCK_TIMEOUT=2 — the timeout is unreachable from the steal branch"
+fi
+wait "$SPINNER" 2>/dev/null || true
+chmod u+w "$T6DIR"; rm -rf "$T6DIR"
+
+printf '\n%s== the TTL branch never robs a LIVE recorded holder ==%s\n' "$DIM" "$RESET"
+# Age alone is not a proof of death. The TTL branch fired whenever the pid
+# branch had not, which includes "pid present and process ALIVE" — measured
+# with a short TTL against a slow holder: two holders inside the lock at once.
+T7="${TMP}/t7"; : > "$T7"
+mkdir "${T7}.lockdir"; printf '%s\n' "$$" > "${T7}.lockdir/pid"   # us — alive
+perl -e 'select(undef,undef,undef,1.2)' 2>/dev/null || sleep 2
+out=$(run_locked 1 1 "$T7" bash -c "echo robbed >> '$T7'" 2>&1); rc=$?
+[[ $rc -ne 0 ]] && ok "a live holder's lock is not stolen on age alone" \
+  || fail "TTL robbed a live holder" "rc=0 — two processes would be inside the lock"
+[[ -s "$T7" ]] && fail "wrote under a live holder's lock" "" || ok "no write happened"
+rm -rf "${T7}.lockdir"
+
+printf '\n%s== release is a no-op once the lock is no longer ours ==%s\n' "$DIM" "$RESET"
+# Release operated on the PATH, so a victim whose lock had been stolen deleted
+# the THIEF'S live lockdir on the way out and a third process walked in
+# (measured: max 2 concurrent holders). Simulated by swapping the pid under a
+# holder while it runs: its release must leave the directory alone.
+T8="${TMP}/t8"; : > "$T8"
+out=$(PATH="$NOFLOCK" ORCH_LOCK_TIMEOUT=5 bash -c '
+  . "$1"
+  with_lock "$2" bash -c "printf 99999\\\n > \"$2.lockdir/pid\""
+' _ "$LIB" "$T8" 2>&1)
+if [[ -d "${T8}.lockdir" ]]; then
+  ok "a holder whose lock was taken does not delete the new owner's lockdir"
+else
+  fail "stolen-lock release cascade" "the victim's release removed a lockdir it no longer owned"
+fi
+printf '%s' "$out" | grep -q 'no longer ours' && ok "the refusal is announced, not silent" \
+  || fail "silent refusal" "out=$(printf '%s' "$out" | head -1)"
+rm -rf "${T8}.lockdir"
+
 TOTAL=$((PASS + FAIL))
 printf '\n'
 if (( FAIL == 0 )); then

@@ -138,6 +138,25 @@ const items = ["a","b"]
 const rs = await parallel(items.map(i => () => agent(`review ${i}`)))
 return { rs }
 '
+# Found by cold review, all fail-safe (they rejected VALID input):
+# the declaration regex was unanchored, so the phrase inside a comment — which
+# this repo's own docs and checker header both contain — made the scanner
+# parse the comment's example object.
+accepts "the phrase appears in a comment above the real meta" '// Every workflow must start with `export const meta = { name, description }`.
+export const meta = { name: "commented", description: "d" }
+return {}
+'
+# No regex-literal state: `/["'"'"']/g` left the walker inside a phantom string
+# and `/[}]/` ended the object early.
+accepts "regex literal containing quote chars in meta" 'export const meta = { name: "rx", description: "d", strip: /["'"'"']/g }
+return {}
+'
+accepts "regex literal containing a brace in meta" 'export const meta = { name: "rx2", description: "d", closer: /[}]/ }
+return {}
+'
+accepts "regex with a counted quantifier in meta" 'export const meta = { name: "rx3", description: "d", two: /^\d{2}$/ }
+return {}
+'
 accepts "leading comments before meta" '// a comment
 // another
 export const meta = { name: "mini", description: "d" }

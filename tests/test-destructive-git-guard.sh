@@ -132,7 +132,36 @@ blocks "git --no-optional-locks checkout main"
 blocks "$(printf 'git reset \\\n--hard HEAD~1')"
 blocks "$(printf 'git \\\n--no-pager \\\ncheckout -f main')"
 
+printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
+# Brace expansion must keep the PREFIX. Blanking the punctuation turned
+# `--{hard,hard}` into ['--','hard','hard'], and a bare `--` is the pathspec
+# separator — so a reset bash runs as `git reset --hard --hard` parsed as a
+# reset with NO flags. Verified: `set -- --{hard,hard}` -> `--hard --hard`.
+blocks 'git reset --{hard,hard}'
+blocks 'git clean --{force,force}'
+blocks 'rm -rf .{git,foo}'
+# An env-assignment word does not consume the command position, so the
+# interpreter behind it must still be seen (classifier -> 3, guard -> raw scan).
+blocks 'FOO=1 bash -c "git reset --hard"'
+blocks 'X=1 sh -c "git clean -fdx"'
+# --force removes git's unmerged-branch protection whatever the verb spelling.
+# Measured on git 2.54: `git branch -d feat` rc=1 (kept); `-d -f` and `-df`
+# rc=0, branch DESTROYED. Requiring exactly -D or --delete+--force missed both.
+blocks 'git branch -d -f feat'
+blocks 'git branch -df feat'
+blocks 'git branch --delete --force feat'
+# Bare repositories are named `<name>.git`. Matching only whole path
+# COMPONENTS fixed a `.github/` false positive and silently stopped covering
+# the bare-repo case, which is the harm the rule names.
+blocks 'rm -rf myrepo.git'
+blocks 'rm -rf /srv/repos/project.git'
+
 printf '\n%s== false positives: a guard that blocks these gets switched off ==%s\n' "$DIM" "$RESET"
+# Neither touches the working tree or the stash ref.
+allows "git stash create"
+allows "git stash store abc1234"
+allows "rm -rf .github"
+allows "rm -rf src/github-client"
 # `--help` touches nothing, and branch CREATION is the documented exception —
 # blocking them while allowing `--h` on a destructive reset is the profile of a
 # guard users disable. Note git resolves `--h` to `--hard`, NOT `--help`

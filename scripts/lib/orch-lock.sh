@@ -74,24 +74,39 @@ with_lock() {
           mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
         fi
       fi
-      continue
     fi
-    lock_age="$( _orch_lock_age_secs "${lockdir}" )"
-    if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )); then
-      _steal="${lockdir}.stale.$$.${RANDOM}"
-      if mv "${lockdir}" "${_steal}" 2>/dev/null; then
-        # Same check, by age: a directory created since our reading is young,
-        # so re-measure the one we actually moved before destroying it.
-        lock_age="$( _orch_lock_age_secs "${_steal}" )"
-        if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )); then
-          rm -rf "${_steal}" 2>/dev/null
-          echo "orch-lock: reclaimed lock on ${target} — ${lock_age}s old (> ${stale_secs}s TTL)" >&2
-        else
-          mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
+    # The TTL branch is a fallback for a lockdir with NO usable pid — a kill
+    # inside the mkdir→write window, or a pid from a previous boot. It must
+    # never fire against a recorded, LIVE process: age alone is not a proof of
+    # death, and treating it as one let a slow-but-alive holder be robbed
+    # (measured: two holders inside the lock at once).
+    if [[ -z "${holder_pid}" ]] || [[ "${holder_pid}" == *[!0-9]* ]] \
+       || ! kill -0 "${holder_pid}" 2>/dev/null; then
+      lock_age="$( _orch_lock_age_secs "${lockdir}" )"
+      if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )); then
+        _steal="${lockdir}.stale.$$.${RANDOM}"
+        if mv "${lockdir}" "${_steal}" 2>/dev/null; then
+          # Same verify-after-move as above: re-measure the directory we
+          # actually moved, and check it still carries no live holder.
+          lock_age="$( _orch_lock_age_secs "${_steal}" )"
+          _moved_pid="$(cat "${_steal}/pid" 2>/dev/null || true)"
+          if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )) \
+             && { [[ -z "${_moved_pid}" ]] || [[ "${_moved_pid}" == *[!0-9]* ]] \
+                  || ! kill -0 "${_moved_pid}" 2>/dev/null; }; then
+            rm -rf "${_steal}" 2>/dev/null
+            echo "orch-lock: reclaimed lock on ${target} — ${lock_age}s old (> ${stale_secs}s TTL), no live holder" >&2
+          else
+            mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
+          fi
         fi
       fi
-      continue
     fi
+    # EVERY path through this loop reaches the timeout check and the sleep.
+    # The steal branches used to `continue`, so on any iteration that ATTEMPTED
+    # a steal the timeout was unreachable and nothing slept — a steal that can
+    # never succeed (read-only parent directory, for instance) spun this loop
+    # forever at 100% CPU instead of returning 1. A lock helper that hangs is
+    # worse than one that gives up.
     if (( waited >= timeout * 10 )); then
       echo "lock timeout on ${target}" >&2
       return 1
@@ -108,11 +123,22 @@ with_lock() {
   done
   printf '%s\n' "$$" > "${lockdir}/pid" 2>/dev/null || true
 
-  # Run the command, then always release the lock (pid file first, then dir).
+  # Run the command, then release ONLY IF THE LOCK IS STILL OURS.
+  #
+  # Release used to operate on the path unconditionally. If our lock was
+  # stolen while we ran (a stale-judgment race, or a TTL expiry on a long
+  # operation), our release then deleted the THIEF'S live lockdir and a third
+  # process walked straight in — measured: max 2 concurrent holders, with the
+  # third entering while the second was still inside. Checking the pid makes a
+  # stolen lock a no-op on release instead of a cascade.
   local rc=0
   "$@" || rc=$?
-  rm -f "${lockdir}/pid" 2>/dev/null
-  rmdir "${lockdir}" 2>/dev/null
+  if [[ "$(cat "${lockdir}/pid" 2>/dev/null)" == "$$" ]]; then
+    rm -f "${lockdir}/pid" 2>/dev/null
+    rmdir "${lockdir}" 2>/dev/null
+  else
+    echo "orch-lock: not releasing ${target} — the lock is no longer ours (it was reclaimed while we held it)" >&2
+  fi
   return ${rc}
 }
 

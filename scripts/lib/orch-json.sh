@@ -94,7 +94,7 @@ orch_scan_source() {
   fi
   command -v python3 >/dev/null 2>&1 || { printf '__ORCH_RAW__\n%s' "${cmd}"; return 0; }
   ORCH_RAW_CMD="${cmd}" python3 - <<'PYEOF' 2>/dev/null || printf '__ORCH_RAW__\n%s' "${cmd}"
-import os, shlex, sys
+import os, re, shlex, sys
 
 cmd = os.environ.get("ORCH_RAW_CMD", "")
 
@@ -167,12 +167,20 @@ if not tokens:
     sys.exit(1)
 
 OPS_BEFORE_CMD = {";", "|", "&", "&&", "||", ";;", "(", ")"}
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 at_cmd_position = True
 for t in tokens:
     if "$" in t or "`" in t:
         sys.exit(1)      # unexpanded expansion — we cannot know what it becomes
     if t in OPS_BEFORE_CMD:
         at_cmd_position = True
+        continue
+    # `FOO=1 bash -c '...'` still runs bash. An env-assignment word does NOT
+    # consume the command position; treating it as the command meant the
+    # interpreter behind it was never recognised, so the quoted payload was
+    # replaced with a placeholder and `FOO=1 bash -c "git reset --hard"`
+    # scanned as inert data.
+    if at_cmd_position and ASSIGNMENT.match(t):
         continue
     # Only a token in COMMAND POSITION can re-enter a shell. Checking every
     # token made `.` — the source builtin, and the commonest path argument in

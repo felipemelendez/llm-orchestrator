@@ -34,8 +34,12 @@ worktree-local forms (caller proves it is inside one of our worktrees).
 """
 
 import os
+import re
 import shlex
 import sys
+
+# A leading `NAME=value` word is an env assignment, not the command.
+ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 # Tokens that can hand the string back to a shell, an interpreter, or another
 # host. Deliberately broad and matched on basename. Only meaningful in COMMAND
@@ -96,11 +100,28 @@ def unfold(s):
 
 
 def expand_braces(tok):
-    """`{a,b}` is one token to shlex and several words to bash."""
-    if "{" in tok and "}" in tok and "," in tok:
-        return [w for w in tok.replace("{", " ").replace("}", " ")
-                .replace(",", " ").split() if w]
-    return [tok]
+    """`pre{a,b}post` is one token to shlex and several words to bash.
+
+    The PREFIX has to survive. Blanking the punctuation turned
+    `--{hard,hard}` into ['--', 'hard', 'hard'], and a bare `--` is the
+    pathspec separator — so `git reset --{hard,hard}`, which bash runs as
+    `git reset --hard --hard`, parsed as a reset with NO flags and was
+    allowed. Same for `git clean --{force,force}` and `rm -rf .{git,x}`.
+    """
+    if "{" not in tok or "}" not in tok or "," not in tok:
+        return [tok]
+    open_i = tok.index("{")
+    close_i = tok.index("}", open_i)
+    if close_i < open_i:
+        return [tok]
+    pre, body, post = tok[:open_i], tok[open_i + 1:close_i], tok[close_i + 1:]
+    if "," not in body:
+        return [tok]
+    out = []
+    for alt in body.split(","):
+        # Recurse so a second group in the same word also expands.
+        out.extend(expand_braces(pre + alt + post))
+    return out or [tok]
 
 
 def tokenize(cmd):
@@ -290,9 +311,19 @@ def classify_destructive(inv, relax):
             return ("git stash %s stash@{N} — consumes a specific entry on the "
                     "shared stash stack" % verb)
     if sub == "branch":
-        if has_short(flags, "D") or \
-                (has_long(flags, "delete") and has_long(flags, "force")):
-            return "git branch -D — force-deletes a branch, dropping unmerged commits"
+        # --force is what removes git's protection, whatever the delete verb's
+        # spelling. Measured on git 2.54 against an unmerged branch:
+        #   git branch -d feat     -> rc=1, branch kept (git protects)
+        #   git branch -d -f feat  -> rc=0, branch DESTROYED
+        #   git branch -df feat    -> rc=0, branch DESTROYED
+        # Requiring the exact `-D` or `--delete`+`--force` pair missed both.
+        deleting = (has_short(flags, "d") or has_short(flags, "D")
+                    or has_long(flags, "delete"))
+        forcing = has_short(flags, "f") or has_short(flags, "D") \
+            or has_long(flags, "force")
+        if deleting and forcing:
+            return ("git branch -D / -d --force — force-deletes a branch, "
+                    "dropping unmerged commits")
     if sub == "worktree" and pos[:1] == ["remove"]:
         if has_long(flags, "force") or has_short(flags, "f"):
             return "git worktree remove --force — discards a worktree's uncommitted changes"
@@ -303,8 +334,11 @@ def classify_destructive(inv, relax):
     # --- blocked on the shared checkout, allowed inside our own worktree ------
     if sub == "stash":
         verb = pos[0] if pos else ""
-        if verb in ("list", "show"):
-            return None                     # read-only
+        # `create` prints a commit object without touching the tree or the
+        # stash ref; `store` records a given sha as a stash entry without
+        # touching the tree. Neither can lose work, so neither is blocked.
+        if verb in ("list", "show", "create", "store"):
+            return None                     # read-only / no tree mutation
         return ("git stash — 'save' runs an internal 'git reset --hard'; "
                 "pop/apply overwrite whatever files the stash touches")
     if sub == "reset":
@@ -433,6 +467,12 @@ def main():
         if t in OPS:
             at_cmd_position = True
             continue
+        # `FOO=1 bash -c '...'` still runs bash. An env-assignment word does
+        # NOT consume the command position, so it must not clear the flag —
+        # otherwise the interpreter behind it is never seen and the whole
+        # command is classified as if the quoted payload were inert data.
+        if at_cmd_position and ASSIGNMENT_RE.match(t):
+            continue
         if at_cmd_position and os.path.basename(t) in INTERP:
             sys.exit(3)
         at_cmd_position = False
@@ -452,8 +492,15 @@ def main():
                         # is usually a worktree INSIDE the container
                         # (`rm -rf .worktrees/feat-x`), which an endswith test
                         # misses entirely.
+                        # Any path COMPONENT that IS `.git`/`.worktrees`, or a
+                        # component ENDING in `.git` — the bare-repo naming
+                        # convention (`myrepo.git`, `/srv/repos/proj.git`).
+                        # Component-only matching fixed a `.github/` false
+                        # positive but silently stopped covering bare repos,
+                        # which is exactly the harm this rule names.
                         parts = [p for p in a.split("/") if p]
-                        if ".git" in parts or ".worktrees" in parts:
+                        if ".git" in parts or ".worktrees" in parts \
+                                or any(p.endswith(".git") for p in parts):
                             print("rm -rf of .git/.worktrees — irrecoverably "
                                   "destroys a repository or an isolated worktree")
                             sys.exit(2)

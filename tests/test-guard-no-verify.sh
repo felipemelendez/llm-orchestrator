@@ -105,6 +105,17 @@ blocks "$(printf 'git commit \\\n--no-verify -m x')"
 blocks 'git --no-pager commit --no-verify -m x'
 blocks 'git -P commit --no-verif -m x'
 
+printf '\n%s== the alias rule runs even when the classifier is confident ==%s\n' "$DIM" "$RESET"
+# Regression found by cold review: gating the raw `-c alias.` scan on "the
+# classifier decided" made the classifier's blind spots into the guard's. An
+# env-assignment prefix stopped the interpreter from being recognised, so the
+# classifier reported a confident allow and the alias rule — which exists
+# precisely because tokenization hides an alias body — never ran. This form
+# was BLOCKED at the f867f7a baseline and allowed after the gate was added.
+blocks "FOO=1 bash -c \"git -c alias.zz='commit --no-verify' zz\""
+blocks "bash -c \"git -c alias.zz='commit --no-verify' zz\""
+blocks 'X=1 sh -c "git commit --no-verify -m x"'
+
 printf '\n%s== false positives ==%s\n' "$DIM" "$RESET"
 allows 'git commit --help'
 allows 'git log -n 5'

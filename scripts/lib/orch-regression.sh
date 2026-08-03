@@ -32,7 +32,12 @@ _orch_baseline_file() {
   if declare -f orch_sha1_of >/dev/null 2>&1; then
     printf '%s/baseline.%s.md\n' "$cache_dir" "$(orch_sha1_of "$abs")"
   else
-    printf '%s/baseline.md\n' "$cache_dir"
+    # No hasher: fall back to a per-tree name built from the path itself
+    # rather than the shared, unkeyed `baseline.md` — that fallback silently
+    # reinstated the cross-worktree disarm this keying exists to prevent
+    # (a sibling's red baseline skipping the guard for everyone else).
+    printf '%s/baseline.%s.md\n' "$cache_dir" \
+      "$(printf '%s' "$abs" | tr -c 'A-Za-z0-9' '-' | tail -c 60)"
   fi
 }
 
@@ -40,7 +45,10 @@ _orch_baseline_file() {
 # orch_regression_baseline <dir>
 #
 # Detects the test command for <dir>, runs it, then records the outcome into
-#   ${ORCH_HOME:-~/.llm-orchestrator}/toolchain/<hash>/baseline.md
+#   ${ORCH_HOME:-~/.llm-orchestrator}/toolchain/<project-hash>/baseline.<tree-hash>.md
+# The cache DIR is shared per project (clones share toolchain detection); the
+# FILENAME is keyed on the tree's absolute path, so sibling worktrees each get
+# their own baseline. See _orch_baseline_file.
 #
 # The baseline file contains:
 #   status: pass | fail

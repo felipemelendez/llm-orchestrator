@@ -101,10 +101,34 @@ report_and_exit() {
 # definition. A caller that cannot restore must say so rather than claim clean.
 restore_base() {
   local pre="$1"
+  # A hard reset needs a target we have PROVEN exists. An empty or bogus `pre`
+  # made `git reset --hard ""` fail into `|| true`, and the second check was
+  # skipped because it is guarded on `-n "${pre}"` — so the function returned 0
+  # and the caller announced "the base is unchanged" having verified nothing.
+  if [[ -z "${pre}" ]] || ! git rev-parse -q --verify "${pre}^{commit}" >/dev/null 2>&1; then
+    git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+      printf 'the base is STILL MID-MERGE at %s and no valid pre-merge sha was recorded — resolve by hand (git merge --abort) before re-running' \
+             "$(git rev-parse --short HEAD 2>/dev/null)"
+      return 1
+    fi
+    return 0
+  fi
   git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
   if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || \
-     [[ -n "${pre}" && "$(git rev-parse HEAD 2>/dev/null)" != "${pre}" ]]; then
-    git reset -q --hard "${pre}" >/dev/null 2>&1 || true
+     [[ "$(git rev-parse HEAD 2>/dev/null)" != "${pre}" ]]; then
+    # Only ever rewind to `pre` when HEAD is a DESCENDANT of it — i.e. the
+    # only commits being discarded are ones made after we recorded it. If HEAD
+    # is unrelated, something outside this run moved the base (a parallel agent
+    # committing on the shared checkout), and discarding that is not ours to do.
+    if [[ "$(git rev-parse HEAD 2>/dev/null)" == "${pre}" ]] \
+       || git merge-base --is-ancestor "${pre}" HEAD 2>/dev/null; then
+      git reset -q --hard "${pre}" >/dev/null 2>&1 || true
+    else
+      printf 'the base moved to %s, which is NOT a descendant of the pre-merge sha %s — something outside this run changed it; refusing to reset, resolve by hand' \
+             "$(git rev-parse --short HEAD 2>/dev/null)" "$(git rev-parse --short "${pre}" 2>/dev/null)"
+      return 1
+    fi
   fi
   if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
     printf 'the base is STILL MID-MERGE at %s — abort and hard reset both failed; resolve by hand (git merge --abort; git reset --hard %s) before re-running' \
