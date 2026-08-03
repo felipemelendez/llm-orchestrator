@@ -148,12 +148,12 @@ Scope: `--check` validates the **source checkout** it lives in — files present
 ```
 export ORCH_HOOK_PROFILE=minimal    # most hooks exit immediately (see below)
 export ORCH_HOOK_PROFILE=standard   # default — everything active
-export ORCH_HOOK_PROFILE=strict     # accepted, currently identical to standard
+export ORCH_HOOK_PROFILE=strict     # everything active AND blocking
 ```
 
 - `minimal` — these hooks exit without acting: protocol reminders (`user-prompt-submit`), research gate, handoff nudge, the `--no-verify` guard, config-protection guard, evidence ledger, verify gate, retry cap, Status validators (`subagent-stop`, researcher validator), protocol grader, worktree reaper. SessionStart still loads the protocol core.
 - `standard` (default) — all of the above are active.
-- `strict` — no script currently branches on it; blocking behavior comes from the `ORCH_STRICT_*` knobs listed under "Other knobs", which work in any profile.
+- `strict` — everything in `standard`, and the four gradeable checks **block** instead of warning: it implies `ORCH_STRICT_PROTOCOL`, `ORCH_STRICT_STATUS`, `ORCH_STRICT_VERIFY` and `ORCH_STRICT_RETRY`. To keep one check non-blocking under this profile, set that knob to `0` explicitly — an explicit value always wins over the profile. (Before 2026-08-03 no script branched on the profile at all, so `strict` was accepted and behaved exactly like `standard`.)
 
 Profile-exempt, deliberately:
 

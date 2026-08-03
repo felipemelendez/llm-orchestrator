@@ -414,6 +414,31 @@ rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=minimal ORCH_STRI
 if [[ $rc -eq 0 ]]; then ok "(l) subagent-stop: ORCH_HOOK_PROFILE=minimal → exit 0 (skipped)"
 else fail "(l) subagent-stop: ORCH_HOOK_PROFILE=minimal" "expected exit 0, got $rc"; fi
 
+printf '\n%s== ORCH_HOOK_PROFILE=strict actually blocks ==%s\n' "$DIM" "$RESET"
+# ARCHITECTURE.md has always documented `strict` as "all hooks active AND
+# blocking", but nothing branched on it: blocking came only from the separate
+# ORCH_STRICT_* knobs, so setting the profile bought the documented word and
+# none of the behaviour. Measured before the fix: PROFILE=strict ALLOWED on
+# protocol-grader, verify-gate and subagent-stop; the explicit flag blocked on
+# all three.
+write_string_jsonl "$T_STRING" "just prose no header"
+rc=0; pipe_hook_exit "$GRADER" "$T_STRING" ORCH_HOOK_PROFILE=strict || rc=$?
+[[ $rc -eq 2 ]] && ok "grader: PROFILE=strict blocks a malformed reply" \
+  || fail "grader PROFILE=strict" "expected exit 2, got $rc — the profile is documented as blocking"
+# An explicit 0 must still opt out, or the knobs lose their granularity.
+rc=0; pipe_hook_exit "$GRADER" "$T_STRING" ORCH_HOOK_PROFILE=strict ORCH_STRICT_PROTOCOL=0 || rc=$?
+[[ $rc -eq 0 ]] && ok "grader: an explicit ORCH_STRICT_PROTOCOL=0 still opts out of strict" \
+  || fail "grader strict opt-out" "expected exit 0, got $rc"
+
+write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
+PIPE_AGENT_TYPE="llm-orchestrator:orch-implementer"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=strict || rc=$?
+[[ $rc -eq 2 ]] && ok "subagent-stop: PROFILE=strict blocks a malformed Status block" \
+  || fail "subagent-stop PROFILE=strict" "expected exit 2, got $rc"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=strict ORCH_STRICT_STATUS=0 || rc=$?
+[[ $rc -eq 0 ]] && ok "subagent-stop: an explicit ORCH_STRICT_STATUS=0 still opts out" \
+  || fail "subagent-stop strict opt-out" "expected exit 0, got $rc"
+
 printf '\n%s== Direct extraction assertions ==%s\n' "$DIM" "$RESET"
 LIB="${ROOT}/scripts/lib/orch-protocol.sh"
 

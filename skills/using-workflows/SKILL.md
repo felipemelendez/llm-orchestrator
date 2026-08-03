@@ -21,8 +21,17 @@ route it through a workflow only if all three hold — a fan-out has to earn its
 3. **High enough value** — the result justifies the multiplier (review of a real diff, a real
    migration, a real research sweep — not a one-line edit).
 
-Good fits today: the two-stage code review (`workflows/review-diff.js`), parallel implementation
-of genuinely independent plan tasks, high-stakes multi-source research.
+**This plugin ships exactly one workflow, and that is the intended surface** — the scope decision
+and its evidence are in `docs/llm-orchestrator/research/2026-08-03-workflow-scope-decision.md`.
+Do not add a second script without re-opening that decision. In particular: a *writer* fan-out has
+no scripted form worth having (`agent()` has no `cwd` option, so it cannot be pinned to a
+materialized worktree), and a research sweep is already covered by Claude Code's bundled
+`/deep-research`.
+
+Before reaching for a workflow at all, check whether a plain subagent is the better primitive. The
+platform's own framing is that a workflow earns its keep by making *the orchestration* repeatable
+and by applying a quality pattern one pass cannot — independent agents adversarially checking each
+other — not by running more agents. A handful of delegated tasks in one turn is subagent-shaped.
 
 **The cost, correctly attributed.** Multi-agent runs use **3–10× the tokens of a single agent on the
 same task** ([Anthropic, 2026-01-23](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)).
@@ -110,8 +119,13 @@ The security-sensitive token set lives once, in `scripts/lib/orch-signals.sh`
 - **This skill is main-thread-only.** The `Workflow` tool is stripped from every subagent
   ([sub-agents](https://code.claude.com/docs/en/sub-agents), retrieved 2026-08-03), so a dispatched
   agent cannot start a workflow. Only the controller can route here.
-- Validate with `tests/validate-workflows.sh` (syntax + a static scan for the banned constructs —
-  `node --check` alone does not catch the runtime-throw builtins).
+- Validate with `tests/validate-workflows.sh`. Note what it does NOT do: `node --check` on a `.js`
+  file containing `export` returns 0 on invalid syntax, so it could never reject anything. The
+  validator now compiles the script as an **async function body** — the grammar the engine runs,
+  where top-level `return` and `await` are legal — via `tests/lib/check-workflow-script.mjs`, and
+  still runs the static scan for the runtime-throw builtins a parse cannot catch.
+- Distribution is automatic: `workflows/` at the plugin root is discovered on install and
+  namespaced `/<plugin>:<meta.name>`, so this script is `/llm-orchestrator:review-diff`.
 
 ## Anti-patterns
 

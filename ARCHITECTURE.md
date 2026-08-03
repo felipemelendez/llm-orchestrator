@@ -91,8 +91,19 @@ Code's `Workflow` tool is present this layer prefers `workflows/review-diff.js` 
 gates Stage 2 (early-exit on a spec mismatch), Stage 3 stays conditional on the
 `scripts/lib/orch-signals.sh` security signal (passed in, not re-derived), findings are
 confidence-filtered and adversarially verified before they surface. The canonical markdown stages
-remain the fallback. Routing lives in the `using-workflows` skill. The same substrate is the
-planned path for Layer 4 (parallel dispatch over independent tasks).
+remain the fallback. Routing lives in the `using-workflows` skill.
+
+**One workflow is the whole intended surface** — see
+[`docs/llm-orchestrator/research/2026-08-03-workflow-scope-decision.md`](./docs/llm-orchestrator/research/2026-08-03-workflow-scope-decision.md).
+Layer 4 (parallel dispatch) is *not* a planned second script: `agent()` has no `cwd` option, so a
+scripted writer fan-out cannot be pinned to a pre-materialized worktree, and the native
+`isolation: 'worktree'` branches from the default branch rather than the parent's `HEAD`. The two
+other candidates were dropped too — Claude Code now bundles `/deep-research`, and a judge-panel
+script is speculative against guidance that reports removing over 80% of Claude Code's own system
+prompt with no measured loss. Review is kept because fresh-context verification is the one
+multi-agent boundary that current guidance still endorses, and because the docs name adversarial
+cross-checking as the thing a workflow adds beyond "run more agents". Honest status: correct
+(mutation-tested), not *measured* to improve review quality.
 
 ### Layer 7 — Evidence-based completion (unfakeable by construction)
 
@@ -108,7 +119,9 @@ Verify:
 
 The sharp question for any verification gate is: **does the model sit between the check and the verdict?** A gate that only checks "a Verify: line exists" is defeated by fabrication — the model writes plausible output for a command it never ran (MAST FM-2.6, reasoning-action mismatch, 13.2% of failures). v0.6 closes that path with an **evidence ledger**: `orch-evidence-ledger.sh` runs on `PostToolUse` *and* `PostToolUseFailure` for Bash, and when the command is verify-shaped (test/lint/typecheck/build — command-position anchored, so `git add tests/x.sh` or `echo pytest passed` record nothing), it appends `⟨stamp, exit, epoch, substance, command⟩` to a session ledger only the hook writes. The platform contract was verified live against v2.1.220: success and failure are distinguished by *which event fires* (Bash `tool_response` exposes no exit code).
 
-**The ledger is read, never recited.** The `UserPromptSubmit` hook records when the turn began; the Stop-hook verify gate (`orch-verify-gate.sh`) then asks the ledger directly — *did a verify command run green, on real output, since this turn started?* The model is not in that loop. It cannot opt out by declining to cite, cannot reuse a stale green from three turns ago, and never sees a marker in its tool output.
+**The ledger is read, never recited.** The `UserPromptSubmit` hook records when the turn began; the Stop-hook verify gate (`orch-verify-gate.sh`) then asks the ledger directly — *did a verify command run green, on real output, since this turn started?* The model cannot opt out by declining to cite, cannot reuse a stale green from three turns ago, and never sees a marker in its tool output.
+
+The one deliberate opt-out is the cosmetic exemption, and it is **scoped to the prescribed form**: `Verify: no verification needed (cosmetic)`, outside any code fence. As a bare substring anywhere in the reply it was a kill switch the model could trip by accident — the phrase quoted from this document, or used in prose *disclaiming* it ("this is not a case of no verification needed (cosmetic)"), silently disabled the gate. Mentioning the phrase no longer invokes it.
 
 v0.6.1 removed the citation scheme that preceded this. The hook used to rewrite Bash stdout to append `[orch-evidence <stamp> exit=N] (cite this line in your Verify: block)`. That cost three things and bought nothing the ledger did not already provide: when `tool_response` carried no literal `stdout` string the rewrite **replaced the command's real output with the marker alone**; the parenthetical was an imperative arriving through a data channel, which well-behaved agents correctly refuse, so the mechanism selected against its own adoption; and it reached every agent, including reviewer and explorer seats whose prompts never explained it, which spent review cycles escalating it as an anomaly. `ORCH_EVIDENCE_MARKER=1` restores an inert (non-imperative) marker for cross-agent transport, and even then the rewrite is emitted only when the hook holds the real stdout.
 
@@ -188,7 +201,7 @@ How the pieces fit together at the file level.
 - Profiles via `ORCH_HOOK_PROFILE`:
   - `minimal` — bootstrap only: loads `using-orchestrator` (the Concise Agent Protocol — fixed response shapes) at SessionStart.
   - `standard` (default) — adds UserPromptSubmit reminders, the research gate, PreToolUse guards, the PostToolUse evidence ledger, SubagentStop validators + retry breaker + implementer mutex reaper, and Stop-hook verify gate + retry breaker + retention pruning.
-  - `strict` — all hooks active and blocking: malformed replies (`ORCH_STRICT_PROTOCOL=1`), malformed Status blocks (`ORCH_STRICT_STATUS=1`), uncorroborated or failed verification (`ORCH_STRICT_VERIFY=1`), retry storms (`ORCH_STRICT_RETRY=1`).
+  - `strict` — all hooks active and blocking: malformed replies, malformed Status blocks, uncorroborated or failed verification, and retry storms all block. Setting the profile is enough; it implies `ORCH_STRICT_PROTOCOL`, `ORCH_STRICT_STATUS`, `ORCH_STRICT_VERIFY` and `ORCH_STRICT_RETRY`. (It did not until 2026-08-03: no script branched on the profile, so `strict` bought the documented word and none of the behaviour. Each knob can still be set to `0` explicitly to opt a single check back out.)
 - Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`. Exception: `guard-destructive-git.sh` deliberately ignores both this list and the profile — a data-loss guard must not share an off switch with style hooks; its only opt-out is `ORCH_ALLOW_DESTRUCTIVE_GIT=1` (see `docs/install.md`).
 - One exception to profile gating: the `type: "prompt"` SubagentStop termination-contract hook is a single-turn cheap-model evaluation the platform runs directly — it cannot read `ORCH_HOOK_PROFILE` and is active in every profile.
 
@@ -202,10 +215,13 @@ How the pieces fit together at the file level.
 - File: `workflows/<name>.js` — a deterministic script for Claude Code's `Workflow` tool. Plain
   JavaScript only (no TypeScript, no imports; the nondeterministic time/random builtins throw at
   runtime). Begins with a pure-literal `export const meta = {...}`.
-- A *preferred* substrate for the breadth-first, independent-fan-out layers — today **Layer 6**
-  (code review, `workflows/review-diff.js`) and, when added, **Layer 4** (parallel dispatch). It
-  is never a hard dependency: every skill that prefers a workflow keeps its canonical markdown
-  path, and routing is the try-then-fallback heuristic in the `using-workflows` skill.
+- A *preferred* substrate for exactly one layer: **Layer 6** (code review,
+  `workflows/review-diff.js`). Layer 4 is deliberately NOT a second script — see the scope decision
+  linked in Layer 6. It is never a hard dependency: the skill that prefers the workflow keeps its
+  canonical markdown path, and routing is the try-then-fallback heuristic in `using-workflows`.
+- Distribution is by directory: a plugin's `workflows/` at plugin root is auto-discovered and
+  namespaced `/<plugin>:<meta.name>`, so this script is reachable as
+  `/llm-orchestrator:review-diff`.
 - Reuses the existing `agents/orch-*.md` subagents via the `agentType` option (composed with a
   structured `schema`); it adds no new agent roles.
 - Gate logic is never re-derived in JS — the controller computes it in shell (e.g.

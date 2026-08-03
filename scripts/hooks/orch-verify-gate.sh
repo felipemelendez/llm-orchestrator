@@ -52,7 +52,15 @@ set -uo pipefail
 
 PROFILE="${ORCH_HOOK_PROFILE:-standard}"
 DISABLED="${ORCH_DISABLED_HOOKS:-}"
+# ORCH_HOOK_PROFILE=strict IMPLIES this flag. ARCHITECTURE.md has always
+# documented `strict` as "all hooks active and blocking", but nothing branched
+# on it — blocking came only from the explicit knob, so setting the profile
+# bought the word and none of the behaviour. An explicit ORCH_STRICT_VERIFY=0
+# still wins, so a per-check opt-out survives.
 STRICT="${ORCH_STRICT_VERIFY:-0}"
+if [[ -z "${ORCH_STRICT_VERIFY:-}" && "${ORCH_HOOK_PROFILE:-standard}" == "strict" ]]; then
+  STRICT=1
+fi
 
 if [[ ",${DISABLED}," == *",orch-verify-gate,"* ]] || [[ "${PROFILE}" == "minimal" ]]; then
   exit 0
@@ -115,9 +123,23 @@ if ! printf '%s' "${REPLY_CLAIM}" | grep -qE '^[[:space:]]*(#{1,6}[[:space:]]*)?
 fi
 
 # Explicit cosmetic exemption, honoured before anything else can speak.
-case "${REPLY}" in
-  *"no verification needed (cosmetic)"*) exit 0 ;;
-esac
+#
+# SCOPED, because as a raw substring this was a model-controlled kill switch:
+# the phrase anywhere in the reply — inside a code fence, quoted from the
+# protocol doc, or in prose DISCLAIMING it ("this is not a case of no
+# verification needed (cosmetic)") — silently disabled the gate, while the file
+# claimed "the model is not in that loop. It cannot opt out."
+#
+# It is still an opt-out; that is intended and documented. What changes is that
+# it must be USED rather than merely mentioned: the phrase has to appear
+# outside code fences, on a line that reads as the Verify: line itself. Anyone
+# wanting the exemption writes exactly what the protocol prescribes —
+# `Verify: no verification needed (cosmetic)` — and prose about the phrase no
+# longer counts as invoking it.
+if printf '%s' "${REPLY_CLAIM}" \
+   | grep -qE '^[[:space:]]*([-*][[:space:]]*)?(#{1,6}[[:space:]]*)?[*_]{0,2}Verify[*_]{0,2}:[[:space:]]*[*_]{0,2}no verification needed \(cosmetic\)'; then
+  exit 0
+fi
 
 # A Verify: section counts whether its content is on the same line or the next
 # one — both are correct protocol. See orch_has_section.

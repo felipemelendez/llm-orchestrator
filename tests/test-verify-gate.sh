@@ -347,6 +347,33 @@ done
 [[ $rp_fp_ok -eq 1 ]] && ok "ordinary source and docs paths are not mistaken for tests"
 rm -f "$LEDGER" "$TURNSTART"
 
+printf '\n%s== the cosmetic exemption must be USED, not merely mentioned ==%s\n' "$DIM" "$RESET"
+# As a raw substring anywhere in the reply, this phrase was a model-controlled
+# kill switch — inside a fence, quoted from the protocol, or in prose
+# DISCLAIMING it, all silently disabled the gate, while the file claimed the
+# model "cannot opt out". It stays an opt-out; it just has to be invoked.
+_t=$(mk_transcript "$(printf 'Changed:\n- src/a.ts:1 — real edit\n\nVerify: no verification needed (cosmetic)\n')")
+out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
+[[ "$rc" == "0" && -z "$err" ]] && ok "the prescribed form still exempts (Verify: no verification needed (cosmetic))" \
+  || fail "prescribed cosmetic form rejected" "rc=$rc err=$(printf '%s' "$err" | head -1)"
+
+_t=$(mk_transcript "$(printf 'Changed:\n- src/a.ts:1 — a real code change\n\nThis is NOT a case of no verification needed (cosmetic); I simply did not run the suite.\n')")
+out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
+printf '%s' "$err" | grep -q 'Verify' \
+  && ok "prose DISCLAIMING the phrase does not exempt" \
+  || fail "disclaiming prose exempted" "the gate went silent on a reply that admits it did not verify"
+
+# The phrase inside a fence, with NO Verify: section of its own outside it, so
+# the only thing that could silence the gate is the exemption path. (A fenced
+# `Verify: ...` line is a different, deliberate silence: the gate keeps fenced
+# content as EVIDENCE, and a Verify: whose content is not a recognizable
+# command is a case where it genuinely knows nothing.)
+_t=$(mk_transcript "$(printf 'Changed:\n- src/a.ts:1 — real edit\n\nThe protocol phrase is:\n```\nno verification needed (cosmetic)\n```\n')")
+out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
+printf '%s' "$err" | grep -q 'Verify' \
+  && ok "the phrase QUOTED inside a code fence does not exempt" \
+  || fail "fenced quote exempted" "a quoted sample disabled the gate"
+
 printf '\n%s== decorated Changed: headers are the same claim ==%s\n' "$DIM" "$RESET"
 # Mutation-found gap: dropping the heading/bold prefix from the Changed: regex
 # left every check green — `**Changed:**` with no Verify: passed silently, so

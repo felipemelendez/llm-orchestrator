@@ -27,7 +27,15 @@ set -uo pipefail
 PROFILE="${ORCH_HOOK_PROFILE:-standard}"
 DISABLED="${ORCH_DISABLED_HOOKS:-}"
 ENABLED="${ORCH_RETRY_CAP:-1}"
+# ORCH_HOOK_PROFILE=strict IMPLIES this flag. ARCHITECTURE.md has always
+# documented `strict` as "all hooks active and blocking", but nothing branched
+# on it — blocking came only from the explicit knob, so setting the profile
+# bought the word and none of the behaviour. An explicit ORCH_STRICT_RETRY=0
+# still wins, so a per-check opt-out survives.
 STRICT="${ORCH_STRICT_RETRY:-0}"
+if [[ -z "${ORCH_STRICT_RETRY:-}" && "${ORCH_HOOK_PROFILE:-standard}" == "strict" ]]; then
+  STRICT=1
+fi
 N="${ORCH_RETRY_CAP_N:-3}"
 
 # Strict implies enabled.
