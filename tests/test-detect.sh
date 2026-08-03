@@ -409,19 +409,21 @@ else
   fail "orch_regression_baseline succeeds when tests pass" "exit code: $BASELINE_RC"
 fi
 
-# Baseline file must exist in cache.
-REG_BASELINE_FILE=$(find "$REG_HOME/toolchain" -name "baseline.md" 2>/dev/null | head -1)
+# Baseline file must exist in cache. Named baseline.<tree-hash>.md — keyed on
+# the tree's absolute path so sibling worktrees of one repo cannot clobber
+# each other's baseline (the cache DIR is shared per-project by design).
+REG_BASELINE_FILE=$(find "$REG_HOME/toolchain" -name "baseline.*md" 2>/dev/null | head -1)
 if [[ -n "$REG_BASELINE_FILE" ]]; then
-  ok "baseline.md written to cache after orch_regression_baseline"
+  ok "per-tree baseline written to cache after orch_regression_baseline"
 else
-  fail "baseline.md written to cache after orch_regression_baseline" "no baseline.md under $REG_HOME/toolchain"
+  fail "per-tree baseline written to cache after orch_regression_baseline" "no baseline.*md under $REG_HOME/toolchain"
 fi
 
 # Baseline should record status=pass.
 if [[ -n "$REG_BASELINE_FILE" ]] && grep -q 'status: pass' "$REG_BASELINE_FILE" 2>/dev/null; then
-  ok "baseline.md records status: pass"
+  ok "baseline records status: pass"
 else
-  fail "baseline.md records status: pass" "contents: $(cat "${REG_BASELINE_FILE:-/dev/null}" 2>/dev/null | tr '\n' '|')"
+  fail "baseline records status: pass" "contents: $(cat "${REG_BASELINE_FILE:-/dev/null}" 2>/dev/null | tr '\n' '|')"
 fi
 
 # While tests still pass, orch_regression_check must return zero.
@@ -459,6 +461,36 @@ if [[ $CHECK_FIXED_RC -eq 0 ]]; then
   ok "orch_regression_check returns 0 after tests are fixed"
 else
   fail "orch_regression_check returns 0 after tests are fixed" "exit code: $CHECK_FIXED_RC"
+fi
+
+# A green baseline whose test command has DISAPPEARED is a signal, not a pass.
+# This used to return 0 ("no regression") exactly when the project lost the
+# ability to test itself; the honest answer is 2 (unknown — cannot certify).
+rm -f "$REG_DIR/Makefile" "$REG_DIR/run-tests.sh"
+REG_GONE_OUT=$((cd "$REG_DIR" && orch_regression_check "$REG_DIR") 2>&1)
+CHECK_GONE_RC=$?
+if [[ $CHECK_GONE_RC -eq 2 ]]; then
+  ok "vanished test command → rc 2 (unknown), not 0 (clean)"
+else
+  fail "vanished test command → rc 2 (unknown), not 0 (clean)" "exit code: $CHECK_GONE_RC out: $(printf '%s' "$REG_GONE_OUT" | head -1)"
+fi
+if printf '%s' "$REG_GONE_OUT" | grep -qi 'cannot certify\|disappeared'; then
+  ok "vanished-suite check says why it cannot certify"
+else
+  fail "vanished-suite check says why it cannot certify" "got: $(printf '%s' "$REG_GONE_OUT" | head -1)"
+fi
+
+# Sibling trees must not share one baseline file. The cache DIR is shared
+# per-project by design (clones share toolchain detection); the baseline
+# FILENAME is keyed on the tree's absolute path, so a sibling worktree
+# recording a red baseline can no longer disarm this tree's guard.
+BL_A=$(_orch_baseline_file "$REG_DIR")
+SIBLING_DIR="$TMP/reg-sibling"; mkdir -p "$SIBLING_DIR"
+BL_B=$(_orch_baseline_file "$SIBLING_DIR")
+if [[ -n "$BL_A" && -n "$BL_B" && "$BL_A" != "$BL_B" ]]; then
+  ok "two trees get two distinct baseline files"
+else
+  fail "two trees get two distinct baseline files" "A=$BL_A B=$BL_B"
 fi
 
 unset ORCH_HOME

@@ -64,7 +64,7 @@ Do not hand the checkout to the harness's per-agent worktree isolation (`isolati
    orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
    L=$(orch_lib orch-detect.sh) && . "$L" && orch_regression_baseline <worktree-dir>
    ```
-   This detects the test command, runs it, and writes `~/.llm-orchestrator/toolchain/<hash>/baseline.md`. If the suite is not green at this point, stop — do not proceed with edits until the baseline is clean.
+   This detects the test command, runs it, and writes `~/.llm-orchestrator/toolchain/<hash>/baseline.<tree-hash>.md` — the filename is keyed on the worktree's absolute path, so sibling worktrees of one repo each get their own baseline and cannot disarm each other's regression guard. If the suite is not green at this point, stop — do not proceed with edits until the baseline is clean.
 
 ## A submodule is not a worktree
 

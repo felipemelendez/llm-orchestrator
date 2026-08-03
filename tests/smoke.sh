@@ -170,7 +170,7 @@ if should_run structural; then
             bash "${ROOT}/tests/test-protocol-grader.sh"
   check_out "protocol hook e2e tests pass" "checks passed" \
             bash "${ROOT}/tests/test-protocol-hooks.sh"
-  check_out "detect toolchain + cache tests pass" "All 45 detect checks passed" \
+  check_out "detect toolchain + cache tests pass" "All 48 detect checks passed" \
             bash "${ROOT}/tests/test-detect.sh"
   check_out "handoff smoke tests pass" "PASS: smoke-handoff" \
             bash "${ROOT}/tests/handoff/smoke-handoff.sh"

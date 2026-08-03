@@ -27,8 +27,14 @@ HANDOFF_STATE_DIR="${HOME_DIR}/handoff"
 # Pruning runs every turn (cheap, idempotent). Suppress errors so a missing
 # dir doesn't fail the hook.
 [[ -d "${TRASH_DIR}" ]] && find "${TRASH_DIR}" -name '*.md' -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
-# Toolchain cache: prune stale detection results (also clears any stranded .lock/.lockdir files).
+# Toolchain cache: prune stale detection results.
 [[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && find "${TOOLCHAIN_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
+# Stranded .lockdir directories: `-type f -delete` above can NEVER remove one —
+# a lockdir is a DIRECTORY — yet this file used to claim it did. Depth-first
+# rm of hour-old lockdirs; with_lock's own dead-pid/TTL steal is the primary
+# recovery, this is the janitor for lock paths nothing contends on anymore.
+[[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && find "${TOOLCHAIN_CACHE_DIR}" -name '*.lockdir' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+[[ -d "${HOME_DIR}/memory" ]] && find "${HOME_DIR}/memory" -name '*.lockdir' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
 # Architecture study cache: prune stale decisions files at same retention as toolchain.
 [[ -d "${ARCH_CACHE_DIR}" ]] && find "${ARCH_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 # Handoff nudge markers (Layer 9 fire-once state): short-lived, prune after 1 day.

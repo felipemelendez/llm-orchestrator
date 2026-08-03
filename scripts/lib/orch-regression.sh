@@ -15,6 +15,28 @@
 if ! declare -f orch_regression_baseline >/dev/null 2>&1; then
 
 # ---------------------------------------------------------------------------
+# _orch_baseline_file <dir>
+#
+# The baseline path for THIS tree. The file used to be a single unkeyed
+# baseline.md in the shared project cache: `_orch_proj_cache_dir` keys on the
+# git remote (deliberately, so clones share toolchain detection), which means
+# every worktree of a repo shared one baseline — a parallel writer recording a
+# red baseline made `orch_regression_check` skip the guard and return 0 for
+# all of its siblings. Keying the FILENAME on the tree's absolute path keeps
+# the shared detection cache while giving each worktree its own baseline.
+# ---------------------------------------------------------------------------
+_orch_baseline_file() {
+  local dir="${1:-.}" cache_dir abs
+  cache_dir=$(_orch_proj_cache_dir "$dir")
+  abs=$(cd "$dir" 2>/dev/null && pwd -P) || abs="$dir"
+  if declare -f orch_sha1_of >/dev/null 2>&1; then
+    printf '%s/baseline.%s.md\n' "$cache_dir" "$(orch_sha1_of "$abs")"
+  else
+    printf '%s/baseline.md\n' "$cache_dir"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # orch_regression_baseline <dir>
 #
 # Detects the test command for <dir>, runs it, then records the outcome into
@@ -49,19 +71,20 @@ orch_regression_baseline() {
   local status="fail"
   [[ $exit_code -eq 0 ]] && status="pass"
 
-  # Write baseline to cache.
-  local cache_dir
-  cache_dir=$(_orch_proj_cache_dir "$dir")
-  mkdir -p "$cache_dir"
-
-  local baseline_file="${cache_dir}/baseline.md"
+  # Write baseline to cache — per-tree file, atomic rename so a concurrent
+  # reader never sees a half-written baseline.
+  local baseline_file tmp_file
+  baseline_file=$(_orch_baseline_file "$dir")
+  mkdir -p "$(dirname "$baseline_file")"
+  tmp_file="${baseline_file}.tmp.$$"
   {
     printf 'status: %s\n' "$status"
     printf 'test-cmd: %s\n' "$test_cmd"
     printf 'exit-code: %d\n' "$exit_code"
+    printf 'tree: %s\n' "$(cd "$dir" 2>/dev/null && pwd -P || printf '%s' "$dir")"
     printf '\n## output\n'
     printf '%s\n' "$output" | head -40
-  } > "$baseline_file"
+  } > "$tmp_file" && mv -f "$tmp_file" "$baseline_file"
 
   return $exit_code
 }
@@ -83,9 +106,8 @@ orch_regression_check() {
   local dir="${1:-.}"
   dir="${dir%/}"
 
-  local cache_dir
-  cache_dir=$(_orch_proj_cache_dir "$dir")
-  local baseline_file="${cache_dir}/baseline.md"
+  local baseline_file
+  baseline_file=$(_orch_baseline_file "$dir")
 
   if [[ ! -f "$baseline_file" ]]; then
     printf 'regression-check: no baseline found for %s — run orch_regression_baseline first\n' "$dir" >&2
@@ -107,8 +129,13 @@ orch_regression_check() {
   test_cmd=$(orch_detect_toolchain "$dir" 2>/dev/null | grep '^test=' | head -1 | cut -d= -f2-)
 
   if [[ -z "$test_cmd" ]]; then
-    printf 'regression-check: no test command detected in %s\n' "$dir" >&2
-    return 0
+    # A green baseline PROVES a test command existed. Its disappearance is a
+    # signal (deleted script, broken manifest, wrong directory), and this used
+    # to be reported as `return 0` — "no regression" — precisely when the
+    # project lost the ability to test itself. UNKNOWN (2) is the honest
+    # answer; finishing-a-branch treats non-zero as "do not certify".
+    printf 'regression-check: baseline is green but NO test command is detected now in %s — the suite this baseline was built from has disappeared; cannot certify (unknown, not clean)\n' "$dir" >&2
+    return 2
   fi
 
   local current_output current_exit
