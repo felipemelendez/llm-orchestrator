@@ -107,6 +107,48 @@ blocks "rm -rf .git"
 blocks "rm -rf .worktrees/feat-x"
 blocks "rm -fr .git/"
 
+printf '\n%s== spellings git accepts that a regex guard missed ==%s\n' "$DIM" "$RESET"
+# Every case here was measured ALLOWED by the spelling-matching guard, and
+# every one was measured to really run against git 2.54. Three mechanisms:
+# long-option abbreviation (git takes any unambiguous prefix), VALUELESS global
+# options (the old absorber stripped only the five value-taking ones), and a
+# line continuation (the newline rewrite tracked quotes but not a backslash).
+blocks "git reset --h HEAD~1"
+blocks "git reset --ha HEAD~1"
+blocks "git reset --har HEAD~1"
+blocks "git reset --k HEAD~1"
+blocks "git reset --mer HEAD~1"
+blocks "git clean --for -d"
+blocks "git clean --forc"
+blocks "git restore --workt src/file.ts"
+blocks "git worktree remove --fo .worktrees/x"
+blocks "git branch --delete --forc feat/x"
+blocks "git --no-pager checkout -f main"
+blocks "git -P checkout -f main"
+blocks "git --no-pager switch main"
+blocks "git --no-pager stash"
+blocks "git --paginate reset --hard"
+blocks "git --no-optional-locks checkout main"
+blocks "$(printf 'git reset \\\n--hard HEAD~1')"
+blocks "$(printf 'git \\\n--no-pager \\\ncheckout -f main')"
+
+printf '\n%s== false positives: a guard that blocks these gets switched off ==%s\n' "$DIM" "$RESET"
+# `--help` touches nothing, and branch CREATION is the documented exception —
+# blocking them while allowing `--h` on a destructive reset is the profile of a
+# guard users disable. Note git resolves `--h` to `--hard`, NOT `--help`
+# (verified: it printed "HEAD is now at" and moved the tree), so the help
+# exemption must not cover a prefix that could name a destructive option.
+allows "git checkout --help"
+allows "git switch --help"
+allows "git reset --help"
+allows "git clean --help"
+allows "git checkout -q -b newbranch"
+allows "git switch --create newbranch"
+allows "git checkout -b feat/x main"
+allows "git branch -d merged-topic"
+allows "git branch --list"
+allows "git branch --format=%(refname)"
+
 printf '\n%s== allows safe / read-only git ==%s\n' "$DIM" "$RESET"
 allows "git stash list"
 allows "git stash show"

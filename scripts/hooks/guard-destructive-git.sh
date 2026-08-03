@@ -133,6 +133,31 @@ RAWCMD=$(printf '%s' "${RAWCMD}" | LC_ALL=C tr -c '[:print:][:space:]' ' ' | tr 
 
 reason=""
 
+# --- PRIMARY PATH: semantic classification ------------------------------------
+# The regex rules below match option SPELLINGS, and git's own parser accepts
+# spellings no author enumerates: `git reset --h` really resets, `git clean
+# --for` really cleans, `git --no-pager checkout -f` walked past the flag
+# absorber, and a line continuation broke adjacency entirely. The classifier
+# strips globals the way git does, finds the subcommand, and resolves long
+# options by PREFIX against the destructive names — so it decides on meaning.
+#
+# Exit 3 means it could not parse with confidence (no python3, unbalanced
+# quotes, a shell re-entry point, an unexpanded $). That is NOT an allow: the
+# spelling rules below then run as the block-biased fallback they always were.
+_CLASSIFIER="${HOOK_DIR}/../lib/orch-git-classify.py"
+_DECODED_CMD=""
+declare -f orch_json_field >/dev/null 2>&1 && _DECODED_CMD=$(orch_json_field "${INPUT}" tool_input.command)
+if [[ -n "${_DECODED_CMD}" && -f "${_CLASSIFIER}" ]] && command -v python3 >/dev/null 2>&1; then
+  _CR=0
+  _CREASON=$(printf '%s' "${_DECODED_CMD}" \
+    | python3 "${_CLASSIFIER}" --mode destructive --relax "${RELAX}" 2>/dev/null) || _CR=$?
+  case "${_CR}" in
+    2) reason="${_CREASON}" ;;
+    0) exit 0 ;;   # parsed with confidence and found nothing destructive
+    *) : ;;        # 3 (or a crash) → fall through to the spelling rules
+  esac
+fi
+
 # --- git re-entering itself ----------------------------------------------
 # These rules scan RAWCMD, not SCAN. They exist to catch a payload that quoting
 # hides, and tokenization replaces precisely that payload with a placeholder —

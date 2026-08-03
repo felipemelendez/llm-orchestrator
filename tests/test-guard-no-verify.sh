@@ -74,6 +74,27 @@ blocks "$(printf 'npm test\ngit commit --no-verify -m x')"
 allows "$(printf 'echo hi\ngit commit -m ok')"
 blocks 'git {commit,--no-verify,-m,x}'
 
+printf '\n%s== spellings git accepts that the flag-text guard missed ==%s\n' "$DIM" "$RESET"
+# Git takes any unambiguous long-option prefix, so this guard's whole purpose —
+# the project's pre-commit hook — was bypassable by dropping one character.
+# Measured against git 2.54: `git commit --no-verif` committed past a FAILING
+# pre-commit hook. A line continuation is the normal way to write a long
+# command and defeated the newline rewrite the same way.
+blocks 'git commit --no-verif -m x'
+blocks 'git commit --no-veri -m x'
+blocks 'git commit --no-ver -m x'
+blocks 'git commit --no-gpg -m x'
+blocks 'git commit --no-gpg-sig -m x'
+blocks "$(printf 'git commit \\\n--no-verify -m x')"
+blocks 'git --no-pager commit --no-verify -m x'
+blocks 'git -P commit --no-verif -m x'
+
+printf '\n%s== false positives ==%s\n' "$DIM" "$RESET"
+allows 'git commit --help'
+allows 'git log -n 5'
+allows 'git push --dry-run'
+allows 'git commit -m x'
+
 printf '\n%s== opt-in and profile gates ==%s\n' "$DIM" "$RESET"
 RC=$(rc_for 'git commit --no-verify -m x' 'x' ORCH_ALLOW_NO_VERIFY=1)
 [[ "$RC" == "0" ]] && ok "ORCH_ALLOW_NO_VERIFY=1 → allowed" || fail "opt-in" "expected 0, got $RC"

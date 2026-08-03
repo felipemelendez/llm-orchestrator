@@ -63,15 +63,38 @@ fi
 SCAN=$(printf '%s' "${SCAN}" | LC_ALL=C tr -c '[:print:][:space:]' ' ')
 
 HIT=0
+CLASSIFIED=0
+# --- PRIMARY PATH: semantic classification ------------------------------------
+# `git commit --no-verif` commits past a failing pre-commit hook — git accepts
+# any unambiguous prefix, and this guard's whole purpose is that hook. The
+# classifier resolves long options by prefix against the bypass names instead
+# of matching their full spelling. Exit 3 (no python3 / unparseable / shell
+# re-entry) falls through to the block-biased rules below.
+_CLASSIFIER="${HOOK_DIR}/../lib/orch-git-classify.py"
+_DECODED_CMD=""
+declare -f orch_json_field >/dev/null 2>&1 && _DECODED_CMD=$(orch_json_field "${INPUT}" tool_input.command)
+if [[ -n "${_DECODED_CMD}" && -f "${_CLASSIFIER}" ]] && command -v python3 >/dev/null 2>&1; then
+  _CR=0
+  printf '%s' "${_DECODED_CMD}" \
+    | python3 "${_CLASSIFIER}" --mode no-verify >/dev/null 2>&1 || _CR=$?
+  case "${_CR}" in
+    2) HIT=1; CLASSIFIED=1 ;;
+    0) HIT=0; CLASSIFIED=1 ;;   # parsed with confidence — skip the fallbacks
+    *) : ;;
+  esac
+fi
+
 # An inline alias can carry the flag past every token-level rule, because the
 # alias body is a quoted argument that tokenization replaces with a placeholder.
 # Scan the RAW command for the FORM; there is no legitimate agent use for it.
 RAWCMD="${INPUT}"
 declare -f orch_json_field >/dev/null 2>&1 && _RC=$(orch_json_field "${INPUT}" tool_input.command) && [[ -n "${_RC}" ]] && RAWCMD="${_RC}"
-if grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]*alias\.' <<< "${RAWCMD}"; then
+if [[ ${CLASSIFIED} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+-c[[:space:]]*alias\.' <<< "${RAWCMD}"; then
   HIT=1
 fi
-if [[ ${HIT} -eq 0 ]] && [[ ${DECODED} -eq 1 ]] && declare -f orch_shell_segments >/dev/null 2>&1; then
+if [[ ${CLASSIFIED} -eq 1 ]]; then
+  : # the classifier already decided; neither fallback may override it
+elif [[ ${HIT} -eq 0 ]] && [[ ${DECODED} -eq 1 ]] && declare -f orch_shell_segments >/dev/null 2>&1; then
   # Match a git INVOCATION carrying the flag, not the flag's mere presence.
   #
   # After tokenization a quoted single word is indistinguishable from an
