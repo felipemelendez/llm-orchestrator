@@ -156,6 +156,23 @@ blocks 'git branch --delete --force feat'
 blocks 'rm -rf myrepo.git'
 blocks 'rm -rf /srv/repos/project.git'
 
+printf '\n%s== a padded command cannot stall the guard into a fail-open ==%s\n' "$DIM" "$RESET"
+# Brace expansion is multiplicative. Unbounded, `{a,b}` x26 produced
+# 67,108,864 words in 26 seconds — and Claude Code treats a hook that times
+# out or errors as a FAILURE, which lets the command run. So padding a
+# destructive command with brace groups was a denial-of-guard. The expansion
+# is now capped; assert both that the verdict is still BLOCK and that it
+# arrives quickly.
+PAD=""
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26; do PAD="${PAD}{a,b}"; done
+_t0=$(date +%s)
+RC=$(rc_for "git reset --hard ${PAD}")
+_elapsed=$(( $(date +%s) - _t0 ))
+[[ "$RC" == "2" ]] && ok "brace-padded destructive command still blocks" \
+  || fail "brace-padded command" "expected 2, got $RC"
+[[ ${_elapsed} -lt 10 ]] && ok "verdict returned in ${_elapsed}s (was 26s+ unbounded)" \
+  || fail "guard stalled" "took ${_elapsed}s — a slow hook reads as a fail-open"
+
 printf '\n%s== false positives: a guard that blocks these gets switched off ==%s\n' "$DIM" "$RESET"
 # Neither touches the working tree or the stash ref.
 allows "git stash create"

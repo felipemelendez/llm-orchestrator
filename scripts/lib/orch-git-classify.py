@@ -99,7 +99,18 @@ def unfold(s):
     return "".join(out)
 
 
-def expand_braces(tok):
+# Brace expansion is multiplicative, so it is BOUNDED. Unbounded, `{a,b}`
+# repeated 26 times produced 67,108,864 words in 26 seconds — inside a
+# PreToolUse hook, where Claude Code treats a timeout or error as a hook
+# FAILURE and lets the command run. That turns a decorative prefix into a
+# denial-of-guard: pad a destructive command with brace groups and the guard
+# never reaches a verdict. Past the cap we fall back to the old
+# blank-the-punctuation behaviour, which loses the prefix but is linear and
+# still yields every alternative as a separate word to match against.
+_BRACE_WORD_CAP = 256
+
+
+def expand_braces(tok, _budget=None):
     """`pre{a,b}post` is one token to shlex and several words to bash.
 
     The PREFIX has to survive. Blanking the punctuation turned
@@ -110,6 +121,8 @@ def expand_braces(tok):
     """
     if "{" not in tok or "}" not in tok or "," not in tok:
         return [tok]
+    if _budget is None:
+        _budget = [_BRACE_WORD_CAP]
     open_i = tok.index("{")
     close_i = tok.index("}", open_i)
     if close_i < open_i:
@@ -119,8 +132,12 @@ def expand_braces(tok):
         return [tok]
     out = []
     for alt in body.split(","):
-        # Recurse so a second group in the same word also expands.
-        out.extend(expand_braces(pre + alt + post))
+        if _budget[0] <= 0:
+            # Cap hit: degrade to the linear form rather than keep multiplying.
+            return [w for w in tok.replace("{", " ").replace("}", " ")
+                    .replace(",", " ").split() if w] or [tok]
+        _budget[0] -= 1
+        out.extend(expand_braces(pre + alt + post, _budget))
     return out or [tok]
 
 
