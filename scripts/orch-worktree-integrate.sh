@@ -80,6 +80,45 @@ report_and_exit() {
 
 # --- serial mode (original engine) -----------------------------------------
 
+# restore_base <pre_sha> — undo a staged merge on the base and PROVE it worked.
+# Prints nothing on success; prints a diagnostic and returns 1 if the base is
+# still mid-merge or has moved.
+#
+# `git merge --abort || git reset --merge || true` was not enough, and `|| true`
+# hid it. When the suite rewrites a file THE MERGE TOUCHED — a formatter, a
+# codegen step, a snapshot updater, all routine — both refuse:
+#
+#   error: Entry 'f.txt' not uptodate. Cannot merge.
+#   fatal: Could not reset index file to revision 'HEAD'.     (rc=128, both)
+#
+# and MERGE_HEAD survives, so the run reported "the merge was discarded and the
+# base is unchanged" with the base sitting mid-merge. The next run then read
+# that state and advised committing the red merge.
+#
+# The escalation is `reset --hard <pre>`, which is safe HERE specifically: the
+# pre-flight rejects a dirty base, so the only content that can be lost is the
+# staged merge and whatever the suite just wrote — both disposable by
+# definition. A caller that cannot restore must say so rather than claim clean.
+restore_base() {
+  local pre="$1"
+  git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || \
+     [[ -n "${pre}" && "$(git rev-parse HEAD 2>/dev/null)" != "${pre}" ]]; then
+    git reset -q --hard "${pre}" >/dev/null 2>&1 || true
+  fi
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    printf 'the base is STILL MID-MERGE at %s — abort and hard reset both failed; resolve by hand (git merge --abort; git reset --hard %s) before re-running' \
+           "$(git rev-parse --short HEAD 2>/dev/null)" "${pre}"
+    return 1
+  fi
+  if [[ -n "${pre}" && "$(git rev-parse HEAD 2>/dev/null)" != "${pre}" ]]; then
+    printf 'the base moved to %s and could not be restored to %s — resolve by hand before re-running' \
+           "$(git rev-parse --short HEAD 2>/dev/null)" "${pre}"
+    return 1
+  fi
+  return 0
+}
+
 on_signal() {
   # Decide from git's REAL state, not a shadow flag (which lags commits by a line).
   local in_merge=""; git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && in_merge=1
@@ -121,8 +160,11 @@ do_serial() {
     # a RED merge on the base every time a branch broke the suite — the exact
     # thing the "base only ever moves to a suite-green SHA" invariant forbids.
     if ! git merge --no-ff --no-commit "${branch}" >/dev/null 2>&1; then
-      git merge --abort >/dev/null 2>&1 || true
-      STOPPED="${slug} — CONFLICT — overlapping changes; merge aborted, base clean"
+      if restore_err="$(restore_base "${PRE}")"; then
+        STOPPED="${slug} — CONFLICT — overlapping changes; merge aborted, base clean"
+      else
+        STOPPED="${slug} — CONFLICT_DIRTY — overlapping changes, and ${restore_err}"
+      fi
       PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
     fi
 
@@ -137,17 +179,25 @@ do_serial() {
         rm -f "${TESTOUT}"; TESTOUT=""
         # Green: only now does the merge join the branch.
         if ! git commit -q --no-edit -m "integrate ${slug}" >/dev/null 2>&1; then
-          git merge --abort >/dev/null 2>&1 || true
-          STOPPED="${slug} — COMMIT_FAILED — the suite passed but the merge commit could not be created; base clean"
+          if restore_err="$(restore_base "${PRE}")"; then
+            STOPPED="${slug} — COMMIT_FAILED — the suite passed but the merge commit could not be created; base clean"
+          else
+            STOPPED="${slug} — COMMIT_FAILED_DIRTY — the merge commit could not be created, and ${restore_err}"
+          fi
           PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
         fi
         mergesha="$(git rev-parse --short HEAD)"
       else
         rm -f "${TESTOUT}"; TESTOUT=""
-        # Red: discard the staged merge. The base is left exactly where it was,
-        # so there is nothing to inspect or revert and no red commit to explain.
-        git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
-        STOPPED="${slug} — TEST_FAILED — '${TESTCMD}' failed against the merged tree; the merge was discarded and the base is unchanged at $(git rev-parse --short HEAD)"
+        # Red: discard the staged merge — and VERIFY the discard, because the
+        # suite that just failed may also have rewritten a merged file, which
+        # makes both abort forms refuse. Only claim "base is unchanged" when
+        # the base is provably unchanged.
+        if restore_err="$(restore_base "${PRE}")"; then
+          STOPPED="${slug} — TEST_FAILED — '${TESTCMD}' failed against the merged tree; the merge was discarded and the base is unchanged at $(git rev-parse --short HEAD)"
+        else
+          STOPPED="${slug} — TEST_FAILED_DIRTY — '${TESTCMD}' failed against the merged tree AND ${restore_err}"
+        fi
         PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
       fi
     fi

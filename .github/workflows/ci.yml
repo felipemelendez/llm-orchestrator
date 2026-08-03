@@ -27,6 +27,13 @@ jobs:
         if: always()
         run: bash tests/validate-workflows.sh
 
+      # Meta-test: the workflow validator's syntax layer could never fail
+      # (node --check returns 0 on invalid ESM), so it is now itself mutation-
+      # tested — inject one defect at a time and assert it goes red.
+      - name: Workflow validator mutation tests
+        if: always()
+        run: bash tests/test-validate-workflows.sh
+
       - name: Workflow distribution
         if: always()
         run: bash tests/test-workflow-distribution.sh

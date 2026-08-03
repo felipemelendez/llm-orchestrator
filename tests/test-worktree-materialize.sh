@@ -183,6 +183,42 @@ WB="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SID="${SID}" SCRIPT="${SCRIPT}" b
 ')"
 [[ "$WB" == "OK" ]] && ok "rollback_all clears worktrees+claims+branches (and a meta-less claim)" || fail "rollback_all" "got: ${WB}"
 
+printf '\n%s== white-box: rollback_all refuses to destroy ANOTHER session'"'"'s worktree ==%s\n' "$DIM" "$RESET"
+# The one place this engine can lose uncommitted work with no second command.
+# Window: our claim is pruned while a slow `worktree add` still holds the path,
+# another session re-claims the slug and populates the SAME path, and then our
+# failure path force-removes it. Simulated directly: record a path in the
+# rollback list, hand both ownership proofs (registry meta + the worktree's own
+# .orch-worktree-lock stamp) to a different session, then roll back.
+XS="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SID="${SID}" SCRIPT="${SCRIPT}" bash -c '
+  . "${SCRIPT}"; init_paths
+  do_materialize other-session xown >/dev/null 2>&1 || { echo SETUP_FAIL; exit 0; }
+  echo "precious uncommitted work" > .worktrees/xown/WORK.txt
+  # Our run recorded the same path, believing it was ours.
+  R_SID="${SID}"
+  R_SLUG=(xown); R_PATH=("${PWD}/.worktrees/xown"); R_BRANCH=("orch/${SID}/xown")
+  rollback_all 2>/dev/null
+  [[ -d .worktrees/xown ]] || { echo WORKTREE_DESTROYED; exit 0; }
+  [[ -f .worktrees/xown/WORK.txt ]] || { echo WORK_LOST; exit 0; }
+  [[ -d "${OWNERS}/xown" ]] || { echo CLAIM_DESTROYED; exit 0; }
+  echo OK
+')"
+[[ "$XS" == "OK" ]] && ok "rollback_all skips a path owned by another session (work preserved)" \
+  || fail "cross-session rollback" "got: ${XS} — rollback destroyed another session's worktree"
+
+printf '\n%s== duplicate-slug guard is live (not dead code) ==%s\n' "$DIM" "$RESET"
+# `sanitize` printed with no trailing newline, so `... | sort | uniq -d` saw one
+# concatenated line and the guard could never fire. The suite named for it
+# passed anyway, because the claim mkdir rejected the second slug — a test
+# green for a different reason than the one it names. Assert the GUARD.
+DUPOUT="$(cd "${REPO}" && run "$SID" 'dup slug' 'dup_slug' 2>&1)"; duprc=$?
+if [[ $duprc -ne 0 ]] && printf '%s' "$DUPOUT" | grep -q 'duplicate slug'; then
+  ok "two raw slugs that sanitize alike are rejected BY the duplicate guard"
+else
+  fail "duplicate-slug guard" "rc=$duprc out=$(printf '%s' "$DUPOUT" | head -1)"
+fi
+[[ ! -d "${REPO}/.worktrees/dup_slug" ]] && ok "duplicate-slug rejection created nothing" || fail "dup leaked"
+
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-worktree-materialize%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"

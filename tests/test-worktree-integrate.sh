@@ -94,6 +94,43 @@ printf '%s' "$OUT" | grep -q 'Falling back to --serial' && ok "base-state red �
   || ok "serial contract: a red suite discards the merge; the base is unchanged"
 printf '%s' "$OUT" | grep -q 'the base is unchanged at' && ok "the report says the base is unchanged" || fail "unchanged-base wording" "out=$OUT"
 
+printf '\n%s== a red suite that rewrites a MERGED file must not leave the base mid-merge ==%s\n' "$DIM" "$RESET"
+# `git merge --abort` and `git reset --merge` BOTH refuse (rc=128, "Entry
+# 'f' not uptodate. Cannot merge.") when the working tree carries an unstaged
+# change to a file the merge touched — a formatter, codegen, or snapshot
+# updater run by the suite does exactly that. `|| true` swallowed it, so the
+# run reported "the merge was discarded and the base is unchanged" with
+# MERGE_HEAD still present, and the next run advised committing the red merge.
+mat dm; mk dm seed.txt "branch version"
+BEFORE_DM="$(git rev-parse HEAD)"
+# The suite rewrites the merged file, then fails.
+OUT="$(bash "$INTEG" --serial --test "echo suite-rewrote > seed.txt; false" "$SID" dm 2>&1)"; rc=$?
+[[ $rc -ne 0 ]] && ok "red suite → non-zero" || fail "dirty-abort exit" "rc=$rc"
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  fail "base left mid-merge" "MERGE_HEAD present — the report's 'base is unchanged' would be false"
+  git merge --abort >/dev/null 2>&1 || git reset -q --hard "$BEFORE_DM" >/dev/null 2>&1 || true
+else
+  ok "base is NOT mid-merge after a red suite that rewrote a merged file"
+fi
+[[ "$(git rev-parse HEAD)" == "$BEFORE_DM" ]] && ok "base HEAD restored to its pre-merge sha" \
+  || fail "base moved" "was $BEFORE_DM now $(git rev-parse HEAD)"
+# Whatever it reports must MATCH the state it left: a clean claim only when clean.
+if printf '%s' "$OUT" | grep -q 'the base is unchanged at'; then
+  git diff --quiet && git diff --cached --quiet \
+    && ok "'base is unchanged' claimed only with a genuinely clean base" \
+    || fail "false clean claim" "reported unchanged while the tree is dirty"
+else
+  printf '%s' "$OUT" | grep -q 'TEST_FAILED_DIRTY' \
+    && ok "un-restorable base is reported as TEST_FAILED_DIRTY, not as clean" \
+    || fail "dirty state unreported" "out=$(printf '%s' "$OUT" | head -3)"
+fi
+git reset -q --hard "$BEFORE_DM" >/dev/null 2>&1 || true
+git checkout -q -- . 2>/dev/null || true
+bash "$MAT" --release "$SID" dm >/dev/null 2>&1 || true
+git worktree remove --force .worktrees/dm >/dev/null 2>&1 || true
+git worktree prune >/dev/null 2>&1 || true
+git branch -D "orch/${SID}/dm" >/dev/null 2>&1 || true
+
 printf '\n%s== speculative green path: N branches, ONE suite run ==%s\n' "$DIM" "$RESET"
 CNT="${TMP}/cnt-green"; : > "$CNT"
 mat s1 s2; mk s1 fs1.txt one; mk s2 fs2.txt two

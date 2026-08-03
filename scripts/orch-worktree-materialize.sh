@@ -51,7 +51,13 @@ init_paths() {
   mkdir -p "${OWNERS}"
 }
 
-sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
+# Prints the sanitized slug WITH a trailing newline. Without it the
+# duplicate-slug guard was dead code: `for raw; do sanitize "$raw"; done | sort
+# | uniq -d` saw one concatenated line ("a_ba_b"), so `uniq -d` never had two
+# lines to compare and reported nothing. The suite named for that guard passed
+# because a DIFFERENT check (the claim mkdir) happened to reject the second
+# slug — a test green for a reason other than the one it names.
+sanitize() { printf '%s\n' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
 
 # epoch mtime of a path — GNU stat first, then BSD. The order matters: GNU
 # `stat -f %m` does NOT fail — `-f` is filesystem mode there and %m prints the
@@ -147,11 +153,39 @@ do_list() {
 
 # rollback list (parallel indexed arrays — bash 3.2 has no associative arrays).
 # Re-initialized at the top of do_materialize so a sourced second run is clean.
-R_SLUG=(); R_PATH=(); R_BRANCH=()
+R_SLUG=(); R_PATH=(); R_BRANCH=(); R_SID=""
 
 rollback_all() {
-  local i
+  local i owner locked
   for (( i=${#R_SLUG[@]}-1; i>=0; i-- )); do
+    # DESTROY ONLY WHAT IS STILL OURS.
+    #
+    # `git worktree remove --force` on a path we merely RECORDED is the one
+    # place this engine can destroy uncommitted work with no second command.
+    # The window: our claim is pruned while we still hold the path (a slow
+    # `worktree add` on a large repo can outlive the TTL, and prune only
+    # requires the recorded worktree to be absent — which it is, mid-add), the
+    # slug is re-claimed by another session, that session populates the SAME
+    # path, and then our failure path force-removes it. Observed: the winning
+    # session exited 0 and printed a path that no longer existed.
+    #
+    # Two independent ownership proofs, either of which vetoes the removal.
+    # Both fail toward SKIPPING, because a leaked worktree is recoverable by
+    # hand and a destroyed one is not.
+    owner="$(registry_owner "${R_SLUG[$i]}" 2>/dev/null)"
+    if [[ -n "${owner}" && -n "${R_SID}" && "${owner}" != "${R_SID}" ]]; then
+      printf 'orch-materialize: rollback SKIPPED for "%s" — the claim is now held by %s, not us (%s). Left in place; remove by hand if it is truly stale.\n' \
+             "${R_SLUG[$i]}" "${owner}" "${R_SID}" >&2
+      continue
+    fi
+    locked=""
+    [[ -f "${R_PATH[$i]}/.orch-worktree-lock" ]] && \
+      locked="$(cat "${R_PATH[$i]}/.orch-worktree-lock" 2>/dev/null)"
+    if [[ -n "${locked}" && -n "${R_SID}" && "${locked}" != "${R_SID}" ]]; then
+      printf 'orch-materialize: rollback SKIPPED for "%s" — the worktree at %s is stamped for session %s. Left in place.\n' \
+             "${R_SLUG[$i]}" "${R_PATH[$i]}" "${locked}" >&2
+      continue
+    fi
     # We created these claims this run, so remove the claim dir directly with
     # rm -rf — INTENTIONALLY bypassing registry_release's ownership/in-progress
     # guards, which exist for external callers, not for our own teardown. Claim
@@ -164,7 +198,7 @@ rollback_all() {
 }
 
 do_materialize() {
-  R_SLUG=(); R_PATH=(); R_BRANCH=()
+  R_SLUG=(); R_PATH=(); R_BRANCH=(); R_SID=""
   local base="HEAD" dry=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -177,6 +211,7 @@ do_materialize() {
   [[ -n "${sid}" ]] || { echo "orch-materialize: empty session id — is the plugin's SessionStart hook installed? (try --sid)" >&2; exit 2; }
   [[ "${sid}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "orch-materialize: invalid session id (allowed: A-Za-z0-9._-) — got '${sid}'" >&2; exit 2; }
   [[ $# -gt 0 ]] || { echo "usage: orch-worktree-materialize.sh [--base ref] [--dry-run] <session_id> <slug> [slug ...]" >&2; exit 2; }
+  R_SID="${sid}"   # rollback_all compares against this before destroying anything
 
   # Must run from the repo root — the engine builds worktree paths relative to it.
   # `--show-prefix` is empty exactly at the root and is symlink-immune (unlike a

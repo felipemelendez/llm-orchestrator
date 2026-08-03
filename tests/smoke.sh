@@ -108,6 +108,15 @@ if should_run structural; then
   else
     fail "validate-workflows passes" "unexpected output: $(printf '%s' "$VW_OUT" | head -1)"
   fi
+  # The validator's own falsifiability. Node-gated the same way as the
+  # behavior harness below: without node it prints SKIP:, which is announced
+  # rather than booked as a pass.
+  if command -v node >/dev/null 2>&1; then
+    check_out "workflow validator rejects injected defects" "PASS: test-validate-workflows" \
+              bash "${ROOT}/tests/test-validate-workflows.sh"
+  else
+    skipped "workflow validator mutation tests (node not installed)"
+  fi
   check_out "installer + packaging contract tests pass" "PASS: test-install" \
             bash "${ROOT}/tests/test-install.sh"
   check_out "lib-resolution contract tests pass" "PASS: test-lib-resolution" \
