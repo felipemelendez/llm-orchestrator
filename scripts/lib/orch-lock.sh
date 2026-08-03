@@ -12,11 +12,44 @@
 #   content
 #   EOF'
 
+# _restore_steal <moved-dir> <original-path>
+# Put back a lockdir we moved but did not condemn — WITHOUT nesting it.
+#
+# POSIX `mv` moves a directory INTO an existing directory rather than failing,
+# so a plain `mv "$_steal" "$lockdir"` after another waiter had already
+# mkdir'd the path deposited `<target>.lockdir.stale.PID.RAND/` INSIDE the new
+# owner's live lockdir. That owner's release then ran `rmdir`, which fails
+# silently on a non-empty directory — leaving a lockdir with no pid file and a
+# fresh mtime, i.e. stranded for the full TTL. Callers that respond to a lock
+# timeout by writing UNLOCKED (orch-detect.sh, orch-arch.sh) turn that into
+# exactly the permanent no-op this whole mechanism exists to prevent.
+#
+# If the path is occupied again, the new holder is legitimate: drop our copy
+# rather than nest it. A post-check catches the residual race.
+_restore_steal() {
+  local moved="$1" dest="$2"
+  if [[ -e "${dest}" ]]; then
+    rm -rf "${moved}" 2>/dev/null
+    return 0
+  fi
+  mv "${moved}" "${dest}" 2>/dev/null || { rm -rf "${moved}" 2>/dev/null; return 0; }
+  # If the rename nested (the path reappeared between the test and the mv),
+  # undo it — a nested directory is what makes the lock unreleasable.
+  if [[ -d "${dest}/$(basename "${moved}")" ]]; then
+    rm -rf "${dest}/$(basename "${moved}")" 2>/dev/null
+  fi
+}
+
 with_lock() {
   local target="$1"; shift
   local lockfile="${target}.lock"
   local lockdir="${target}.lockdir"
+  # Numeric-only, with a fallback to the default. Under `set -u` an arithmetic
+  # test against a non-numeric value ("abc") is an UNBOUND VARIABLE error, so
+  # `with_lock` returned 1 and the callers that proceed unlocked on failure
+  # did so — a typo in an env var silently disabled the mutex.
   local timeout="${ORCH_LOCK_TIMEOUT:-10}"
+  case "${timeout}" in ''|*[!0-9]*) timeout=10 ;; esac
 
   if command -v flock >/dev/null 2>&1; then
     # GNU/BSD systems with util-linux flock or compatible.
@@ -59,6 +92,7 @@ with_lock() {
   # it replaces is two concurrent writers to the user's CLAUDE.md.
   # `waited` counts tenths-of-a-second so timeout (in seconds) maps to waited * 10.
   local waited=0 stale_secs="${ORCH_LOCK_STALE_SECS:-600}" holder_pid="" lock_age=""
+  case "${stale_secs}" in ''|*[!0-9]*) stale_secs=600 ;; esac
   local _steal _moved_pid
   while ! mkdir "${lockdir}" 2>/dev/null; do
     holder_pid="$(cat "${lockdir}/pid" 2>/dev/null || true)"
@@ -71,7 +105,7 @@ with_lock() {
           echo "orch-lock: reclaimed lock on ${target} from dead pid ${holder_pid}" >&2
         else
           # Someone re-acquired between our judgment and our rename. Not ours.
-          mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
+          _restore_steal "${_steal}" "${lockdir}"
         fi
       fi
     fi
@@ -96,7 +130,7 @@ with_lock() {
             rm -rf "${_steal}" 2>/dev/null
             echo "orch-lock: reclaimed lock on ${target} — ${lock_age}s old (> ${stale_secs}s TTL), no live holder" >&2
           else
-            mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
+            _restore_steal "${_steal}" "${lockdir}"
           fi
         fi
       fi
@@ -121,7 +155,16 @@ with_lock() {
       waited=$((waited + 10))  # advance by a full second's worth of tenths
     fi
   done
-  printf '%s\n' "$$" > "${lockdir}/pid" 2>/dev/null || true
+  # A holder that cannot record its identity cannot release its own lock: the
+  # ownership check below would read an empty pid, conclude "not ours", and
+  # skip the rmdir — stranding a lock we legitimately held. Give it up instead
+  # of proceeding with a lock we can never hand back.
+  if ! printf '%s\n' "$$" > "${lockdir}/pid" 2>/dev/null; then
+    rm -f "${lockdir}/pid" 2>/dev/null
+    rmdir "${lockdir}" 2>/dev/null
+    echo "orch-lock: could not record ownership of ${target}; releasing rather than holding an unreleasable lock" >&2
+    return 1
+  fi
 
   # Run the command, then release ONLY IF THE LOCK IS STILL OURS.
   #

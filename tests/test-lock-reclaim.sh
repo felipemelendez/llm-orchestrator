@@ -207,6 +207,43 @@ printf '%s' "$out" | grep -q 'no longer ours' && ok "the refusal is announced, n
   || fail "silent refusal" "out=$(printf '%s' "$out" | head -1)"
 rm -rf "${T8}.lockdir"
 
+printf '\n%s== a put-back never NESTS into a re-taken lock path ==%s\n' "$DIM" "$RESET"
+# POSIX mv moves a directory INTO an existing directory rather than failing.
+# The put-back therefore deposited `<t>.lockdir.stale.PID.RAND/` inside the
+# NEW owner's live lockdir; that owner's release ran rmdir, which fails
+# silently on a non-empty directory, leaving a lockdir with no pid file and a
+# fresh mtime — stranded for the full TTL. Callers that write unlocked on a
+# lock timeout then turn it into the permanent no-op this mechanism exists to
+# prevent.
+T9="${TMP}/t9"; : > "$T9"
+mkdir "${T9}.lockdir.stale.probe"; printf '111\n' > "${T9}.lockdir.stale.probe/pid"
+mkdir "${T9}.lockdir";             printf '222\n' > "${T9}.lockdir/pid"
+PATH="$NOFLOCK" bash -c '. "$1"; _restore_steal "$2" "$3"' _ "$LIB" \
+  "${T9}.lockdir.stale.probe" "${T9}.lockdir" >/dev/null 2>&1
+[[ ! -d "${T9}.lockdir/$(basename "${T9}.lockdir.stale.probe")" ]] \
+  && ok "the moved dir was not nested inside the new owner's lockdir" \
+  || fail "put-back nested" "the new owner's lockdir is now un-rmdir-able"
+rm -f "${T9}.lockdir/pid"
+if rmdir "${T9}.lockdir" 2>/dev/null; then
+  ok "the new owner can still release its lock"
+else
+  fail "new owner cannot release" "rmdir failed — the lock is stranded"
+  rm -rf "${T9}.lockdir"
+fi
+rm -rf "${T9}".lockdir.stale.* 2>/dev/null
+
+printf '\n%s== a non-numeric env override must not disable the lock ==%s\n' "$DIM" "$RESET"
+# Under `set -u`, an arithmetic test against a non-numeric value is an UNBOUND
+# VARIABLE error, so with_lock returned 1 — and the callers that proceed
+# unlocked on failure did so. A typo in an env var silently disabled the mutex.
+for _bad in ORCH_LOCK_STALE_SECS=abc ORCH_LOCK_TIMEOUT=abc ORCH_LOCK_TIMEOUT=; do
+  T10="${TMP}/t10.${RANDOM}"; : > "$T10"
+  rc=0
+  PATH="$NOFLOCK" env "${_bad}" bash -c '. "$1"; with_lock "$2" true' _ "$LIB" "$T10" >/dev/null 2>&1 || rc=$?
+  [[ $rc -eq 0 ]] && ok "lock still works with ${_bad}" \
+    || fail "env typo disabled the lock: ${_bad}" "with_lock rc=$rc"
+done
+
 TOTAL=$((PASS + FAIL))
 printf '\n'
 if (( FAIL == 0 )); then

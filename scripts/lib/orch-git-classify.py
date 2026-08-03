@@ -124,8 +124,15 @@ def expand_braces(tok, _budget=None):
     if _budget is None:
         _budget = [_BRACE_WORD_CAP]
     open_i = tok.index("{")
-    close_i = tok.index("}", open_i)
-    if close_i < open_i:
+    # `find`, not `index`: with a start offset `index` can only raise, never
+    # return a smaller value, so the `close_i < open_i` guard below could not
+    # fire and a token like `}{a,b` raised ValueError out of tokenize().
+    # main() caught it as exit 3, which reads as "cannot parse" and drops the
+    # whole command to the spelling rules — so ONE poisoned token anywhere on
+    # the line disarmed the semantic layer: `echo '}{a,b' ; git reset --h` was
+    # allowed while `git reset --h` alone was blocked.
+    close_i = tok.find("}", open_i)
+    if close_i < 0:
         return [tok]
     pre, body, post = tok[:open_i], tok[open_i + 1:close_i], tok[close_i + 1:]
     if "," not in body:
@@ -341,6 +348,14 @@ def classify_destructive(inv, relax):
         if deleting and forcing:
             return ("git branch -D / -d --force — force-deletes a branch, "
                     "dropping unmerged commits")
+        # A force RENAME drops the destination branch exactly as -D would:
+        # `git branch -M main other` overwrites `other`. Same protection
+        # removal, different verb.
+        if (has_short(flags, "M") or
+                (has_long(flags, "move") and
+                 (has_long(flags, "force") or has_short(flags, "f")))):
+            return ("git branch -M / --move --force — force-renames over an "
+                    "existing branch, dropping its unmerged commits")
     if sub == "worktree" and pos[:1] == ["remove"]:
         if has_long(flags, "force") or has_short(flags, "f"):
             return "git worktree remove --force — discards a worktree's uncommitted changes"
@@ -498,13 +513,28 @@ def main():
         if mode == "destructive":
             # Raw filesystem destruction of the work containers themselves is
             # not a git command, so no git rule can ever see it.
-            if seg and os.path.basename(seg[0]) == "rm":
+            #
+            # The command word is found by SKIPPING env assignments, the same
+            # way the interpreter scan does. This rule is the only positional
+            # one in the file, and testing seg[0] directly meant `FOO=1 rm -rf
+            # .git` had `FOO=1` as its command word, matched nothing, and — via
+            # the classifier's confident exit 0 — was allowed outright with no
+            # fallback. `env rm -rf .git` was already caught (env is an
+            # interpreter → exit 3), so the bare assignment prefix was the hole.
+            _ci = 0
+            while _ci < len(seg) and ASSIGNMENT_RE.match(seg[_ci]):
+                _ci += 1
+            if _ci < len(seg) and os.path.basename(seg[_ci]) == "rm":
+                # `-R` is a documented recursive flag on GNU and BSD rm alike;
+                # scanning only lowercase r/f missed `rm -R .git`, and the
+                # spelling fallback has no uppercase R either.
                 forceful = any(s.startswith("-") and not s.startswith("--")
-                               and ("r" in s[1:] or "f" in s[1:]) for s in seg)
+                               and any(c in s[1:] for c in ("r", "R", "f"))
+                               for s in seg)
                 forceful = forceful or any(resolves_to(s, "recursive") or
                                            resolves_to(s, "force") for s in seg)
                 if forceful:
-                    for a in seg[1:]:
+                    for a in seg[_ci + 1:]:
                         # Any path COMPONENT, not just the last one: the target
                         # is usually a worktree INSIDE the container
                         # (`rm -rf .worktrees/feat-x`), which an endswith test
@@ -515,7 +545,12 @@ def main():
                         # Component-only matching fixed a `.github/` false
                         # positive but silently stopped covering bare repos,
                         # which is exactly the harm this rule names.
-                        parts = [p for p in a.split("/") if p]
+                        # Glob metacharacters are stripped before matching:
+                        # shlex hands us the LITERAL token `.git*`, which bash
+                        # expands to `.git` at execution, so an exact-string
+                        # test missed `rm -rf .git*` and `rm -rf .worktrees*`
+                        # entirely.
+                        parts = [p.rstrip("*?") for p in a.split("/") if p]
                         if ".git" in parts or ".worktrees" in parts \
                                 or any(p.endswith(".git") for p in parts):
                             print("rm -rf of .git/.worktrees — irrecoverably "

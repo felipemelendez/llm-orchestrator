@@ -156,6 +156,31 @@ blocks 'git branch --delete --force feat'
 blocks 'rm -rf myrepo.git'
 blocks 'rm -rf /srv/repos/project.git'
 
+printf '\n%s== second-pass review: the classifier is the ONLY line of defence ==%s\n' "$DIM" "$RESET"
+# The hook exits 0 immediately on a confident classifier verdict, so a
+# classifier gap is a FULL allow, not a fall-back to the spelling rules. Each
+# case below was measured allowed end-to-end through the real hook.
+#
+# An env-assignment prefix: the rm rule was the file's only POSITIONAL rule,
+# so `FOO=1 rm -rf .git` had `FOO=1` as its command word. (`env rm -rf .git`
+# was already caught — env is an interpreter — so the bare prefix was the hole.)
+blocks 'FOO=1 rm -rf .git'
+blocks 'A=1 B=2 rm -rf .git'
+blocks 'FOO=1 rm -rf .worktrees/feat-x'
+# `-R` is a documented recursive flag on GNU and BSD rm alike.
+blocks 'rm -R .git'
+blocks 'rm -Rf .worktrees/x'
+# shlex hands over the LITERAL token; bash expands the glob at execution.
+blocks 'rm -rf .git*'
+blocks 'rm -rf .worktrees*'
+# A `}` before `{` made expand_braces raise, which main() caught as exit 3 —
+# so ONE poisoned token disarmed the semantic layer for the whole line.
+blocks "$(printf "echo '}{a,b' ; git reset --h")"
+blocks "$(printf "echo 'x}y{a,b' ; git clean -f")"
+# A force RENAME drops the destination branch exactly as -D would.
+blocks 'git branch -M main other'
+blocks 'git branch --move --force main other'
+
 printf '\n%s== a padded command cannot stall the guard into a fail-open ==%s\n' "$DIM" "$RESET"
 # Brace expansion is multiplicative. Unbounded, `{a,b}` x26 produced
 # 67,108,864 words in 26 seconds — and Claude Code treats a hook that times
