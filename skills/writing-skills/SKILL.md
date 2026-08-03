@@ -34,22 +34,28 @@ description: Use when <trigger>. <Optional second sentence on scope.>
 ---
 ```
 
-Rules the linter enforces:
+Rules the linter (`tests/validate-skills.sh`) enforces:
 - `name` must equal the directory name.
 - `description` must start with `Use when`.
 - The whole file must be ≤ 250 lines (target ≤ 150).
 
 ## Body conventions
 
-Required sections in order:
-1. **One-line purpose** at the top (no header).
-2. **When to use** — bullets.
-3. **When NOT to use** — bullets. Omit only if there's no plausible mis-trigger.
-4. **Steps** — numbered.
-5. **Output shape** — show the Concise Agent Protocol block this skill produces.
-6. **Anti-patterns** — bullets, short.
+Nothing below the frontmatter is machine-checked, and no fixed section list is
+required — a previous version of this file mandated five sections in order that
+no skill in the corpus (including this one) satisfied. The working skeleton,
+used where each part earns its place:
 
-Optional: a small table when comparing options.
+- **One-line purpose** at the top (no header) — near-universal; keep it.
+- **When to use / when not to** — include when the trigger has a plausible
+  mis-fire; the frontmatter `description` already carries the primary trigger.
+- **Steps** — numbered, when the skill is a procedure rather than a reference.
+- **Output shape** — the Concise Agent Protocol block the skill produces, when
+  it produces one.
+- **Anti-patterns** — short bullets; the most consistently useful section in
+  practice.
+
+A small table is fine when comparing options.
 
 ## Voice
 

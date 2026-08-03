@@ -58,63 +58,20 @@ Required in each step instead: the literal change (the actual function/test to w
 
 ## Plan format
 
-Use the template at `templates/plan.md`.
+Copy `templates/plan.md` and fill it in — it is the single source for the
+plan's structure; do not reconstruct the format from memory. Load-bearing
+details the executor depends on:
 
-```
-# <Title> — Plan
-
-Date: YYYY-MM-DD
-Spec: docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md
-
-## Global constraints
-
-Project-wide requirements every task inherits — version floors, dependency
-limits, naming and copy rules, platform targets. One line each, values copied
-verbatim from the spec.
-
-A task-scoped implementer never sees the spec preamble. If a constraint lives
-only there, it does not reach the agent doing the work, and the reviewer marks
-the omission as a defect that was never communicated. Every task's requirements
-implicitly include this section, and it gets pasted into every dispatch.
-
-## Goal
-- one line
-
-## Files
-
-Map every file to be created or modified **and what each one is responsible
-for**. The responsibility annotation is what makes this drive decomposition
-rather than being a checklist — files that change together belong in the same
-task, and the split follows responsibility, not technical layer.
-
-
-- create: path/to/new.ts
-- modify: path/to/existing.ts:120–180
-- test: path/to/new.test.ts
-
-## Tasks
-
-### 1. <task name>
-Independent: yes | no (depends on N)
-Done when: <observable end state>
-Stop if: <abort conditions → PARTIAL or BLOCKED>
-
-Steps:
-- [ ] write failing test in <file>
-- [ ] run: `<cmd>` — expect: <line>
-- [ ] implement <thing> in <file>
-- [ ] run: `<cmd>` — expect: <line>
-- [ ] commit: `<message>`
-
-### 2. <task name>
-...
-
-## Risks
-- <risk> — <one-line mitigation or "accept">
-
-## Verify done
-- <command> — <expected output>
-```
+- Each `### N. <task name>  - [ ]` heading carries the task-level checkbox.
+  That checkbox is the durable state `dispatching-subagents` ticks and
+  `executing-plans` greps across `/clear`; sub-step checkboxes are progress
+  notes only. A heading without it makes progress untrackable.
+- Each task's `Files:`, `Done when:`, `Stop if:`, `Owner:`, and optional
+  `Interfaces:` blocks feed the dispatch envelope.
+- `## Global constraints` is pasted into every dispatch; `## References`
+  carries the verified sources. Map every file in `## Files` with what it is
+  responsible for — files that change together belong in the same task, and the
+  split follows responsibility, not technical layer.
 
 ## Output
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "Drop this into .claude/settings.json (per-project) or merge into ~/.claude/settings.json (per-user). Adjust paths and permissions to taste.",
+  "_comment": "Starter Claude Code settings for LLM Orchestrator. install.sh --copy seeds <project>/.claude/settings.json from this file when none exists; you can also merge it into ~/.claude/settings.json (per-user) by hand. Adjust paths and permissions to taste.",
   "env": {
     "ORCH_HOOK_PROFILE": "standard",
     "ORCH_SESSION_MAX_CHARS": "8000",
@@ -21,9 +21,7 @@
       "Bash(find:*)",
       "Bash(mkdir:*)",
       "Bash(touch:*)",
-      "Read(*)",
-      "Glob(*)",
-      "Grep(*)"
+      "Read(*)"
     ],
     "ask": [
       "Bash(git push:*)",
@@ -31,16 +29,14 @@
       "Bash(git reset:*)",
       "Bash(rm:*)",
       "Bash(gh pr:*)",
-      "Edit(*)",
-      "Write(*)"
+      "Edit(*)"
     ],
     "deny": [
-      "Bash(git push --force:*)",
-      "Bash(rm -rf /*)",
-      "Bash(curl * | sh)",
-      "Bash(curl * | bash)"
+      "Bash(rm -rf /*)"
     ]
   },
+  "_permissions_note": "Three kinds of rules were removed from earlier versions of this template because they cannot fire. (1) 'Bash(curl * | sh)': Bash rules are matched against each pipe-split subcommand, so a pattern that itself contains a pipe matches neither side — it denied nothing. (2) 'Bash(git push --force:*)': ':*' is a trailing wildcard, so 'git push origin main --force' was not matched; flag position cannot be expressed in these patterns. Every push, forced or not, is intercepted by the 'Bash(git push:*)' ask rule instead. (3) 'Write(*)' / 'Glob(*)' / 'Grep(*)': path rules are consulted for Edit and Read only — rules naming other tools are accepted, never consulted, and warn at startup.",
+  "_safety_note": "The two hard guards have deliberate, individually named escape hatches, set in the environment (not in this file) when a human really means it. ORCH_ALLOW_DESTRUCTIVE_GIT=1 disarms guard-destructive-git — that guard intentionally ignores ORCH_DISABLED_HOOKS and ORCH_HOOK_PROFILE, because a guard against losing uncommitted work must not share an off switch with style hooks. ORCH_ALLOW_CONFIG_EDIT=1 disarms guard-config-protection. See docs/install.md, 'Escape hatches for the hard guards'.",
   "_handoff_note": "ORCH_CONTEXT_HANDOFF_TOKENS is the token count at which the agent is reminded once to write a handoff note (a short status file) so a long task can continue cleanly after Claude Code compacts the conversation. Default 950000 (~95% of a 1M-token window), just below the point where native compaction kicks in. Lower it for a smaller window. You can also write the note anytime with /llm-orchestrator:handoff.",
-  "_hooks_note": "If you installed via --copy (not as a plugin), add hook entries here using Claude Code's settings.json hook schema. See docs/install.md → 'Wiring hooks for a --copy install' for the full example. If you installed as a plugin, hooks come from .claude-plugin/plugin.json automatically — leave this block out."
+  "_hooks_note": "If you installed via --copy (not as a plugin), add hook entries here using Claude Code's settings.json hook schema. See 'Wiring hooks for a --copy install' in docs/install.md — install.sh --copy ships that file to .claude/docs/install.md so the reference resolves inside the installed tree. If you installed as a plugin, hooks come from hooks/hooks.json automatically — leave the hooks block out."
 }

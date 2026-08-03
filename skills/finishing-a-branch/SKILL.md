@@ -15,9 +15,9 @@ Before this skill runs:
 - **Regression check passes.** Run:
   ```bash
   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
-  L=$(orch_lib orch-regression.sh) && . "$L" && orch_regression_check <project-dir>
+  L=$(orch_lib orch-detect.sh) && . "$L" && orch_regression_check <project-dir>
   ```
-  If it returns nonzero (a previously-green suite now fails), **refuse to merge or open a PR** and report what regressed. Fix the regression first. This check is never destructive — it only reads and runs tests.
+  Exit codes: `0` — suite passes now (or the baseline was never green, so no guard applies). `1` — a previously-green suite now fails: **refuse to merge or open a PR**, report what regressed, fix that first. `2` — no baseline was ever recorded (the branch didn't go through `using-git-worktrees` step 7): say so and continue on the strength of `/llm-orchestrator:verify` — do not report a regression that was never measured. This check is never destructive — it only reads and runs tests.
 
 If any precondition is false, stop and do that first.
 

@@ -18,22 +18,27 @@ export const meta = {
 //     specText, planText, conventions, diff,   // all pasted strings
 //     security_sensitive,                       // boolean from orch-signals.sh
 //   }
+//
+// Governing invariant for the return: it must never claim the review was more
+// complete, more verified, or cleaner than it was. Every finding a reviewer
+// produced is visible in the return, or its loss is counted there. log() is
+// display-only — the controller builds its report from the return value alone.
 // ---------------------------------------------------------------------------
 const a = args || {}
 const diff = a.diff || ''
 const specText = a.specText || '(no spec on disk)'
 const planText = a.planText || '(no plan on disk)'
 const conventions = a.conventions || '(no conventions section)'
+// Strict boolean: a truthy non-boolean must not dispatch the security reviewer.
 const securitySensitive = a.security_sensitive === true
 
 const CONFIDENCE_FLOOR = 0.8
 const VERIFY_BATCHES = 4 // hard cap on skeptic agents, so a noisy diff can't blow the budget
 
-// Every finding carries a `fix` — the minimal concrete correction. That is not
-// decoration: the skeptic pass executes the proposed fix as COUNTERFACTUAL
-// evidence where the claim is runnable (arXiv:2603.00539's fix-guided
-// verification filter — the paper's measured countermeasure, FNR 54.8%→16.3%
-// on HumanEval). A finding whose fix changes nothing observable is refuted.
+// Every finding carries a `fix`: the skeptic pass EXECUTES the proposed fix as
+// counterfactual evidence where the claim is runnable (arXiv:2603.00539's
+// fix-guided verification filter). A fix that changes nothing observable
+// refutes the finding.
 const FINDINGS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -62,7 +67,49 @@ const FIX_RULE =
   ' For each finding, "fix" is the minimal concrete correction — name the file:line and the exact change. The verifier EXECUTES your fix as counterfactual evidence where the claim is runnable, so a finding without a workable fix will not survive.'
 
 const isBlocking = (f) => f.severity === 'critical' || f.severity === 'important'
+// Junk elements degrade to a counted drop, never a throw or a surfaced note.
+const isFinding = (f) => !!f && typeof f === 'object'
+// Callers filter through isFinding first; only real objects reach the floor.
 const passesFloor = (f) => typeof f.confidence === 'number' && f.confidence >= CONFIDENCE_FLOOR
+// One definition of "this stage produced a usable result", applied to EVERY
+// stage — null, `{}`, and a non-array payload all read as a loss, not as clean.
+const liveFindings = (r) => !!r && Array.isArray(r.findings)
+const liveVerdicts = (v) => !!v && Array.isArray(v.verdicts)
+// Verdict reasons are carried into the return; the clip bounds its size.
+const clip = (s) => (typeof s === 'string' ? s.slice(0, 500) : '')
+// Junk elements in a findings array are dropped and counted — never surfaced.
+const droppedOf = (r) => (liveFindings(r) ? r.findings.filter((f) => !isFinding(f)).length : 0)
+
+// A severity outside the enum must fail CLOSED (toward verification), not fall
+// through to notes: wrong case normalises, anything else clamps to important.
+let coercedSeverities = 0
+const normalizeSeverity = (f) => {
+  const s = typeof f.severity === 'string' ? f.severity.toLowerCase() : ''
+  if (s === 'critical' || s === 'important' || s === 'minor') return s === f.severity ? f : { ...f, severity: s }
+  coercedSeverities += 1
+  return { ...f, severity: 'important' }
+}
+
+// A review of nothing must not read as a clean review: no agents are paid for,
+// and the return is loudly incomplete.
+if (diff.trim() === '') {
+  log('No diff provided — nothing to review; returning incomplete without dispatching any reviewer')
+  return {
+    earlyExit: true,
+    confirmed: [],
+    notes: [],
+    refuted: [],
+    stagesRun: [],
+    incomplete: true,
+    failedDimensions: ['no-diff'],
+    verifyBatches: { total: 0, lost: 0 },
+    unjudgedFindings: 0,
+    malformedVerdicts: 0,
+    droppedFindings: 0,
+    coercedSeverities: 0,
+    unverifiedFindings: 0,
+  }
+}
 
 // --- Stage 1: spec compliance (the gate) ----------------------------------
 phase('Spec')
@@ -71,47 +118,51 @@ const stage1 = await agent(
   { agentType: 'llm-orchestrator:orch-spec-reviewer', schema: FINDINGS_SCHEMA, label: 'spec-compliance', phase: 'Spec' }
 )
 
-// A dead Stage 1 is not a clean Stage 1. `agent()` returns null when the user
-// skips it or the subagent dies on a terminal API error, so `stage1?.findings`
-// collapses a crashed gate and a passing gate into the same empty list. Stage
-// 2/3 already refuse to report a clean result while a dimension is missing
-// (see below); the gate itself was never given the same guard, so a dead spec
-// reviewer produced a review marked complete whose gating stage never ran.
-// Covers every shape that yields no usable finding list, not just null — the
-// `?.` on the next line is itself an admission that the return isn't trusted,
-// and `{}` or `{findings: null}` would otherwise read as a clean gate.
-const specDied = !stage1 || !Array.isArray(stage1.findings)
-const specAll = stage1?.findings || []
+// A dead gate is a loss, not a clean pass; junk elements are dropped and
+// counted; severity is normalised before any blocking decision is made.
+const specDied = !liveFindings(stage1)
+const specDropped = droppedOf(stage1)
+const specAll = specDied ? [] : stage1.findings.filter(isFinding).map(normalizeSeverity)
 const specFindings = specAll.filter(passesFloor)
 const specBlocks = specFindings.filter(isBlocking)
 
 // Early-exit: if the diff does not implement the spec, do NOT pay for the
-// code-quality / security reviewers — exactly the cheap-exit the ordered
-// markdown flow preserves.
+// code-quality / security reviewers. NOTE: this fires on critical OR important
+// — stricter than the markdown path, which stops on Critical only.
 if (specBlocks.length > 0) {
   log(`Stage 1 blocking (${specBlocks.length}) — early-exit before quality/security`)
-  // Mirror the normal path's partitioning so the fields mean the same thing on
-  // both returns: blocking -> confirmed, minor -> notes. Early-exit findings skip
-  // the skeptic verify pass — a blocking spec mismatch is reason enough to stop.
-  // `incomplete`/`failedDimensions` are part of the documented return shape
-  // (skills/requesting-code-review/SKILL.md, commands/review.md). Omitting them
-  // here made a caller reading `result.incomplete` get `undefined` on this path.
-  // Both are literal here: reaching this branch requires specBlocks.length > 0,
-  // which requires findings, which requires a live Stage 1 — so specDied is
-  // necessarily false and no dimension was lost.
+  if (specDropped > 0) log(`WARNING: ${specDropped} malformed finding element(s) discarded — a reviewer returned junk in its findings array`)
+  // Same partitioning as the normal path: blocking -> confirmed, minor AND
+  // sub-floor -> notes. Findings skip the skeptic pass by design here, so they
+  // are tagged unverified — verifiedBy exists on every path.
+  const confirmed = specBlocks.map((f) => ({ ...f, verifiedBy: 'unverified' }))
   return {
     earlyExit: true,
-    confirmed: specBlocks,
-    notes: specFindings.filter((f) => !isBlocking(f)),
+    confirmed,
+    notes: specFindings.filter((f) => !isBlocking(f)).concat(specAll.filter((f) => !passesFloor(f))),
+    refuted: [],
     stagesRun: ['spec'],
-    incomplete: false,
-    failedDimensions: [],
+    // A discarded finding is a loss even on this path: the stage ran, but part
+    // of its output was unusable.
+    incomplete: specDropped > 0,
+    failedDimensions: specDropped > 0 ? ['spec'] : [],
+    // Field parity with the normal return: a caller reading a documented field
+    // must never get `undefined` on one path only.
+    verifyBatches: { total: 0, lost: 0 },
+    unjudgedFindings: 0,
+    malformedVerdicts: 0,
+    droppedFindings: specDropped,
+    coercedSeverities,
+    unverifiedFindings: confirmed.length,
   }
 }
 
 // --- Stage 2/3: quality + conditional security, in parallel ----------------
 phase('Quality+Security')
-const stage23 = await parallel(
+// dimensionNames stays index-aligned with stage23 (spec's loss is concatenated
+// onto the RESULT, never prepended here).
+const dimensionNames = ['code-quality'].concat(securitySensitive ? ['security'] : [])
+const stage23Raw = await parallel(
   [
     () =>
       agent(
@@ -127,30 +178,35 @@ const stage23 = await parallel(
       : null,
   ].filter(Boolean)
 )
+// parallel() must return one slot per thunk; a mis-sized result reads as every
+// dimension lost — never as data silently deleted or an index off the end.
+const stage23 = Array.isArray(stage23Raw) && stage23Raw.length === dimensionNames.length
+  ? stage23Raw
+  : dimensionNames.map(() => null)
+if (stage23 !== stage23Raw) log(`WARNING: parallel() returned ${Array.isArray(stage23Raw) ? stage23Raw.length : 'no'} result(s) for ${dimensionNames.length} reviewer(s) — treating all as lost`)
 
-// A dimension that CRASHED is not a dimension that found nothing. parallel()
-// resolves a failed thunk to null, so `.filter(Boolean)` silently converted a
-// dead security reviewer into a clean security review. Track the losses and
-// refuse to report a clean result while any dimension is missing.
-// dimensionNames stays index-aligned with stage23 (1 or 2 entries). Do NOT
-// prepend 'spec' to it — stage23[0] is code-quality, so a prepended name would
-// report a dead code-quality reviewer as a dead spec reviewer. The spec loss is
-// concatenated onto the RESULT instead.
-const dimensionNames = ['code-quality'].concat(securitySensitive ? ['security'] : [])
-const failedDimensions = (specDied ? ['spec'] : []).concat(
-  stage23.map((r, i) => (r ? null : dimensionNames[i])).filter(Boolean)
+// A dimension that CRASHED (or returned junk elements) is not a dimension that
+// found nothing: any partial loss puts its stage in failedDimensions.
+const stageDropped = stage23.map(droppedOf)
+const failedDimensions = (specDied || specDropped > 0 ? ['spec'] : []).concat(
+  stage23.map((r, i) => (!liveFindings(r) || stageDropped[i] > 0 ? dimensionNames[i] : null)).filter(Boolean)
 )
 if (failedDimensions.length) {
   const gate = specDied ? ' The spec GATE did not run.' : ''
-  log(`WARNING: ${failedDimensions.join(', ')} did not return — this review is INCOMPLETE.${gate}`)
+  log(`WARNING: ${failedDimensions.join(', ')} did not return a fully usable result — this review is INCOMPLETE.${gate}`)
 }
 
-const otherAll = stage23.filter(Boolean).flatMap((r) => r.findings || [])
+// Only live dimensions contribute findings; junk elements are dropped (counted
+// above per stage) and severity is normalised before any partitioning.
+const otherAll = stage23.filter(liveFindings).flatMap((r) => r.findings).filter(isFinding).map(normalizeSeverity)
 const otherFindings = otherAll.filter(passesFloor)
+const droppedFindings = specDropped + stageDropped.reduce((x, y) => x + y, 0)
+if (droppedFindings > 0) {
+  log(`WARNING: ${droppedFindings} malformed finding element(s) discarded — a reviewer returned junk in its findings array`)
+}
 
-// Reviewers report everything and tag confidence; the filtering happens HERE, once.
-// Sub-floor findings are demoted to notes, never discarded — a finding the reviewer
-// was unsure about is still a finding a human may want to scan.
+// Reviewers report everything and tag confidence; the filtering happens HERE,
+// once. Sub-floor findings are demoted to notes, never discarded.
 const allFindings = specAll.concat(otherAll)
 const pool = specFindings.concat(otherFindings)
 const toVerify = pool.filter(isBlocking)                       // skeptics judge critical+important
@@ -160,14 +216,17 @@ const minorNotes = pool.filter((f) => !isBlocking(f)).concat(belowFloor)
 // --- Verify: bounded adversarial refute pass -------------------------------
 phase('Verify')
 let confirmed = toVerify
+const refutedOut = []
 const deadVerifyBatches = []
+let totalVerifyBatches = 0
+let malformedVerdicts = 0
+let unjudgedFindings = 0
 if (toVerify.length > 0) {
   // Batch findings into at most VERIFY_BATCHES skeptic agents (not one-per-finding).
   const batchSize = Math.ceil(toVerify.length / VERIFY_BATCHES)
   const batches = []
-  for (let i = 0; i < toVerify.length; i += batchSize) {
-    batches.push(toVerify.slice(i, i + batchSize))
-  }
+  for (let i = 0; i < toVerify.length; i += batchSize) batches.push(toVerify.slice(i, i + batchSize))
+  totalVerifyBatches = batches.length
 
   const VERDICT_SCHEMA = {
     type: 'object',
@@ -191,13 +250,10 @@ if (toVerify.length > 0) {
     required: ['verdicts'],
   }
 
-  // Fix-guided verification (arXiv:2603.00539): where the claim is runnable,
-  // the skeptic EXECUTES the reviewer's proposed fix as counterfactual
-  // evidence instead of arguing about a prose scenario — the same paper finds
-  // that asking for more explanation *increases* misjudgement. Prose refutation
-  // is the fallback for non-runnable findings (style, missing tests,
-  // architecture), and stays labelled as such (method: "reasoned").
-  const results = await parallel(
+  // Fix-guided verification (arXiv:2603.00539): where the claim is runnable the
+  // skeptic EXECUTES the proposed fix as counterfactual evidence; prose
+  // refutation is the fallback and stays labelled as such (method: "reasoned").
+  const resultsRaw = await parallel(
     batches.map((batch, bi) => () => {
       const listed = batch
         .map((f, i) => `[${i}] (${f.severity}) ${f.file}:${f.line} — CLAIM: ${f.claim}\n    PROPOSED FIX: ${f.fix || '(none given)'}`)
@@ -205,64 +261,127 @@ if (toVerify.length > 0) {
       return agent(
         `You are a skeptical verifier with shell access. For each finding below, decide refuted true/false.\n\nPREFER EXECUTION (method: "executed"): when the claim is demonstrable by running code — a reproduction snippet, the file's own tests, a typecheck — verify it counterfactually. NEVER modify the repository or its git state: copy the affected file(s) into a fresh temp dir (mktemp -d), build the minimal reproduction the claim implies, run it against the ORIGINAL code, then apply the finding's PROPOSED FIX in the temp copy and run it again. The finding survives (refuted=false) only if the original actually RAN and misbehaved AND the fixed version behaves. If original and fixed both ran and behave the SAME, the finding is refuted — the fix changed nothing observable, so the claim was noise. IMPORTANT: "could not execute" is NOT equivalence — if the reproduction fails to run at all (missing dependencies, config, import errors unrelated to the claim), you learned nothing; do NOT mark executed and do NOT refute on that basis — drop to the reasoned fallback instead. method: "executed" asserts the original demonstrably ran. Put the commands you ran and the observed outputs in reason.\n\nFALLBACK (method: "reasoned"): when the finding is not runnable (style, missing test coverage, architectural concerns, or execution was impossible in this environment), try hard to REFUTE it against the diff. Default to refuted=true when the evidence is weak — a claim the diff does not support. But being UNABLE to determine is not the same as weak evidence: if you cannot tell either way from the diff, leave refuted=false and say so in reason. Uncertainty must never clear a blocker. A critical finding whose claim states no concrete failure scenario or attack path is weak evidence by definition — refute it unless the diff itself makes the scenario obvious. Do not pad reasons: run code or cite the diff line.\n\n<diff>\n${diff}\n</diff>\n\n<findings>\n${listed}\n</findings>\n\nReturn one verdict per finding by its [index].`,
         { agentType: 'llm-orchestrator:orch-code-reviewer', schema: VERDICT_SCHEMA, label: `verify:${bi}`, phase: 'Verify' }
-      ).then((v) => ({ batch, verdicts: v?.verdicts || [] }))
+      ).then((v) =>
+        // A null or malformed skeptic return is normalised to null so it lands
+        // in the same dead-batch branch a THROW takes — one failure path.
+        liveVerdicts(v) ? { batch, verdicts: v.verdicts } : null
+      )
     })
   )
+  // Same liveness assertion as Stage 2/3: one result slot per batch, or every
+  // batch reads as lost.
+  const results = Array.isArray(resultsRaw) && resultsRaw.length === batches.length
+    ? resultsRaw
+    : batches.map(() => null)
+  if (results !== resultsRaw) log(`WARNING: parallel() returned ${Array.isArray(resultsRaw) ? resultsRaw.length : 'no'} result(s) for ${batches.length} skeptic batch(es) — treating all as lost`)
 
   const survivors = []
   results.forEach((r, bi) => {
-    // A skeptic batch whose thunk THREW resolves to null (parallel() never
-    // rejects). `results.filter(Boolean)` used to drop it, deleting every
-    // blocking finding it carried — findings a live reviewer had actually
-    // produced — while `incomplete` stayed false. A dead verifier is not a
-    // refutation. Fail closed: keep the findings, mark them unverified, and
-    // record the loss so the caller's `incomplete` check fires.
-    //
-    // Note the asymmetry this removes: a skeptic that RETURNED null was already
-    // safe (`v?.verdicts || []` refutes nothing, so findings survived), while a
-    // skeptic that THREW silently cleared them. Same event, opposite outcomes.
+    // A dead verifier is not a refutation. Fail closed: keep the findings,
+    // mark them unverified, and record the loss so `incomplete` fires.
     if (!r) {
       deadVerifyBatches.push(bi)
       batches[bi].forEach((f) => survivors.push({ ...f, verifiedBy: 'unverified' }))
       return
     }
-    const refuted = new Set(r.verdicts.filter((v) => v.refuted).map((v) => v.index))
+    // Verdict indices are BATCH-LOCAL; anything outside the batch is discarded
+    // and counted, so a confused skeptic degrades to "unjudged", never to a
+    // false verdict.
+    const inRange = (v) =>
+      !!v && Number.isInteger(v.index) && v.index >= 0 && v.index < r.batch.length
+    const usable = r.verdicts.filter(inRange)
+    malformedVerdicts += r.verdicts.length - usable.length
+
+    // A duplicated index is contradiction, not judgement: EVERY verdict for it
+    // is discarded (counted per verdict, same unit as out-of-range above) and
+    // the finding degrades to unjudged — "uncertainty must never clear a
+    // blocker", in either verdict order.
+    const seen = {}
+    for (const v of usable) seen[v.index] = (seen[v.index] || 0) + 1
+    const refuted = new Set()
     const methodOf = {}
-    for (const v of r.verdicts) methodOf[v.index] = v.method
+    const reasonOf = {}
+    const judged = new Set()
+    for (const v of usable) {
+      if (seen[v.index] > 1) { malformedVerdicts += 1; continue }
+      judged.add(v.index)
+      // Clamp to the documented enum; strict `=== true` so a truthy string
+      // never deletes a blocker.
+      methodOf[v.index] = v.method === 'executed' ? 'executed' : 'reasoned'
+      reasonOf[v.index] = clip(v.reason)
+      if (v.refuted === true) refuted.add(v.index)
+    }
     r.batch.forEach((f, i) => {
-      // verifiedBy makes the evidence strength visible downstream: "executed"
-      // survived a real counterfactual run; "reasoned" survived only argument;
-      // "unverified" means the skeptic died and nothing judged it.
-      if (!refuted.has(i)) survivors.push({ ...f, verifiedBy: methodOf[i] || 'reasoned' })
+      if (refuted.has(i)) {
+        // A refuted blocker stays visible: the reason is the only record of
+        // why it was deleted from `confirmed`.
+        refutedOut.push({ ...f, refutedBy: methodOf[i], reason: reasonOf[i] })
+        return
+      }
+      // verifiedBy: "executed" survived a real counterfactual run; "reasoned"
+      // survived only argument; "unverified" means nothing judged it.
+      const method = judged.has(i) ? methodOf[i] || 'reasoned' : 'unverified'
+      if (!judged.has(i)) unjudgedFindings += 1
+      const out = { ...f, verifiedBy: method }
+      // The evidence behind the verdict, not just its label.
+      if (judged.has(i)) out.verifiedReason = reasonOf[i]
+      survivors.push(out)
     })
   })
   confirmed = survivors
 }
 
-// stagesRun reports what actually ran, so it must be derived from the same
-// evidence as failedDimensions — every hardcoded entry is a stage that claims
-// to have run whether or not it did. Tokens match dimensionNames exactly, so
-// `stagesRun` minus `failedDimensions` is a meaningful set operation for a
-// caller; they previously disagreed ('quality' vs 'code-quality').
+// stagesRun reports what actually ran; tokens match dimensionNames so it and
+// failedDimensions are one set. A stage appears in stagesRun if it ran AT ALL
+// and in failedDimensions if ANY part of it was lost — partial loss puts it in
+// BOTH, and `verifyBatches` gives the degree.
+const verifyRanAtAll = totalVerifyBatches > deadVerifyBatches.length
 const stagesRun = (specDied ? [] : ['spec']).concat(
-  stage23.map((r, i) => (r ? dimensionNames[i] : null)).filter(Boolean),
-  toVerify.length > 0 && deadVerifyBatches.length === 0 ? ['verify'] : []
+  stage23.map((r, i) => (liveFindings(r) ? dimensionNames[i] : null)).filter(Boolean),
+  verifyRanAtAll ? ['verify'] : []
 )
 
-// Every lost stage in one list, so `incomplete` covers the verify pass too.
-const allLosses = failedDimensions.concat(deadVerifyBatches.length ? ['verify'] : [])
+// Every loss in one list, so `incomplete` covers the verify pass too: a live
+// skeptic that judged nothing is as much a loss as a dead one.
+const allLosses = failedDimensions.concat(
+  deadVerifyBatches.length || unjudgedFindings > 0 ? ['verify'] : []
+)
 if (deadVerifyBatches.length) {
-  log(`WARNING: ${deadVerifyBatches.length} skeptic batch(es) died — their findings are reported UNVERIFIED, not refuted`)
+  log(`WARNING: ${deadVerifyBatches.length}/${totalVerifyBatches} skeptic batch(es) died — their findings are reported UNVERIFIED, not refuted`)
 }
-log(`confirmed ${confirmed.length} finding(s); ${minorNotes.length} note(s)`)
+if (malformedVerdicts > 0) {
+  log(`WARNING: ${malformedVerdicts} verdict(s) discarded — out-of-range or duplicated index`)
+}
+if (unjudgedFindings > 0) {
+  log(`WARNING: ${unjudgedFindings} finding(s) received no verdict and are reported UNVERIFIED`)
+}
+// The caller's "is this an approval" number: confirmed findings nothing judged.
+const unverifiedFindings = confirmed.filter((f) => f.verifiedBy === 'unverified').length
+log(`confirmed ${confirmed.length} finding(s); ${refutedOut.length} refuted; ${minorNotes.length} note(s)`)
 
 return {
   earlyExit: false,
   confirmed,
   notes: minorNotes,
+  // Findings the skeptic pass deleted, with the method and reason that cleared
+  // each — a third category, neither confirmed nor notes. Refutation is a
+  // WORKING verify pass, so this does not set `incomplete`.
+  refuted: refutedOut,
   stagesRun,
-  // Non-empty ⇒ a reviewer or a skeptic died. The caller must not treat this as
-  // an approval, regardless of how few findings came back.
+  // Non-empty losses ⇒ the caller must not treat this as an approval, however
+  // few findings came back.
   incomplete: allLosses.length > 0,
   failedDimensions: allLosses,
+  // Batches (not findings): distinguishes a total verify loss from a partial one.
+  verifyBatches: { total: totalVerifyBatches, lost: deadVerifyBatches.length },
+  unjudgedFindings,
+  // Verdicts discarded for an out-of-range or duplicated index, counted per
+  // verdict. The findings they failed to address are in unjudgedFindings.
+  malformedVerdicts,
+  // Malformed elements discarded from a reviewer's findings array — each is a
+  // loss, attributed to its stage in failedDimensions.
+  droppedFindings,
+  // Findings whose severity was outside the enum and clamped to important.
+  coercedSeverities,
+  unverifiedFindings,
 }

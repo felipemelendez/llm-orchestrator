@@ -17,7 +17,7 @@ Skip for tiny edits on a clean tree — just commit.
 
 ## Delegation
 
-When dispatching a writing subagent through a harness that offers per-agent worktree isolation (Claude Code's agent dispatch can create an isolated worktree per agent), prefer that for the checkout itself — the harness handles creation and cleanup. The steps below apply to worktrees the controller manages directly, and the surrounding discipline — registry claim, provenance marker, green-baseline capture, test-gated merge-back — applies either way.
+Do not hand the checkout to the harness's per-agent worktree isolation (`isolation: worktree` on dispatch) — it was evaluated and rejected, and the reasons apply to the interactive single-writer case as much as to batch fan-out (see `docs/llm-orchestrator/research/2026-07-28-v0.6-platform-drift-brief.md`, "Claims examined and NOT supported"): the harness branches from the default branch, not your current `HEAD`, so the subagent edits against the wrong base; the `worktree.baseRef: head` mitigation is a user setting a plugin cannot ship; the harness never reports the worktree path, so the registry claim, provenance marker, and green-baseline capture below have nowhere to land; and native cleanup keeps changed worktrees in a location the reaper never scans. Create the worktree yourself with the steps below (for parallel writers, the materialize engine per `dispatching-parallel-agents`) and pass the path into the dispatch envelope.
 
 ## Steps
 
@@ -62,7 +62,7 @@ When dispatching a writing subagent through a harness that offers per-agent work
 7. **Run baseline tests and record.** Capture the green state before any edits and persist it so the regression guard can compare later.
    ```
    orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
-   L=$(orch_lib orch-regression.sh) && . "$L" && orch_regression_baseline <worktree-dir>
+   L=$(orch_lib orch-detect.sh) && . "$L" && orch_regression_baseline <worktree-dir>
    ```
    This detects the test command, runs it, and writes `~/.llm-orchestrator/toolchain/<hash>/baseline.md`. If the suite is not green at this point, stop — do not proceed with edits until the baseline is clean.
 

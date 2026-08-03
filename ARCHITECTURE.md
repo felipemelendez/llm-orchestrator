@@ -79,7 +79,7 @@ Every meaningful diff goes through two distinct review passes, each in a fresh s
 
 **Stage 2 — Code quality.** Only runs after Stage 1 passes. `orch-code-reviewer` reads the diff against project conventions. Correctness, safety, idiom, minimalism, test coverage.
 
-Both reviewers are told to **report every finding and tag it with a confidence from 0.0 to 1.0** — explicitly not to be conservative. The controller (or `workflows/review-diff.js`) then demotes anything below 0.8 into a separate `Notes:` section; nothing is discarded. The threshold lives in the filter, never in the reviewer: an instruction to withhold is followed literally and costs recall, which is why Anthropic's Opus 5 guidance says to "ask it to report everything and filter in a separate pass instead." Padding is countered by the concrete-evidence rule on Critical findings, not by suppression.
+Both reviewers are told to **report every finding and tag it with a confidence from 0.0 to 1.0** — explicitly not to be conservative. The controller (or `workflows/review-diff.js`) then demotes anything below 0.8 into a separate `Notes:` section; a demoted finding is never discarded. Two removals do happen, and both stay visible in the workflow's return: malformed non-object elements in a findings array are dropped and counted (`droppedFindings`, a loss that marks the review incomplete), and findings the skeptic pass refutes are returned in `refuted` with the reason that cleared them. The threshold lives in the filter, never in the reviewer: an instruction to withhold is followed literally and costs recall, which is why Anthropic's Opus 5 guidance says to "ask it to report everything and filter in a separate pass instead." Padding is countered by the concrete-evidence rule on Critical findings, not by suppression.
 
 Verdict routing is mechanical:
 - Critical issues → re-dispatch implementer immediately
@@ -189,7 +189,7 @@ How the pieces fit together at the file level.
   - `minimal` — bootstrap only: loads `using-orchestrator` (the Concise Agent Protocol — fixed response shapes) at SessionStart.
   - `standard` (default) — adds UserPromptSubmit reminders, the research gate, PreToolUse guards, the PostToolUse evidence ledger, SubagentStop validators + retry breaker + implementer mutex reaper, and Stop-hook verify gate + retry breaker + retention pruning.
   - `strict` — all hooks active and blocking: malformed replies (`ORCH_STRICT_PROTOCOL=1`), malformed Status blocks (`ORCH_STRICT_STATUS=1`), uncorroborated or failed verification (`ORCH_STRICT_VERIFY=1`), retry storms (`ORCH_STRICT_RETRY=1`).
-- Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`.
+- Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`. Exception: `guard-destructive-git.sh` deliberately ignores both this list and the profile — a data-loss guard must not share an off switch with style hooks; its only opt-out is `ORCH_ALLOW_DESTRUCTIVE_GIT=1` (see `docs/install.md`).
 - One exception to profile gating: the `type: "prompt"` SubagentStop termination-contract hook is a single-turn cheap-model evaluation the platform runs directly — it cannot read `ORCH_HOOK_PROFILE` and is active in every profile.
 
 ### Templates

@@ -77,8 +77,26 @@ PATS
   checked=$((checked+1))
 done < <(find "$DIR" -maxdepth 1 -name '*.js' | sort)
 
+# A directory that exists but holds nothing is not a pass. `workflows/` is named
+# by requesting-code-review and commands/review.md; an empty one means those
+# instructions point at nothing, which is the failure this validator exists for.
+# The message states the actual scope scanned: only the TOP LEVEL of workflows/
+# is searched (maxdepth 1), because only top-level files are workflow entry
+# points — a nested workflows/sub/x.js does not make this a false claim.
+if (( checked == 0 )); then
+  echo "FAIL: no *.js at the top level of $DIR — skills reference workflows/review-diff.js (nested files are not workflow entry points)"
+  exit 1
+fi
+
 if (( fail == 0 )); then
-  echo "OK: $checked workflow script(s) validated"
+  if (( have_node )); then
+    echo "OK: $checked workflow script(s) validated"
+  else
+    # Layer A did not run, so this was not a full validation and must not
+    # print the full-validation pass line — callers (smoke.sh) key off the
+    # wording and would otherwise book a half-run as a full pass.
+    echo "OK (degraded): $checked workflow script(s) scanned — node missing, Layer A (node --check) skipped"
+  fi
 else
   echo "FAILED"
   exit 1

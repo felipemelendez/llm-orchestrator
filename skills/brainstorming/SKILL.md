@@ -53,7 +53,7 @@ or framework skill — those are implementation, and implementation follows a pl
    - Load the library, then call it (the function is not in scope until sourced):
      ```bash
      orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
-     L=$(orch_lib orch-arch.sh) && . "$L" && orch_arch_cached "$PWD"
+     L=$(orch_lib orch-detect.sh) && . "$L" && orch_arch_cached "$PWD"
      ```
      Also read the `## Decisions` and `## Conventions` sections of `./CLAUDE.md`. Treat every entry as a constraint the spec must not break.
    - Acknowledge them in ONE line before proposing options, e.g. "Honoring recorded decisions: offline-first via SQLite; data access through the repository layer." This is informational, not a question — if a decision is now wrong, the user can say so.

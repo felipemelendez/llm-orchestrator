@@ -112,7 +112,10 @@ each is also runnable on its own. Every one exits non-zero on failure.
 | Suite | Covers |
 |---|---|
 | `validate-skills.sh` | skill/command/agent frontmatter, length cap, reference resolution |
-| `validate-workflows.sh` | `workflows/*.js` parse + `meta` shape |
+| `validate-workflows.sh` | `workflows/*.js` parse + `meta` shape (static only — it never executes a script) |
+| `test-review-diff-behavior.sh` | what `review-diff.js` actually RETURNS: dead-stage detection, the confidence floor, refutation, and the four ways a review can look clean when it isn't |
+| `test-workflow-distribution.sh` | `--copy` ships `workflows/`, and `--check` names it when missing |
+| `test-install.sh` | the installer's claims are true: `--copy` rewrites every hook command to an absolute existing path (positive property, independently asserted) and fails closed; `--check` fails on deleted/corrupted shipped files; docs wire every hook; no dead permission rules |
 | `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
 | `test-protocol-grader.sh`, `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
 | `test-evidence-ledger.sh`, `test-verify-gate.sh` | what the ledger records, and what the Stop gate does and does not say |

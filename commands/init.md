@@ -39,7 +39,7 @@ Steps:
 Changed:
 - created CLAUDE.md (or appended pointer)
 - created AGENTS.md (or kept existing)
-- created docs/llm-orchestrator/{specs,plans,reviews}/
+- created docs/llm-orchestrator/{specs,plans,reviews,research,handoffs}/
 - appended .gitignore entries
 Verify:
 - ls docs/llm-orchestrator/

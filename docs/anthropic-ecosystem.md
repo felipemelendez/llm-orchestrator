@@ -75,7 +75,7 @@ Effort resolution order: `CLAUDE_CODE_EFFORT_LEVEL` > frontmatter > session leve
 
 Per-invocation overrides: the Agent tool accepts `model` but **not** `effort`. Genuine per-task effort selection exists only inside Workflow scripts, via `agent(prompt, {model, effort})`.
 
-**Turn caps.** The five read-only agents carry `maxTurns` (explorer 25, reviewers 30, debugger 40) as a runaway-repetition bound — step repetition is the largest failure mode in the MAST taxonomy (15.7%, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657), N=1642). `orch-implementer` deliberately has **no** cap: its writer mutex is released by a voluntary final-turn action, and a hard cap can strand the mutex (the SubagentStop reaper mitigates this, but the primary bound for writers is the controller-side retry logic, not a turn cap).
+**Turn caps.** The six read-only agents carry `maxTurns` (explorer 25, the three reviewers 30, researcher 35, debugger 40) as a runaway-repetition bound — step repetition is the largest failure mode in the MAST taxonomy (15.7%, [arXiv:2503.13657](https://arxiv.org/abs/2503.13657), N=1642). `orch-implementer` deliberately has **no** cap: its writer mutex is released by a voluntary final-turn action, and a hard cap can strand the mutex (the SubagentStop reaper mitigates this, but the primary bound for writers is the controller-side retry logic, not a turn cap).
 
 ## Optional: MCP (Model Context Protocol) servers
 

@@ -10,7 +10,7 @@ This is the meta-skill. SessionStart injects the core below; the rest of this fi
 
 **If you were dispatched as a subagent to run one task, stop here.** Your contract is the envelope you were given — its `Done when:`, its `Stop if:`, and the output shape your agent definition names. Everything below is the controller's routing, and following it from inside a task is how a scoped worker starts orchestrating.
 
-**Invoke relevant skills before responding.** When a trigger clearly matches the user's message, invoke the skill first; if it turns out not to apply, discard it — but skipping a check that should have happened is the failure mode. Common triggers: investigate / bug / test failure → `systematic-debugging`; build / design / new feature → `brainstorming`; library + version + design verb → `research-classifier`; approved spec → `writing-plans`; diff ready → `requesting-code-review`; about to claim done/fixed/passing → `verification-before-completion`; remember / save / forget → `managing-memory`. For a read-heavy sweep (many files, many naming conventions), dispatch the explorer subagent instead of doing the reads inline — you want its conclusion, not its file dumps.
+**Invoke relevant skills before responding.** When a trigger clearly matches the user's message, invoke the skill first; if it turns out not to apply, discard it — but skipping a check that should have happened is the failure mode. Common triggers: investigate / bug / test failure → `systematic-debugging`; build / design / new feature → `brainstorming`; library + version + design verb → `research-classifier`; approved spec → `writing-plans`; diff ready → `requesting-code-review`; about to claim done/fixed/passing → `verification-before-completion`; remember / save / forget → `managing-memory`; context filling on a long task → `handing-off-to-fresh-context`. For a read-heavy sweep (many files, many naming conventions), dispatch the explorer subagent instead of doing the reads inline — you want its conclusion, not its file dumps.
 
 ## Response shape — the hard rule
 
@@ -107,6 +107,7 @@ Each row is a directive, not a suggestion. If the trigger matches, invoke.
 | Reviewer returned issues                                         | `receiving-code-review`            |
 | Branch green, deciding what to do                                | `finishing-a-branch`               |
 | User says "remember", "I told you", "save this", "forget"        | `managing-memory`                  |
+| Context filling on a long task, or about to be compacted         | `handing-off-to-fresh-context`     |
 | Adding or editing a skill                                        | `writing-skills`                   |
 
 If multiple skills could apply, use this priority:
@@ -120,7 +121,7 @@ If multiple skills could apply, use this priority:
 
 ## Dispatching subagents
 
-Read-heavy and specialized work goes to dedicated subagents through the `Task` tool — each runs in its own fresh context. The exact `subagent_type` names and their models are listed in the Task tool's agent roster; the dispatch skills (`dispatching-subagents`, `requesting-code-review`, and others) name the specific one to use at each step. The orchestrator does not write subagent prompts inline — it dispatches the declared agents.
+Read-heavy and specialized work goes to dedicated subagents through the `Agent` tool (`TaskCreate` manages the task list; it dispatches nothing) — each runs in its own fresh context. The exact `subagent_type` names and their models are listed in the Agent tool's agent roster; the dispatch skills (`dispatching-subagents`, `requesting-code-review`, and others) name the specific one to use at each step. The orchestrator does not write subagent prompts inline — it dispatches the declared agents.
 
 The roster covers, by role:
 

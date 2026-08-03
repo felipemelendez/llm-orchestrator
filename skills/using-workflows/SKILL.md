@@ -77,10 +77,11 @@ capability it cannot verify. Instead:
 2. If the tool is absent or errors, run the canonical markdown path for that skill.
 
 There is no `ORCH_WORKFLOWS` switch. This section used to document `=0` / `=1`
-overrides; no code anywhere reads that variable, and it is absent from
-`templates/settings.json`, which declares the ORCH knobs that are real. A
-documented toggle that does nothing is worse than none — it gets set, and then
-trusted.
+overrides; no code anywhere reads that variable — `grep -r ORCH_WORKFLOWS
+scripts/` comes back empty, and that grep is the test that matters. (Absence
+from `templates/settings.json` proves nothing: real knobs, including the two
+hard-guard escape hatches, have gone undeclared there before.) A documented
+toggle that does nothing is worse than none — it gets set, and then trusted.
 
 The two paths are **not** claimed equivalent: the workflow path adds structured findings and an
 adversarial verify pass the prose path does not reproduce step-for-step. The markdown path is the

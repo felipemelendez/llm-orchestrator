@@ -1,5 +1,11 @@
 # Dispatch response — shape reference
 
+Canonical reference for the subagent status enum. Dispatch envelopes must stay
+self-contained, so `templates/implementer-prompt.md` and
+`templates/dispatch-prompt.md` inline copies of these blocks — when a shape
+changes, change it here first and sync the two inline copies
+(`tests/test-protocol-drift.sh` guards this file).
+
 Subagents pick exactly one Status. No prose outside the structure.
 
 ## DONE

@@ -44,7 +44,7 @@ cd /path/to/llm-orchestrator
 ./scripts/install.sh --copy ~/myproject
 ```
 
-This copies `skills/`, `commands/`, `agents/`, `templates/`, `output-styles/`, `hooks/`, and `scripts/` (including `scripts/lib/orch-lock.sh`) into `~/myproject/.claude/`. Hook paths in `hooks/hooks.json` are rewritten to absolute. A starter `settings.json` is generated.
+This copies `skills/`, `commands/`, `agents/`, `templates/`, `output-styles/`, `hooks/`, `workflows/`, `scripts/` (including `scripts/lib/orch-lock.sh`), and this document (to `.claude/docs/install.md`) into `~/myproject/.claude/`. Hook paths in the copied `hooks/hooks.json` are rewritten to absolute — and the installer verifies that every rewritten command path exists on disk before claiming so; if verification fails, the install fails. A starter `settings.json` is seeded from `templates/settings.json` (permissions block plus the ORCH env knobs) unless one already exists.
 
 ### Wiring hooks for a `--copy` install
 
@@ -59,44 +59,64 @@ Two options:
 ```
 This uses the plugin schema directly; no settings.json edits needed.
 
-**B. Wire hooks manually in settings.json.** Add this to `.claude/settings.json`:
+**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` **completely** — all sixteen hook scripts across seven events. (An earlier version of this section wired 7 of 16 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
 ```jsonc
 {
   "env": { "ORCH_HOOK_PROFILE": "standard" },
   "hooks": {
     "SessionStart": [
-      { "matcher": "*",
+      { "matcher": "startup|clear|compact|resume",
         "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/session-start.sh" }] }
     ],
     "UserPromptSubmit": [
-      { "matcher": "*",
-        "hooks": [
+      { "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/user-prompt-submit.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-research-gate.sh" }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-research-gate.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-handoff-nudge.sh" }
         ] }
     ],
     "PreToolUse": [
       { "matcher": "Bash",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-no-verify.sh" }] }
+        "hooks": [
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-no-verify.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-destructive-git.sh" }
+        ] },
+      { "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Skill",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/skill-telemetry.sh" }] },
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-evidence-ledger.sh" }] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-evidence-ledger.sh" }] }
     ],
     "SubagentStop": [
-      { "matcher": "*",
-        "hooks": [
+      { "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/subagent-stop.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-researcher-validator.sh" }
-        ] }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-researcher-validator.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-retry-cap.sh" }
+        ] },
+      { "matcher": "(^|:)orch-implementer$",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-worktree-reaper.sh" }] }
     ],
     "Stop": [
-      { "matcher": "*",
-        "hooks": [
+      { "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-stop.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-protocol-grader.sh" }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-protocol-grader.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-verify-gate.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-retry-cap.sh" }
         ] }
     ]
   }
 }
 ```
-Replace `/full/path/to/.claude/` with the absolute path to the copied directory.
+Replace `/full/path/to/.claude/` with the absolute path to the copied directory. Easier still: the copied `.claude/hooks/hooks.json` already has every path rewritten to absolute, so you can transcribe the entries from there.
+
+One shipped hook is not a script and is not shown above: the `type: "prompt"` termination-contract hook on `SubagentStop` (matcher `(^|:)orch-implementer$`), which judges whether an implementer's `Verify:` section contains real pasted output. If you want it in a manual wiring, copy its entry verbatim from `.claude/hooks/hooks.json`.
 
 ## Memory location
 
@@ -119,18 +139,51 @@ Override with `ORCH_HOME=/some/other/path`. The directories are created on first
 
 Both should print OK.
 
+Scope: `--check` validates the **source checkout** it lives in — files present, JSON parseable, every hook command in `hooks/hooks.json` resolving to a script that exists. It cannot be pointed at an installed tree (`install.sh` is not among the files `--copy` writes). A `--copy` install is instead verified at install time: `--copy` fails, rather than printing success, when the installed `hooks.json` does not resolve.
+
 ## Profiles
 
-```
-export ORCH_HOOK_PROFILE=minimal    # bootstrap only, no memory load
-export ORCH_HOOK_PROFILE=standard   # default — bootstrap + memory + guard
-export ORCH_HOOK_PROFILE=strict     # all hooks active
-```
-
-Disable individual hooks without changing profile:
+`ORCH_HOOK_PROFILE` is read by each hook script individually — there is no central profile map; the scripts are the source of truth.
 
 ```
-export ORCH_DISABLED_HOOKS=orch-guard
+export ORCH_HOOK_PROFILE=minimal    # most hooks exit immediately (see below)
+export ORCH_HOOK_PROFILE=standard   # default — everything active
+export ORCH_HOOK_PROFILE=strict     # accepted, currently identical to standard
+```
+
+- `minimal` — these hooks exit without acting: protocol reminders (`user-prompt-submit`), research gate, handoff nudge, the `--no-verify` guard, config-protection guard, evidence ledger, verify gate, retry cap, Status validators (`subagent-stop`, researcher validator), protocol grader, worktree reaper. SessionStart still loads the protocol core.
+- `standard` (default) — all of the above are active.
+- `strict` — no script currently branches on it; blocking behavior comes from the `ORCH_STRICT_*` knobs listed under "Other knobs", which work in any profile.
+
+Profile-exempt, deliberately:
+
+- `guard-destructive-git.sh` — always on. See "Escape hatches for the hard guards".
+- `orch-stop.sh` — retention cleanup (trash + research-cache pruning) runs in every profile.
+- `skill-telemetry.sh` — governed by its own opt-in (`ORCH_TELEMETRY=1`, default off), not by profile.
+- the `type: "prompt"` SubagentStop termination-contract hook — evaluated by the platform directly; it cannot read environment variables.
+
+Disable individual hooks without changing profile (comma-separated):
+
+```
+export ORCH_DISABLED_HOOKS=orch-guard,orch-research-gate
+```
+
+Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-stop`.
+
+## Escape hatches for the hard guards
+
+`guard-destructive-git.sh` (blocks `git reset --hard`, `git stash`, `git clean`, and friends — the working-tree-destroying forms) deliberately ignores **both** `ORCH_DISABLED_HOOKS` and `ORCH_HOOK_PROFILE`. That asymmetry is the design, not an oversight: a guard against silently losing uncommitted work must not share an off switch with style hooks, or disabling a nudge quietly disarms the safety layer too. Its only opt-out is its own named variable, set in the hook's environment by a human who means it:
+
+```
+export ORCH_ALLOW_DESTRUCTIVE_GIT=1
+```
+
+An inline `ORCH_ALLOW_DESTRUCTIVE_GIT=1 git …` prefix in the command being run does **not** disarm the guard — that lands in the child shell's environment, not the hook's.
+
+`guard-config-protection.sh` (blocks edits to settings/hook/guard files) honours `ORCH_HOOK_PROFILE=minimal` and `ORCH_DISABLED_HOOKS=orch-config-protection`, and has its own explicit hatch:
+
+```
+export ORCH_ALLOW_CONFIG_EDIT=1
 ```
 
 

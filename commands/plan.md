@@ -26,8 +26,9 @@ Steps:
 
 5. Self-review:
    - No "TBD", "similar to N", "etc.".
-   - Every task has at least one `Verify:` command.
-   - Each task is marked `Independent: yes | no (depends on M)`.
+   - Every task has a `Done when:` line and a `Stop if:` line — the termination contract the implementer envelope pastes; a task without them gives the dispatched agent no way to prove success or stop failing.
+   - Every task has at least one `run:` sub-step with an `expect:` output line, and the file ends with a `## Verify done` section.
+   - Each task heading carries the `- [ ]` checkbox and is marked `Independent: yes | no (depends on M)`.
 
 6. Report:
 

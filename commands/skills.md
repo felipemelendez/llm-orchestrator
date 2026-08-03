@@ -18,7 +18,7 @@ Steps:
 
 3. Present the result as a `Found:` block. Group the skills:
    - **Process** — brainstorming, research-classifier, systematic-debugging
-   - **Build** — writing-plans, executing-plans, test-driven-development, dispatching-subagents, dispatching-parallel-agents
+   - **Build** — writing-plans, executing-plans, test-driven-development, dispatching-subagents, dispatching-parallel-agents, using-workflows
    - **Review & finish** — requesting-code-review, receiving-code-review, verification-before-completion, finishing-a-branch
    - **Context & memory** — handing-off-to-fresh-context, managing-memory, using-orchestrator
    - **Git** — using-git-worktrees

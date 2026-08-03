@@ -23,6 +23,10 @@ ends and the pasted file begins.
 <paste>
 </plan_task>
 
+<global_constraints>
+<paste the plan's `## Global constraints` section, or "none" — every line is a requirement the task inherits, even when the task text does not repeat it>
+</global_constraints>
+
 <existing_code>
 <paste — only what's needed>
 </existing_code>

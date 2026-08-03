@@ -25,6 +25,14 @@ that would otherwise be indistinguishable from this envelope's own structure.
 {{task_text — paste the full task from the plan, including its Steps and Verify}}
 </task>
 
+## Global constraints
+
+<global_constraints>
+{{paste the plan's `## Global constraints` section verbatim, or "none"}}
+</global_constraints>
+
+Every line above is a requirement this task inherits — version floors, dependency limits, naming and copy rules, platform targets. Violating one is a defect even when the task text does not repeat it.
+
 ## Termination
 
 - Done when: {{done_when — the plan task's `Done when:` line, or the default: "the Verify command exits green and every sub-step of the task is complete". Meeting this is the only path to DONE.}}

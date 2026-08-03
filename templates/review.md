@@ -1,3 +1,11 @@
+# Review artifact template
+
+The shape of the review saved to `docs/llm-orchestrator/reviews/YYYY-MM-DD-<slug>-review.md`
+by `/llm-orchestrator:review` and `requesting-code-review`. Include the Stage 3 section only
+when the conditional security pass ran; otherwise omit it entirely.
+
+---
+
 # Review — <branch or PR>
 
 Date: YYYY-MM-DD
@@ -33,6 +41,20 @@ Issues:
 Verdict:
 - Ready: yes | no | with-fixes
 - <one-line reason>
+
+## Stage 3 — Security (only when the security pass ran)
+
+Issues:
+- Critical:
+  - <file:line> — <what + why it matters + suggested fix>
+- Important:
+  - ...
+- Minor:
+  - ...
+
+Verdict:
+- Ready: yes | no | with-fixes
+- <one-line reason — Critical blocks the merge; Important and below are advisory>
 
 ## Notes
 

@@ -16,61 +16,96 @@ jobs:
           node-version: '20'
 
       - name: Check server.cjs syntax
+        if: always()
         run: node --check skills/brainstorming/scripts/server.cjs
 
       - name: Validate skills
+        if: always()
         run: bash tests/validate-skills.sh
 
       - name: Validate workflows
+        if: always()
         run: bash tests/validate-workflows.sh
 
       - name: Workflow distribution
+        if: always()
         run: bash tests/test-workflow-distribution.sh
 
       - name: review-diff behavior
+        if: always()
         run: bash tests/test-review-diff-behavior.sh
 
       - name: Smoke tests
+        if: always()
         run: bash tests/smoke.sh
 
       - name: Research gate tests
+        if: always()
         run: bash tests/test-research-gate.sh
 
       - name: Research classifier tests
+        if: always()
         run: bash tests/test-research-classifier.sh
 
       - name: Protocol grader tests
+        if: always()
         run: bash tests/test-protocol-grader.sh
 
       - name: Protocol hook e2e tests
+        if: always()
         run: bash tests/test-protocol-hooks.sh
 
       - name: Research brief and agent contract tests
+        if: always()
         run: bash tests/test-research-brief.sh
 
       - name: Portability tests
+        if: always()
         run: bash tests/test-portability.sh
 
       # Safety-critical guards and the verification path. These run on Linux
       # here and on macOS locally, which is the point: several defects in this
       # area were BSD-vs-GNU differences that passed silently on one platform.
       - name: Destructive-git guard tests
+        if: always()
         run: bash tests/test-destructive-git-guard.sh
 
       - name: No-verify guard tests
+        if: always()
         run: bash tests/test-guard-no-verify.sh
 
       - name: Worktree reaper ownership tests
+        if: always()
         run: bash tests/test-worktree-reaper.sh
 
       - name: Evidence ledger contract tests
+        if: always()
         run: bash tests/test-evidence-ledger.sh
 
       - name: Verify gate tests
+        if: always()
         run: bash tests/test-verify-gate.sh
 
       - name: Protocol single-source drift tests
+        if: always()
         run: bash tests/test-protocol-drift.sh
 
       - name: Worktree integrate tests
+        if: always()
         run: bash tests/test-worktree-integrate.sh
+
+      - name: Worktree materialize tests
+        if: always()
+        run: bash tests/test-worktree-materialize.sh
+
+      - name: Lib resolution contract tests
+        if: always()
+        run: bash tests/test-lib-resolution.sh
+
+      # Installer + packaging: the --copy hook-path rewrite shipped broken for
+      # its whole life because the only check guarding it shared its blind
+      # spot. This suite asserts the positive property (every installed hook
+      # command is an absolute path that exists) with an independent checker.
+      - name: Installer and packaging contract tests
+        if: always()
+        run: bash tests/test-install.sh

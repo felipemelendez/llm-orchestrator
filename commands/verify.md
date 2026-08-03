@@ -35,6 +35,8 @@ Steps:
 6. Report:
 
 ```
+Found:
+- <one line: all green, or what failed>
 Verify:
 - typecheck: <last line>
 - lint: <last line>
@@ -43,6 +45,9 @@ Next:
 - If all green: /llm-orchestrator:review.
 - If failure: /llm-orchestrator:debug.
 ```
+
+(`Verify:` is a sub-section, never the top-level header — the protocol grader
+checks the first line for one of the six shapes.)
 
 Constraints:
 - Never claim "tests pass" without an actual run.

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Reference for the subagent roles (specialized agents that run orchestrator commands) and the Status values they return. Names below match the `subagent_type:` value the Task tool expects (the same as each file's frontmatter `name:` in `agents/`).
+Reference for the subagent roles (specialized agents that run orchestrator commands) and the Status values they return. Names below match the `subagent_type:` value the Agent tool expects (the same as each file's frontmatter `name:` in `agents/`). The dispatch tool is `Agent`; `TaskCreate` manages the task list and dispatches nothing.
 
 ## House style
 

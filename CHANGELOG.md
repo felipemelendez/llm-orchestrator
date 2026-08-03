@@ -5,6 +5,67 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Fixed — `--copy` installs shipped a dead enforcement layer
+
+`scripts/install.sh` rewrote hook paths with a sed pattern matching the *unbraced*
+`$CLAUDE_PLUGIN_ROOT`, while `hooks/hooks.json` uses the braced form in all 18 command
+strings. The rewrite matched nothing, the installer printed "Hook paths rewritten to
+absolute" regardless, and `docs/install.md` repeated the claim. Because the placeholder is
+not expanded in a project `settings.json`, every hook in a `--copy` install resolved to a
+non-existent path and silently never fired.
+
+The smoke check guarding this greped for the same unbraced spelling, found zero matches,
+inverted, and reported green — a check sharing the blind spot of the thing it checked.
+
+The installer now rewrites both spellings and **verifies before claiming**: a new checker
+asserts every installed `command` path is absolute and exists on disk, and the install
+exits non-zero rather than printing success. `tests/test-install.sh` re-implements that
+assertion independently rather than calling the installer's own checker.
+
+### Fixed — the review workflow could report a review as complete when it was not
+
+`workflows/review-diff.js` had four paths that returned a review marked complete and clean
+while a stage had not run or findings had been dropped: a dead spec gate, a dead
+quality/security reviewer, a skeptic batch that threw, and a skeptic that returned `null`.
+Refuted findings were deleted with no record anywhere in the return, so a run whose skeptics
+refuted every blocker was indistinguishable from a run that found nothing.
+
+One liveness predicate now applies to every stage, both `parallel()` sites are length-guarded,
+verdict indices are validated as batch-local, duplicate and contradictory verdicts degrade to
+unjudged rather than letting a refutation win, and severity outside the enum clamps toward
+verification. The return adds `refuted` (each with the reason the blocker was removed),
+`unverifiedFindings`, `droppedFindings`, and `coercedSeverities`. An empty diff now returns
+immediately without dispatching any reviewer.
+
+Behaviour is pinned by a 72-mutation suite (was 12 of 30 caught).
+
+### Fixed — `workflows/` was never installed
+
+`--copy` did not ship the directory, so `requesting-code-review` and `commands/review.md`
+instructed the controller to run a file that was never installed, and `--check` reported the
+install healthy. Both now cover it.
+
+### Fixed — three skills ran shell blocks that could not succeed
+
+`brainstorming`, `finishing-a-branch` and `using-git-worktrees` sourced `orch-arch.sh` /
+`orch-regression.sh` directly. Those are leaf libs loaded by `orch-detect.sh`, which defines
+the helpers they call, so each block failed unconditionally. `finishing-a-branch` tells the
+controller to refuse a merge on a nonzero return, and the return was always nonzero with a
+fabricated reason. Call sites now source `orch-detect.sh`, and the gate distinguishes a real
+regression from an absent baseline.
+
+### Changed — `config/profiles.json` removed
+
+Nothing read it, and it was wrong in both directions: eight active hooks appeared in no
+profile, and `minimal` claimed to disable guards that have no profile gate. The accurate
+profile story now lives in `docs/install.md`.
+
+### Known open
+
+A system audit on 2026-08-03 found defects beyond this changeset, including bypasses in both
+PreToolUse guards and a test suite through which roughly 28% of injected defects pass. See
+`docs/llm-orchestrator/reviews/2026-08-03-system-audit-findings.md`.
+
 ### Added — explicit writer-isolation modes (worktree / shared-checkout)
 
 A field incident (2026-08-02): a project with a standing no-worktrees ruling

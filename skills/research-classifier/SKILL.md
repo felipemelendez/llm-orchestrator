@@ -16,9 +16,9 @@ Two reference files carry the detail this body points to:
 Two fixed trigger points only — never every turn:
 
 - **Trigger A — pre-spec**: between `brainstorming` step 1 (read the room) and step 2 (clarifying questions). Input: the user's raw task text.
-- **Trigger B — pre-plan**: at `writing-plans` step 0, before any plan file is written. Input: the spec's `## Approach` section.
+- **Trigger B — pre-plan**: at `writing-plans` step 0.5, before any plan file is written. Input: the spec's `## Approach` section.
 
-Don't invoke for arbitrary user messages, for `/llm-orchestrator:debug`, `/llm-orchestrator:verify`, `/llm-orchestrator:finish`, or any non-design conversation. The hook layer enforces this; the classifier itself only checks signals against the input it receives.
+Don't invoke for arbitrary user messages, for `/llm-orchestrator:debug`, `/llm-orchestrator:verify`, `/llm-orchestrator:finish`, or any non-design conversation. The hook layer does not enforce these trigger points — `orch-research-gate.sh` is content-addressed: it fires whenever a user prompt matches the shared signal patterns (design verb plus library/version/security token), wherever in a conversation that happens, and compels the classifier to run. The two fixed trigger points are a discipline held by this skill and its callers (`brainstorming` step 1.5, `writing-plans` step 0.5); the classifier itself only checks signals against the input it receives.
 
 ## Signal heuristics
 

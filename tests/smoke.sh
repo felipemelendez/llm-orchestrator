@@ -35,6 +35,7 @@ done
 
 PASS=0
 FAIL=0
+SKIP=0
 FAILED_CHECKS=()
 
 # ANSI for terminals, plain for pipes/CI
@@ -42,6 +43,9 @@ if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'
 else GREEN=""; RED=""; DIM=""; RESET=""; fi
 
 ok()   { (( QUIET )) || printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
+# A check that could not run is neither a pass nor a failure. Counting it as a
+# pass would make the total claim coverage the run does not have.
+skipped() { (( QUIET )) || printf '  %s~%s %s\n' "$DIM" "$RESET" "$1"; SKIP=$((SKIP+1)); }
 fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); }
 section() { (( QUIET )) || printf '\n%s== %s ==%s\n' "$DIM" "$1" "$RESET"; }
 
@@ -53,12 +57,22 @@ check() {
 }
 
 # `check_out NAME EXPECTED CMD`: run CMD, ok if stdout contains EXPECTED
+# On ANY failure the captured output is printed (last 40 lines), not discarded.
+# Discarding it meant a red CI run named the broken suite and nothing else —
+# the log could not say WHY, so every remote failure cost a blind round-trip.
 check_out() {
   local name="$1" expected="$2"; shift 2
   local out
-  out=$("$@" 2>&1) || { fail "$name" "command failed: $*"; return; }
+  if ! out=$("$@" 2>&1); then
+    fail "$name" "command failed: $*"
+    printf '%s\n' "$out" | tail -40 | sed 's/^/      | /'
+    return
+  fi
   if printf '%s' "$out" | grep -qF -- "$expected"; then ok "$name"
-  else fail "$name" "expected '$expected' in output; got: $(printf '%s' "$out" | head -1)"; fi
+  else
+    fail "$name" "expected '$expected' in output"
+    printf '%s\n' "$out" | tail -40 | sed 's/^/      | /'
+  fi
 }
 
 # Conditional section gate
@@ -78,14 +92,39 @@ if should_run structural; then
   section "Structural"
   check_out "install --check passes" "OK" "${ROOT}/scripts/install.sh" --check
   check_out "validate-skills passes" "OK:" "${ROOT}/tests/validate-skills.sh"
-  check_out "validate-workflows passes" "OK:" "${ROOT}/tests/validate-workflows.sh"
+  # Asserts the "validated" wording, not a bare "OK:" — validate-workflows.sh
+  # also prints "OK: no workflows/ directory — nothing to validate", so a bare
+  # prefix match would pass vacuously on the very tree this suite exists to catch.
+  # A degraded run (node absent, Layer A skipped) is a SKIP, not a pass: booking
+  # a half-run validator as green is the exact reporter defect skipped() exists for.
+  VW_OUT=$("${ROOT}/tests/validate-workflows.sh" 2>&1)
+  VW_RC=$?
+  if [[ $VW_RC -ne 0 ]]; then
+    fail "validate-workflows passes" "$(printf '%s' "$VW_OUT" | head -1)"
+  elif printf '%s' "$VW_OUT" | grep -q "OK (degraded)"; then
+    skipped "validate-workflows full pass (node not installed — Layer A did not run)"
+  elif printf '%s' "$VW_OUT" | grep -q "workflow script(s) validated"; then
+    ok "validate-workflows passes"
+  else
+    fail "validate-workflows passes" "unexpected output: $(printf '%s' "$VW_OUT" | head -1)"
+  fi
+  check_out "installer + packaging contract tests pass" "PASS: test-install" \
+            bash "${ROOT}/tests/test-install.sh"
+  check_out "lib-resolution contract tests pass" "PASS: test-lib-resolution" \
+            bash "${ROOT}/tests/test-lib-resolution.sh"
   check_out "workflows ship on --copy installs" "OK: workflow distribution" \
             bash "${ROOT}/tests/test-workflow-distribution.sh"
   # Node-gated: the behavior harness executes the workflow script. Without node
-  # the test exits 0 with "SKIP:", which check_out would still report as a red ✗.
+  # the test exits 0 with "SKIP:", which check_out would report as a red ✗.
+  # Announced either way — a check that silently vanishes makes the total lie.
   if command -v node >/dev/null 2>&1; then
-    check_out "review-diff reports a dead spec gate" "OK: stage-1 loss reported" \
+    check_out "review-diff behavior (dead stages, floor, refutation)" "OK: review-diff behavior" \
               bash "${ROOT}/tests/test-review-diff-behavior.sh"
+  else
+    # NOT `ok` — counting a check that never ran as a pass is the same
+    # "reported clean while a stage did not run" shape this suite exists to
+    # catch, just relocated into the reporter.
+    skipped "review-diff behavior (node not installed)"
   fi
   check_out "research-classifier curated examples pass" "All 15 classifier checks passed" \
             "${ROOT}/tests/test-research-classifier.sh"
@@ -326,6 +365,7 @@ if should_run install; then
       .claude/output-styles/orchestrator.md \
       .claude/concise-agent-protocol.md \
       .claude/settings.json \
+      .claude/docs/install.md \
       .claude/hooks/hooks.json; do
     if [[ -f $SMOKE_TMP/proj/$f ]]; then ok "--copy placed $f"
     else fail "--copy missing $f" "expected at $SMOKE_TMP/proj/$f"; fi
@@ -333,8 +373,16 @@ if should_run install; then
 
   check "Generated settings.json is valid JSON" \
         python3 -m json.tool $SMOKE_TMP/proj/.claude/settings.json
-  check "hooks.json paths rewritten to absolute" \
-        bash -c "! grep -q '\\\$CLAUDE_PLUGIN_ROOT' $SMOKE_TMP/proj/.claude/hooks/hooks.json"
+  # Positive property, not absence-of-one-spelling: every command hook in the
+  # INSTALLED hooks.json must be an absolute path that exists on disk. The old
+  # check grepped for bare $CLAUDE_PLUGIN_ROOT while the file writes braced
+  # ${CLAUDE_PLUGIN_ROOT} — blind in exactly the way the installer was, so it
+  # stayed green for the whole life of the bug. A regressed no-op rewrite now
+  # fails this check (placeholders are not absolute existing paths).
+  check "hooks.json rewritten: every command path absolute and existing" \
+        python3 "${ROOT}/scripts/lib/check-hook-paths.py" $SMOKE_TMP/proj/.claude/hooks/hooks.json
+  check "hooks.json rewritten: no CLAUDE_PLUGIN_ROOT text survives (any spelling)" \
+        bash -c "! grep -q 'CLAUDE_PLUGIN_ROOT' $SMOKE_TMP/proj/.claude/hooks/hooks.json"
 
   # Re-run SessionStart from the copied install
   CLAUDE_PLUGIN_ROOT="$SMOKE_TMP/proj/.claude" ORCH_HOME="$SMOKE_TMP/proj-mem" \
@@ -380,7 +428,9 @@ if should_run docs; then
       fail "--link install missing orch-lock.sh" "expected at $LINK_TARGET/scripts/lib/orch-lock.sh — /remember will fail"
     fi
   else
-    ok "(no --link install present to check)"
+    # Not a pass — the check did not run. Counting it green would claim
+    # coverage this machine does not have.
+    skipped "--link install resolution (no --link install present on this machine)"
   fi
 
   # Plugin marketplace registry exists and is valid JSON
@@ -474,11 +524,22 @@ fi
 # Summary
 # ------------------------------------------------------------
 printf '\n'
+# The skip count appears in BOTH branches: a check that did not run is part of
+# the story whether the run was green or red. And "All" is only claimed when
+# nothing was skipped — "All N passed, M skipped" is false advertising.
 if (( FAIL == 0 )); then
-  printf '%sAll %d checks passed.%s\n' "$GREEN" "$PASS" "$RESET"
+  if (( SKIP > 0 )); then
+    printf '%s%d checks passed%s, %d skipped.\n' "$GREEN" "$PASS" "$RESET" "$SKIP"
+  else
+    printf '%sAll %d checks passed.%s\n' "$GREEN" "$PASS" "$RESET"
+  fi
   exit 0
 else
-  printf '%s%d passed, %d failed.%s\n' "$RED" "$PASS" "$FAIL" "$RESET"
+  if (( SKIP > 0 )); then
+    printf '%s%d passed, %d failed%s, %d skipped.\n' "$RED" "$PASS" "$FAIL" "$RESET" "$SKIP"
+  else
+    printf '%s%d passed, %d failed.%s\n' "$RED" "$PASS" "$FAIL" "$RESET"
+  fi
   printf 'Failed:\n'
   for c in "${FAILED_CHECKS[@]}"; do printf '  - %s\n' "$c"; done
   exit 1
