@@ -1,6 +1,43 @@
-# System audit — open findings
+# System audit — findings
 
 Date: 2026-08-03 · CLI at time of audit: Claude Code v2.1.220
+
+> **STATUS UPDATE (2026-08-03, second pass).** Everything below has now been
+> independently re-run rather than inherited, and the open items are closed.
+> Corrections to this document's own claims, from direct execution:
+>
+> - **§2.2 "CI is red, stops at step 8 of 21"** — closed. Two causes, both test
+>   bugs, neither in production code: `test-detect.sh` wrote `$TMP/…` and read
+>   `/tmp/…` (green only on a machine with stale residue), and a
+>   `test-protocol-hooks.sh` fixture used unescaped backticks inside a
+>   double-quoted `python -c` string, so the shell ran them as command
+>   substitution. A third, real, production defect surfaced only once CI could
+>   reach the end: `_mtime` tried BSD `stat -f %m` first, but **GNU `stat -f`
+>   succeeds and prints the mount point**, so the age arithmetic was a fatal
+>   expansion error and the worktree engine was broken on Linux entirely.
+>   CI now runs every step under `if: always()` and is green end to end.
+> - **§3 "both aborts fail when the test suite rewrites a tracked file"** —
+>   scope correction. They fail only when the rewritten file is one **the merge
+>   itself touched**; a write to any other tracked file aborts cleanly.
+>   Reproduced both ways.
+> - **§2.3 "replacing `agents/orch-researcher.md` with a stub that inverts
+>   every rule passes 42/42"** — **not reproducible.** A full inverting stub
+>   fails 12 checks. The real defect is narrower and was confirmed exactly:
+>   inverting the CONTRADICTED rule's *meaning* while leaving the vocabulary
+>   intact passed all 42, because the assertion matched words, not polarity.
+> - **§5.4 "`using-workflows` has no row in the controller routing table"** —
+>   stale; the row is at `skills/using-orchestrator/SKILL.md:105`.
+> - **§4's installer claims** — verified independently: 0 unrewritten
+>   placeholders and 18/18 hook command paths absolute and existing after a
+>   `--copy` install.
+>
+> Items found in this pass that were **not** in the original audit: a
+> `guard-no-verify` regression introduced by the repair itself, three
+> concurrency defects in the new lock code (an unbounded spin, a TTL branch
+> that robbed live holders, and a release that deleted another process's
+> lock), a denial-of-guard via unbounded brace expansion, and
+> `git checkout -f -b` / `git branch -d -f` bypasses. See the commits on
+> `fix/workflow-path-repair`.
 
 Five parallel read-only audits covered the hook enforcement layer, the test suite, the shell
 libs and worktree engine, the instruction layer, and packaging. Roughly 580 defects were
