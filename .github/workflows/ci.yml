@@ -7,6 +7,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      # A suite that cannot run because a dependency is missing must FAIL here,
+      # not skip: CI is the instrument every other claim is measured on, and a
+      # runner image that silently lost python3 or perl would otherwise turn
+      # six guard/gate suites into no-ops that still report green.
+      ORCH_REQUIRE_DEPS: "1"
     steps:
       - uses: actions/checkout@v4
 

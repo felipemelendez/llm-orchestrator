@@ -20,7 +20,23 @@ PASS=0; FAIL=0; FAILED=()
 ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
 fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED+=("$1"); }
 
-command -v python3 >/dev/null 2>&1 || { printf '%sPASS: test-worktree-reaper (skipped — python3 unavailable)%s\n' "$DIM" "$RESET"; exit 0; }
+# A skipped suite is NOT a passed suite. This used to print `PASS: <name>
+# (skipped — ...)`, and smoke.sh greps the `PASS:` prefix, so a missing
+# dependency read as green — in precisely the environment where orch-json.sh
+# degrades and the guards are weakest. Under ORCH_REQUIRE_DEPS=1 (set in CI) a
+# missing dependency is a hard failure instead: CI is the instrument every
+# other claim is measured on, so it must never quietly under-run.
+skip_suite() { # <suite-name> <reason>
+  if [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
+    printf '%sFAIL: %s — %s (ORCH_REQUIRE_DEPS=1)%s\n' "$RED" "$1" "$2" "$RESET"
+    exit 1
+  fi
+  printf '%sSKIP: %s (%s)%s\n' "$DIM" "$1" "$2" "$RESET"
+  exit 0
+}
+
+
+command -v python3 >/dev/null 2>&1 || skip_suite test-worktree-reaper 'python3 unavailable'
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT

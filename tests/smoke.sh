@@ -75,6 +75,31 @@ check_out() {
   fi
 }
 
+# `check_suite NAME EXPECTED CMD`: like check_out, but a sub-suite that reports
+# `SKIP:` is counted as skipped rather than passed or failed.
+#
+# Six suites used to print `PASS: <name> (skipped — python3 unavailable)` and
+# this file greps the `PASS:` prefix, so a missing dependency read as green —
+# in exactly the environment where orch-json.sh degrades and the guards are
+# weakest. They now print `SKIP:`; this helper is the reporting half of that.
+check_suite() {
+  local name="$1" expected="$2"; shift 2
+  local out
+  if ! out=$("$@" 2>&1); then
+    fail "$name" "command failed: $*"
+    printf '%s\n' "$out" | tail -40 | sed 's/^/      | /'
+    return
+  fi
+  if printf '%s' "$out" | grep -q '^SKIP:'; then
+    skipped "$name — $(printf '%s' "$out" | grep -m1 '^SKIP:' | sed 's/^SKIP: //')"
+  elif printf '%s' "$out" | grep -qF -- "$expected"; then
+    ok "$name"
+  else
+    fail "$name" "expected '$expected' in output"
+    printf '%s\n' "$out" | tail -40 | sed 's/^/      | /'
+  fi
+}
+
 # Conditional section gate
 should_run() { [[ -z "$SECTION" || "$SECTION" == "$1" ]]; }
 
@@ -155,21 +180,21 @@ if should_run structural; then
             bash "${ROOT}/tests/handoff/test-precompact.sh"
   check_out "telemetry + dry-run tests pass" "PASS: test-telemetry" \
             bash "${ROOT}/tests/test-telemetry.sh"
-  check_out "hook latency budget tests pass" "PASS: test-hook-latency" \
+  check_suite "hook latency budget tests pass" "PASS: test-hook-latency" \
             bash "${ROOT}/tests/test-hook-latency.sh"
-  check_out "verify-gate tests pass" "PASS: test-verify-gate" \
+  check_suite "verify-gate tests pass" "PASS: test-verify-gate" \
             bash "${ROOT}/tests/test-verify-gate.sh"
-  check_out "retry-cap tests pass" "PASS: test-retry-cap" \
+  check_suite "retry-cap tests pass" "PASS: test-retry-cap" \
             bash "${ROOT}/tests/test-retry-cap.sh"
   check_out "protocol single-source drift tests pass" "PASS: test-protocol-drift" \
             bash "${ROOT}/tests/test-protocol-drift.sh"
-  check_out "evidence-ledger contract tests pass" "PASS: test-evidence-ledger" \
+  check_suite "evidence-ledger contract tests pass" "PASS: test-evidence-ledger" \
             bash "${ROOT}/tests/test-evidence-ledger.sh"
-  check_out "worktree reaper ownership tests pass" "PASS: test-worktree-reaper" \
+  check_suite "worktree reaper ownership tests pass" "PASS: test-worktree-reaper" \
             bash "${ROOT}/tests/test-worktree-reaper.sh"
   check_out "writer-mutex mode contract tests pass" "PASS: test-writer-mutex-modes" \
             bash "${ROOT}/tests/test-writer-mutex-modes.sh"
-  check_out "no-verify guard tests pass" "PASS: test-guard-no-verify" \
+  check_suite "no-verify guard tests pass" "PASS: test-guard-no-verify" \
             bash "${ROOT}/tests/test-guard-no-verify.sh"
   check_out "destructive-git guard tests pass" "PASS: test-destructive-git-guard" \
             bash "${ROOT}/tests/test-destructive-git-guard.sh"
@@ -315,18 +340,18 @@ fi
 if should_run classifier; then
   section "/remember classifier"
 
+  # The classifier under test is EXTRACTED from commands/remember.md, not
+  # reimplemented here. This block used to hold its own copy of the case
+  # statement, and the two had already drifted (remember.md classifies
+  # "X over Y" as a Decision; the copy did not) — so the suite was testing
+  # code that ships nowhere. If the extraction comes back empty the check
+  # FAILS; a test that silently reverts to a local copy is the same defect.
+  CLASSIFY_SRC=$(sed -n '/LOWER=\$(printf/,/esac/p' "${ROOT}/commands/remember.md" | sed 's/^[[:space:]]*//')
   classify() {
-    local LOWER
-    LOWER=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
-    case "$LOWER" in
-      *use*|*prefer*|*not*|*formatter*|*lint*|*test*|*package*|*config*|*npm*|*pnpm*|*yarn*|*bun*|*cargo*|*pip*|*poetry*|*uv*|*ruff*|*eslint*|*biome*|*vitest*|*jest*|*mocha*|*pytest*)
-        printf 'Conventions' ;;
-      *decid*|*chose*|*chosen*|*picked*|*went\ with*)
-        printf 'Decisions' ;;
-      *own*|*team*|*slack*|*pm*|*engineer*|*lead*|*author*|*maintainer*|*responsible*)
-        printf 'People' ;;
-      *) printf 'Notes' ;;
-    esac
+    local ARGUMENTS="$1" LOWER="" SECTION=""
+    [[ -n "$CLASSIFY_SRC" ]] || { printf 'EXTRACTION-FAILED'; return; }
+    eval "$CLASSIFY_SRC"
+    printf '%s' "$SECTION"
   }
 
   expect() {
@@ -341,6 +366,10 @@ if should_run classifier; then
   expect "use Vitest for tests"          "Conventions"
   expect "prefer Biome over ESLint"      "Conventions"
   expect "we picked tRPC over GraphQL"   "Decisions"
+  # The case that PROVED the drift: remember.md's Decisions arm has a bare
+  # "X over Y" pattern; the deleted local copy did not, so this fact
+  # classified as Notes under the copy and Decisions under the real rules.
+  expect "flask over django"             "Decisions"
   expect "chose Postgres over Mongo"     "Decisions"
   expect "Sara owns auth"                "People"
   expect "Sara is the auth owner"        "People"

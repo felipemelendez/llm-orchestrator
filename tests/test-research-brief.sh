@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+#
+# SCOPE, STATED HONESTLY. Most checks here are greps against markdown, and a
+# grep against a prompt cannot prove what the model DOES with it — the
+# observable is behaviour, never text. What these checks legitimately enforce
+# is a DOCUMENT CONTRACT: the literal outcome tokens the controller routes on
+# must exist, and the load-bearing rules must not be silently inverted.
+#
+# The distinction is not academic. The CONTRADICTED assertion below used to be
+# polarity-blind: rewriting the rule to say the opposite of what it means still
+# passed all 42 checks, because the assertion matched vocabulary rather than
+# meaning. Assertions that can only ever go green are worse than no assertions,
+# because they are counted. Behavioural claims about the agent belong in
+# tests/evals/, which runs the model; they do not belong here.
 # Validates that templates/research-brief.md has the required structure for
 # all three first-class outcomes (VERIFIED, COULDN'T_VERIFY, CONTRADICTED),
 # and that agents/orch-researcher.md matches the contract the brief defines.
@@ -114,12 +127,28 @@ else
     fail "Anti-soft-pedal-NA rule" "agent must explicitly forbid demoting CONTRADICTED/COULDN'T_VERIFY into NOT_APPLICABLE"
   fi
 
-  # The contradicted-is-first-class invariant — the user named this as the
-  # most important property. Test that the agent body says it explicitly.
-  if grep -qE 'first-class|do not soft-pedal|halts the workflow' "$AGENT"; then
-    ok "Agent treats CONTRADICTED as first-class (halt, not soft-warn)"
+  # The contradicted-is-first-class invariant — the most important property in
+  # this file, and the one whose old assertion was POLARITY-BLIND.
+  #
+  # It used to be `grep -qE 'first-class|do not soft-pedal|halts the workflow'`,
+  # which matches vocabulary, not meaning. Measured: rewriting the rule to
+  # "**This does NOT halt the workflow.** Proceed with the plan as written"
+  # — the exact inversion of the invariant — still passed all 42 checks,
+  # because the surrounding heading still contained "first-class" and
+  # "do not soft-pedal".
+  #
+  # A text assertion cannot prove the model's behaviour; what it CAN do is
+  # refuse to pass when the document states the opposite. So: the affirmative
+  # form must be present AND no negated form may appear in the CONTRADICTED
+  # section. (Elsewhere "does NOT halt" is legitimate — NOT_APPLICABLE says
+  # exactly that — so the scan is scoped to the section.)
+  CONTRA_SECTION="$(awk '/^### CONTRADICTED/{f=1} f&&/^### /&&!/^### CONTRADICTED/{f=0} f' "$AGENT")"
+  if ! printf '%s' "$CONTRA_SECTION" | grep -qE 'halts the workflow|must be revised'; then
+    fail "CONTRADICTED first-class invariant" "the CONTRADICTED section must state that it halts the workflow"
+  elif printf '%s' "$CONTRA_SECTION" | grep -qiE 'does not halt|does NOT halt|never halts|do not halt|proceed (with|anyway)'; then
+    fail "CONTRADICTED polarity" "the CONTRADICTED section contains a NEGATED halt rule — the invariant is inverted"
   else
-    fail "CONTRADICTED first-class invariant" "agent body must explicitly say CONTRADICTED halts, not soft-warns"
+    ok "Agent treats CONTRADICTED as first-class, and the rule is not negated"
   fi
 
   # Anti-soft-pedal: explicit warning against demoting CONTRADICTED → COULDN'T_VERIFY
