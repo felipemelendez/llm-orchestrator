@@ -57,7 +57,7 @@ Steps:
    - Run `workflows/review-diff.js` with `args = {specText, planText, conventions, diff,
      security_sensitive}`. It reproduces the Stage-1-gates-Stage-2 ordering (early-exits when the
      diff fails spec compliance), demotes findings below 0.8 confidence to `Notes:`, and runs a bounded
-     adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, earlyExit, stagesRun, incomplete, failedDimensions}`. If `incomplete` is true a reviewer died — report that plainly and do not present the result as a clean review, however few findings came back.
+     adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, earlyExit, stagesRun, incomplete, failedDimensions}`. If `incomplete` is true a reviewer or a skeptic died — report that plainly and do not present the result as a clean review, however few findings came back. `stagesRun` and `failedDimensions` share one token set (`spec`, `code-quality`, `security`, `verify`). A finding tagged `verifiedBy: "unverified"` was never judged because its skeptic died; surface it as unjudged rather than confirmed.
    - Build the report below from that return, then continue at step 9.
 
 8. Merge all `Issues:` blocks (from whichever stages ran) into one report.

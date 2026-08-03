@@ -71,6 +71,16 @@ const stage1 = await agent(
   { agentType: 'llm-orchestrator:orch-spec-reviewer', schema: FINDINGS_SCHEMA, label: 'spec-compliance', phase: 'Spec' }
 )
 
+// A dead Stage 1 is not a clean Stage 1. `agent()` returns null when the user
+// skips it or the subagent dies on a terminal API error, so `stage1?.findings`
+// collapses a crashed gate and a passing gate into the same empty list. Stage
+// 2/3 already refuse to report a clean result while a dimension is missing
+// (see below); the gate itself was never given the same guard, so a dead spec
+// reviewer produced a review marked complete whose gating stage never ran.
+// Covers every shape that yields no usable finding list, not just null — the
+// `?.` on the next line is itself an admission that the return isn't trusted,
+// and `{}` or `{findings: null}` would otherwise read as a clean gate.
+const specDied = !stage1 || !Array.isArray(stage1.findings)
 const specAll = stage1?.findings || []
 const specFindings = specAll.filter(passesFloor)
 const specBlocks = specFindings.filter(isBlocking)
@@ -83,11 +93,19 @@ if (specBlocks.length > 0) {
   // Mirror the normal path's partitioning so the fields mean the same thing on
   // both returns: blocking -> confirmed, minor -> notes. Early-exit findings skip
   // the skeptic verify pass — a blocking spec mismatch is reason enough to stop.
+  // `incomplete`/`failedDimensions` are part of the documented return shape
+  // (skills/requesting-code-review/SKILL.md, commands/review.md). Omitting them
+  // here made a caller reading `result.incomplete` get `undefined` on this path.
+  // Both are literal here: reaching this branch requires specBlocks.length > 0,
+  // which requires findings, which requires a live Stage 1 — so specDied is
+  // necessarily false and no dimension was lost.
   return {
     earlyExit: true,
     confirmed: specBlocks,
     notes: specFindings.filter((f) => !isBlocking(f)),
     stagesRun: ['spec'],
+    incomplete: false,
+    failedDimensions: [],
   }
 }
 
@@ -114,12 +132,17 @@ const stage23 = await parallel(
 // resolves a failed thunk to null, so `.filter(Boolean)` silently converted a
 // dead security reviewer into a clean security review. Track the losses and
 // refuse to report a clean result while any dimension is missing.
+// dimensionNames stays index-aligned with stage23 (1 or 2 entries). Do NOT
+// prepend 'spec' to it — stage23[0] is code-quality, so a prepended name would
+// report a dead code-quality reviewer as a dead spec reviewer. The spec loss is
+// concatenated onto the RESULT instead.
 const dimensionNames = ['code-quality'].concat(securitySensitive ? ['security'] : [])
-const failedDimensions = stage23
-  .map((r, i) => (r ? null : dimensionNames[i]))
-  .filter(Boolean)
+const failedDimensions = (specDied ? ['spec'] : []).concat(
+  stage23.map((r, i) => (r ? null : dimensionNames[i])).filter(Boolean)
+)
 if (failedDimensions.length) {
-  log(`WARNING: ${failedDimensions.join(', ')} did not return — this review is INCOMPLETE`)
+  const gate = specDied ? ' The spec GATE did not run.' : ''
+  log(`WARNING: ${failedDimensions.join(', ')} did not return — this review is INCOMPLETE.${gate}`)
 }
 
 const otherAll = stage23.filter(Boolean).flatMap((r) => r.findings || [])
@@ -137,6 +160,7 @@ const minorNotes = pool.filter((f) => !isBlocking(f)).concat(belowFloor)
 // --- Verify: bounded adversarial refute pass -------------------------------
 phase('Verify')
 let confirmed = toVerify
+const deadVerifyBatches = []
 if (toVerify.length > 0) {
   // Batch findings into at most VERIFY_BATCHES skeptic agents (not one-per-finding).
   const batchSize = Math.ceil(toVerify.length / VERIFY_BATCHES)
@@ -186,20 +210,50 @@ if (toVerify.length > 0) {
   )
 
   const survivors = []
-  for (const r of results.filter(Boolean)) {
+  results.forEach((r, bi) => {
+    // A skeptic batch whose thunk THREW resolves to null (parallel() never
+    // rejects). `results.filter(Boolean)` used to drop it, deleting every
+    // blocking finding it carried — findings a live reviewer had actually
+    // produced — while `incomplete` stayed false. A dead verifier is not a
+    // refutation. Fail closed: keep the findings, mark them unverified, and
+    // record the loss so the caller's `incomplete` check fires.
+    //
+    // Note the asymmetry this removes: a skeptic that RETURNED null was already
+    // safe (`v?.verdicts || []` refutes nothing, so findings survived), while a
+    // skeptic that THREW silently cleared them. Same event, opposite outcomes.
+    if (!r) {
+      deadVerifyBatches.push(bi)
+      batches[bi].forEach((f) => survivors.push({ ...f, verifiedBy: 'unverified' }))
+      return
+    }
     const refuted = new Set(r.verdicts.filter((v) => v.refuted).map((v) => v.index))
     const methodOf = {}
     for (const v of r.verdicts) methodOf[v.index] = v.method
     r.batch.forEach((f, i) => {
       // verifiedBy makes the evidence strength visible downstream: "executed"
-      // survived a real counterfactual run; "reasoned" survived only argument.
+      // survived a real counterfactual run; "reasoned" survived only argument;
+      // "unverified" means the skeptic died and nothing judged it.
       if (!refuted.has(i)) survivors.push({ ...f, verifiedBy: methodOf[i] || 'reasoned' })
     })
-  }
+  })
   confirmed = survivors
 }
 
-const stagesRun = ['spec', 'quality'].concat(securitySensitive ? ['security'] : [])
+// stagesRun reports what actually ran, so it must be derived from the same
+// evidence as failedDimensions — every hardcoded entry is a stage that claims
+// to have run whether or not it did. Tokens match dimensionNames exactly, so
+// `stagesRun` minus `failedDimensions` is a meaningful set operation for a
+// caller; they previously disagreed ('quality' vs 'code-quality').
+const stagesRun = (specDied ? [] : ['spec']).concat(
+  stage23.map((r, i) => (r ? dimensionNames[i] : null)).filter(Boolean),
+  toVerify.length > 0 && deadVerifyBatches.length === 0 ? ['verify'] : []
+)
+
+// Every lost stage in one list, so `incomplete` covers the verify pass too.
+const allLosses = failedDimensions.concat(deadVerifyBatches.length ? ['verify'] : [])
+if (deadVerifyBatches.length) {
+  log(`WARNING: ${deadVerifyBatches.length} skeptic batch(es) died — their findings are reported UNVERIFIED, not refuted`)
+}
 log(`confirmed ${confirmed.length} finding(s); ${minorNotes.length} note(s)`)
 
 return {
@@ -207,8 +261,8 @@ return {
   confirmed,
   notes: minorNotes,
   stagesRun,
-  // Non-empty ⇒ a reviewer died. The caller must not treat this as an approval,
-  // regardless of how few findings came back.
-  incomplete: failedDimensions.length > 0,
-  failedDimensions,
+  // Non-empty ⇒ a reviewer or a skeptic died. The caller must not treat this as
+  // an approval, regardless of how few findings came back.
+  incomplete: allLosses.length > 0,
+  failedDimensions: allLosses,
 }

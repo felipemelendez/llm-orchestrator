@@ -21,6 +21,15 @@ jobs:
       - name: Validate skills
         run: bash tests/validate-skills.sh
 
+      - name: Validate workflows
+        run: bash tests/validate-workflows.sh
+
+      - name: Workflow distribution
+        run: bash tests/test-workflow-distribution.sh
+
+      - name: review-diff behavior
+        run: bash tests/test-review-diff-behavior.sh
+
       - name: Smoke tests
         run: bash tests/smoke.sh
 

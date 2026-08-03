@@ -31,7 +31,7 @@ order, and the evidence rules below.
 2. Run `workflows/review-diff.js`, passing `args = {specText, planText, conventions, diff,
    security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1 (preserving the
    early-exit below), demotes findings below 0.8 confidence to `Notes:`, and verifies the rest with a bounded
-   skeptic pass. It returns `{confirmed, notes, earlyExit, stagesRun, incomplete, failedDimensions}`. `incomplete: true` means a reviewer did not return — that is never an approval.
+   skeptic pass. It returns `{confirmed, notes, earlyExit, stagesRun, incomplete, failedDimensions}`. `incomplete: true` means a reviewer or a skeptic did not return — that is never an approval. `stagesRun` and `failedDimensions` use the same tokens (`spec`, `code-quality`, `security`, `verify`), so a stage in neither list is one that had nothing to do. Each confirmed finding carries `verifiedBy`: `executed` (survived a real counterfactual run), `reasoned` (survived argument only), or `unverified` (its skeptic died — nothing judged it, so it was kept rather than dropped).
 3. Write the review artifact from that return, using the same report shape as the canonical path.
 
 ### Fallback path (no Workflow tool) — canonical

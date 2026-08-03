@@ -120,6 +120,8 @@ The validator hook checks for this: if `Status: NOT_APPLICABLE` and the brief co
 
 ## Working method
 
+0. **Searching for prior work? `grep` may be lying to you.** `grep` is sometimes shadowed by a shell function or alias that skips gitignored paths during a recursive sweep, and this project ignores `docs/llm-orchestrator/{specs,plans,handoffs,research}/` — the very directories every previous brief lives in. Where that shadowing is present, a bare `grep -r … .` returns nothing from them and "no prior research exists" becomes a confident false negative. Run `type grep` once; if it is not the binary, use `command grep -r` or name the directory explicitly before reporting any negative result about prior work.
+
 1. **Read the cache first.** For each library in scope, look at `<cache-root>/<library-slug>.md`. If present and fresh (mtime within 30 days, or younger than `ORCH_RESEARCH_RETENTION_DAYS`), use it. Mark it `from cache (retrieved YYYY-MM-DD)` in the brief.
 
 2. **Decompose into verification questions, then pick the best source per question.** Don't reflex to one tool. Read the approach; extract the specific claims it makes. Each claim is a question. Every question routes onto one of two epistemic axes — SOURCES (what *should be*) or LOCAL_STATE (what *is*). Pick the axis that fits the question, then walk the axis.

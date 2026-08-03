@@ -14,8 +14,7 @@ The markdown flow stays canonical and portable. See the contract brief at
 ## When a chosen fan-out should run on the Workflow tool
 
 Whether to fan out at all is `dispatching-parallel-agents`' decision. Once a fan-out is chosen,
-route it through a workflow only if all three hold (Anthropic's cost guidance — multi-agent runs
-~15× the tokens of a single agent, so the fan-out has to earn it):
+route it through a workflow only if all three hold — a fan-out has to earn its coordination cost:
 
 1. **Breadth-first** — the work splits into parts that can run at once.
 2. **Independent** — the parts don't share context or depend on each other's output mid-flight.
@@ -24,6 +23,13 @@ route it through a workflow only if all three hold (Anthropic's cost guidance �
 
 Good fits today: the two-stage code review (`workflows/review-diff.js`), parallel implementation
 of genuinely independent plan tasks, high-stakes multi-source research.
+
+**The cost, correctly attributed.** Multi-agent runs use **3–10× the tokens of a single agent on the
+same task** ([Anthropic, 2026-01-23](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)).
+The widely-quoted **15×** is against *chat*, not against a single agent
+([Anthropic, 2025-06-13](https://www.anthropic.com/engineering/multi-agent-research-system)); don't
+use it as the bar here. Anthropic publishes no multiplier for dynamic workflows specifically, and
+the "5–10× expected tokens" figure in secondary write-ups is not theirs. All directional.
 
 ## The isolation invariant (applies inside scripts too)
 
@@ -34,17 +40,31 @@ just because the fan-out is scripted.
 
 - **Read-only fan-out** (review, research, explore) — the agents only read and report. Safe to
   `parallel()`/`pipeline()` on the shared checkout. `workflows/review-diff.js` is this shape.
-- **Writer fan-out** (parallel implementation) — every writing `agent()` MUST take
-  `isolation: 'worktree'` so each runs in its own checkout; the script then merges the branches
-  back sequentially. Never `parallel()` two writers without it — they would race the shared tree.
+- **Writer fan-out** (parallel implementation) — each writing `agent()` is dispatched against a
+  worktree created by `scripts/orch-worktree-materialize.sh`, with the path pasted into the agent's
+  prompt; the script then merges the branches back sequentially.
 
-So: writer agents → `agent(prompt, { isolation: 'worktree', ... })`; reviewer/research agents →
-plain `agent()`. If a script fans out writers without `isolation: 'worktree'`, that is a bug.
+**Inside a workflow script, do not use `isolation: 'worktree'`.** (This is scoped to scripted
+fan-out, where the engine gives you no hook to fix up what the option gets wrong.
+`using-git-worktrees` governs the interactive case.) The native option looks like the right
+primitive and is not:
+it branches from the **default branch**, not the parent's `HEAD`, unless `worktree.baseRef: "head"`
+is set — a *user* setting a plugin cannot ship ([sub-agents](https://code.claude.com/docs/en/sub-agents),
+retrieved 2026-08-03). It also provides no slug→path mapping, has no atomic batch rollback, and its
+native cleanup skips worktrees still holding work — all three assessed in
+`docs/llm-orchestrator/research/2026-07-28-v0.6-platform-drift-brief.md:259`, which rejected the
+option for exactly this substitution. `scripts/orch-worktree-materialize.sh` supplies the first
+three; worktree removal is handled separately by `scripts/orch-worktree-integrate.sh`.
+
+Be honest about what enforces this: it is a **prompt-level convention, not an API guarantee**.
+`agent()` has no `cwd` option, so nothing mechanically stops a writer from editing the shared
+checkout. The mechanical backstop is `scripts/hooks/guard-destructive-git.sh`, which blocks
+tree-destroying git outside an isolated worktree.
 
 ## When to stay inline
 
 - Sequential or interdependent work where each step needs the previous one's result. Most coding
-  is this. Forcing it through a workflow pays the 15× multiplier for no parallelism.
+  is this. Forcing it through a workflow pays the multi-agent multiplier for no parallelism.
 - Trivial tasks. A single short edit never needs a fan-out.
 
 ## Routing — try-then-fallback
@@ -81,6 +101,14 @@ The security-sensitive token set lives once, in `scripts/lib/orch-signals.sh`
 - `pipeline()` by default; `parallel()` only when a stage needs all prior results (a barrier).
 - Reuse existing subagents via `agentType` (e.g. `orch-spec-reviewer`); compose with `schema`.
 - Bound any per-finding fan-out so a noisy input can't exhaust the budget.
+- **Size agents for resume.** Replay follows the order agents *started*: cached results stop at the
+  first agent that didn't finish, and everything started after it re-runs even if it completed
+  ([workflows](https://code.claude.com/docs/en/workflows), retrieved 2026-08-03). Many small agents
+  therefore preserve more progress than one long one. Live trade-off: `review-diff.js` batches into
+  4 fat skeptics — cheaper in tokens, worse on resume. Deliberate, not accidental.
+- **This skill is main-thread-only.** The `Workflow` tool is stripped from every subagent
+  ([sub-agents](https://code.claude.com/docs/en/sub-agents), retrieved 2026-08-03), so a dispatched
+  agent cannot start a workflow. Only the controller can route here.
 - Validate with `tests/validate-workflows.sh` (syntax + a static scan for the banned constructs —
   `node --check` alone does not catch the runtime-throw builtins).
 
@@ -91,4 +119,4 @@ The security-sensitive token set lives once, in `scripts/lib/orch-signals.sh`
 - Re-deriving the security regex (or any gate) inside a script instead of taking it via `args`.
 - Claiming the workflow and markdown paths are behaviorally identical.
 - One skeptic agent per finding with no cap.
-- Fanning out writer agents without `isolation: 'worktree'` — they race the shared checkout.
+- Fanning out writer agents onto the shared checkout without a materialized worktree path.

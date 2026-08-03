@@ -78,6 +78,15 @@ if should_run structural; then
   section "Structural"
   check_out "install --check passes" "OK" "${ROOT}/scripts/install.sh" --check
   check_out "validate-skills passes" "OK:" "${ROOT}/tests/validate-skills.sh"
+  check_out "validate-workflows passes" "OK:" "${ROOT}/tests/validate-workflows.sh"
+  check_out "workflows ship on --copy installs" "OK: workflow distribution" \
+            bash "${ROOT}/tests/test-workflow-distribution.sh"
+  # Node-gated: the behavior harness executes the workflow script. Without node
+  # the test exits 0 with "SKIP:", which check_out would still report as a red ✗.
+  if command -v node >/dev/null 2>&1; then
+    check_out "review-diff reports a dead spec gate" "OK: stage-1 loss reported" \
+              bash "${ROOT}/tests/test-review-diff-behavior.sh"
+  fi
   check_out "research-classifier curated examples pass" "All 15 classifier checks passed" \
             "${ROOT}/tests/test-research-classifier.sh"
   check_out "research-brief + orch-researcher contract pass" "All 42 brief/agent checks passed" \

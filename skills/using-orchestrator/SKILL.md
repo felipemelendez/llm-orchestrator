@@ -102,6 +102,7 @@ Each row is a directive, not a suggestion. If the trigger matches, invoke.
 | Needs branch isolation                                           | `using-git-worktrees`              |
 | Dependent or shared-file task                                    | `dispatching-subagents`            |
 | 3+ truly independent tasks, no shared files                      | `dispatching-parallel-agents`      |
+| Fan-out already chosen — script it or run it inline?             | `using-workflows`                  |
 | Diff is ready for review                                         | `requesting-code-review`           |
 | Reviewer returned issues                                         | `receiving-code-review`            |
 | Branch green, deciding what to do                                | `finishing-a-branch`               |

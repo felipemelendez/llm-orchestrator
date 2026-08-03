@@ -19,7 +19,7 @@ case "${cmd}" in
         echo "missing: ${f}"; fail=1
       fi
     done
-    for d in skills commands agents templates hooks scripts/hooks scripts/lib output-styles docs examples tests config; do
+    for d in skills commands agents templates hooks workflows scripts/hooks scripts/lib output-styles docs examples tests config; do
       if [[ ! -d "${ROOT}/${d}" ]]; then
         echo "missing dir: ${d}"; fail=1
       fi
@@ -70,6 +70,10 @@ case "${cmd}" in
     cp -R "${ROOT}/agents" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/output-styles" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/hooks" "${dest}/.claude/"
+    # Workflow scripts. requesting-code-review and commands/review.md both name
+    # workflows/review-diff.js; without this the installed skills point at a file
+    # that does not exist.
+    cp -R "${ROOT}/workflows" "${dest}/.claude/"
     # Copy hook scripts and statusline.
     for f in "${ROOT}/scripts/hooks/"*.sh; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"
