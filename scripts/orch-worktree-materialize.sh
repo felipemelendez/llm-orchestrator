@@ -53,10 +53,19 @@ init_paths() {
 
 sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
 
-# epoch mtime of a path (BSD stat, then GNU stat). If stat is unavailable, return
-# a far-future sentinel so age comes out negative and prune conservatively SKIPS
-# (never mass-reclaims) rather than treating everything as stale.
-_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 9999999999; }
+# epoch mtime of a path — GNU stat first, then BSD. The order matters: GNU
+# `stat -f %m` does NOT fail — `-f` is filesystem mode there and %m prints the
+# MOUNT POINT, so BSD-first returned "/" on every Linux box, the age arithmetic
+# was a fatal expansion error, and every materialize run after the first claim
+# died in its up-front prune. (BSD stat has no -c, so GNU-first fails cleanly
+# through on macOS.) Non-numeric or missing output returns a far-future
+# sentinel: age comes out negative and prune conservatively SKIPS.
+_mtime() {
+  local m
+  m=$(stat -c %Y "$1" 2>/dev/null) || m=$(stat -f %m "$1" 2>/dev/null) || m=""
+  case "${m}" in (''|*[!0-9]*) m=9999999999 ;; esac
+  printf '%s\n' "${m}"
+}
 
 # --- registry --------------------------------------------------------------
 

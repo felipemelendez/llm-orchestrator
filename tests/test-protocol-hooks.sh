@@ -247,10 +247,16 @@ fi
 # ends at a TOP-LEVEL shape header, not at any sub-label: `Verify:` followed by
 # `Summary: npm test → 40 passed` is evidence, and treating a sub-label as a
 # terminator warned replies that had pasted exactly what was asked for.
+# Fence built with chr(96) — literal backticks inside this double-quoted shell
+# string are command substitution: on Linux the substitution garbage split the
+# python source across lines (SyntaxError), and on macOS it silently mangled
+# the fixture. The check only ever passed by accident.
 out=$(python3 -c "
 import json
+fence = chr(96) * 3
+msg = 'Status: DONE\nSummary: ok\nVerify:\n\n' + fence + '\n' + fence
 print(json.dumps({'agent_type': 'llm-orchestrator:orch-implementer',
-                  'last_assistant_message': 'Status: DONE\nSummary: ok\nVerify:\n\n```\n```'}))" \
+                  'last_assistant_message': msg}))" \
       | bash "$SUBAGENT" 2>&1); rc=$?
 if printf '%s' "$out" | grep -q 'requires a "Verify:" line'; then
   ok "(j3d) empty Verify: section → still warned"
