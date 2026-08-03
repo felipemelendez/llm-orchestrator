@@ -112,6 +112,41 @@ out=$(run_locked 1 600 "$T4" bash -c "echo stolen >> '$T4'" 2>&1); rc=$?
 [[ ! -s "$T4" ]] && ok "no write happened under the live holder's lock" || fail "write under held lock"
 rm -rf "${T4}.lockdir"
 
+printf '\n%s== a lock re-acquired between judgment and steal is not destroyed ==%s\n' "$DIM" "$RESET"
+# `mv` renames a PATH, not the inode a waiter inspected, so two waiters that
+# both judge a dead holder's lock stale can interleave: one steals and
+# re-acquires, the second then renames the FIRST'S LIVE lock away and both
+# proceed. Simulated deterministically: stage a dir carrying a dead pid, then
+# swap in a live-pid dir before the stealer's rename — the stealer must put it
+# back rather than take it.
+T5="${TMP}/t5"; : > "$T5"
+DEADPID=999999
+while kill -0 "$DEADPID" 2>/dev/null; do DEADPID=$((DEADPID+1)); done
+mkdir "${T5}.lockdir"; printf '%s\n' "$DEADPID" > "${T5}.lockdir/pid"
+# Racer: replaces the condemned dir with a LIVE-pid one, mimicking a sibling
+# that stole and re-acquired in the window.
+( for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if [[ "$(cat "${T5}.lockdir/pid" 2>/dev/null)" == "$DEADPID" ]]; then
+      rm -rf "${T5}.lockdir" 2>/dev/null
+      mkdir "${T5}.lockdir" 2>/dev/null && printf '%s\n' "$$" > "${T5}.lockdir/pid"
+      break
+    fi
+    perl -e 'select(undef,undef,undef,0.05)' 2>/dev/null || sleep 1
+  done ) &
+RACER=$!
+out=$(run_locked 1 600 "$T5" bash -c "echo raced >> '$T5'" 2>&1); rc=$?
+wait "$RACER" 2>/dev/null || true
+# Whatever the interleaving, the invariant is: this call never both takes a
+# live holder's lock AND writes. Either it reclaimed the genuinely dead one
+# (wrote, lockdir gone) or it backed off (no write).
+if [[ $rc -eq 0 ]]; then
+  ok "steal succeeded against the dead holder (no live lock was taken)"
+else
+  [[ -d "${T5}.lockdir" ]] && ok "backed off and left the live holder's lock in place" \
+    || fail "live lock destroyed" "the stealer removed a lock it did not condemn"
+fi
+rm -rf "${T5}.lockdir" "${T5}".lockdir.stale.* 2>/dev/null
+
 TOTAL=$((PASS + FAIL))
 printf '\n'
 if (( FAIL == 0 )); then

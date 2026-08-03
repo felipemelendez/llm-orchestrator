@@ -40,27 +40,55 @@ with_lock() {
   #   - the lockdir is older than ORCH_LOCK_STALE_SECS (default 600) — covers
   #     a PID-less dir from a kill inside the mkdir→write window, and PID
   #     reuse after reboot.
-  # The steal is an atomic `mv` to a unique name: of N waiters that all judge
-  # the lock stale, exactly one wins the rename, so a lock released and
-  # re-acquired between judgment and steal is never destroyed (the new
-  # holder's mkdir recreated the PATH; the mv moved the OLD inode's name only
-  # once — a loser's mv simply fails and it goes back to waiting).
+  # The steal is `mv` to a unique name, then a VERIFY, then a delete.
+  #
+  # The verify is not optional. `mv` renames a PATH, not the inode a waiter
+  # inspected, so two waiters that both judge the lock stale can interleave:
+  #
+  #   A holds, is SIGKILLed          lockdir has pid=A
+  #   B reads pid=A, judges it dead
+  #   C reads pid=A, judges it dead
+  #   C mv's it away, then mkdir's   C is now the LIVE holder, pid=C
+  #   B mv's ... and takes C's dir   both proceed -> TWO WRITERS
+  #
+  # So after winning the rename we re-read the pid from the directory we
+  # actually moved. If it is not the pid we condemned, we moved a live
+  # holder's lock and put it straight back, then keep waiting. That leaves a
+  # sub-millisecond window where the path is absent (a third waiter could
+  # mkdir into it) — strictly better than the alternative, since the failure
+  # it replaces is two concurrent writers to the user's CLAUDE.md.
   # `waited` counts tenths-of-a-second so timeout (in seconds) maps to waited * 10.
   local waited=0 stale_secs="${ORCH_LOCK_STALE_SECS:-600}" holder_pid="" lock_age=""
+  local _steal _moved_pid
   while ! mkdir "${lockdir}" 2>/dev/null; do
     holder_pid="$(cat "${lockdir}/pid" 2>/dev/null || true)"
     if [[ -n "${holder_pid}" && "${holder_pid}" != *[!0-9]* ]] && ! kill -0 "${holder_pid}" 2>/dev/null; then
-      if mv "${lockdir}" "${lockdir}.stale.$$.${RANDOM}" 2>/dev/null; then
-        rm -rf "${lockdir}.stale.$$."* 2>/dev/null
-        echo "orch-lock: reclaimed lock on ${target} from dead pid ${holder_pid}" >&2
+      _steal="${lockdir}.stale.$$.${RANDOM}"
+      if mv "${lockdir}" "${_steal}" 2>/dev/null; then
+        _moved_pid="$(cat "${_steal}/pid" 2>/dev/null || true)"
+        if [[ "${_moved_pid}" == "${holder_pid}" ]]; then
+          rm -rf "${_steal}" 2>/dev/null
+          echo "orch-lock: reclaimed lock on ${target} from dead pid ${holder_pid}" >&2
+        else
+          # Someone re-acquired between our judgment and our rename. Not ours.
+          mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
+        fi
       fi
       continue
     fi
     lock_age="$( _orch_lock_age_secs "${lockdir}" )"
     if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )); then
-      if mv "${lockdir}" "${lockdir}.stale.$$.${RANDOM}" 2>/dev/null; then
-        rm -rf "${lockdir}.stale.$$."* 2>/dev/null
-        echo "orch-lock: reclaimed lock on ${target} — ${lock_age}s old (> ${stale_secs}s TTL)" >&2
+      _steal="${lockdir}.stale.$$.${RANDOM}"
+      if mv "${lockdir}" "${_steal}" 2>/dev/null; then
+        # Same check, by age: a directory created since our reading is young,
+        # so re-measure the one we actually moved before destroying it.
+        lock_age="$( _orch_lock_age_secs "${_steal}" )"
+        if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )); then
+          rm -rf "${_steal}" 2>/dev/null
+          echo "orch-lock: reclaimed lock on ${target} — ${lock_age}s old (> ${stale_secs}s TTL)" >&2
+        else
+          mv "${_steal}" "${lockdir}" 2>/dev/null || rm -rf "${_steal}" 2>/dev/null
+        fi
       fi
       continue
     fi
