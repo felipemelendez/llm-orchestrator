@@ -355,8 +355,11 @@ section "validate-workflows (P8, P10)"
 
 # P10: only a nested *.js present — the message must state the actual scope
 # (top level of workflows/), not "contains no *.js".
-mkdir -p "$TMP/vw/tests" "$TMP/vw/workflows/sub"
+mkdir -p "$TMP/vw/tests/lib" "$TMP/vw/workflows/sub"
 cp "$ROOT/tests/validate-workflows.sh" "$TMP/vw/tests/"
+# The syntax/meta checker lives in tests/lib/ and the validator refuses to run
+# without it — correct, but this case is about the top-level-scope message.
+cp "$ROOT/tests/lib/check-workflow-script.mjs" "$TMP/vw/tests/lib/"
 printf 'export const meta = {};\n' > "$TMP/vw/workflows/sub/x.js"
 VW_OUT=$(bash "$TMP/vw/tests/validate-workflows.sh" 2>&1)
 VW_RC=$?

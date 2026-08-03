@@ -631,8 +631,12 @@ want   "${SKV2}" '"incomplete":true'  "verify skew +1: incomplete"
 #     fail, not pass — the skills reference workflows/review-diff.js by name.
 # =============================================================================
 VW="${TMP}/vw"
-mkdir -p "${VW}/tests" "${VW}/workflows"
+mkdir -p "${VW}/tests/lib" "${VW}/workflows"
 cp "${ROOT}/tests/validate-workflows.sh" "${VW}/tests/"
+# The validator's syntax/meta checker moved into tests/lib/ — without it the
+# validator correctly refuses to run at all ("script checker missing"), which
+# is right behaviour but not what THIS case is asserting.
+cp "${ROOT}/tests/lib/check-workflow-script.mjs" "${VW}/tests/lib/"
 if VWOUT=$(bash "${VW}/tests/validate-workflows.sh" 2>&1); then
   echo "FAIL: validate-workflows passes on an empty workflows/ dir"
   echo "      got: ${VWOUT}"

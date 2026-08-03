@@ -62,6 +62,23 @@ print(json.dumps(d))" "$1" "${2-ok}" "${3:-}"   # ${2-ok}: an explicitly EMPTY s
 }
 fire()        { event "$@" | bash "$HOOK"; }
 fire_marker() { event "$@" | ORCH_EVIDENCE_MARKER=1 bash "$HOOK"; }
+
+# A FAILURE event. On this platform Bash's tool_response carries no exit code —
+# success and failure are distinguished by WHICH EVENT FIRES — so the failure
+# arm needs its own fixture. Without one the entire red path was untested:
+# forcing exit_code = 0 there left all 37 ledger checks and all 43 verify-gate
+# checks green, which means a verify command that FAILED was recorded as green
+# evidence and the completion claim shipped. That is Layer 7 inverted.
+event_fail() { # <command> [stderr]
+  python3 -c "
+import json, sys
+print(json.dumps({'session_id': 'ev-test', 'hook_event_name': 'PostToolUseFailure',
+                  'tool_name': 'Bash', 'tool_input': {'command': sys.argv[1]},
+                  'tool_response': {'stdout': '', 'stderr': sys.argv[2],
+                                    'interrupted': False, 'isImage': False,
+                                    'noOutputExpected': False}}))" "$1" "${2:-1 failing}"
+}
+fire_fail() { event_fail "$@" | bash "$HOOK"; }
 ledger()  { cat "$ORCH_HOME"/state/*/evidence.ev-test.tsv 2>/dev/null; }
 mutexmap(){ cat "$ORCH_HOME"/state/*/mutex-map.ev-test.tsv 2>/dev/null; }
 
@@ -72,6 +89,31 @@ if ledger | grep -qE '^[0-9a-f]{12}	0	[0-9]+	ok	npm test$'; then
   ok "ledger row recorded: stamp, exit 0, epoch, substance=ok, command"
 else fail "ledger row" "$(ledger)"; fi
 STAMP=$(ledger | head -1 | cut -f1)
+
+printf '\n%s== a FAILED verify run must record as failed, never as green ==%s\n' "$DIM" "$RESET"
+# Mutation-found gap: forcing the failure arm's exit_code to 0 left every check
+# in this file AND in test-verify-gate.sh green. The ledger is the only thing
+# standing between "the model says it verified" and "a verify command actually
+# ran green this turn", so recording a red run as green defeats the layer
+# outright — the gate then confirms a completion claim the run refutes.
+fire_fail "npm test" "1 failing" >/dev/null
+if ledger | grep -qE '	1	[0-9]+	red	npm test$'; then
+  ok "PostToolUseFailure records exit 1 with substance=red"
+else
+  fail "failed run recorded as failed" "ledger rows: $(ledger | tail -3 | tr '\n' '|')"
+fi
+if ledger | grep -E 'npm test$' | grep -qE '	0	[0-9]+	(ok|none)	npm test$' \
+   && ! ledger | grep -qE '	1	[0-9]+	red	npm test$'; then
+  fail "failed run recorded as green" "a red run produced a green ledger row"
+else
+  ok "no green row was manufactured for the failed run"
+fi
+# A non-verify command that fails must still record nothing.
+before_nv=$(ledger | wc -l | tr -d ' ')
+fire_fail "git add tests/x.sh" "fatal: pathspec" >/dev/null
+after_nv=$(ledger | wc -l | tr -d ' ')
+[[ "$before_nv" == "$after_nv" ]] && ok "a failed NON-verify command records nothing" \
+  || fail "non-verify failure recorded" "rows went $before_nv -> $after_nv"
 
 printf '\n%s== REGRESSION: a quoted pipe is an argument, not an invocation ==%s\n' "$DIM" "$RESET"
 # `grep -rn "tsc|eslint" pkg.json` used to be classified as a typecheck run and

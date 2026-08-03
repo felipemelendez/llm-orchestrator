@@ -190,6 +190,8 @@ if should_run structural; then
             bash "${ROOT}/tests/test-protocol-drift.sh"
   check_suite "evidence-ledger contract tests pass" "PASS: test-evidence-ledger" \
             bash "${ROOT}/tests/test-evidence-ledger.sh"
+  check_out "lock reclaim tests pass" "PASS: test-lock-reclaim" \
+            bash "${ROOT}/tests/test-lock-reclaim.sh"
   check_suite "worktree reaper ownership tests pass" "PASS: test-worktree-reaper" \
             bash "${ROOT}/tests/test-worktree-reaper.sh"
   check_out "writer-mutex mode contract tests pass" "PASS: test-writer-mutex-modes" \

@@ -286,6 +286,55 @@ blocks "$(printf 'git switch -c tmp\ngit switch main')"
 blocks "$(printf 'git checkout -b a\ngit checkout -b b\ngit checkout main')"
 allows "$(printf 'cd sub\nnpm test')"
 
+printf '\n%s== malformed payloads must never fail OPEN ==%s\n' "$DIM" "$RESET"
+# Mutation-found gap: adding a JSON-parse fail-open to this guard left all 130
+# checks green — there was no malformed-payload case at all. A guard that can
+# be argued out of firing by a broken event is not a guard. Each payload below
+# is undecodable in a different way and must still reach the block decision by
+# falling back to a raw scan.
+raw_rc() { printf '%s' "$1" > "$_PAYLOAD"; ( cd "$MAINDIR" && bash "$GUARD" < "$_PAYLOAD" ) >/dev/null 2>&1; echo $?; }
+# Undecodable AND carrying destructive text → must still block via the raw scan.
+for _bad in \
+  'not json at all git reset --hard' \
+  '{"tool_input":{"command":"git reset --hard"' \
+  '{"tool_input":{"command":"git clean -fd"' \
+  '{"tool_input":{"command":"git reset --hard"},,,}' \
+  '{"tool_input" "command" "git stash"}' ; do
+  RC=$(raw_rc "$_bad")
+  if [[ "$RC" == "2" ]]; then ok "undecodable + destructive still blocks: ${_bad:0:34}"
+  else fail "undecodable + destructive blocks: ${_bad:0:34}" "expected 2, got $RC — FAIL-OPEN"; fi
+done
+# Malformed but carrying NO destructive text: there is nothing to block, so
+# allowing is correct — but the guard must exit cleanly rather than crash.
+# (A non-0/non-2 exit is a hook ERROR, which Claude Code treats as allow, so a
+# crash on a weird payload is itself a fail-open.)
+for _empty in '{"tool_input":' '{}' '{"tool_input":{"command":' '' 'null'; do
+  RC=$(raw_rc "$_empty")
+  if [[ "$RC" == "0" || "$RC" == "2" ]]; then ok "malformed-but-harmless payload exits cleanly (rc=$RC): ${_empty:0:24}"
+  else fail "malformed payload crashed: ${_empty:0:24}" "got $RC — a crash code reads as ALLOW"; fi
+done
+
+printf '\n%s== forged worktree markers must not unlock the relaxation ==%s\n' "$DIM" "$RESET"
+# Mutation-found gap: dropping the `gitdir:` CONTENT check left every check
+# green. Both file tests alone are forgeable — mkdir a dir, write a .git FILE
+# pointing anywhere, touch .orch-worktree — and `git reset --hard HEAD~2` then
+# ran against the SHARED checkout with no cd and no -C for the retarget grep
+# to catch. A real linked worktree's .git resolves into .git/worktrees/<name>.
+FORGE="$TMP/forged"; mkdir -p "$FORGE"
+printf 'gitdir: %s/.git\n' "$MAINDIR" > "$FORGE/.git"
+touch "$FORGE/.orch-worktree"
+forged_rc() { _mkpayload "$1"; ( cd "$FORGE" && bash "$GUARD" < "$_PAYLOAD" ) >/dev/null 2>&1; echo $?; }
+for _cmd in "git reset --hard HEAD~2" "git clean -fd" "git stash" "git checkout main"; do
+  RC=$(forged_rc "$_cmd")
+  if [[ "$RC" == "2" ]]; then ok "forged .git marker does NOT relax: $_cmd"
+  else fail "forged marker relaxed: $_cmd" "expected 2, got $RC — a spoofed worktree got worktree privileges"; fi
+done
+# A .git file pointing at a plausible-looking but non-worktrees path is also a forgery.
+printf 'gitdir: %s/.git/modules/x\n' "$MAINDIR" > "$FORGE/.git"
+RC=$(forged_rc "git reset --hard HEAD~2")
+[[ "$RC" == "2" ]] && ok "gitdir pointing outside .git/worktrees/ does not relax" \
+  || fail "non-worktrees gitdir relaxed" "expected 2, got $RC"
+
 printf '\n%s== ORCH_ALLOW_DESTRUCTIVE_GIT=1 overrides (lets it through) ==%s\n' "$DIM" "$RESET"
 OVR=$(printf '{"tool_input":{"command":"git reset --hard"}}' | ORCH_ALLOW_DESTRUCTIVE_GIT=1 bash "$GUARD" >/dev/null 2>&1; echo $?)
 [[ "$OVR" == "0" ]] && ok "ORCH_ALLOW_DESTRUCTIVE_GIT=1 → git reset --hard allowed" || fail "override" "expected exit 0, got $OVR"

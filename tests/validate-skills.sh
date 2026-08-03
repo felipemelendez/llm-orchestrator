@@ -44,6 +44,14 @@ while IFS= read -r dir; do
     continue
   fi
 
+  # The file must OPEN with a frontmatter block. The name/description scans
+  # below match `^name:` anywhere in the file, so without this a body line
+  # that happens to start with "name:" satisfies them with no frontmatter.
+  if [[ "$(head -1 "$file" | tr -d '\r')" != "---" ]]; then
+    echo "FAIL: $file does not open with a --- frontmatter block"
+    fail=1
+  fi
+
   fm_name=$(awk '/^name:/ {print $2; exit}' "$file" | tr -d '\r')
   fm_desc=$(awk '/^description:/ {sub(/^description:[ ]*/,""); print; exit}' "$file" | tr -d '\r')
   lines=$(wc -l < "$file" | tr -d ' ')
@@ -188,6 +196,24 @@ if [[ -d "$ROOT/agents" ]]; then
     checked_agents=$((checked_agents+1))
   done < <(find "$ROOT/agents" -maxdepth 1 -name '*.md' | sort)
 fi
+
+# The counts above are real but were compared to NOTHING: deleting seven skill
+# directories still printed "OK: 11 skills, ..." and exited 0. The core roster
+# is load-bearing — the routing table, hooks, and commands reference these by
+# name — so each one's absence is a hard failure that names it. Adding a NEW
+# skill needs no change here; deleting a core one must be deliberate (remove
+# it from this list in the same commit, where a reviewer can see both).
+REQUIRED_SKILLS="using-orchestrator brainstorming writing-plans executing-plans \
+dispatching-subagents dispatching-parallel-agents test-driven-development \
+systematic-debugging verification-before-completion requesting-code-review \
+receiving-code-review using-git-worktrees finishing-a-branch writing-skills \
+using-workflows research-classifier managing-memory handing-off-to-fresh-context"
+for req in $REQUIRED_SKILLS; do
+  if [[ ! -f "$ROOT/skills/$req/SKILL.md" ]]; then
+    echo "FAIL: core skill missing: skills/$req/SKILL.md (deletion must be deliberate — update REQUIRED_SKILLS in the same commit)"
+    fail=1
+  fi
+done
 
 if (( fail == 0 )); then
   echo "OK: $checked_skills skills, $checked_commands commands, $checked_agents agents"

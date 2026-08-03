@@ -25,15 +25,20 @@ else GREEN=""; RED=""; YEL=""; RESET=""; fi
 FAIL=0
 PASS=0
 
-# scan PATTERN DESCRIPTION  — fail if any *.sh under ROOT (excluding tests/) matches
+# scan PATTERN DESCRIPTION — fail on a match anywhere a GNU-only construct can
+# break a run. This used to search only scripts/ and hooks/, so its 7 passing
+# checks said nothing about tests/, commands/ or agents/ — and its own
+# tests/-exclusion filters below were dead code (nothing under tests/ was ever
+# searched). The tests matter MOST here: a GNU-only construct in a test is
+# exactly the macOS-green/Linux-red split that kept CI misreporting.
 scan() {
   local pattern="$1" desc="$2"
   local hits
   hits=$(grep -rEn "$pattern" \
-          "$ROOT/scripts" "$ROOT/hooks" 2>/dev/null \
+          "$ROOT/scripts" "$ROOT/hooks" "$ROOT/tests" "$ROOT/commands" "$ROOT/agents" 2>/dev/null \
         | grep -v '\.git/' \
-        | grep -v 'tests/smoke.sh' \
         | grep -v 'tests/test-portability.sh' \
+        | grep -v '/README\.md:' \
         | grep -v '# portable-ok' \
         || true)
   if [[ -n "$hits" ]]; then

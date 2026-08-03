@@ -347,6 +347,26 @@ done
 [[ $rp_fp_ok -eq 1 ]] && ok "ordinary source and docs paths are not mistaken for tests"
 rm -f "$LEDGER" "$TURNSTART"
 
+printf '\n%s== decorated Changed: headers are the same claim ==%s\n' "$DIM" "$RESET"
+# Mutation-found gap: dropping the heading/bold prefix from the Changed: regex
+# left every check green — `**Changed:**` with no Verify: passed silently, so
+# the BETTER-formatted reply was the one that escaped the gate. Each form below
+# is a completion claim with no evidence and must be warned about.
+for _hdr in 'Changed:' '**Changed:**' '## Changed:' '### Changed:' '  Changed:'; do
+  _t=$(mk_transcript "$(printf '%s\n- src/a.ts:1 — edit with no evidence\n' "$_hdr")")
+  out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
+  if printf '%s' "$err" | grep -q 'Verify'; then
+    ok "decorated header warns without Verify:  ${_hdr}"
+  else
+    fail "decorated header ignored: ${_hdr}" "rc=$rc err=$(printf '%s' "$err" | head -1)"
+  fi
+done
+# ...and the same forms with a real Verify: section must stay silent.
+_t=$(mk_transcript "$(printf '**Changed:**\n- src/a.ts:1 — edit\n\n**Verify:**\n- bash tests/smoke.sh → 79 passed\n')")
+out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
+[[ "$rc" == "0" ]] && ok "decorated Changed: WITH a decorated Verify: is accepted" \
+  || fail "decorated pair rejected" "rc=$rc err=$(printf '%s' "$err" | head -1)"
+
 printf '\n%s== Dry-run logs intent, never blocks ==%s\n' "$DIM" "$RESET"
 out=$(run "$tr" ORCH_STRICT_VERIFY=1 ORCH_HOOK_DRY_RUN=1); rc=${out%%|*}; err=${out#*|}
 if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'orch-dry-run\[orch-verify-gate\]'; then

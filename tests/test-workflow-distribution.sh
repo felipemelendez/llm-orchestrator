@@ -54,6 +54,42 @@ else
   fail=1
 fi
 
+# The validator is only as shippable as its helper. tests/lib/check-workflow-
+# script.mjs holds the syntax + meta checks, and validate-workflows.sh REFUSES
+# to run without it (correctly — a validator that cannot validate must not
+# print OK). A --copy install that ships one and not the other therefore turns
+# the validator into a hard error on the installed side.
+if [[ -f "${ROOT}/tests/validate-workflows.sh" ]]; then
+  if [[ ! -f "${ROOT}/tests/lib/check-workflow-script.mjs" ]]; then
+    echo "FAIL: tests/lib/check-workflow-script.mjs is missing — validate-workflows.sh cannot run without it"
+    fail=1
+  fi
+  # Prove the pairing on a copy that mirrors what an install lays down.
+  PAIR="$(mktemp -d)"
+  mkdir -p "${PAIR}/tests/lib" "${PAIR}/workflows"
+  cp "${ROOT}/tests/validate-workflows.sh" "${PAIR}/tests/"
+  cp "${ROOT}/tests/lib/check-workflow-script.mjs" "${PAIR}/tests/lib/" 2>/dev/null
+  cp "${ROOT}/workflows/review-diff.js" "${PAIR}/workflows/" 2>/dev/null
+  if PAIR_OUT=$(bash "${PAIR}/tests/validate-workflows.sh" 2>&1); then
+    : # validator + helper + script travel together and pass
+  else
+    echo "FAIL: validator does not pass when shipped alongside its helper and script"
+    printf '%s\n' "${PAIR_OUT}" | command sed 's/^/    /' | head -5
+    fail=1
+  fi
+  # ...and drops to a hard error, never a silent OK, when the helper is absent.
+  rm -f "${PAIR}/tests/lib/check-workflow-script.mjs"
+  if NOHELP_OUT=$(bash "${PAIR}/tests/validate-workflows.sh" 2>&1); then
+    echo "FAIL: validate-workflows.sh reported success with its checker missing"
+    fail=1
+  elif ! printf '%s' "${NOHELP_OUT}" | command grep -q 'checker missing'; then
+    echo "FAIL: missing-checker failure does not say what is missing"
+    printf '%s\n' "${NOHELP_OUT}" | command sed 's/^/    /' | head -3
+    fail=1
+  fi
+  rm -rf "${PAIR}"
+fi
+
 if (( fail == 0 )); then
   echo "OK: workflow distribution"
 else

@@ -583,7 +583,7 @@ fi
 # Cache TTL tests.
 printf '\n%s== Cache TTL frontmatter tests ==%s\n' "$DIM" "$RESET"
 
-OLD35="$(date -v-35d +%Y%m%d%H%M 2>/dev/null || date -d "35 days ago" +%Y%m%d%H%M)"
+OLD35="$(date -v-35d +%Y%m%d%H%M 2>/dev/null || date -d "35 days ago" +%Y%m%d%H%M)"  # portable-ok: BSD-first, GNU fallback
 CACHE=$TMP/cache
 mkdir -p "$CACHE/research/cache"
 
@@ -615,7 +615,7 @@ touch -t "$OLD35" "$CACHE/research/cache/short.md"
 cat > "$CACHE/research/cache/fresh.md" <<'EOF'
 # fresh
 EOF
-touch -t "$(date -v-1d +%Y%m%d%H%M 2>/dev/null || date -d '1 day ago' +%Y%m%d%H%M)" "$CACHE/research/cache/fresh.md"
+touch -t "$(date -v-1d +%Y%m%d%H%M 2>/dev/null || date -d '1 day ago' +%Y%m%d%H%M)" "$CACHE/research/cache/fresh.md"  # portable-ok: BSD-first, GNU fallback
 
 ORCH_HOME="$CACHE" bash "${ROOT}/scripts/hooks/orch-stop.sh"
 

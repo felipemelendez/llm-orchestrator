@@ -111,6 +111,13 @@ jobs:
         if: always()
         run: bash tests/test-worktree-materialize.sh
 
+      # Forces the no-flock mkdir fallback via a constructed PATH — this
+      # runner has flock, so without that the stale-lock reclaim would never
+      # execute here at all.
+      - name: Lock reclaim tests
+        if: always()
+        run: bash tests/test-lock-reclaim.sh
+
       - name: Lib resolution contract tests
         if: always()
         run: bash tests/test-lib-resolution.sh
