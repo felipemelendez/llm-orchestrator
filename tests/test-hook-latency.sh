@@ -101,6 +101,7 @@ check_latency() {
 check_latency "session-start.sh"            "$START_EVENT"   "$SESSION_BUDGET_MS"
 check_latency "user-prompt-submit.sh"       "$PROMPT_EVENT"
 check_latency "orch-research-gate.sh"       "$PROMPT_EVENT"
+check_latency "orch-skill-nudge.sh"         "$PROMPT_EVENT"
 check_latency "orch-handoff-nudge.sh"       "$TRANSCRIPT_EVENT"
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"

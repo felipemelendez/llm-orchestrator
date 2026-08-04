@@ -108,6 +108,47 @@ merged into the with-arm's settings env, which is how hook ablations are built (
 Keep graders mechanical — two people reading the same transcript must reach the same
 verdict, or the case is measuring taste rather than behaviour.
 
+### Variant families
+
+A case MAY carry `"variants"`: a list of scenarios that sample the same construct with
+different task instances. Every conclusion otherwise rests on a single frozen task, which
+is easy to (accidentally) tune the plugin toward — variants resist that Goodhart drift.
+
+```json
+{
+  "id": "tdd-under-pressure",
+  "why": "...",
+  "prompt": "...", "setup": ["..."], "check": ["..."], "expect": {},
+  "variants": [
+    {"name": "expiry-off-by-one", "prompt": "...", "setup": ["..."],
+     "check": ["..."], "expect": {}}
+  ]
+}
+```
+
+Semantics:
+
+- Each variant is **complete and independent** — all four of `prompt` / `setup` /
+  `check` / `expect`, no field inheritance from the base. Merging is where merge bugs
+  live, so there is none.
+- The top-level `prompt`/`setup`/`check`/`expect` remain required and act as the scenario
+  named `base`. The runner builds `scenarios = [base] + variants` and iteration `i`
+  (1-based) runs `scenarios[(i-1) % len(scenarios)]` — prompt, setup, grading checks and
+  expect all from that one scenario.
+- Each raw row records `"variant"` (`"base"` for the top-level scenario).
+- Case-level aggregation stays the headline — the variants measure one construct and are
+  pooled. Per-variant behavioural rates are additionally stored in the benchmark JSON
+  under `per_variant`, so a variant that alone drags the family down is visible.
+- **Check indices are per-scenario.** Check `i` of one variant is a different command
+  from check `i` of another, so pooling them by bare index would average unrelated
+  measurements under whichever scenario's label happened to come first. When a case has
+  variants, `per_check` in the benchmark JSON is keyed `"<variant>:<index>"` (variant-less
+  cases keep plain `"<index>"` keys), and each printed per-check line is labelled with its
+  variant name and that scenario's own command.
+- `tests/test-eval-cases.sh` enforces: variant names unique, nonempty, matching
+  `[A-Za-z0-9._-]+` (and not `base`), each variant complete, and **red-before holds for
+  every scenario** — the base and each variant independently.
+
 Prefer execution checks over `expect` regexes for anything you intend to draw a conclusion
 from. Protocol-format regexes only ever *subtract* from the pass rate, and they subtract
 noisily: on `tdd-under-pressure` they turned a p=0.004 behavioural regression into a
@@ -164,7 +205,11 @@ aggregate the paragraph above warns about. The regression was three lines below 
 headline that said there wasn't one.
 
 So the summary now leads with the behavioural rate and computes the verdict from it,
-falling back to the overall rate only for cases with no execution checks. Each `check`
+falling back to the overall rate only for cases with no execution checks. The
+expect-derived checks (`must_match` / `must_not_match` / `must_open_with`) get their own
+**shape** columns in the table and a `shape` key in the JSON — reported beside behaviour,
+never mixed into it, so format drift is visible without being able to swamp the verdict
+again. Each `check`
 command is also graded and reported **separately** (`per_check` in the benchmark JSON), so
 a case can carry two independent measurements — `reviewer-recall-planted-defect` measures
 recall in check 1 and precision in check 2, and collapsing them into one bit would report
@@ -202,6 +247,25 @@ smaller than roughly 12–13 points.** The TDD regression was measurable because
 Do not re-run an arm and treat the second number as a correction of the first — average them
 or say the interval.
 
+## Skill-invocation telemetry
+
+Plugin arms run with `ORCH_TELEMETRY=1`, so the skill-telemetry hook records every Skill
+invocation inside the scratch project's `ORCH_HOME`. After grading, the runner harvests
+it into a per-row field:
+
+- `"skills_invoked": ["name", ...]` — skill names in invocation order.
+- `[]` — the instrument existed and recorded **zero invocations**. That is data.
+- `null` — the arm carried **no instrument**: the `without` arm, a `ref:` tree that
+  predates `scripts/hooks/skill-telemetry.sh`, or raw rows from before this field.
+  That is absence of measurement, not a zero.
+
+The distinction is load-bearing: on 2026-08-04 a regression's mechanism — skill
+invocation dropping from ~23% to 0% — had to be mined out of session transcripts by
+hand. Every run now carries that answer natively. The summary prints one line per
+case-arm (invocation rate over the measured rows, plus which skills fired, or
+`n/a (not captured)`) and stores it as `skills` in the benchmark JSON; the denominator
+is rows where `skills_invoked` is not null.
+
 ## Results are append-only
 
 Every run writes `raw.<case>.<UTC-timestamp>.jsonl` and
@@ -214,6 +278,11 @@ evidence for it. Only the benchmark summary survived, archived by hand at
 
 ## Model pinning
 
-Runs pin `--model` (default `opus`, override with `--model`/`ORCH_EVAL_MODEL`) instead of
-inheriting the session default. An exhausted or unavailable session model returns its
-limit notice as a normal-looking $0 result and silently fails every check.
+Runs pin `--model` (default `opus`, override with `--model` or the `ORCH_EVAL_MODEL`
+environment variable) instead of inheriting the session default. An exhausted or
+unavailable session model returns its limit notice as a normal-looking $0 result and
+silently fails every check.
+
+All historical baselines in `results/` were measured on **opus**. A rate measured on one
+model is not a baseline for another — establish new baselines on the production model
+before comparing anything against them.

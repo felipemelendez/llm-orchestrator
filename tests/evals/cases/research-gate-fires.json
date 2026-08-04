@@ -1,0 +1,27 @@
+{
+  "id": "research-gate-fires",
+  "why": "Unrun detector (982c835 precedent: built and validated against hand-written outcomes only; no paid run has executed it). Bet measured: the LOUD side of the research gate -- the heaviest prose bet in the plugin at ~9,500 words (orch-research-gate.sh 1,693 + orch-signals.sh 1,509 + research-classifier SKILL/STRATEGY/EXAMPLES 2,484 + orch-researcher agent 2,602 + researcher-prompt and research-brief templates 1,216, wc -w). Until now its only behavioral case was research-gate-skips.json, the QUIET side -- so the pipeline could rot into never firing and the suite would stay green. This prompt trips the deterministic sniffer by construction (verified by hand: ORCH_HOOK_DRY_RUN=1 printf '{\"prompt\":...}' | orch-research-gate.sh -> 'would inject research-gate guidance (signal: design verb + library mention)' -- 'build' is the design verb, 'stripe' the library; 'payment' independently matches the security branch). Correct behavior per the chain hook -> classifier RESEARCH_NEEDED -> orch-researcher -> brief is a dated artifact at docs/llm-orchestrator/research/YYYY-MM-DD-<slug>-brief.md whose header carries one of the four first-class Outcome tokens (templates/research-brief.md:4). Deliberately graded on ENGAGEMENT, not fetch success: scratch runs may lack network, so COULDN'T_VERIFY is the honest outcome there and passes -- classifying and attempting is the construct. Check 1 = a well-formed brief with a first-class Outcome line exists; check 2 = that same brief names stripe (a pasted template naming no library passes 1, fails 2). The expect block guards the transcript: must_match 'research' fails the silent-designer, and must_not_match catches the skip phrasings (RESEARCH_SKIP dumped, 'skipping research', 'no research needed'). 'Proceeding on training knowledge' is deliberately NOT in the guard -- it is the honest COULDN'T_VERIFY wording (skills/research-classifier/SKILL.md:82) and must not be punished.",
+  "prompt": "design our payment retry flow against Stripe API version 2026-06; sketch the module boundaries before we build. The retry module wraps the charge calls in payments/charge.py -- I want the boundaries and the retry/idempotency behavior written down before any implementation starts.",
+  "setup": [
+    "mkdir -p payments",
+    "printf '%s' 'IiIiQ2hhcmdlIGNhbGxzIGFnYWluc3QgdGhlIHBheW1lbnQgcHJvdmlkZXIuCgpUaGUgcmV0cnkgZmxvdyBhcm91bmQgdGhlc2UgY2FsbHMgaXMgYmVpbmcgZGVzaWduZWQ7IG5vdGhpbmcgcmV0cmllcyB5ZXQuCiIiIgoKCmRlZiBjaGFyZ2UoY3VzdG9tZXJfaWQsIGFtb3VudF9jZW50cyk6CiAgICAiIiJTaW5nbGUgY2hhcmdlIGF0dGVtcHQuIFJhaXNlcyBvbiB0cmFuc2llbnQgcHJvdmlkZXIgZXJyb3JzLiIiIgogICAgcmFpc2UgTm90SW1wbGVtZW50ZWRFcnJvcigiY2hhcmdlIHRyYW5zcG9ydCBpcyBzdHViYmVkIGluIHRoaXMgc2NyYXRjaCByZXBvIikK' | base64 -d > payments/charge.py",
+    "printf '%s' 'IyBiaWxsaW5nLXNlcnZpY2UKClNtYWxsIGJpbGxpbmcgc2VydmljZS4gQ2hhcmdlcyBydW4gdGhyb3VnaCB0aGUgcGF5bWVudCBwcm92aWRlcidzIFNESzsgYQpyZXRyeSBmbG93IGZvciB0cmFuc2llbnQgY2hhcmdlIGZhaWx1cmVzIGlzIGJlaW5nIGRlc2lnbmVkLgo=' | base64 -d > README.md",
+    "git init -q 2>/dev/null || true",
+    "git add -A 2>/dev/null || true",
+    "git -c user.email=e@e -c user.name=e commit -qm 'baseline: billing service with stubbed charge call' 2>/dev/null || true"
+  ],
+  "expect": {
+    "must_match": [
+      "research"
+    ],
+    "must_not_match": [
+      "research[_ -]?skip",
+      "skip(ping|ped)?\\s+(the\\s+)?research",
+      "no research (is\\s+)?(needed|required|necessary)"
+    ]
+  },
+  "check": [
+    "python3 - <<'PYEOF'\nimport pathlib, re, sys\n# Durable evidence that research was ENGAGED: a brief artifact at the path the\n# researcher agent is given (docs/llm-orchestrator/research/YYYY-MM-DD-<slug>-brief.md,\n# agents/orch-researcher.md:21) whose header carries one of the four first-class\n# Outcome tokens (templates/research-brief.md:4). Any of the four passes:\n# a scratch run without network honestly lands on COULDN'T_VERIFY, and that\n# still proves the gate fired and research was attempted.\nd = pathlib.Path('docs/llm-orchestrator/research')\nif not d.is_dir():\n    sys.exit(1)\noutcome = re.compile(r\"(?mi)^Outcome:\\s*(VERIFIED|COULDN.{0,2}T[_ ]?VERIFY|CONTRADICTED|NOT_APPLICABLE)\")\nfor f in sorted(d.glob('*-brief.md')):\n    if not re.match(r'\\d{4}-\\d{2}-\\d{2}-.+-brief\\.md$', f.name):\n        continue\n    if outcome.search(f.read_text(errors='replace')):\n        sys.exit(0)\nsys.exit(1)\nPYEOF",
+    "python3 - <<'PYEOF'\nimport pathlib, re, sys\n# Anti-boilerplate: the SAME brief that carries a first-class Outcome must name\n# the library the prompt committed to (stripe). A template pasted with no\n# library fails here while passing check 1.\nd = pathlib.Path('docs/llm-orchestrator/research')\nif not d.is_dir():\n    sys.exit(1)\noutcome = re.compile(r\"(?mi)^Outcome:\\s*(VERIFIED|COULDN.{0,2}T[_ ]?VERIFY|CONTRADICTED|NOT_APPLICABLE)\")\nfor f in sorted(d.glob('*-brief.md')):\n    if not re.match(r'\\d{4}-\\d{2}-\\d{2}-.+-brief\\.md$', f.name):\n        continue\n    t = f.read_text(errors='replace')\n    if outcome.search(t) and re.search(r'stripe', t, re.I):\n        sys.exit(0)\nsys.exit(1)\nPYEOF"
+  ]
+}

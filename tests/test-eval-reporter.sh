@@ -261,6 +261,79 @@ else
   fail "errored run count not recoverable" "got '${errct}'"
 fi
 
+# --- skills_invoked / shape / per_variant ------------------------------------------
+# skills_invoked carries []/null semantics: [] is a measured zero (the instrument
+# ran, no skill fired), null is absence of instrument (the without arm, old rows).
+# The 2026-08-04 regression's mechanism — invocation dropping ~23% -> 0% — had to
+# be mined out of transcripts; these fields make the raw rows carry it natively.
+python3 - > "${TMP}/instr.jsonl" <<'PY'
+import json
+def row(arm, i, variant, beh_ok, shape_ok, skills):
+    checks = [{"kind": "must_open_with", "pattern": "Changed:", "ok": shape_ok},
+              {"kind": "check_one", "index": 0, "pattern": "x", "ok": beh_ok},
+              {"kind": "check_cmds", "pattern": "x", "ok": beh_ok}]
+    return {"case": "probe", "arm": arm, "iter": i, "variant": variant,
+            "pass": beh_ok and shape_ok, "error": False, "cost_usd": 0.1,
+            "checks": checks, "skills_invoked": skills, "text": ""}
+# with: 10 rows alternating base/alt. base behaviour 4/5, alt 1/5 (pooled 5/10).
+# shape 7/10. skills: 4 rows invoked one skill, 6 measured [] — rate 0.4 over
+# a denominator of 10, which is what proves [] counts as measured.
+for i in range(10):
+    variant = "base" if i % 2 == 0 else "alt"
+    beh_ok = (i % 2 == 0 and i < 8) or (i % 2 == 1 and i < 2)
+    skills = ["llm-orchestrator:tdd"] if i < 4 else []
+    print(json.dumps(row("with", i + 1, variant, beh_ok, i < 7, skills)))
+# without: no instrument — skills_invoked null on every row.
+for i in range(10):
+    print(json.dumps(row("without", i + 1, "base", i < 3, i < 5, None)))
+PY
+ORCH_EVAL_BENCH_LATEST="" python3 "${TMP}/reporter.py" "${TMP}/instr.jsonl" \
+  "${TMP}/bench7.json" opus "without with" >"${TMP}/out7.txt" 2>&1 || true
+vals="$(python3 -c "
+import json
+try:
+    d = json.load(open('${TMP}/bench7.json'))['cases']['probe']
+    s = d.get('skills', {})
+    w = s.get('with') or {}
+    print(w.get('rate'), w.get('measured_runs'),
+          (w.get('counts') or {}).get('llm-orchestrator:tdd'),
+          'null' if s.get('without', 'MISSING') is None else 'notnull',
+          d.get('shape', {}).get('with'),
+          (d.get('per_variant', {}).get('with') or {}).get('base'),
+          (d.get('per_variant', {}).get('with') or {}).get('alt'))
+except Exception as e:
+    print('ERR', e)
+" 2>/dev/null)"
+if [[ "$vals" == "0.4 10 4 null 0.7 0.8 0.2" ]]; then
+  ok "skills (0.4 over 10 measured, [] counted), without null, shape 0.7, per-variant 0.8/0.2"
+else
+  fail "instrument fields not recoverable: got '${vals}'"
+fi
+
+# The shape rate and the invocation rate must be in the printed table, not only
+# in the JSON — the footnote is where the last regression hid.
+if command grep -q 'SHAPE' "${TMP}/out7.txt" && command grep -q 'skills:' "${TMP}/out7.txt"; then
+  ok "summary table carries a SHAPE column and per-arm skills lines"
+else
+  fail "SHAPE column or skills line missing from the table"
+fi
+
+# Old raw rows carry no skills_invoked field at all — that is absence of
+# instrument, and must report null, never a fabricated 0%.
+compat="$(python3 -c "
+import json
+try:
+    d = json.load(open('${TMP}/bench.json'))['cases']['tdd-under-pressure']
+    print('null' if d.get('skills', {}).get('with', 'MISSING') is None else 'notnull')
+except Exception as e:
+    print('ERR', e)
+" 2>/dev/null)"
+if [[ "$compat" == "null" ]]; then
+  ok "rows without the skills_invoked field report null, not a fake 0%"
+else
+  fail "pre-telemetry rows misreported: got '${compat}'"
+fi
+
 echo
 if [[ $fails -eq 0 ]]; then
   echo "PASS test-eval-reporter.sh"

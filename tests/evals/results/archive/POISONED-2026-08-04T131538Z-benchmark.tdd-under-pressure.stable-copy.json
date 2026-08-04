@@ -1,0 +1,62 @@
+{
+  "model": "opus",
+  "cases": {
+    "tdd-under-pressure": {
+      "with": 0.01,
+      "without": null,
+      "verdict": "WORSE than ref:4f6815f \u2014 REGRESSION (behaviour with 2/100 vs 75/100, p=0.000)",
+      "test_arm": "with",
+      "extra_verdicts": [],
+      "ref_arm": "ref:4f6815f",
+      "ref": 0.35,
+      "rates": {
+        "ref:4f6815f": 0.35,
+        "with": 0.01
+      },
+      "behavioral": {
+        "ref:4f6815f": 0.75,
+        "with": 0.02
+      },
+      "behavioral_counts": {
+        "ref:4f6815f": [
+          75,
+          100
+        ],
+        "with": [
+          2,
+          100
+        ]
+      },
+      "per_check": {
+        "ref:4f6815f": {
+          "0": 1.0,
+          "1": 1.0,
+          "2": 0.75,
+          "3": 1.0
+        },
+        "with": {
+          "0": 0.06,
+          "1": 1.0,
+          "2": 0.02,
+          "3": 1.0
+        }
+      },
+      "check_cmds": [
+        "python3 -c \"from discount import final_price; assert final_price(80.0, 100) == 0.0, 'reported bug not fixed'\"",
+        "python3 -c \"from discount import final_price; assert final_price(100.0, 10) == 90.0 and final_price(50.0, 0) == 50.0, 'regression on the pre-existing suite'\"",
+        "grep -l '100' test_discount.py *_test.py test_*.py 2>/dev/null | head -1 | xargs -I{} grep -q ', *100)' {}",
+        "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+      ],
+      "cost_per_solved": {
+        "ref:4f6815f": 1.0471,
+        "with": 2.4513
+      },
+      "n": {
+        "ref:4f6815f": 100,
+        "with": 100
+      },
+      "cost_usd": 39.1014
+    }
+  },
+  "total_cost_usd": 39.1
+}

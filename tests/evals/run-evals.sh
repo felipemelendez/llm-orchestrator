@@ -119,7 +119,11 @@ hooks = json.load(open(f"{root}/hooks/hooks.json"))
 raw = json.dumps(hooks).replace("${CLAUDE_PLUGIN_ROOT}", root)
 # Isolate all plugin state (evidence ledgers, caches) inside the scratch dir,
 # and apply any per-case env for the with arm (hook ablations etc.).
-env = {"ORCH_HOOK_PROFILE": "standard", "ORCH_HOME": f"{dest}/.orch-home"}
+# ORCH_TELEMETRY=1 arms the skill-telemetry hook so every run records which
+# skills it invoked — the raw rows carry the answer natively instead of it
+# having to be mined out of session transcripts after the fact.
+env = {"ORCH_HOOK_PROFILE": "standard", "ORCH_HOME": f"{dest}/.orch-home",
+       "ORCH_TELEMETRY": "1"}
 env.update(case.get("with_env", {}))
 settings = {"hooks": json.loads(raw)["hooks"], "env": env}
 pathlib.Path(f"{dest}/.claude/settings.json").write_text(json.dumps(settings, indent=2))
@@ -130,8 +134,50 @@ PY
 run_case() {
   local case_file="$1" arm="$2" iter="$3"
   local cid; cid="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" "$case_file")"
-  local prompt; prompt="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['prompt'])" "$case_file")"
   local dir="${WORK_ROOT}/${cid}-${arm}-${iter}"
+
+  # Variant families: a case MAY carry "variants" — a list of COMPLETE,
+  # independent scenarios (no field merging with the base; merging is where
+  # merge bugs live). scenarios = [base] + variants, and iteration i (1-based)
+  # runs scenarios[(i-1) % len(scenarios)]: prompt, setup, grading checks and
+  # expect all come from that one scenario. A single frozen task instance is
+  # easy to Goodhart; a family samples the construct.
+  # Scenario materialization must NOT fall through into a paid run. Unchecked, a
+  # malformed variant (missing field, non-object entry) crashed this heredoc and
+  # `claude -p ""` still ran and recorded a normal-looking row — same failure
+  # class as the build_project guard below, so it aborts the same way.
+  local scen_file="${WORK_ROOT}/${cid}-${arm}-${iter}.scenario.json"
+  if ! python3 - "$case_file" "$iter" > "$scen_file" <<'PY'
+import json, sys
+case = json.load(open(sys.argv[1])); it = int(sys.argv[2])
+scenarios = [{"name": "base", "prompt": case["prompt"],
+              "setup": case.get("setup", []), "check": case.get("check", []),
+              "expect": case.get("expect", {})}]
+for v in case.get("variants", []):
+    scenarios.append({"name": v["name"], "prompt": v["prompt"],
+                      "setup": v.get("setup", []), "check": v.get("check", []),
+                      "expect": v.get("expect", {})})
+s = scenarios[(it - 1) % len(scenarios)]
+if not (isinstance(s.get("prompt"), str) and s["prompt"].strip()):
+    sys.stderr.write("scenario %r has an empty or non-string prompt\n" % s.get("name"))
+    sys.exit(1)
+s["case_id"] = case["id"]
+print(json.dumps(s))
+PY
+  then
+    echo "run-evals: could not materialize scenario for case '$cid' iter $iter (malformed variant or missing field) — aborting rather than paying for an ungraded run" >&2
+    exit 1
+  fi
+  if [[ ! -s "$scen_file" ]]; then
+    echo "run-evals: empty scenario file for case '$cid' iter $iter — aborting rather than paying for an ungraded run" >&2
+    exit 1
+  fi
+  local prompt
+  if ! prompt="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['prompt'])" "$scen_file")" \
+     || [[ -z "$prompt" ]]; then
+    echo "run-evals: could not extract the prompt for case '$cid' iter $iter — aborting rather than running 'claude -p \"\"'" >&2
+    exit 1
+  fi
 
   # A failed build must NOT fall through into a paid run. Unchecked, a one-char
   # typo in `--arm ref:<sha>` produced a BARE scratch project that still ran
@@ -143,8 +189,8 @@ run_case() {
     exit 1
   fi
 
-  # per-case setup commands, run inside the scratch project
-  python3 -c "import json,sys;print('\n'.join(json.load(open(sys.argv[1])).get('setup',[])))" "$case_file" \
+  # per-scenario setup commands, run inside the scratch project
+  python3 -c "import json,sys;print('\n'.join(json.load(open(sys.argv[1])).get('setup',[])))" "$scen_file" \
     | ( cd "$dir" && bash -s ) >/dev/null 2>&1 || true
 
   # --dangerously-skip-permissions: a non-interactive run cannot answer
@@ -162,7 +208,7 @@ run_case() {
   # precision are the first pair — and the summary can report each separately
   # instead of collapsing them into one bit that says only "something failed".
   local check_json
-  check_json="$(python3 - "$case_file" "$dir" <<'PY'
+  check_json="$(python3 - "$scen_file" "$dir" <<'PY'
 import json, subprocess, sys
 case = json.load(open(sys.argv[1]))
 out = []
@@ -173,13 +219,82 @@ print(json.dumps(out))
 PY
 )"
 
-  python3 - "$case_file" "$arm" "$iter" "$out" "$check_json" >> "$RESULTS" <<'PY'
+  # Skill-invocation telemetry harvest. [] and null mean DIFFERENT things:
+  #   []   the instrument existed and recorded zero invocations — that is data;
+  #   null the arm carried no instrument at all — absence of measurement.
+  # The without arm, and ref trees that predate scripts/hooks/skill-telemetry.sh,
+  # record null; a plugin arm whose telemetry file is simply absent recorded
+  # zero invocations and gets []. On 2026-08-04 a regression's mechanism —
+  # skill invocation dropping from ~23% to 0% — had to be mined out of session
+  # transcripts by hand; this field makes every future run carry that answer.
+  local tel_src="" skills_json="null"
+  case "$arm" in
+    with)  tel_src="$ROOT" ;;
+    ref:*) tel_src="$(materialize_ref "${arm#ref:}" 2>/dev/null || true)" ;;
+  esac
+  # "Instrument armed" means armed, not merely present on disk: the script must
+  # exist in the arm's tree, be wired into that tree's hooks/hooks.json, and the
+  # effective settings env (the runner's defaults overlaid with the case's
+  # with_env — which can ablate it) must carry ORCH_TELEMETRY=1 without naming
+  # orch-skill-telemetry in ORCH_DISABLED_HOOKS. A tree that ships the script unwired
+  # or a case that disables it recorded nothing — that is null (no instrument),
+  # not [] (a measured zero).
+  local tel_armed=0
+  if [[ -n "$tel_src" && -f "${tel_src}/scripts/hooks/skill-telemetry.sh" ]]; then
+    if python3 - "$case_file" "${tel_src}/hooks/hooks.json" <<'PY'
+import json, sys
+case = json.load(open(sys.argv[1]))
+try:
+    hooks_raw = open(sys.argv[2]).read()
+except OSError:
+    sys.exit(1)                     # no hooks.json in that tree — never wired
+if "skill-telemetry" not in hooks_raw:
+    sys.exit(1)                     # script present but not wired as a hook
+env = {"ORCH_HOOK_PROFILE": "standard", "ORCH_TELEMETRY": "1"}
+env.update(case.get("with_env", {}))   # mirrors build_project's effective env
+if str(env.get("ORCH_TELEMETRY", "")) != "1":
+    sys.exit(1)
+# Mirror the hook's own kill switch exactly (scripts/hooks/skill-telemetry.sh):
+# it matches ",${ORCH_DISABLED_HOOKS}," against ",orch-skill-telemetry," — the
+# exact token "orch-skill-telemetry", comma-delimited, no whitespace stripping.
+# Anything looser here records a measured [] for a run the hook sat out (or
+# null for a run it recorded), which is the one lie this field must never tell.
+disabled = str(env.get("ORCH_DISABLED_HOOKS", "")).split(",")
+if "orch-skill-telemetry" in disabled:
+    sys.exit(1)
+sys.exit(0)
+PY
+    then tel_armed=1; fi
+  fi
+  if (( tel_armed )); then
+    skills_json="$(python3 - "${dir}/.orch-home/telemetry/skills.jsonl" <<'PY'
+import json, os, sys
+names = []
+if os.path.exists(sys.argv[1]):
+    for line in open(sys.argv[1]):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            names.append(json.loads(line)["skill"])
+        except Exception:
+            pass
+print(json.dumps(names))
+PY
+)"
+  fi
+
+  python3 - "$scen_file" "$arm" "$iter" "$out" "$check_json" "$skills_json" >> "$RESULTS" <<'PY'
 import json, re, sys
 case = json.load(open(sys.argv[1])); arm, it, raw = sys.argv[2], int(sys.argv[3]), sys.argv[4]
 try:
     check_results = json.loads(sys.argv[5])
 except Exception:
     check_results = []
+try:
+    skills_invoked = json.loads(sys.argv[6])
+except Exception:
+    skills_invoked = None
 try:
     obj = json.loads(raw); text = obj.get("result") or ""
     cost = obj.get("total_cost_usd"); err = bool(obj.get("is_error"))
@@ -219,9 +334,10 @@ if case.get("check"):
                    "ok": graded_all and all(check_results)})
 
 print(json.dumps({
-    "case": case["id"], "arm": arm, "iter": it,
+    "case": case["case_id"], "arm": arm, "iter": it, "variant": case["name"],
     "pass": (not err) and all(c["ok"] for c in checks) and bool(checks),
     "error": err, "cost_usd": cost, "checks": checks,
+    "skills_invoked": skills_invoked,
     "text": text[:2000],
 }))
 PY
@@ -236,6 +352,14 @@ for case_file in "$CASE_DIR"/*.json; do
   [[ -f "$case_file" ]] || { echo "no cases found in $CASE_DIR" >&2; exit 1; }
   cid="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" "$case_file")"
   [[ -n "$ONLY_CASE" && "$cid" != "$ONLY_CASE" ]] && continue
+  # Iterations round-robin the scenario family, so when N is not a multiple of
+  # the family size the tail scenarios run fewer iterations — and at N < family
+  # size some never run at all. Say so, or a family member silently not being
+  # exercised looks identical to it passing.
+  scen_n="$(python3 -c "import json,sys;print(1+len(json.load(open(sys.argv[1])).get('variants',[]) or []))" "$case_file")"
+  if (( scen_n > 1 && N % scen_n != 0 )); then
+    echo "  note: ${cid} has ${scen_n} scenarios and n=${N} — the first $((N % scen_n)) scenario(s) run $((N / scen_n + 1))x per arm, the remaining $((scen_n - N % scen_n)) run $((N / scen_n))x"
+  fi
   for arm in $ARMS; do
     for i in $(seq 1 "$N"); do
       printf '  %-28s %-8s %d/%d ... ' "$cid" "$arm" "$i" "$N"
@@ -315,6 +439,7 @@ summary = {}
 arm_order = [a for a in sys.argv[4].split()] if len(sys.argv) > 4 else []
 print("\n== summary ==")
 print(f"{'case':<28} {'BEHAVIOUR base':>14} {'BEHAVIOUR test':>14} "
+      f"{'SHAPE base':>10} {'SHAPE test':>10} "
       f"{'overall base':>12} {'overall test':>12} {'$/solved':>9}   verdict")
 print(f"{'':<28} {'(ref: if present, else without)':>44}")
 for case, arms in sorted(agg.items()):
@@ -341,6 +466,52 @@ for case, arms in sorted(agg.items()):
               for x in v if any(c["kind"] == "check_cmds" for c in x["checks"])]
         beh_n[a] = (sum(cc), len(cc)) if cc else None
     beh = {a: (round(t[0] / t[1], 3) if t else None) for a, t in beh_n.items()}
+
+    # Shape rate: the expect-derived checks only (must_match / must_not_match /
+    # must_open_with), per arm. Reported beside the behavioural rate, never
+    # mixed into it — format noise swamping the behavioural signal is the exact
+    # failure the behavioural headline exists to prevent. Denominator: rows
+    # carrying at least one expect-derived check.
+    SHAPE_KINDS = ("must_match", "must_not_match", "must_open_with")
+    shape = {}
+    for a, v in arms.items():
+        sc = [all(c["ok"] for c in x["checks"] if c["kind"] in SHAPE_KINDS)
+              for x in v if any(c["kind"] in SHAPE_KINDS for c in x["checks"])]
+        shape[a] = round(sum(sc) / len(sc), 3) if sc else None
+
+    # Skill-invocation telemetry, per arm. Denominator = rows where the
+    # instrument existed (skills_invoked is not null); [] counts as a measured
+    # zero. Rows without the field (old raw files, the without arm) are
+    # absence of instrument, not zero — they are excluded, and an arm with no
+    # measured rows reports None rather than a fake 0%.
+    skills = {}
+    for a, v in arms.items():
+        meas = [x for x in v if x.get("skills_invoked") is not None]
+        if not meas:
+            skills[a] = None
+            continue
+        counts = collections.Counter()
+        for x in meas:
+            counts.update(x["skills_invoked"])
+        inv = sum(1 for x in meas if x["skills_invoked"])
+        skills[a] = {"rate": round(inv / len(meas), 3),
+                     "invoked_runs": inv, "measured_runs": len(meas),
+                     "counts": dict(counts)}
+
+    # Per-variant behavioural rates. The case-level aggregate above stays the
+    # headline — all variants measure one construct and are pooled — but the
+    # split is stored so a variant that alone drags the family down is visible.
+    per_variant = {}
+    for a, v in arms.items():
+        by = {}
+        for x in v:
+            by.setdefault(x.get("variant", "base"), []).append(x)
+        pv = {}
+        for name, xs in sorted(by.items()):
+            cc = [all(c["ok"] for c in x["checks"] if c["kind"] == "check_cmds")
+                  for x in xs if any(c["kind"] == "check_cmds" for c in x["checks"])]
+            pv[name] = round(sum(cc) / len(cc), 3) if cc else None
+        per_variant[a] = pv
 
     # An arm that lost a material share of its runs cannot be compared to one
     # that did not. Report the loss; do not quietly compare what survived.
@@ -416,16 +587,31 @@ for case, arms in sorted(agg.items()):
     else:         verdict = "PLUGIN HURTS"
     # Per-check rates, so a case carrying two independent measurements (recall
     # and precision, say) reports them separately instead of as one bit.
+    # Check indices are PER-SCENARIO: with variants, index i is a different
+    # command in each scenario, so pooling by bare index mixed unrelated
+    # commands under whichever label came first. When variants are present the
+    # aggregation key is "<variant>:<index>"; without them it stays "<index>"
+    # so existing consumers of variant-less cases are unchanged.
     per_check = {}
+    per_check_label = {}
+    has_variants = any(x.get("variant", "base") != "base"
+                       for v in arms.values() for x in v)
     for a, v in arms.items():
-        idx_ok = {}
+        idx_ok, idx_pat = {}, {}
         for x in v:
+            vn = x.get("variant", "base")
             for c in x["checks"]:
                 if c["kind"] == "check_one":
-                    idx_ok.setdefault(c["index"], []).append(c["ok"])
+                    key = (vn, c["index"]) if has_variants else ("", c["index"])
+                    idx_ok.setdefault(key, []).append(c["ok"])
+                    idx_pat.setdefault(key, c.get("pattern", ""))
         if idx_ok:
-            per_check[a] = {str(i): round(sum(o) / len(o), 3)
-                            for i, o in sorted(idx_ok.items())}
+            kstr = lambda k: (f"{k[0]}:{k[1]}" if has_variants else str(k[1]))
+            per_check[a] = {kstr(k): round(sum(o) / len(o), 3)
+                            for k, o in sorted(idx_ok.items())}
+            per_check_label[a] = {
+                kstr(k): (f"[{k[0]}] " if has_variants else "") + idx_pat[k]
+                for k in sorted(idx_ok)}
 
     if invalid:
         verdict = "INVALID — " + "; ".join(sorted(invalid)) + " (re-run; not a result)"
@@ -437,6 +623,9 @@ for case, arms in sorted(agg.items()):
                      "behavioral": beh,
                      "behavioral_counts": {a: (list(t) if t else None)
                                            for a, t in beh_n.items()},
+                     "shape": shape,
+                     "skills": skills,
+                     "per_variant": per_variant,
                      "per_check": per_check,
                      "errored_runs": dict(errs),
                      "invalid": invalid,
@@ -452,16 +641,31 @@ for case, arms in sorted(agg.items()):
     base_arm = ref_arm or "without"
     show_arm = test_arm or "with"
     print(f"{case:<28} {fmt(beh.get(base_arm)):>14} {fmt(beh.get(show_arm)):>14} "
+          f"{fmt(shape.get(base_arm)):>10} {fmt(shape.get(show_arm)):>10} "
           f"{fmt(rate.get(base_arm)):>12} {fmt(rate.get(show_arm)):>12} "
           f"{fmtc(cps.get(show_arm)):>9}   {verdict}")
     for ev in extra_verdicts:
         print(f"    {'':<12} {ev}")
+    # One skills line per case-arm: invocation rate over the measured rows,
+    # plus which skills fired. "n/a (not captured)" is an arm with no
+    # instrument — distinct from a measured 0%.
+    for a in [x for x in arm_order if x in arms]:
+        s = skills.get(a)
+        if s is None:
+            print(f"    {a:<12} skills: n/a (not captured)")
+        else:
+            top = ", ".join(f"{k} x{n}" for k, n in
+                            sorted(s["counts"].items(), key=lambda kv: (-kv[1], kv[0])))
+            print(f"    {a:<12} skills: {s['invoked_runs']}/{s['measured_runs']} runs invoked >=1 skill"
+                  + (f"   ({top})" if top else ""))
     for a, d in sorted(per_check.items()):
-        cmds = summary[case]["check_cmds"]
-        for i, v in sorted(d.items(), key=lambda kv: int(kv[0])):
-            label = (cmds[int(i)][:58] + "…") if int(i) < len(cmds) and len(cmds[int(i)]) > 58 \
-                    else (cmds[int(i)] if int(i) < len(cmds) else f"check {i}")
-            print(f"    {a:<12} check{int(i)+1}: {v*100:5.1f}%   {label}")
+        labels = per_check_label.get(a, {})
+        for k, v in d.items():   # built sorted: variant name, then index
+            label = labels.get(k) or f"check {k}"
+            if len(label) > 58:
+                label = label[:58] + "…"
+            idx = int(k.rsplit(":", 1)[-1])
+            print(f"    {a:<12} check{idx+1}: {v*100:5.1f}%   {label}")
 
 total = round(sum(s["cost_usd"] for s in summary.values()), 2)
 print(f"\ntotal cost: ${total}")

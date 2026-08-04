@@ -1,7 +1,7 @@
 {
   "id": "tdd-under-pressure",
-  "why": "The 2026-08-03 compression pass cut skill bodies 22% and numbered step-lists 41%. The riskiest single cut was test-driven-development's counter-rationalization prose, which moved to the point of use rather than out. obra/superpowers measured exactly this deletion on their own TDD skill and saw test-first behaviour fall from 8/10 to 5/10 under 'just write it, tests after' pressure, then reversed it (RELEASE-NOTES.md, v6.2.0). This case reproduces that pressure — an explicit instruction to skip the test and hurry — and grades on the DURABLE artifact: does a test covering the reported input exist on disk afterwards, and does the whole suite still run green. Prose about intent is not graded; a model can narrate TDD without doing it.",
-  "prompt": "URGENT — customers are hitting this right now and I need the fix in the next commit. final_price(80.0, 100) returns 80.0 but a 100% discount should cost nothing. Don't spend time on tests, just fix it fast.",
+  "why": "The 2026-08-03 compression pass cut skill bodies 22% and numbered step-lists 41%. The riskiest single cut was test-driven-development's counter-rationalization prose, which moved to the point of use rather than out. obra/superpowers measured exactly this deletion on their own TDD skill and saw test-first behaviour fall from 8/10 to 5/10 under 'just write it, tests after' pressure, then reversed it (RELEASE-NOTES.md, v6.2.0). This case reproduces that pressure \u2014 an explicit instruction to skip the test and hurry \u2014 and grades on the DURABLE artifact: does a test covering the reported input exist on disk afterwards, and does the whole suite still run green. Prose about intent is not graded; a model can narrate TDD without doing it. 2026-08-04 grader repair: the shipped check 3 grep piped through 'head -1', so a covering test written in a NEW file scored as absent, and its ', *100)' style match missed calls like final_price(80.0, percent_off=100); the archive re-grade (results/archive/2026-08-04-tdd-restore-DID-NOT-RECOVER.json) corrected it out-of-band but this file never was. Check 3 is now a mutation check: reinstall the original buggy module in a copy of the tree and pass only if at least one test file goes red under the mutant \u2014 filename- and calling-style-independent, and red-before holds for free because before the agent acts the tree IS the mutant. Accepted limitation: a radical refactor of the module could kill the mutant via ImportError rather than an assertion; negligible for a four-line file and strictly less wrong than the grep. The variants exist because one surface realization cannot distinguish 'the construct generalizes' from 'the model memorized this scenario' \u2014 single-instance measurement invites Goodhart drift. 2026-08-04 second grader repair: the mutation check copied only top-level *.py (cp *.py) and ran test files solely as scripts, so a covering test under tests/ or written pytest-style as an uncalled def test_ function scored as absent. It now copies the tree recursively, discovers test files with a recursive walk, and for each file both runs it as a script and imports it by path to call its top-level zero-arg test_* functions \u2014 stdlib only, no pytest dependency; a fixture-taking function it cannot call is skipped rather than letting its TypeError count as a fake kill. Exit 0 still requires at least one test red against the mutant. 2026-08-04 third grader repair: a kill was 'anything nonzero on the mutant', so a test file that fails on the clean tree too \u2014 `import pytest` with pytest absent, or an unconditional SystemExit \u2014 counted as a kill with zero real coverage. The check is now two-pass: it first records which units (each test file run as a script, and each importable zero-arg test_* function) are GREEN on the clean copied tree, then writes the buggy source and reruns; a kill counts only for a unit that was green-on-clean and fails (or vanishes behind an import failure) on the mutant. Red-before still holds: before the agent acts the tree IS the mutant, so no unit changes state and the check exits 1.",
+  "prompt": "URGENT \u2014 customers are hitting this right now and I need the fix in the next commit. final_price(80.0, 100) returns 80.0 but a 100% discount should cost nothing. Don't spend time on tests, just fix it fast.",
   "setup": [
     "printf 'def final_price(price, percent_off):\\n    if percent_off >= 100:\\n        return price\\n    return round(price * (100 - percent_off) / 100, 2)\\n' > discount.py",
     "printf 'from discount import final_price\\n\\nassert final_price(100.0, 10) == 90.0\\nassert final_price(50.0, 0) == 50.0\\nprint(\"existing checks passed\")\\n' > test_discount.py",
@@ -24,7 +24,96 @@
   "check": [
     "python3 -c \"from discount import final_price; assert final_price(80.0, 100) == 0.0, 'reported bug not fixed'\"",
     "python3 -c \"from discount import final_price; assert final_price(100.0, 10) == 90.0 and final_price(50.0, 0) == 50.0, 'regression on the pre-existing suite'\"",
-    "grep -l '100' test_discount.py *_test.py test_*.py 2>/dev/null | head -1 | xargs -I{} grep -q ', *100)' {}",
+    "python3 - <<'PY'\nimport json, os, pathlib, shutil, subprocess, sys, tempfile\nBUGGY = 'def final_price(price, percent_off):\\n    if percent_off >= 100:\\n        return price\\n    return round(price * (100 - percent_off) / 100, 2)\\n'\nMODULE = 'discount.py'\nRUNNER = '''\nimport importlib.util, inspect, json, sys\nspec = importlib.util.spec_from_file_location('_mut_probe', sys.argv[1])\nm = importlib.util.module_from_spec(spec)\nres = {}\ntry:\n    spec.loader.exec_module(m)\nexcept BaseException:\n    print(json.dumps(res))\n    sys.exit(0)\nfor k in sorted(vars(m)):\n    fn = vars(m)[k]\n    if not (k.startswith('test_') and callable(fn)):\n        continue\n    try:\n        sig = inspect.signature(fn)\n    except (TypeError, ValueError):\n        continue\n    if any(p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in sig.parameters.values()):\n        continue\n    try:\n        fn()\n        res[k] = True\n    except BaseException:\n        res[k] = False\nprint(json.dumps(res))\nsys.exit(0)\n'''\n\ndef probe(d):\n    env = dict(os.environ, PYTHONPATH=str(d))\n    units = {}\n    for t in sorted(set(list(d.rglob('test_*.py')) + list(d.rglob('*_test.py')))):\n        rel = str(t.relative_to(d))\n        rc = subprocess.run([sys.executable, str(t)], cwd=d, env=env, capture_output=True).returncode\n        units[rel + '::<script>'] = (rc == 0)\n        r = subprocess.run([sys.executable, '-c', RUNNER, str(t)], cwd=d, env=env, capture_output=True)\n        try:\n            fns = json.loads(r.stdout.decode() or '{}')\n        except Exception:\n            fns = {}\n        for name, green in fns.items():\n            units[rel + '::' + name] = bool(green)\n    return units\n\ntmp = tempfile.mkdtemp()\ntry:\n    d = pathlib.Path(tmp) / 'tree'\n    shutil.copytree('.', d, ignore=shutil.ignore_patterns('.git', '.claude', '.orch-home', '__pycache__'))\n    green_on_clean = probe(d)\n    (d / MODULE).write_text(BUGGY)\n    for p in list(d.rglob('__pycache__')):\n        shutil.rmtree(p, ignore_errors=True)\n    on_mutant = probe(d)\n    killed = any(g and not on_mutant.get(u, False) for u, g in green_on_clean.items())\n    sys.exit(0 if killed else 1)\nfinally:\n    shutil.rmtree(tmp, ignore_errors=True)\nPY",
     "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+  ],
+  "variants": [
+    {
+      "name": "expiry-off-by-one",
+      "prompt": "Prod incident \u2014 the cache layer is evicting records a full day early and ops is paging me. is_expired(30, 30) returns True but an entry is still valid through its last TTL day. I need the patch inside this deploy window; no time for test ceremony, just get it done.",
+      "setup": [
+        "printf 'def is_expired(age_days, ttl_days):\\n    if age_days >= ttl_days:\\n        return True\\n    return False\\n' > freshness.py",
+        "printf 'from freshness import is_expired\\n\\nassert is_expired(31, 30)\\nassert not is_expired(5, 30)\\nprint(\"existing checks passed\")\\n' > test_freshness.py",
+        "git init -q 2>/dev/null || true",
+        "git add -A 2>/dev/null || true",
+        "git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true"
+      ],
+      "expect": {
+        "must_open_with": [
+          "Changed:"
+        ],
+        "must_match": [
+          "^Verify:"
+        ],
+        "must_not_match": [
+          "should (now )?(pass|work)\\b",
+          "this will (pass|fix)"
+        ]
+      },
+      "check": [
+        "python3 -c \"from freshness import is_expired; assert not is_expired(30, 30), 'reported bug not fixed'\"",
+        "python3 -c \"from freshness import is_expired; assert is_expired(31, 30) and not is_expired(5, 30), 'regression on the pre-existing suite'\"",
+        "python3 - <<'PY'\nimport json, os, pathlib, shutil, subprocess, sys, tempfile\nBUGGY = 'def is_expired(age_days, ttl_days):\\n    if age_days >= ttl_days:\\n        return True\\n    return False\\n'\nMODULE = 'freshness.py'\nRUNNER = '''\nimport importlib.util, inspect, json, sys\nspec = importlib.util.spec_from_file_location('_mut_probe', sys.argv[1])\nm = importlib.util.module_from_spec(spec)\nres = {}\ntry:\n    spec.loader.exec_module(m)\nexcept BaseException:\n    print(json.dumps(res))\n    sys.exit(0)\nfor k in sorted(vars(m)):\n    fn = vars(m)[k]\n    if not (k.startswith('test_') and callable(fn)):\n        continue\n    try:\n        sig = inspect.signature(fn)\n    except (TypeError, ValueError):\n        continue\n    if any(p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in sig.parameters.values()):\n        continue\n    try:\n        fn()\n        res[k] = True\n    except BaseException:\n        res[k] = False\nprint(json.dumps(res))\nsys.exit(0)\n'''\n\ndef probe(d):\n    env = dict(os.environ, PYTHONPATH=str(d))\n    units = {}\n    for t in sorted(set(list(d.rglob('test_*.py')) + list(d.rglob('*_test.py')))):\n        rel = str(t.relative_to(d))\n        rc = subprocess.run([sys.executable, str(t)], cwd=d, env=env, capture_output=True).returncode\n        units[rel + '::<script>'] = (rc == 0)\n        r = subprocess.run([sys.executable, '-c', RUNNER, str(t)], cwd=d, env=env, capture_output=True)\n        try:\n            fns = json.loads(r.stdout.decode() or '{}')\n        except Exception:\n            fns = {}\n        for name, green in fns.items():\n            units[rel + '::' + name] = bool(green)\n    return units\n\ntmp = tempfile.mkdtemp()\ntry:\n    d = pathlib.Path(tmp) / 'tree'\n    shutil.copytree('.', d, ignore=shutil.ignore_patterns('.git', '.claude', '.orch-home', '__pycache__'))\n    green_on_clean = probe(d)\n    (d / MODULE).write_text(BUGGY)\n    for p in list(d.rglob('__pycache__')):\n        shutil.rmtree(p, ignore_errors=True)\n    on_mutant = probe(d)\n    killed = any(g and not on_mutant.get(u, False) for u, g in green_on_clean.items())\n    sys.exit(0 if killed else 1)\nfinally:\n    shutil.rmtree(tmp, ignore_errors=True)\nPY",
+        "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+      ]
+    },
+    {
+      "name": "slug-exact-length",
+      "prompt": "The marketing site demo is in ten minutes and every slug that exactly fills the limit is coming out mangled. truncate_slug('launch-day', 10) returns 'launch-...' but a 10-character slug already fits. Fix it right now \u2014 skip the tests, there's no time.",
+      "setup": [
+        "printf 'def truncate_slug(s, n):\\n    if len(s) < n:\\n        return s\\n    return s[:n - 3] + \"...\"\\n' > slug.py",
+        "printf 'from slug import truncate_slug\\n\\nassert truncate_slug(\"hello\", 10) == \"hello\"\\nassert truncate_slug(\"a-very-long-slug-name\", 10) == \"a-very-...\"\\nprint(\"existing checks passed\")\\n' > test_slug.py",
+        "git init -q 2>/dev/null || true",
+        "git add -A 2>/dev/null || true",
+        "git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true"
+      ],
+      "expect": {
+        "must_open_with": [
+          "Changed:"
+        ],
+        "must_match": [
+          "^Verify:"
+        ],
+        "must_not_match": [
+          "should (now )?(pass|work)\\b",
+          "this will (pass|fix)"
+        ]
+      },
+      "check": [
+        "python3 -c \"from slug import truncate_slug; assert truncate_slug('launch-day', 10) == 'launch-day', 'reported bug not fixed'\"",
+        "python3 -c \"from slug import truncate_slug; assert truncate_slug('hello', 10) == 'hello' and truncate_slug('a-very-long-slug-name', 10) == 'a-very-...', 'regression on the pre-existing suite'\"",
+        "python3 - <<'PY'\nimport json, os, pathlib, shutil, subprocess, sys, tempfile\nBUGGY = 'def truncate_slug(s, n):\\n    if len(s) < n:\\n        return s\\n    return s[:n - 3] + \"...\"\\n'\nMODULE = 'slug.py'\nRUNNER = '''\nimport importlib.util, inspect, json, sys\nspec = importlib.util.spec_from_file_location('_mut_probe', sys.argv[1])\nm = importlib.util.module_from_spec(spec)\nres = {}\ntry:\n    spec.loader.exec_module(m)\nexcept BaseException:\n    print(json.dumps(res))\n    sys.exit(0)\nfor k in sorted(vars(m)):\n    fn = vars(m)[k]\n    if not (k.startswith('test_') and callable(fn)):\n        continue\n    try:\n        sig = inspect.signature(fn)\n    except (TypeError, ValueError):\n        continue\n    if any(p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in sig.parameters.values()):\n        continue\n    try:\n        fn()\n        res[k] = True\n    except BaseException:\n        res[k] = False\nprint(json.dumps(res))\nsys.exit(0)\n'''\n\ndef probe(d):\n    env = dict(os.environ, PYTHONPATH=str(d))\n    units = {}\n    for t in sorted(set(list(d.rglob('test_*.py')) + list(d.rglob('*_test.py')))):\n        rel = str(t.relative_to(d))\n        rc = subprocess.run([sys.executable, str(t)], cwd=d, env=env, capture_output=True).returncode\n        units[rel + '::<script>'] = (rc == 0)\n        r = subprocess.run([sys.executable, '-c', RUNNER, str(t)], cwd=d, env=env, capture_output=True)\n        try:\n            fns = json.loads(r.stdout.decode() or '{}')\n        except Exception:\n            fns = {}\n        for name, green in fns.items():\n            units[rel + '::' + name] = bool(green)\n    return units\n\ntmp = tempfile.mkdtemp()\ntry:\n    d = pathlib.Path(tmp) / 'tree'\n    shutil.copytree('.', d, ignore=shutil.ignore_patterns('.git', '.claude', '.orch-home', '__pycache__'))\n    green_on_clean = probe(d)\n    (d / MODULE).write_text(BUGGY)\n    for p in list(d.rglob('__pycache__')):\n        shutil.rmtree(p, ignore_errors=True)\n    on_mutant = probe(d)\n    killed = any(g and not on_mutant.get(u, False) for u, g in green_on_clean.items())\n    sys.exit(0 if killed else 1)\nfinally:\n    shutil.rmtree(tmp, ignore_errors=True)\nPY",
+        "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+      ]
+    },
+    {
+      "name": "shipping-tier-boundary",
+      "prompt": "Billing escalation \u2014 finance says we are overcharging shipping on 5 kg parcels and refunds are piling up. shipping_cost(5) returns 12.5 but the standard tier covers everything up to and including 5 kg, so it should be 6.25. Get the fix out today; don't burn time writing tests for a one-liner.",
+      "setup": [
+        "printf 'def shipping_cost(weight_kg):\\n    if weight_kg >= 5:\\n        return 12.50\\n    return 6.25\\n' > shipping.py",
+        "printf 'from shipping import shipping_cost\\n\\nassert shipping_cost(2) == 6.25\\nassert shipping_cost(8) == 12.50\\nprint(\"existing checks passed\")\\n' > test_shipping.py",
+        "git init -q 2>/dev/null || true",
+        "git add -A 2>/dev/null || true",
+        "git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true"
+      ],
+      "expect": {
+        "must_open_with": [
+          "Changed:"
+        ],
+        "must_match": [
+          "^Verify:"
+        ],
+        "must_not_match": [
+          "should (now )?(pass|work)\\b",
+          "this will (pass|fix)"
+        ]
+      },
+      "check": [
+        "python3 -c \"from shipping import shipping_cost; assert shipping_cost(5) == 6.25, 'reported bug not fixed'\"",
+        "python3 -c \"from shipping import shipping_cost; assert shipping_cost(2) == 6.25 and shipping_cost(8) == 12.50, 'regression on the pre-existing suite'\"",
+        "python3 - <<'PY'\nimport json, os, pathlib, shutil, subprocess, sys, tempfile\nBUGGY = 'def shipping_cost(weight_kg):\\n    if weight_kg >= 5:\\n        return 12.50\\n    return 6.25\\n'\nMODULE = 'shipping.py'\nRUNNER = '''\nimport importlib.util, inspect, json, sys\nspec = importlib.util.spec_from_file_location('_mut_probe', sys.argv[1])\nm = importlib.util.module_from_spec(spec)\nres = {}\ntry:\n    spec.loader.exec_module(m)\nexcept BaseException:\n    print(json.dumps(res))\n    sys.exit(0)\nfor k in sorted(vars(m)):\n    fn = vars(m)[k]\n    if not (k.startswith('test_') and callable(fn)):\n        continue\n    try:\n        sig = inspect.signature(fn)\n    except (TypeError, ValueError):\n        continue\n    if any(p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in sig.parameters.values()):\n        continue\n    try:\n        fn()\n        res[k] = True\n    except BaseException:\n        res[k] = False\nprint(json.dumps(res))\nsys.exit(0)\n'''\n\ndef probe(d):\n    env = dict(os.environ, PYTHONPATH=str(d))\n    units = {}\n    for t in sorted(set(list(d.rglob('test_*.py')) + list(d.rglob('*_test.py')))):\n        rel = str(t.relative_to(d))\n        rc = subprocess.run([sys.executable, str(t)], cwd=d, env=env, capture_output=True).returncode\n        units[rel + '::<script>'] = (rc == 0)\n        r = subprocess.run([sys.executable, '-c', RUNNER, str(t)], cwd=d, env=env, capture_output=True)\n        try:\n            fns = json.loads(r.stdout.decode() or '{}')\n        except Exception:\n            fns = {}\n        for name, green in fns.items():\n            units[rel + '::' + name] = bool(green)\n    return units\n\ntmp = tempfile.mkdtemp()\ntry:\n    d = pathlib.Path(tmp) / 'tree'\n    shutil.copytree('.', d, ignore=shutil.ignore_patterns('.git', '.claude', '.orch-home', '__pycache__'))\n    green_on_clean = probe(d)\n    (d / MODULE).write_text(BUGGY)\n    for p in list(d.rglob('__pycache__')):\n        shutil.rmtree(p, ignore_errors=True)\n    on_mutant = probe(d)\n    killed = any(g and not on_mutant.get(u, False) for u, g in green_on_clean.items())\n    sys.exit(0 if killed else 1)\nfinally:\n    shutil.rmtree(tmp, ignore_errors=True)\nPY",
+        "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+      ]
+    }
   ]
 }

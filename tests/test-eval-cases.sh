@@ -75,6 +75,37 @@ for f in files:
         problems.append(f"{cid}: no assertions at all — the case cannot grade anything")
     if not (c.get("why") or "").strip():
         problems.append(f"{cid}: no 'why' — a case nobody can justify is a case nobody dares delete")
+    # Variant families: each variant is a COMPLETE, independent scenario — all
+    # four fields, no inheritance from the base. A merged/partial variant is a
+    # merge bug waiting to grade the wrong thing.
+    variants = c.get("variants", [])
+    if not isinstance(variants, list):
+        problems.append(f"{cid}: 'variants' must be a list"); variants = []
+    vnames = set()
+    for i, v in enumerate(variants):
+        if not isinstance(v, dict):
+            problems.append(f"{cid}: variant {i} is not an object"); continue
+        name = v.get("name")
+        if not (isinstance(name, str) and name.strip()):
+            problems.append(f"{cid}: variant {i} has no name"); name = f"<variant {i}>"
+        elif not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+            # The red-before protocol below transports "<cid>\t<name>" lines; a
+            # tab (or any exotic character) in a name corrupts the transport.
+            problems.append(f"{cid}: variant {i} name {name!r} must match [A-Za-z0-9._-]+")
+        elif name == "base":
+            problems.append(f"{cid}: variant name 'base' collides with the top-level scenario")
+        elif name in vnames:
+            problems.append(f"{cid}: duplicate variant name '{name}'")
+        vnames.add(name)
+        for k in ("prompt", "setup", "check", "expect"):
+            if k not in v:
+                problems.append(f"{cid}: variant '{name}' missing '{k}' — variants are complete, not merged")
+        for kind in ("must_match", "must_not_match"):
+            for pat in (v.get("expect") or {}).get(kind, []):
+                try:
+                    re.compile(pat)
+                except re.error as e:
+                    problems.append(f"{cid}: variant '{name}' {kind} pattern does not compile: {pat!r} ({e})")
 print(json.dumps({"n": len(files), "problems": problems}))
 PY
 )"
@@ -111,39 +142,56 @@ for f in sorted(pathlib.Path(sys.argv[1]).glob("*.json")):
         c = json.loads(f.read_text())
     except Exception:
         continue
+    cid = c.get("id", f.stem)
     for cmd in c.get("check", []) or []:
         enc = base64.b64encode(cmd.encode()).decode()
-        print(f"{c.get('id', f.stem)}\t{enc}")
+        print(f"{cid}\t{enc}")
+    for v in c.get("variants", []) or []:
+        if not isinstance(v, dict):
+            continue
+        for cmd in v.get("check", []) or []:
+            enc = base64.b64encode(cmd.encode()).decode()
+            print(f"{cid}[{v.get('name', '?')}]\t{enc}")
 PY
 )
 [[ $bad_syntax -eq 0 ]] && ok "every check command parses as shell"
 
 # --- RED BEFORE: the case must not already be green -------------------------------
-# Run each case's setup in a scratch dir, then its checks. At least one check has to
-# fail. If they all pass with no agent involved, the case is measuring the setup.
-while IFS= read -r cid; do
+# Run each scenario's setup in a scratch dir, then its checks. At least one check has
+# to fail. If they all pass with no agent involved, the scenario is measuring the
+# setup. EVERY scenario is held to this — the base and each variant independently —
+# because a variant that is green on its own setup silently dilutes the family's
+# rate on every paid run.
+while IFS=$'\t' read -r cid sname; do
   [[ -n "$cid" ]] || continue
-  work="${TMP}/${cid}"
+  work="${TMP}/red-${cid}-$(printf '%s' "$sname" | tr -c 'A-Za-z0-9._-' '_')"
   mkdir -p "$work"
-  ( cd "$work" && python3 - "${CASE_DIR}/${cid}.json" <<'PY' >/dev/null 2>&1
+  ( cd "$work" && python3 - "${CASE_DIR}/${cid}.json" "$sname" <<'PY' >/dev/null 2>&1
 import json, subprocess, sys
-for s in json.load(open(sys.argv[1])).get("setup", []):
+case = json.load(open(sys.argv[1])); name = sys.argv[2]
+scen = case if name == "base" else next(
+    v for v in case.get("variants", []) if isinstance(v, dict) and v.get("name") == name)
+for s in scen.get("setup", []):
     subprocess.run(["bash", "-c", s])
 PY
   )
-  res="$(cd "$work" && python3 - "${CASE_DIR}/${cid}.json" <<'PY'
+  res="$(cd "$work" && python3 - "${CASE_DIR}/${cid}.json" "$sname" <<'PY'
 import json, subprocess, sys
-checks = json.load(open(sys.argv[1])).get("check", [])
+case = json.load(open(sys.argv[1])); name = sys.argv[2]
+scen = case if name == "base" else next(
+    v for v in case.get("variants", []) if isinstance(v, dict) and v.get("name") == name)
+checks = scen.get("check", [])
 passed = [i + 1 for i, c in enumerate(checks)
           if subprocess.run(["bash", "-c", c], capture_output=True).returncode == 0]
 print(f"{len(passed)}/{len(checks)}")
 PY
   )"
   npass="${res%%/*}"; ntot="${res##*/}"
+  label="$cid"; [[ "$sname" != "base" ]] && label="${cid}[${sname}]"
   if [[ "$npass" == "$ntot" ]]; then
-    fail "${cid}: all ${ntot} checks already pass on the bare setup — the case grades nothing"
+    fail "${label}: all ${ntot} checks already pass on the bare setup — the scenario grades nothing"
   else
-    ok "${cid}: red before the agent runs (${npass}/${ntot} pass on setup alone)"
+    ok "${label}: red before the agent runs (${npass}/${ntot} pass on setup alone)"
   fi
 done < <(python3 - "$CASE_DIR" <<'PY'
 import json, pathlib, sys
@@ -152,8 +200,12 @@ for f in sorted(pathlib.Path(sys.argv[1]).glob("*.json")):
         c = json.loads(f.read_text())
     except Exception:
         continue
+    cid = c.get("id", f.stem)
     if c.get("check"):
-        print(c.get("id", f.stem))
+        print(f"{cid}\tbase")
+    for v in c.get("variants", []) or []:
+        if isinstance(v, dict) and v.get("check") and (v.get("name") or "").strip():
+            print(f"{cid}\t{v['name']}")
 PY
 )
 
