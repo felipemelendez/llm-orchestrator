@@ -7,6 +7,12 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Without this, a suite that blocks on stdin or loops holds the job to
+    # GitHub's six-hour default kill — and because run-all.sh captures each
+    # suite's output, the log would not even name which one hung. The full
+    # discovered suite takes ~3 minutes locally; 20 leaves generous headroom
+    # for a cold runner without leaving a hang to burn the afternoon.
+    timeout-minutes: 20
     env:
       # A suite that cannot run because a dependency is missing must FAIL here,
       # not skip: CI is the instrument every other claim is measured on, and a
@@ -33,11 +39,12 @@ jobs:
 
       # One step, every suite, DISCOVERED rather than enumerated.
       #
-      # This used to be 23 hand-written steps, and the list had drifted: ten
-      # suites were never run by CI at all — the writer-mutex modes, the retry
-      # cap, telemetry, detect, hook latency, and all three handoff suites —
-      # while CI reported green across the board. Adding the missing ten would
-      # have fixed today's gap and left the mechanism that produced it, so the
+      # This used to be 23 hand-written steps, and the list had drifted: of the
+      # 31 suites that existed, CI ran 23. Eight were never run at all — the
+      # writer-mutex modes, the retry cap, telemetry, detect, hook latency, and
+      # all three handoff suites — while CI reported green across the board. Adding
+      # the missing eight would have fixed that gap and left the mechanism that
+      # produced it, so the
       # enumeration is gone instead. tests/run-all.sh globs the suites, prints
       # any deliberate exclusion with its reason, and fails with the names of
       # the suites that broke. Adding a test file is now enough to have it run.

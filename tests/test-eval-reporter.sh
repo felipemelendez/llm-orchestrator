@@ -31,7 +31,10 @@ echo "== eval reporter =="
 python3 - "$RUNNER" > "${TMP}/reporter.py" <<'PY'
 import re, sys, pathlib
 src = pathlib.Path(sys.argv[1]).read_text()
-m = re.search(r"python3 - \"\$RESULTS\" \"\$BENCH\" \"\$MODEL\" <<'PY'\n(.*?)\nPY\n", src, re.S)
+# Tolerant of extra arguments on the heredoc line: pinning the exact argv list
+# made this test fail the moment the reporter gained a parameter, which is a
+# test breaking on a change it was not written to police.
+m = re.search(r"python3 - \"\$RESULTS\" \"\$BENCH\" \"\$MODEL\".*?<<'PY'\n(.*?)\nPY\n", src, re.S)
 if not m:
     sys.stderr.write("could not locate the summary block in the runner\n")
     sys.exit(1)
@@ -144,6 +147,60 @@ except Exception: print('')
 case "$v3" in
   *REGRESSION*overall*) ok "text-only case still graded, on the overall basis" ;;
   *) fail "text-only case verdict wrong: ${v3:-<none>}" ;;
+esac
+
+# --- no paid comparison may be silently discarded -----------------------------------
+# `--arm "ref:X without"` is a legal two-arm run — "did the plugin at X already do
+# this?" — and the verdict used to fire only when a `with` arm existed, so a result
+# that had already been paid for printed "single-arm" and was thrown away.
+python3 - > "${TMP}/nowith.jsonl" <<'PY'
+import json
+for arm, k in (("ref:aaa", 18), ("without", 5)):
+    for i in range(20):
+        b = i < k
+        checks = [{"kind": "check_one", "index": 0, "pattern": "x", "ok": b},
+                  {"kind": "check_cmds", "pattern": "x", "ok": b}]
+        print(json.dumps({"case": "probe", "arm": arm, "iter": i + 1, "pass": b,
+                          "error": False, "cost_usd": 0.1, "checks": checks, "text": ""}))
+PY
+ORCH_EVAL_BENCH_LATEST="" python3 "${TMP}/reporter.py" \
+  "${TMP}/nowith.jsonl" "${TMP}/bench4.json" opus "ref:aaa without" >/dev/null 2>&1 || true
+v4="$(python3 -c "
+import json
+try: print(json.load(open('${TMP}/bench4.json'))['cases']['probe']['verdict'])
+except Exception: print('')
+" 2>/dev/null)"
+case "$v4" in
+  *REGRESSION*) ok "a ref-vs-without run is compared, not discarded as single-arm" ;;
+  *) fail "ref-vs-without run reported as: ${v4:-<none>}" ;;
+esac
+
+# --- a second baseline must not vanish ----------------------------------------------
+# With two `ref:` arms the reporter used to compare against whichever sha spelled
+# lowest in hex, so which baseline you got depended on the spelling of a commit id
+# and the other comparison was computed nowhere.
+python3 - > "${TMP}/tworef.jsonl" <<'PY'
+import json
+for arm, k in (("ref:aaa-older", 10), ("ref:zzz-newer", 19), ("with", 10)):
+    for i in range(20):
+        b = i < k
+        checks = [{"kind": "check_one", "index": 0, "pattern": "x", "ok": b},
+                  {"kind": "check_cmds", "pattern": "x", "ok": b}]
+        print(json.dumps({"case": "probe", "arm": arm, "iter": i + 1, "pass": b,
+                          "error": False, "cost_usd": 0.1, "checks": checks, "text": ""}))
+PY
+ORCH_EVAL_BENCH_LATEST="" python3 "${TMP}/reporter.py" "${TMP}/tworef.jsonl" \
+  "${TMP}/bench5.json" opus "ref:aaa-older ref:zzz-newer with" >"${TMP}/out5.txt" 2>&1 || true
+extra="$(python3 -c "
+import json
+try:
+    d = json.load(open('${TMP}/bench5.json'))['cases']['probe']
+    print(' | '.join(d.get('extra_verdicts', [])))
+except Exception: print('')
+" 2>/dev/null)"
+case "$extra" in
+  *zzz-newer*REGRESSION*) ok "the second baseline's regression is reported, not dropped" ;;
+  *) fail "second ref arm not compared: '${extra:-<none>}'" ;;
 esac
 
 echo

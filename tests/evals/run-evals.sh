@@ -41,7 +41,7 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 1; }
 
 mkdir -p "$OUT_DIR" "$WORK_ROOT"
 # Per-case output when --case is given, so parallel single-case invocations
-# don't clobber each other; merge with merge-results.sh or jq/cat afterwards.
+# don't clobber each other; concatenate the per-case raw files to merge.
 #
 # Each run also gets its own timestamped pair, and history is append-only. The
 # stable names used to be the only ones: a 200-run confirmation of a measured
@@ -244,7 +244,7 @@ for case_file in "$CASE_DIR"/*.json; do
   done
 done
 
-ORCH_EVAL_BENCH_LATEST="$BENCH_LATEST" python3 - "$RESULTS" "$BENCH" "$MODEL" <<'PY'
+ORCH_EVAL_BENCH_LATEST="$BENCH_LATEST" python3 - "$RESULTS" "$BENCH" "$MODEL" "$ARMS" <<'PY'
 import json, sys, collections
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 agg = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -275,11 +275,18 @@ def fisher_exact_two_tailed(a, b, c, d):
 
 
 summary = {}
+# Arms in the order the CLI listed them, so no comparison depends on sha spelling.
+arm_order = [a for a in sys.argv[4].split()] if len(sys.argv) > 4 else []
 print("\n== summary ==")
-print(f"{'case':<28} {'BEHAVIOUR w/o':>13} {'BEHAVIOUR w':>12} "
-      f"{'overall w/o':>11} {'overall w':>10} {'$/solved(w)':>12}   verdict")
+print(f"{'case':<28} {'BEHAVIOUR base':>14} {'BEHAVIOUR test':>14} "
+      f"{'overall base':>12} {'overall test':>12} {'$/solved':>9}   verdict")
+print(f"{'':<28} {'(ref: if present, else without)':>44}")
 for case, arms in sorted(agg.items()):
     rate = {a: sum(x["pass"] for x in v) / len(v) for a, v in arms.items()}
+    for a in arms:                       # arms present in the rows but not on the CLI
+        if a not in arm_order:
+            arm_order.append(a)
+    extra_verdicts = []
     # cost per SOLVED task, per arm — the metric that stays informative when
     # pass-rate deltas sit inside the noise floor.
     cps = {}
@@ -305,10 +312,19 @@ for case, arms in sorted(agg.items()):
     # plugin do anything?). Reporting only the latter left the version
     # comparison computed and invisible — the run cost money and printed
     # "single-arm", which is how a regression ships unnoticed.
-    ref_arms = sorted(a for a in rate if a.startswith("ref:"))
+    # Arm order as the CLI gave it, not sorted: with two `ref:` arms the old code
+    # compared against whichever sha spelled lowest in hex, so the baseline you got
+    # depended on the spelling of a commit id. Every ref arm now gets its own
+    # verdict line, and none is silently dropped.
+    ref_arms = [a for a in arm_order if a in rate and a.startswith("ref:")]
     ref_arm = ref_arms[0] if ref_arms else None
     r = rate.get(ref_arm) if ref_arm else None
-    if w is not None and r is not None:
+    # The treatment arm is `with` when present, otherwise the single non-ref arm.
+    # `--arm "ref:X without"` is a legal two-arm comparison and used to print
+    # "single-arm", discarding a result that had already been paid for.
+    non_ref = [a for a in arm_order if a in rate and not a.startswith("ref:")]
+    test_arm = "with" if "with" in rate else (non_ref[0] if len(non_ref) == 1 else None)
+    if test_arm is not None and ref_arm is not None:
         # A RATE COMPARISON IS NOT A RESULT. At n=5, 3/5 vs 2/5 is one run, and
         # this printed "REGRESSION" for it — the same overclaiming this harness
         # exists to catch, relocated into the reporter. The README already says
@@ -319,21 +335,33 @@ for case, arms in sorted(agg.items()):
         # that misbehaves on 5 samples.
         # Test the BEHAVIOURAL counts when the case has execution checks; fall
         # back to overall only for cases that are purely about the reply text.
-        if beh_n.get("with") and beh_n.get(ref_arm):
-            (pw, nw), (pr, nr) = beh_n["with"], beh_n[ref_arm]
-            basis, cw, cr = "behaviour", beh["with"], beh[ref_arm]
+        if beh_n.get(test_arm) and beh_n.get(ref_arm):
+            (pw, nw), (pr, nr) = beh_n[test_arm], beh_n[ref_arm]
+            basis, cw, cr = "behaviour", beh[test_arm], beh[ref_arm]
         else:
-            pw = sum(x["pass"] for x in arms["with"]); nw = len(arms["with"])
+            pw = sum(x["pass"] for x in arms[test_arm]); nw = len(arms[test_arm])
             pr = sum(x["pass"] for x in arms[ref_arm]); nr = len(arms[ref_arm])
-            basis, cw, cr = "overall", w, r
+            basis, cw, cr = "overall", rate[test_arm], rate[ref_arm]
         p_value = fisher_exact_two_tailed(pw, nw - pw, pr, nr - pr)
-        gap = f"{basis} {pw}/{nw} vs {pr}/{nr}"
+        gap = f"{basis} {test_arm} {pw}/{nw} vs {pr}/{nr}"
         if p_value >= 0.05:
             verdict = f"inconclusive ({gap}, p={p_value:.2f} — need more runs)"
         elif cw > cr:
             verdict = f"BETTER than {ref_arm} ({gap}, p={p_value:.3f})"
         else:
             verdict = f"WORSE than {ref_arm} — REGRESSION ({gap}, p={p_value:.3f})"
+        for extra in ref_arms[1:]:
+            if beh_n.get(test_arm) and beh_n.get(extra):
+                (aw, an), (ar, anr) = beh_n[test_arm], beh_n[extra]
+                b2 = "behaviour"
+            else:
+                aw = sum(x["pass"] for x in arms[test_arm]); an = len(arms[test_arm])
+                ar = sum(x["pass"] for x in arms[extra]); anr = len(arms[extra])
+                b2 = "overall"
+            p2 = fisher_exact_two_tailed(aw, an - aw, ar, anr - ar)
+            extra_verdicts.append(
+                f"also vs {extra}: {b2} {aw}/{an} vs {ar}/{anr}, p={p2:.3f}"
+                + ("" if p2 >= 0.05 else ("  <-- BETTER" if aw / an > ar / anr else "  <-- REGRESSION")))
     elif w is None or o is None:
         verdict = "single-arm"
     elif w > o:   verdict = "plugin helps"
@@ -354,6 +382,7 @@ for case, arms in sorted(agg.items()):
                             for i, o in sorted(idx_ok.items())}
 
     summary[case] = {"with": w, "without": o, "verdict": verdict,
+                     "test_arm": test_arm, "extra_verdicts": extra_verdicts,
                      "ref_arm": ref_arm, "ref": r,
                      "rates": rate,
                      "behavioral": beh,
@@ -369,9 +398,13 @@ for case, arms in sorted(agg.items()):
                      "cost_usd": round(sum(x["cost_usd"] or 0 for v in arms.values() for x in v), 4)}
     fmt = lambda x: "  n/a  " if x is None else f"{x*100:5.0f}%  "
     fmtc = lambda x: "   n/a " if x is None else f"${x:.3f}"
-    ref_or_wo = lambda d: d.get(ref_arm) if ref_arm else d.get("without")
-    print(f"{case:<28} {fmt(ref_or_wo(beh)):>13} {fmt(beh.get('with')):>12} "
-          f"{fmt(ref_or_wo(rate)):>11} {fmt(w):>10} {fmtc(cps.get('with')):>12}   {verdict}")
+    base_arm = ref_arm or "without"
+    show_arm = test_arm or "with"
+    print(f"{case:<28} {fmt(beh.get(base_arm)):>14} {fmt(beh.get(show_arm)):>14} "
+          f"{fmt(rate.get(base_arm)):>12} {fmt(rate.get(show_arm)):>12} "
+          f"{fmtc(cps.get(show_arm)):>9}   {verdict}")
+    for ev in extra_verdicts:
+        print(f"    {'':<12} {ev}")
     for a, d in sorted(per_check.items()):
         cmds = summary[case]["check_cmds"]
         for i, v in sorted(d.items(), key=lambda kv: int(kv[0])):

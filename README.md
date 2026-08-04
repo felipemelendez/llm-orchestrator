@@ -234,7 +234,7 @@ The hooks follow three rules so their behavior is predictable without reading th
 Two switches cut across all of the above:
 
 - **`ORCH_DISABLE_PROTOCOL_GRADER=1`** turns the protocol grader off entirely. `ORCH_STRICT_PROTOCOL=1` wins if both are set — strict mode is never silently disabled.
-- **`ORCH_HOOK_DRY_RUN=1`** makes every *injecting or grading* hook log what it would inject or block to stderr and then do nothing — 10 of the 16. The three safety guards (`guard-destructive-git`, `guard-no-verify`, `guard-config-protection`) deliberately ignore it: for a guard, enforcement beats a dry run. Use it to tune behavior safely before turning a strict flag on.
+- **`ORCH_HOOK_DRY_RUN=1`** makes every *injecting or grading* hook log what it would inject or block to stderr and then do nothing — 10 of the 16. Six ignore it. Three deliberately — the safety guards `guard-destructive-git`, `guard-no-verify` and `guard-config-protection`, because for a guard enforcement beats a dry run. The other three (`orch-stop`, `orch-evidence-ledger`, and `orch-worktree-reaper`, which actively releases mutexes) simply do not implement it. Use it to tune behavior safely before turning a strict flag on.
 
 When two flags conflict, the safer reading wins: a strict flag beats a disable flag, and dry-run beats an enforcement action — except in the three safety guards, which ignore dry-run entirely.
 

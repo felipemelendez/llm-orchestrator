@@ -5,15 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
-### Fixed — CI ran 23 of 33 suites and reported green; a `--copy` install shipped its guards disarmed
+### Fixed — CI ran 23 of the 31 suites that existed and reported green; a `--copy` install shipped its guards disarmed
 
 Two defects of the shape this audit keeps finding: a guard applied to one path and not its
 siblings, and a check that shares the blind spot of the thing it checks.
 
-**CI listed its suites by hand and the list had drifted.** Ten were never run —
+**CI listed its suites by hand and the list had drifted.** Of the 31 suites that existed, CI
+ran 23. Eight were never run —
 `test-writer-mutex-modes` (the writer-isolation contract), `test-retry-cap`, `test-telemetry`,
 `test-detect`, `test-hook-latency`, and all three `handoff/` suites — while CI reported green
-across the board. Adding the missing ten would have closed today's gap and left the mechanism
+across the board. Adding the missing eight would have closed that gap and left the mechanism
 that produced it, so the enumeration is gone: `tests/run-all.sh` globs the suites, prints any
 deliberate exclusion with its reason, and refuses to report success when it discovers nothing.
 CI is two steps now, and adding a test file is enough to have it run.
@@ -82,6 +83,11 @@ retired form.
 
 `validate-skills.sh` now fails when a doc quotes its summary line with counts that no longer
 match, so this particular claim cannot rot again.
+
+This entry originally said **ten** suites had drifted. A cold review of the diff caught it: two
+of the ten (`test-eval-cases.sh`, `test-eval-reporter.sh`) were created in the same commit that
+rewrote CI, so they were never missed — they did not exist. Eight had drifted, out of 31. In a
+change whose thesis is that a quoted count rots, the count rotted on arrival.
 
 ### Changed — the per-turn injection is now a 230-character nudge
 

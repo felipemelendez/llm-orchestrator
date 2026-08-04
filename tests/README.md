@@ -6,9 +6,9 @@ Before any commit:
 ./tests/run-all.sh             # every suite, discovered — ~3 minutes
 ```
 
-It globs `tests/*.sh` and `tests/handoff/*.sh`, prints one line per suite, dumps the tail
-of anything that failed, and exits non-zero with the names. Suites are **discovered, not
-listed**: CI used to enumerate them by hand and the list drifted until ten suites — the
+It discovers the suites, prints one line per suite, dumps the tail of anything that failed,
+and exits non-zero with the names. Suites are **discovered, not listed**: CI used to
+enumerate them by hand and the list drifted until eight of the 31 suites that existed — the
 writer-mutex modes, the retry cap, telemetry, detect, hook latency, and all three handoff
 suites — were never run by CI at all, while CI reported green. Any deliberate exclusion
 lives in `SKIP` inside the runner with a reason, and prints on every run.
@@ -153,7 +153,7 @@ exactly like a real bug and costs a day.
 
 `.github/workflows/ci.yml` has two steps: a `node --check` on the brainstorming server, and
 `bash tests/run-all.sh`. It used to have twenty-three, one per suite, and that enumeration
-is what drifted — adding the ten missing suites would have fixed the gap and left the
+is what drifted — adding the eight missing suites would have fixed the gap and left the
 mechanism that made it, so the enumeration is gone instead. Adding a test file is now
 enough to have CI run it.
 
