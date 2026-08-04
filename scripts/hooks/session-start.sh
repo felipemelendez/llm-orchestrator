@@ -175,18 +175,11 @@ if [[ -z "${META_BODY}" ]]; then
   exit 0
 fi
 
-# Prepend a short preamble naming the Skill tool as the invocation surface for
-# the rest of the catalog, so the agent knows where the process lives.
-#
-# It used to end "skipping a skill that applies is the failure mode, not
-# invoking one and discarding it" — an instruction to distrust one's own
-# relevance judgement, injected into every session. That is the inverse of the
-# Claude 5 guidance ("Then: give Claude rules / Now: let Claude use
-# judgement"), and it was the last surviving copy after the same phrasing was
-# removed from the meta-skill and CLAUDE.md. The skill descriptions are already
-# in context and are the real trigger surface; a mandate on top of them buys
-# nothing and costs the model its own judgement about relevance.
-PREAMBLE="You are running LLM Orchestrator. Below is the protocol core of your 'using-orchestrator' meta-skill. The rest of the catalog loads through the 'Skill' tool — each skill's description says when it applies.
+# Prepend a short preamble that names the Skill tool as the invocation surface
+# for every other skill in the catalog — this is what gets the agent to
+# auto-invoke brainstorming / systematic-debugging / writing-plans / etc. on
+# plain English, instead of doing the work inline.
+PREAMBLE="You are running LLM Orchestrator. Below is the protocol core of your 'using-orchestrator' meta-skill. Invoke other skills via the 'Skill' tool when a trigger matches; skipping a skill that applies is the failure mode, not invoking one and discarding it.
 
 ---
 "
