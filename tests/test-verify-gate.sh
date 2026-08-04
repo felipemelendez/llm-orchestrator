@@ -365,9 +365,8 @@ printf '%s' "$err" | grep -q 'Verify' \
 
 # The phrase inside a fence, with NO Verify: section of its own outside it, so
 # the only thing that could silence the gate is the exemption path. (A fenced
-# `Verify: ...` line is a different, deliberate silence: the gate keeps fenced
-# content as EVIDENCE, and a Verify: whose content is not a recognizable
-# command is a case where it genuinely knows nothing.)
+# `Verify: ...` line would not silence it either — the section header must
+# exist outside fences to count; see the fenced-quote section above.)
 _t=$(mk_transcript "$(printf 'Changed:\n- src/a.ts:1 — real edit\n\nThe protocol phrase is:\n```\nno verification needed (cosmetic)\n```\n')")
 out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
 printf '%s' "$err" | grep -q 'Verify' \
@@ -393,6 +392,76 @@ _t=$(mk_transcript "$(printf '**Changed:**\n- src/a.ts:1 — edit\n\n**Verify:**
 out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
 [[ "$rc" == "0" ]] && ok "decorated Changed: WITH a decorated Verify: is accepted" \
   || fail "decorated pair rejected" "rc=$rc err=$(printf '%s' "$err" | head -1)"
+
+printf '\n%s== a Verify: header quoted inside a fence is not a Verify: section ==%s\n' "$DIM" "$RESET"
+# REPLY_EVID keeps fenced content (pasted output IS evidence), so a reply with
+# NO real Verify: section but a fenced block QUOTING `Verify: ...` scored as
+# having one — silent under warn AND strict; removing the fence made it warn.
+# The HEADER must exist in the fence-stripped view for the section to count;
+# content is still measured against the fence-kept view, so pasted output
+# under a real header keeps counting as evidence.
+_t=$(mk_transcript "$(printf 'Changed:\n- src/a.ts:1 — real edit\n\nThe checker prints:\n```\nVerify: ./scripts/check.sh -> ok\n```\n')")
+out=$(run "$_t"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'Verify'; then
+  ok "fenced-quote-only Verify: → warns (no real Verify: section outside the fence)"
+else fail "fenced-quote-only Verify" "rc=$rc err=$(printf '%s' "$err" | head -1)"; fi
+out=$(run "$_t" ORCH_STRICT_VERIFY=1); rc=${out%%|*}
+[[ "$rc" == "2" ]] && ok "...and blocks under strict" || fail "fenced-quote-only strict" "rc=$rc"
+# The inverse direction must not break: a real Verify: header with its pasted
+# output inside a fence below it is the normal, correct shape.
+_t=$(mk_transcript "$(printf 'Changed:\n- src/a.ts:1 — real edit\n\nVerify:\n```\n$ ./scripts/check.sh\nok\n```\n')")
+out=$(run "$_t" ORCH_STRICT_VERIFY=1); rc=${out%%|*}; err=${out#*|}
+[[ "$rc" == "0" && -z "$err" ]] && ok "real Verify: header + fenced pasted output below → accepted" \
+  || fail "header-outside-fence rejected" "rc=$rc err=$(printf '%s' "$err" | head -1)"
+
+printf '\n%s== Stop stdin last_assistant_message outranks a lagging transcript ==%s\n' "$DIM" "$RESET"
+# The transcript is written ASYNCHRONOUSLY — at Stop-hook time it may not yet
+# contain the turn's final assistant message (docs: "Hooks that need the final
+# assistant text of the current turn should use last_assistant_message on Stop
+# and SubagentStop instead of reading the transcript"). Scraping the transcript
+# graded a one-turn-STALE reply. Both directions below pin the reply SOURCE.
+lam_run() { # lam_run <lam-text> <transcript> [env...]: prints "rc|stderr"
+  local lam="$1" tr="$2"; shift 2
+  local err rc
+  err=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "session_id": "vg-test", "last_assistant_message": sys.argv[2]}))' "$tr" "$lam" \
+    | env "$@" ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$CLEAN" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+  printf '%s|%s' "$rc" "$err"
+}
+
+# stdin: Changed: with NO Verify:. Stale transcript: an OLDER reply WITH a
+# green Verify:. Grading the transcript stays silent; grading stdin warns.
+tr_stale_green=$(mk_transcript "Changed: fixed the parser.
+Verify: pytest -q → 5 passed")
+out=$(lam_run "Changed: fixed the tokenizer. All tests passing now." "$tr_stale_green"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'orch-verify-gate'; then
+  ok "stdin Changed:-without-Verify: warns even when the stale transcript reply had evidence"
+else fail "stdin claim vs stale-green transcript" "rc=$rc err=$err"; fi
+
+# The inverse — the observed false positive: stdin carries a clean Found:
+# reply; the transcript's LAST entry is the PREVIOUS turn's Changed:-without-
+# Verify. The gate must stay silent about the previous turn's claim.
+tr_stale_bad=$(mk_transcript "Changed: fixed the parser. All tests passing now.")
+out=$(lam_run "Found: the parser lives in src/parse.ts:42." "$tr_stale_bad"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" && -z "$err" ]]; then
+  ok "stdin clean Found: stays silent even when the stale transcript has an unverified Changed:"
+else fail "stdin Found: vs stale-bad transcript" "rc=$rc err=$err"; fi
+
+# No last_assistant_message field at all (old harness / fixtures) → the
+# transcript fallback still grades.
+out=$(run "$tr_stale_bad"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'orch-verify-gate'; then
+  ok "no last_assistant_message field → transcript fallback still warns"
+else fail "transcript fallback" "rc=$rc err=$err"; fi
+
+# Field PRESENT but EMPTY (a pure tool_use turn) → silence, not the stale
+# transcript. Falling back graded the PREVIOUS turn's reply: with a stale
+# Changed:-without-Verify: last entry, the gate warned about a claim this turn
+# never made (executed live). Mirrors subagent-stop.sh's sentinel: emptiness
+# is a real observation, and every consumer exits 0 on an empty reply.
+out=$(lam_run "" "$tr_stale_bad"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" && -z "$err" ]]; then
+  ok "last_assistant_message present but EMPTY → silent (no stale-transcript fallback)"
+else fail "empty last_assistant_message vs stale-bad transcript" "rc=$rc err=$err"; fi
 
 printf '\n%s== Dry-run logs intent, never blocks ==%s\n' "$DIM" "$RESET"
 out=$(run "$tr" ORCH_STRICT_VERIFY=1 ORCH_HOOK_DRY_RUN=1); rc=${out%%|*}; err=${out#*|}

@@ -97,6 +97,61 @@ if last_text is not None:
 PYEOF
 }
 
+# orch_reply_from_hook_input <input_json> [transcript_path]
+#
+# THE HOOK STDIN, NOT THE TRANSCRIPT, CARRIES THE CURRENT TURN'S REPLY.
+# Claude Code writes the transcript ASYNCHRONOUSLY — at Stop-hook time it may
+# not yet contain the turn's final assistant message. Official hooks docs:
+# "Hooks that need the final assistant text of the current turn should use
+# `last_assistant_message` on Stop and SubagentStop instead of reading the
+# transcript" and "The transcript file is written asynchronously and may lag."
+# Scraping the transcript here graded a one-turn-STALE reply on tool-less
+# turns (the gate warned about the PREVIOUS turn's claims — observed live) and
+# an empty tool_use entry otherwise (silently blind).
+#
+# Parses last_assistant_message out of the hook's stdin JSON via
+# orch_json_field — real JSON decoding, because the field is long text full of
+# escaped quotes/newlines that grep cannot handle. If the field is present and
+# non-empty, that IS the reply. If the field is PRESENT but empty (or null),
+# that emptiness is a REAL observation — a pure tool_use turn ended with no
+# final text — and the answer is an empty reply, NOT the transcript: falling
+# back there graded the PREVIOUS turn's reply (executed proof: a stale
+# transcript whose last entry was the prior turn's Changed: claim made the
+# verify gate warn about the previous turn). Same sentinel semantics as
+# subagent-stop.sh; every consumer exits 0 on an empty reply. Only when the
+# field is ABSENT (an older harness, fixtures and tests that predate it) does
+# orch_extract_last_assistant_text on the transcript apply.
+#
+# Fail-open by construction: any parse error, missing python3, or missing lib
+# reads as field-absent and yields the transcript fallback (or nothing); it
+# never crashes a hook.
+orch_reply_from_hook_input() {
+  local input_json="${1:-}" transcript_path="${2:-}" reply="" has_field=""
+  if [[ -n "${input_json}" ]]; then
+    if ! declare -f orch_json_field >/dev/null 2>&1; then
+      local _json_lib
+      _json_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/orch-json.sh"
+      # shellcheck source=scripts/lib/orch-json.sh
+      [[ -f "${_json_lib}" ]] && source "${_json_lib}"
+    fi
+    if declare -f orch_json_field >/dev/null 2>&1; then
+      reply=$(orch_json_field "${input_json}" last_assistant_message)
+    fi
+    if [[ -z "${reply}" ]] && declare -f orch_json_has_field >/dev/null 2>&1 \
+       && orch_json_has_field "${input_json}" last_assistant_message; then
+      has_field=1
+    fi
+  fi
+  if [[ -n "${reply}" ]]; then
+    printf '%s' "${reply}"
+    return 0
+  fi
+  # Present-but-empty: return empty, no fallback (see header).
+  [[ -n "${has_field}" ]] && return 0
+  [[ -n "${transcript_path}" && -f "${transcript_path}" ]] || return 0
+  orch_extract_last_assistant_text "${transcript_path}"
+}
+
 orch_grade_reply() {
   local input
   if [[ -n "${1:-}" && -f "$1" ]]; then

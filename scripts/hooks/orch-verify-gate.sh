@@ -91,9 +91,11 @@ EV_LIB="${HOOK_DIR}/../lib/orch-evidence.sh"
 INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
-[[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]] || exit 0
 
-REPLY=$(orch_extract_last_assistant_text "${TRANSCRIPT}")
+# The reply comes from the stdin payload's last_assistant_message — the
+# transcript is written asynchronously and may not yet hold this turn's final
+# message; it is only the fallback for harnesses without the field.
+REPLY=$(orch_reply_from_hook_input "${INPUT}" "${TRANSCRIPT}")
 [[ -n "${REPLY}" ]] || exit 0
 
 SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
@@ -143,8 +145,18 @@ fi
 
 # A Verify: section counts whether its content is on the same line or the next
 # one — both are correct protocol. See orch_has_section.
+#
+# The HEADER must exist in the fence-stripped view (REPLY_CLAIM): a fenced
+# block QUOTING `Verify: ./scripts/check.sh -> ok` is an example, not a
+# section, but REPLY_EVID keeps fenced content, so measuring the header there
+# scored a reply with NO real Verify: as having evidence — silent under warn
+# AND strict. Section CONTENT is still measured against REPLY_EVID, so pasted
+# output inside a fence under a real header keeps counting as evidence.
 HAS_VERIFY=""
-orch_has_section Verify "${REPLY_EVID}" && HAS_VERIFY=1
+if printf '%s' "${REPLY_CLAIM}" \
+   | grep -qE '^[[:space:]]*([-*][[:space:]]*)?(#{1,6}[[:space:]]*)?[*_]{0,2}Verify[*_]{0,2}:'; then
+  orch_has_section Verify "${REPLY_EVID}" && HAS_VERIFY=1
+fi
 
 WARN=""      # non-empty ⇒ speak
 HARD=""      # non-empty ⇒ eligible to block under ORCH_STRICT_VERIFY=1

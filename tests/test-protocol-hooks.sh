@@ -126,6 +126,28 @@ else
   fail "(c) prose reply strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
 fi
 
+# (b2)/(b3) stdin last_assistant_message outranks a lagging transcript.
+# The transcript is written ASYNCHRONOUSLY — at Stop-hook time it may not yet
+# contain the turn's final assistant message (docs: use last_assistant_message
+# on Stop/SubagentStop instead of reading the transcript). The grader must
+# grade the stdin reply, not the transcript's stale last entry.
+write_string_jsonl "$T_STRING" "$VALID_REPLY"   # stale transcript: VALID reply
+out=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "last_assistant_message": "just prose no header"}))' "$T_STRING" \
+      | bash "$GRADER" 2>&1); rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "does not conform"; then
+  ok "(b2) prose via last_assistant_message → warned despite a valid stale transcript"
+else
+  fail "(b2) stdin prose vs stale-valid transcript" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+write_string_jsonl "$T_STRING" "just prose no header"   # stale transcript: prose
+out=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "last_assistant_message": sys.argv[2]}))' "$T_STRING" "$VALID_REPLY" \
+      | bash "$GRADER" 2>&1); rc=$?
+if [[ $rc -eq 0 && -z "$out" ]]; then
+  ok "(b3) valid reply via last_assistant_message → silent despite a prose stale transcript"
+else
+  fail "(b3) stdin valid vs stale-prose transcript" "exit=$rc out=$(printf '%s' "$out" | head -1)"
+fi
+
 # (d) array-of-blocks schema, valid reply → exit 0
 write_blocks_jsonl "$T_BLOCKS" "$VALID_REPLY"
 rc=0; pipe_hook_exit "$GRADER" "$T_BLOCKS" || rc=$?

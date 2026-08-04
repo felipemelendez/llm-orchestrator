@@ -61,17 +61,58 @@ case "${SUBAGENT}" in
   *) exit 0 ;;
 esac
 
-# Locate the transcript file.
-TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' \
-             | sed -E 's/.*"([^"]+)"$/\1/' | head -1)
-
-if [[ -z "${TRANSCRIPT}" || ! -f "${TRANSCRIPT}" ]]; then
-  # Nothing to validate; pass through.
-  exit 0
+# The researcher's final text comes from the hook stdin's
+# last_assistant_message (SubagentStop carries it). transcript_path names the
+# MAIN transcript — written asynchronously and holding the CONTROLLER's
+# messages, not the researcher's — so reading its tail left OUTCOME empty
+# whenever it lagged and this validator was silently blind. Sentinel
+# semantics mirror subagent-stop.sh: "1"+text = field present (emptiness is a
+# real observation), "0" = old harness without the field, which is the only
+# case where the transcript-tail fallback still applies. Fail-open: missing
+# python3 or any parse failure reads as field-absent.
+HAS_LAM="0"
+TAIL=""
+if command -v python3 >/dev/null 2>&1; then
+  IN_FILE=$(mktemp) || exit 0
+  # trap, not just a trailing rm: killed at the hook timeout, a plain rm never runs.
+  trap 'rm -f "${IN_FILE}" 2>/dev/null' EXIT
+  printf '%s' "${INPUT}" > "${IN_FILE}"
+  LAM_RAW=$(python3 - "${IN_FILE}" <<'PYEOF' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+    has = "1" if "last_assistant_message" in data else "0"
+    sys.stdout.write(has + (data.get("last_assistant_message") or ""))
+except Exception:
+    sys.stdout.write("0")
+PYEOF
+)
+  rm -f "${IN_FILE}" 2>/dev/null
+  if [[ "${LAM_RAW:0:1}" == "1" ]]; then
+    HAS_LAM="1"
+    TAIL="${LAM_RAW:1}"
+  fi
 fi
 
-# Read transcript tail (last 16 KB to catch the final Status block + any brief path).
-TAIL=$(tail -c 16000 "${TRANSCRIPT}" 2>/dev/null || true)
+if [[ "${HAS_LAM}" == "1" ]]; then
+  # Present but empty: the researcher ended with no final text. That is the
+  # SubagentStop general hook's finding; grading the MAIN transcript here
+  # would judge the controller's conversation instead. Nothing to validate.
+  [[ -n "${TAIL}" ]] || exit 0
+else
+  # Old harness without the field: locate the transcript file.
+  TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' \
+               | sed -E 's/.*"([^"]+)"$/\1/' | head -1)
+
+  if [[ -z "${TRANSCRIPT}" || ! -f "${TRANSCRIPT}" ]]; then
+    # Nothing to validate; pass through.
+    exit 0
+  fi
+
+  # Read transcript tail (last 16 KB to catch the final Status block + any brief path).
+  TAIL=$(tail -c 16000 "${TRANSCRIPT}" 2>/dev/null || true)
+fi
 
 # Extract the declared outcome from the Status block.
 # Tolerant of literal newlines and JSONL-escaped \n.

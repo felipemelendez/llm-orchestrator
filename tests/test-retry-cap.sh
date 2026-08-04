@@ -84,6 +84,31 @@ r3=$(fire "$H" "$SAME" ORCH_RETRY_CAP=1 ORCH_RETRY_CAP_N=3)         # count=2, s
 if [[ "${r2#*|}" == "" && "${r3#*|}" == "" ]]; then ok "varied reply between repeats prevents a false trip"
 else fail "reset" "r2='$r2' r3='$r3'"; fi
 
+printf '\n%s== Stop path: stdin last_assistant_message outranks a lagging transcript ==%s\n' "$DIM" "$RESET"
+# The transcript is written ASYNCHRONOUSLY — at Stop-hook time its last entry
+# can be a PREVIOUS turn's reply. Discriminating fixture (b2/b3 pattern from
+# test-protocol-hooks.sh): the stdin reply is the SAME stuck loop on every
+# call while the transcript's last entry DIFFERS each time. Fingerprinting the
+# transcript never trips (counter resets on every call); fingerprinting stdin
+# must warn on the 3rd. This is the check that goes red against the pre-fix
+# hook (transcript-only reply source) — the rest of the suite does not.
+lam_fire() { # lam_fire <home> <lam-text> <transcript> [env...] -> "rc|stderr"
+  local home="$1" lam="$2" tr="$3"; shift 3
+  local err rc
+  err=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "last_assistant_message": sys.argv[2]}))' "$tr" "$lam" \
+        | env ORCH_HOME="$home" "$@" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+  printf '%s|%s' "$rc" "$err"
+}
+H=$(mktemp -d)
+STUCK="Status: trying the same fix again. It still fails the same way."
+V1=$(mk_transcript "Status: exploring the parser — attempt one.")
+V2=$(mk_transcript "Status: exploring the tokenizer — attempt two.")
+V3=$(mk_transcript "Status: exploring the lexer — attempt three.")
+l1=$(lam_fire "$H" "$STUCK" "$V1"); l2=$(lam_fire "$H" "$STUCK" "$V2"); l3=$(lam_fire "$H" "$STUCK" "$V3")
+if [[ "${l1#*|}" == "" && "${l2#*|}" == "" ]] && printf '%s' "${l3#*|}" | grep -q 'orch-retry-cap'; then
+  ok "3× identical stdin reply over 3 DIFFERENT stale transcripts → warns on the 3rd"
+else fail "stdin reply source (Stop path)" "l1='$l1' l2='$l2' l3='$l3'"; fi
+
 printf '\n%s== Strict mode blocks (exit 2) at the threshold ==%s\n' "$DIM" "$RESET"
 H=$(mktemp -d)
 fire "$H" "$SAME" ORCH_STRICT_RETRY=1 ORCH_RETRY_CAP_N=2 >/dev/null

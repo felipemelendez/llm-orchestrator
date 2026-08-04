@@ -334,6 +334,37 @@ else
   fail "Strict mode" "rc=$rc out=$out"
 fi
 
+# SubagentStop stdin last_assistant_message outranks a lagging MAIN transcript.
+# On SubagentStop, transcript_path names the MAIN transcript — written
+# asynchronously and holding the CONTROLLER's messages. When its tail lacks
+# the researcher's Status, OUTCOME parsed empty and the validator was silently
+# blind. The stdin field carries the researcher's final text; grade that.
+T_LAG="$TMP/transcripts/lag.jsonl"
+echo '{"role":"assistant","content":"Dispatching the researcher now."}' > "$T_LAG"
+out=$(python3 -c 'import json,sys; print(json.dumps({"subagent_type":"orch-researcher","transcript_path": sys.argv[1], "last_assistant_message": "Status: VERIFIED\nBrief: " + sys.argv[2]}))' \
+        "$T_LAG" "$TMP/briefs/sneaky-verified.md" \
+      | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+rc=$?
+if [[ "$rc" == "0" ]] && echo "$out" | grep -q 'deprecation/removal/rename'; then
+  ok "stdin last_assistant_message graded when the MAIN transcript tail lacks the Status"
+else
+  fail "LAM outranks lagging transcript" "rc=$rc out=$out"
+fi
+
+# Field PRESENT but EMPTY → no transcript fallback (the tail is the MAIN
+# conversation, not the researcher's reply). Same sentinel semantics as
+# subagent-stop.sh: emptiness is a real observation.
+T_LAM_EMPTY="$TMP/transcripts/lam-empty.jsonl"
+printf '{"role":"assistant","content":"Status: VERIFIED\\nBrief: %s"}\n' "$TMP/briefs/sneaky-verified.md" > "$T_LAM_EMPTY"
+out=$(printf '{"subagent_type":"orch-researcher","transcript_path":"%s","last_assistant_message":""}' "$T_LAM_EMPTY" \
+      | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+rc=$?
+if [[ "$rc" == "0" && -z "$out" ]]; then
+  ok "last_assistant_message present but empty → silent (no MAIN-transcript fallback)"
+else
+  fail "LAM present-but-empty semantics" "rc=$rc out=$out"
+fi
+
 # ============================================================
 # Gate prior-injection tests (Fix 1 + Fix 2 read enforcement)
 # ============================================================

@@ -145,8 +145,10 @@ PYEOF
 fi
 
 # --- Stop: whole-reply repetition by the controller (stateful) --------------
-[[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]] || exit 0
-REPLY=$(orch_extract_last_assistant_text "${TRANSCRIPT}")
+# The reply comes from the stdin payload's last_assistant_message — the
+# transcript is written asynchronously and may not yet hold this turn's final
+# message; it is only the fallback for harnesses without the field.
+REPLY=$(orch_reply_from_hook_input "${INPUT}" "${TRANSCRIPT}")
 [[ -n "${REPLY}" ]] || exit 0
 
 # Fingerprint: lowercase + collapse whitespace, then hash. Near-identical

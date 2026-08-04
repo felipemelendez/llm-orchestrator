@@ -53,14 +53,10 @@ INPUT=$(cat || true)
 # Locate transcript path — same extraction as subagent-stop.sh.
 TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 
-if [[ -z "${TRANSCRIPT}" || ! -f "${TRANSCRIPT}" ]]; then
-  # No transcript available; nothing to grade.
-  exit 0
-fi
-
-# Extract the last assistant message text using the shared helper.
-# Handles both string-content and array-of-blocks schemas.
-REPLY=$(orch_extract_last_assistant_text "${TRANSCRIPT}")
+# The reply comes from the stdin payload's last_assistant_message — the
+# transcript is written asynchronously and may not yet hold this turn's final
+# message; it is only the fallback for harnesses without the field.
+REPLY=$(orch_reply_from_hook_input "${INPUT}" "${TRANSCRIPT}")
 
 if [[ -z "${REPLY}" ]]; then
   # No assistant message found; nothing to grade.

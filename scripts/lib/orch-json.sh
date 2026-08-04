@@ -45,6 +45,33 @@ if isinstance(cur, str):
 ' "${path}" 2>/dev/null || true
 }
 
+# orch_json_has_field <json-text> <dotted.path>
+# True (exit 0) when the key EXISTS at <dotted.path> — even when its value is
+# empty or null. orch_json_field prints nothing for absent, empty AND null
+# alike, which conflates two different situations: field-ABSENT (an old
+# harness — a transcript fallback is correct) and field-present-but-empty (a
+# real observation — e.g. a pure tool_use turn ended with no final text, and
+# falling back to a stale transcript grades the PREVIOUS turn's reply).
+# Fail-open by construction: missing python3 or any parse failure reads as
+# ABSENT (exit 1), so callers keep their fallback path.
+orch_json_has_field() {
+  local json="$1" path="$2"
+  command -v python3 >/dev/null 2>&1 || return 1
+  printf '%s' "${json}" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+cur = data
+for key in sys.argv[1].split("."):
+    if not isinstance(cur, dict) or key not in cur:
+        sys.exit(1)
+    cur = cur[key]
+sys.exit(0)
+' "${path}" 2>/dev/null
+}
+
 # orch_scan_source <json-payload>
 # Prints the text a PreToolUse guard should pattern-match against.
 #
