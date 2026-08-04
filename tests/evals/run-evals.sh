@@ -215,6 +215,29 @@ agg = collections.defaultdict(lambda: collections.defaultdict(list))
 for r in rows:
     agg[r["case"]][r["arm"]].append(r)
 
+def fisher_exact_two_tailed(a, b, c, d):
+    """Two-tailed Fisher exact p for the 2x2 [[a,b],[c,d]].
+
+    Sums the probability of every table at least as extreme as the observed
+    one, conditioning on the margins. Exact — no normal approximation, which
+    is wrong at the sample sizes a paid eval can afford.
+    """
+    from math import comb
+    n = a + b + c + d
+    if n == 0 or (a + b) == 0 or (c + d) == 0 or (a + c) == 0 or (b + d) == 0:
+        return 1.0
+    def prob(x):
+        # hypergeometric: x successes in the first arm, margins fixed
+        return (comb(a + c, x) * comb(b + d, (a + b) - x)) / comb(n, a + b)
+    observed = prob(a)
+    lo = max(0, (a + b) - (b + d))
+    hi = min(a + c, a + b)
+    # 1e-9 absorbs float wobble so a table exactly as likely as the observed
+    # one is counted, which is what "at least as extreme" means.
+    return min(1.0, sum(prob(x) for x in range(lo, hi + 1)
+                        if prob(x) <= observed + 1e-9))
+
+
 summary = {}
 print("\n== summary ==")
 print(f"{'case':<28} {'without':>9} {'with':>9} {'$/solved(w/o)':>13} {'$/solved(w)':>12}   verdict")
@@ -237,9 +260,24 @@ for case, arms in sorted(agg.items()):
     ref_arm = ref_arms[0] if ref_arms else None
     r = rate.get(ref_arm) if ref_arm else None
     if w is not None and r is not None:
-        if   w > r:  verdict = f"BETTER than {ref_arm}"
-        elif w == r: verdict = f"no change vs {ref_arm}"
-        else:        verdict = f"WORSE than {ref_arm} — REGRESSION"
+        # A RATE COMPARISON IS NOT A RESULT. At n=5, 3/5 vs 2/5 is one run, and
+        # this printed "REGRESSION" for it — the same overclaiming this harness
+        # exists to catch, relocated into the reporter. The README already says
+        # a one-run gap is noise; the verdict now has to agree with it.
+        #
+        # Fisher's exact test on the 2x2 (pass/fail x arm). Exact, stdlib-only,
+        # correct at the small n these runs can afford — no normal approximation
+        # that misbehaves on 5 samples.
+        pw = sum(x["pass"] for x in arms["with"]); nw = len(arms["with"])
+        pr = sum(x["pass"] for x in arms[ref_arm]); nr = len(arms[ref_arm])
+        p_value = fisher_exact_two_tailed(pw, nw - pw, pr, nr - pr)
+        gap = f"{pw}/{nw} vs {pr}/{nr}"
+        if p_value >= 0.05:
+            verdict = f"inconclusive ({gap}, p={p_value:.2f} — need more runs)"
+        elif w > r:
+            verdict = f"BETTER than {ref_arm} ({gap}, p={p_value:.3f})"
+        else:
+            verdict = f"WORSE than {ref_arm} — REGRESSION ({gap}, p={p_value:.3f})"
     elif w is None or o is None:
         verdict = "single-arm"
     elif w > o:   verdict = "plugin helps"

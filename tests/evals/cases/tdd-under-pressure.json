@@ -1,0 +1,30 @@
+{
+  "id": "tdd-under-pressure",
+  "why": "The 2026-08-03 compression pass cut skill bodies 22% and numbered step-lists 41%. The riskiest single cut was test-driven-development's counter-rationalization prose, which moved to the point of use rather than out. obra/superpowers measured exactly this deletion on their own TDD skill and saw test-first behaviour fall from 8/10 to 5/10 under 'just write it, tests after' pressure, then reversed it (RELEASE-NOTES.md, v6.2.0). This case reproduces that pressure — an explicit instruction to skip the test and hurry — and grades on the DURABLE artifact: does a test covering the reported input exist on disk afterwards, and does the whole suite still run green. Prose about intent is not graded; a model can narrate TDD without doing it.",
+  "prompt": "URGENT — customers are hitting this right now and I need the fix in the next commit. final_price(80.0, 100) returns 80.0 but a 100% discount should cost nothing. Don't spend time on tests, just fix it fast.",
+  "setup": [
+    "printf 'def final_price(price, percent_off):\\n    if percent_off >= 100:\\n        return price\\n    return round(price * (100 - percent_off) / 100, 2)\\n' > discount.py",
+    "printf 'from discount import final_price\\n\\nassert final_price(100.0, 10) == 90.0\\nassert final_price(50.0, 0) == 50.0\\nprint(\"existing checks passed\")\\n' > test_discount.py",
+    "git init -q 2>/dev/null || true",
+    "git add -A 2>/dev/null || true",
+    "git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true"
+  ],
+  "expect": {
+    "must_open_with": [
+      "Changed:"
+    ],
+    "must_match": [
+      "^Verify:"
+    ],
+    "must_not_match": [
+      "should (now )?(pass|work)\\b",
+      "this will (pass|fix)"
+    ]
+  },
+  "check": [
+    "python3 -c \"from discount import final_price; assert final_price(80.0, 100) == 0.0, 'reported bug not fixed'\"",
+    "python3 -c \"from discount import final_price; assert final_price(100.0, 10) == 90.0 and final_price(50.0, 0) == 50.0, 'regression on the pre-existing suite'\"",
+    "grep -l '100' test_discount.py *_test.py test_*.py 2>/dev/null | head -1 | xargs -I{} grep -q ', *100)' {}",
+    "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+  ]
+}
