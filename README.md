@@ -229,14 +229,14 @@ The hooks follow three rules so their behavior is predictable without reading th
 
 1. **Defaults warn, never block.** Out of the box, no hook blocks your turn. Hooks inject context, grade output, and warn — including the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the evidence-ledger check. **No hook modifies tool output.** The evidence ledger is append-only; the stamp line that used to be injected into Bash stdout is off by default (`ORCH_EVIDENCE_MARKER=1` restores an inert form for cross-agent evidence transport).
 2. **Enforcement is opt-in, always under an `ORCH_STRICT_*` flag.** A hook only blocks when you ask it to: `ORCH_STRICT_PROTOCOL=1` makes the protocol grader block off-shape replies; `ORCH_STRICT_VERIFY=1` blocks a `Changed:` claim in three cases — its `Verify:` names a verify-shaped command the harness has no green record of running this turn, a verify run this turn failed and was never re-run green, or there is no `Verify:` section at all. A `Verify:` naming a command outside the verify-shape regex (a project's own script) is never blocked and never warned: there the gate genuinely knows nothing. A green run that executed zero tests gets a soft note, never a block; `ORCH_STRICT_STATUS=1` blocks malformed or empty subagent returns; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3). Unset, each warns at most. One platform-level exception: the prompt-type SubagentStop termination-contract check is evaluated by the harness itself and blocks with a corrective reason when an implementer terminates without an honest Status block — it cannot read `ORCH_*` env and is active in every profile.
-3. **Local-only state, and one default-on record.** Nothing leaves your machine. Skill telemetry is opt-in (`ORCH_TELEMETRY=1`, off by default). The evidence ledger is **on** under the `standard` profile and writes, per verify-shaped command, its first 160 characters plus exit code, timestamp, and a one-word substance verdict derived from the output — all under `~/.llm-orchestrator/state/`, pruned after 7 days, never transmitted. `ORCH_HOOK_PROFILE=minimal` or `ORCH_DISABLED_HOOKS=orch-evidence-ledger` turns it off. See [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+3. **Local-only state, and one default-on record.** Nothing leaves your machine. Skill telemetry is opt-in (`ORCH_TELEMETRY=1`, off by default). The evidence ledger is **on** under the `standard` profile and writes, per verify-shaped command, its first 400 characters plus exit code, timestamp, and a one-word substance verdict derived from the output — all under `~/.llm-orchestrator/state/`, pruned after 7 days, never transmitted. `ORCH_HOOK_PROFILE=minimal` or `ORCH_DISABLED_HOOKS=orch-evidence-ledger` turns it off. See [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 Two switches cut across all of the above:
 
 - **`ORCH_DISABLE_PROTOCOL_GRADER=1`** turns the protocol grader off entirely. `ORCH_STRICT_PROTOCOL=1` wins if both are set — strict mode is never silently disabled.
-- **`ORCH_HOOK_DRY_RUN=1`** makes every hook log what it *would* inject or block to stderr and then do nothing. Use it to tune behavior safely before turning a strict flag on.
+- **`ORCH_HOOK_DRY_RUN=1`** makes every *injecting or grading* hook log what it would inject or block to stderr and then do nothing — 10 of the 16. The three safety guards (`guard-destructive-git`, `guard-no-verify`, `guard-config-protection`) deliberately ignore it: for a guard, enforcement beats a dry run. Use it to tune behavior safely before turning a strict flag on.
 
-When two flags conflict, the safer reading wins: a strict flag beats a disable flag, and dry-run beats an enforcement action.
+When two flags conflict, the safer reading wins: a strict flag beats a disable flag, and dry-run beats an enforcement action — except in the three safety guards, which ignore dry-run entirely.
 
 ---
 
@@ -247,7 +247,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "71 passed, 0 failed."
+./tests/smoke.sh                           # → "81 checks passed, 1 skipped." (~90s)
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 

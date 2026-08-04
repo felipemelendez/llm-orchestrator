@@ -5,7 +5,7 @@ Three ways to get LLM Orchestrator running.
 ## Option 1 — Claude Code plugin
 
 ```
-/plugin marketplace add https://github.com/<your-org>/llm-orchestrator
+/plugin marketplace add https://github.com/felipemelendez/llm-orchestrator
 /plugin install llm-orchestrator
 ```
 
@@ -123,9 +123,10 @@ One shipped hook is not a script and is not shown above: the `type: "prompt"` te
 By default, memory and saved sessions live in:
 
 ```
-~/.llm-orchestrator/memory/<project-hash>.md
-~/.llm-orchestrator/memory/global.md
-~/.llm-orchestrator/sessions/<project-hash>-<timestamp>.md
+~/.llm-orchestrator/memory/<project-hash>.md      # project facts
+~/.llm-orchestrator/memory/.trash/                # soft-deleted lines, pruned after 90 days
+~/.llm-orchestrator/sessions/<project-hash>/      # session-id marker and the worktree registry
+~/.claude/CLAUDE.md                               # cross-project facts (/remember --global)
 ```
 
 Override with `ORCH_HOME=/some/other/path`. The directories are created on first write.

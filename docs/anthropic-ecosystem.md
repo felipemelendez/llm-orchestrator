@@ -30,10 +30,13 @@ Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trig
 
 ### Hooks (`hooks/hooks.json`)
 
-We use three events:
-- **SessionStart** — bootstrap protocol + memory.
-- **PreToolUse(Bash)** — block `--no-verify` and credential bypass.
-- **Stop** — opt-in session marker + retention pruning.
+We wire sixteen hook scripts across seven events; `hooks/hooks.json` is the source of truth:
+- **SessionStart** — bootstrap the protocol meta-skill. Loading CLAUDE.md stays Claude Code's own job.
+- **UserPromptSubmit** — per-turn protocol reminder, research gate, handoff nudge.
+- **PreToolUse** — the three safety guards: destructive git, verification bypass, config protection.
+- **PostToolUse / PostToolUseFailure** — evidence ledger, and opt-in skill telemetry.
+- **SubagentStop** — Status-block validator, researcher validator, retry cap, writer-mutex reaper.
+- **Stop** — protocol grader, verify gate, retry cap, retention pruning.
 
 ### Settings (`templates/settings.json`)
 
@@ -92,7 +95,7 @@ To add one, edit your project's `.mcp.json` (per Claude Code docs). LLM Orchestr
 
 ## Prompt caching
 
-Claude API supports prompt caching with a 5-minute TTL. Our SessionStart hook injects the same protocol block + memory at every session start, which gets cached on the API side after the first call. Keeping the injected context stable (don't randomize formatting) preserves cache hits across sessions.
+Claude API supports prompt caching with a 5-minute TTL. Our SessionStart hook injects the same protocol block at every session start, which gets cached on the API side after the first call. Keeping the injected context stable (don't randomize formatting) preserves cache hits across sessions.
 
 If you maintain custom skills with high churn in their bodies, expect cache misses. The fix is discipline, not technical.
 
@@ -102,7 +105,7 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## What we deliberately don't use
 
-- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log prompts or transcripts, and nothing is transmitted. Two local exceptions, both stated plainly rather than hidden behind "no capture": the evidence ledger (on by default under `standard`) records the first 160 characters of each verify-shaped command with its exit code and a substance verdict derived from the output; and skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
+- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log prompts or transcripts, and nothing is transmitted. Two local exceptions, both stated plainly rather than hidden behind "no capture": the evidence ledger (on by default under `standard`) records the first 400 characters of each verify-shaped command with its exit code and a substance verdict derived from the output; and skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
 - **Background MCP observers** — same reason.
 
 ## Native equivalents and division of labor

@@ -101,7 +101,14 @@ while IFS= read -r dir; do
     using-orchestrator)             limit=1100 ;;
     requesting-code-review)         limit=1090 ;;
     using-git-worktrees)            limit=960  ;;
-    test-driven-development)        limit=950  ;;
+    # RAISED back to the pre-compression size, deliberately, on measurement.
+    # The 2026-08-03 pass cut this file 1298 -> 998 words. A 200-run A/B then
+    # showed the behavioural pass rate (bug fixed AND a covering test written,
+    # under explicit "don't spend time on tests" pressure) fall 76/100 -> 56/100,
+    # Fisher p=0.004. This is the one skill where the catalogue-wide word budget
+    # was measurably wrong, and it replicates obra/superpowers' own finding
+    # almost exactly (they saw 8/10 -> 5/10 on the same deletion and reversed it).
+    test-driven-development)        limit=1300 ;;
     using-workflows)                limit=900  ;;
     writing-skills)                 limit=820  ;;
     finishing-a-branch)             limit=750  ;;
@@ -254,6 +261,24 @@ for req in $REQUIRED_SKILLS; do
     fail=1
   fi
 done
+
+# Docs quote this script's own summary line as an example of a passing run, and a
+# quoted count is a claim that rots the first time the catalogue changes — the
+# same drift that let CI list its suites by hand and lose ten of them. Any doc
+# reproducing the exact `OK: N skills, N commands, N agents` shape has to match
+# what this run actually counted. Prose like "past ~40 skills" is untouched: the
+# pattern is deliberately the literal output line, not any sentence with a number.
+expected_line="OK: $checked_skills skills, $checked_commands commands, $checked_agents agents"
+while IFS= read -r hit; do
+  [[ -n "$hit" ]] || continue
+  f="${hit%%:*}"; rest="${hit#*:}"; ln="${rest%%:*}"
+  quoted="$(printf '%s' "$hit" | sed -n 's/.*\(OK: [0-9]* skills, [0-9]* commands, [0-9]* agents\).*/\1/p')"
+  if [[ -n "$quoted" && "$quoted" != "$expected_line" ]]; then
+    echo "FAIL: $f:$ln quotes \"$quoted\" but this run counts \"$expected_line\""
+    fail=1
+  fi
+done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* commands, [0-9]* agents' "$ROOT" 2>/dev/null \
+         | command grep -v "$ROOT/docs/llm-orchestrator/" | command grep -v "$ROOT/CHANGELOG.md")
 
 if (( fail == 0 )); then
   echo "OK: $checked_skills skills, $checked_commands commands, $checked_agents agents"

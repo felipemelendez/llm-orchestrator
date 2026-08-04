@@ -42,8 +42,18 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 1; }
 mkdir -p "$OUT_DIR" "$WORK_ROOT"
 # Per-case output when --case is given, so parallel single-case invocations
 # don't clobber each other; merge with merge-results.sh or jq/cat afterwards.
-RESULTS="${OUT_DIR}/raw${ONLY_CASE:+.$ONLY_CASE}.jsonl"
-BENCH="${OUT_DIR}/benchmark${ONLY_CASE:+.$ONLY_CASE}.json"
+#
+# Each run also gets its own timestamped pair, and history is append-only. The
+# stable names used to be the only ones: a 200-run confirmation of a measured
+# regression overwrote the raw rows that proved the regression, so the run
+# checking the finding destroyed the evidence for it. The stable names now hold
+# a copy of the most recent run, kept only so existing docs and tooling resolve.
+RUN_ID="${ORCH_EVAL_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
+STEM="${ONLY_CASE:+.$ONLY_CASE}"
+RESULTS="${OUT_DIR}/raw${STEM}.${RUN_ID}.jsonl"
+BENCH="${OUT_DIR}/benchmark${STEM}.${RUN_ID}.json"
+RESULTS_LATEST="${OUT_DIR}/raw${STEM}.jsonl"
+BENCH_LATEST="${OUT_DIR}/benchmark${STEM}.json"
 : > "$RESULTS"
 
 # --- arm sources ------------------------------------------------------------------
@@ -147,16 +157,29 @@ run_case() {
   # behavioural checks against the real filesystem: every command in the case's
   # "check" array must exit 0 inside the scratch project. This is what lets a
   # case grade "did the fix actually work" instead of "did the prose look right".
-  local check_rc=0 check_cmds
-  check_cmds="$(python3 -c "import json,sys;print('\n'.join(json.load(open(sys.argv[1])).get('check',[])))" "$case_file")"
-  if [[ -n "$check_cmds" ]]; then
-    ( cd "$dir" && bash -e -c "$check_cmds" ) >/dev/null 2>&1 || check_rc=1
-  fi
+  # Graded ONE COMMAND AT A TIME, not as a single `bash -e` conjunction. A case
+  # can then carry two independent measurements — reviewer recall and reviewer
+  # precision are the first pair — and the summary can report each separately
+  # instead of collapsing them into one bit that says only "something failed".
+  local check_json
+  check_json="$(python3 - "$case_file" "$dir" <<'PY'
+import json, subprocess, sys
+case = json.load(open(sys.argv[1]))
+out = []
+for cmd in case.get("check", []):
+    r = subprocess.run(["bash", "-c", cmd], cwd=sys.argv[2], capture_output=True)
+    out.append(r.returncode == 0)
+print(json.dumps(out))
+PY
+)"
 
-  python3 - "$case_file" "$arm" "$iter" "$out" "$check_rc" >> "$RESULTS" <<'PY'
+  python3 - "$case_file" "$arm" "$iter" "$out" "$check_json" >> "$RESULTS" <<'PY'
 import json, re, sys
 case = json.load(open(sys.argv[1])); arm, it, raw = sys.argv[2], int(sys.argv[3]), sys.argv[4]
-check_rc = int(sys.argv[5])
+try:
+    check_results = json.loads(sys.argv[5])
+except Exception:
+    check_results = []
 try:
     obj = json.loads(raw); text = obj.get("result") or ""
     cost = obj.get("total_cost_usd"); err = bool(obj.get("is_error"))
@@ -179,8 +202,21 @@ for prefix in exp.get("must_open_with", []):
     checks.append({"kind": "must_open_with", "pattern": prefix,
                    "ok": first.startswith(prefix)})
 if case.get("check"):
+    # One entry per command, so a per-check pass rate is recoverable from the raw
+    # rows, plus the aggregate the behavioural verdict reads.
+    #
+    # A grader that crashed returns fewer results than there are checks. That must
+    # fail CLOSED and stay diagnosable: scoring it as a pass would credit a run
+    # nothing graded, and scoring it as a silent fail would look identical to the
+    # model failing the task.
+    graded_all = len(check_results) == len(case["check"])
+    if not graded_all:
+        checks.append({"kind": "check_error", "pattern": "grader returned %d of %d results"
+                       % (len(check_results), len(case["check"])), "ok": False})
+    for idx, (cmd, ok) in enumerate(zip(case["check"], check_results)):
+        checks.append({"kind": "check_one", "index": idx, "pattern": cmd, "ok": bool(ok)})
     checks.append({"kind": "check_cmds", "pattern": "; ".join(case["check"]),
-                   "ok": check_rc == 0})
+                   "ok": graded_all and all(check_results)})
 
 print(json.dumps({
     "case": case["id"], "arm": arm, "iter": it,
@@ -208,7 +244,7 @@ for case_file in "$CASE_DIR"/*.json; do
   done
 done
 
-python3 - "$RESULTS" "$BENCH" "$MODEL" <<'PY'
+ORCH_EVAL_BENCH_LATEST="$BENCH_LATEST" python3 - "$RESULTS" "$BENCH" "$MODEL" <<'PY'
 import json, sys, collections
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 agg = collections.defaultdict(lambda: collections.defaultdict(list))
@@ -240,7 +276,8 @@ def fisher_exact_two_tailed(a, b, c, d):
 
 summary = {}
 print("\n== summary ==")
-print(f"{'case':<28} {'without':>9} {'with':>9} {'$/solved(w/o)':>13} {'$/solved(w)':>12}   verdict")
+print(f"{'case':<28} {'BEHAVIOUR w/o':>13} {'BEHAVIOUR w':>12} "
+      f"{'overall w/o':>11} {'overall w':>10} {'$/solved(w)':>12}   verdict")
 for case, arms in sorted(agg.items()):
     rate = {a: sum(x["pass"] for x in v) / len(v) for a, v in arms.items()}
     # cost per SOLVED task, per arm — the metric that stays informative when
@@ -250,6 +287,18 @@ for case, arms in sorted(agg.items()):
         solved = sum(x["pass"] for x in v)
         spent = sum(x["cost_usd"] or 0 for x in v)
         cps[a] = round(spent / solved, 4) if solved else None
+    # Behavioural rate: the held-out execution checks only, per arm. This is the
+    # HEADLINE, not a footnote. On the run that mattered, the overall rate mixed
+    # protocol-format regexes into the pass criterion and printed p=0.46
+    # "inconclusive" while the behaviour underneath had moved 76/100 -> 56/100 at
+    # p=0.004. Format noise swamped the signal the run was bought to find.
+    beh_n = {}
+    for a, v in arms.items():
+        cc = [all(c["ok"] for c in x["checks"] if c["kind"] == "check_cmds")
+              for x in v if any(c["kind"] == "check_cmds" for c in x["checks"])]
+        beh_n[a] = (sum(cc), len(cc)) if cc else None
+    beh = {a: (round(t[0] / t[1], 3) if t else None) for a, t in beh_n.items()}
+
     w, o = rate.get("with"), rate.get("without")
     # A `ref:<sha>` arm is a PLUGIN VERSION, so the interesting comparison is
     # with-vs-ref (did this week's edit help?), not with-vs-without (does the
@@ -268,13 +317,20 @@ for case, arms in sorted(agg.items()):
         # Fisher's exact test on the 2x2 (pass/fail x arm). Exact, stdlib-only,
         # correct at the small n these runs can afford — no normal approximation
         # that misbehaves on 5 samples.
-        pw = sum(x["pass"] for x in arms["with"]); nw = len(arms["with"])
-        pr = sum(x["pass"] for x in arms[ref_arm]); nr = len(arms[ref_arm])
+        # Test the BEHAVIOURAL counts when the case has execution checks; fall
+        # back to overall only for cases that are purely about the reply text.
+        if beh_n.get("with") and beh_n.get(ref_arm):
+            (pw, nw), (pr, nr) = beh_n["with"], beh_n[ref_arm]
+            basis, cw, cr = "behaviour", beh["with"], beh[ref_arm]
+        else:
+            pw = sum(x["pass"] for x in arms["with"]); nw = len(arms["with"])
+            pr = sum(x["pass"] for x in arms[ref_arm]); nr = len(arms[ref_arm])
+            basis, cw, cr = "overall", w, r
         p_value = fisher_exact_two_tailed(pw, nw - pw, pr, nr - pr)
-        gap = f"{pw}/{nw} vs {pr}/{nr}"
+        gap = f"{basis} {pw}/{nw} vs {pr}/{nr}"
         if p_value >= 0.05:
             verdict = f"inconclusive ({gap}, p={p_value:.2f} — need more runs)"
-        elif w > r:
+        elif cw > cr:
             verdict = f"BETTER than {ref_arm} ({gap}, p={p_value:.3f})"
         else:
             verdict = f"WORSE than {ref_arm} — REGRESSION ({gap}, p={p_value:.3f})"
@@ -284,24 +340,44 @@ for case, arms in sorted(agg.items()):
     elif w == o == 1.0: verdict = "already default — rule may be dead weight"
     elif w == o:  verdict = "no effect"
     else:         verdict = "PLUGIN HURTS"
-        # Behavioural sub-rate: check_cmds only (held-out execution), so a case
-    # whose aggregate is dominated by protocol regexes cannot masquerade as a
-    # task-success delta.
-    beh = {}
+    # Per-check rates, so a case carrying two independent measurements (recall
+    # and precision, say) reports them separately instead of as one bit.
+    per_check = {}
     for a, v in arms.items():
-        cc = [all(c["ok"] for c in x["checks"] if c["kind"] == "check_cmds")
-              for x in v if any(c["kind"] == "check_cmds" for c in x["checks"])]
-        beh[a] = round(sum(cc) / len(cc), 3) if cc else None
+        idx_ok = {}
+        for x in v:
+            for c in x["checks"]:
+                if c["kind"] == "check_one":
+                    idx_ok.setdefault(c["index"], []).append(c["ok"])
+        if idx_ok:
+            per_check[a] = {str(i): round(sum(o) / len(o), 3)
+                            for i, o in sorted(idx_ok.items())}
+
     summary[case] = {"with": w, "without": o, "verdict": verdict,
                      "ref_arm": ref_arm, "ref": r,
                      "rates": rate,
                      "behavioral": beh,
+                     "behavioral_counts": {a: (list(t) if t else None)
+                                           for a, t in beh_n.items()},
+                     "per_check": per_check,
+                     "check_cmds": (agg[case] and next(
+                         ([c["pattern"] for c in x["checks"] if c["kind"] == "check_one"]
+                          for v in arms.values() for x in v
+                          if any(c["kind"] == "check_one" for c in x["checks"])), [])),
                      "cost_per_solved": cps,
                      "n": {a: len(v) for a, v in arms.items()},
                      "cost_usd": round(sum(x["cost_usd"] or 0 for v in arms.values() for x in v), 4)}
     fmt = lambda x: "  n/a  " if x is None else f"{x*100:5.0f}%  "
     fmtc = lambda x: "   n/a " if x is None else f"${x:.3f}"
-    print(f"{case:<28} {fmt(o):>9} {fmt(w):>9} {fmtc(cps.get('without')):>13} {fmtc(cps.get('with')):>12}   {verdict}")
+    ref_or_wo = lambda d: d.get(ref_arm) if ref_arm else d.get("without")
+    print(f"{case:<28} {fmt(ref_or_wo(beh)):>13} {fmt(beh.get('with')):>12} "
+          f"{fmt(ref_or_wo(rate)):>11} {fmt(w):>10} {fmtc(cps.get('with')):>12}   {verdict}")
+    for a, d in sorted(per_check.items()):
+        cmds = summary[case]["check_cmds"]
+        for i, v in sorted(d.items(), key=lambda kv: int(kv[0])):
+            label = (cmds[int(i)][:58] + "…") if int(i) < len(cmds) and len(cmds[int(i)]) > 58 \
+                    else (cmds[int(i)] if int(i) < len(cmds) else f"check {i}")
+            print(f"    {a:<12} check{int(i)+1}: {v*100:5.1f}%   {label}")
 
 total = round(sum(s["cost_usd"] for s in summary.values()), 2)
 print(f"\ntotal cost: ${total}")
@@ -309,9 +385,10 @@ print("note: single-run pass rates carry >=1.5pp std at temperature 0; treat a o
 out = {"model": sys.argv[3], "cases": summary, "total_cost_usd": total}
 # Preserve hand-written analysis across regenerations instead of deleting it.
 import os
-if os.path.exists(sys.argv[2]):
+prev_stable = os.environ.get("ORCH_EVAL_BENCH_LATEST", "")
+if prev_stable and os.path.exists(prev_stable):
     try:
-        prev = json.load(open(sys.argv[2]))
+        prev = json.load(open(prev_stable))
         for k in ("interpretation", "method_notes", "date", "n_per_arm"):
             if k in prev and k not in out:
                 out[k] = prev[k]
@@ -322,6 +399,11 @@ if os.path.exists(sys.argv[2]):
 json.dump(out, open(sys.argv[2], "w"), indent=2)
 PY
 
+# The stable names are a copy of the newest run, never the only copy of it.
+cp "$RESULTS" "$RESULTS_LATEST" 2>/dev/null || true
+cp "$BENCH"    "$BENCH_LATEST"  2>/dev/null || true
+
 echo
 echo "raw:       ${RESULTS}"
 echo "benchmark: ${BENCH}"
+echo "latest:    ${RESULTS_LATEST}  ${BENCH_LATEST}   (copies — the timestamped pair is the record)"

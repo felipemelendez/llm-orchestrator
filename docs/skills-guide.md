@@ -18,7 +18,6 @@ Required:
 
 Optional:
 - `tools` — comma-separated list of tools the skill needs.
-- `profile` — `minimal | standard | strict`. Restricts when the skill is loadable.
 
 Example:
 

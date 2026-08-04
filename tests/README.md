@@ -1,14 +1,29 @@
 # Test suite
 
-The suites below. Run them in this order before any commit:
+Before any commit:
 
 ```bash
-./tests/validate-skills.sh     # 1. structural: frontmatter, names, length
-./tests/test-portability.sh    # 2. portability: bash 3.2 / BSD / macOS safe
-./tests/smoke.sh               # 3. behavior: hooks, lock, install, classifier
+./tests/run-all.sh             # every suite, discovered — ~3 minutes
 ```
 
-All three should exit 0 with green output. If any fails, fix before committing.
+It globs `tests/*.sh` and `tests/handoff/*.sh`, prints one line per suite, dumps the tail
+of anything that failed, and exits non-zero with the names. Suites are **discovered, not
+listed**: CI used to enumerate them by hand and the list drifted until ten suites — the
+writer-mutex modes, the retry cap, telemetry, detect, hook latency, and all three handoff
+suites — were never run by CI at all, while CI reported green. Any deliberate exclusion
+lives in `SKIP` inside the runner with a reason, and prints on every run.
+
+The three fastest signals, if you want them individually:
+
+```bash
+./tests/validate-skills.sh     # structural: frontmatter, names, length
+./tests/test-portability.sh    # portability: bash 3.2 / BSD / macOS safe
+./tests/smoke.sh               # behavior: hooks, lock, install, classifier
+```
+
+Set `ORCH_REQUIRE_DEPS=1` to make a missing dependency a failure instead of a skip — that
+is what CI does, so a runner that lost `python3` cannot turn six guard suites into green
+no-ops.
 
 ## What each one checks
 
@@ -56,7 +71,7 @@ Output: 7 checks pass on success, warnings listed informationally.
 
 ### `smoke.sh` — behavior smoke test
 
-Exercises everything that can be tested without a live Claude Code session. Bash 3.2 compatible; runs in ~5 seconds.
+Exercises everything that can be tested without a live Claude Code session. Bash 3.2 compatible; runs in ~90 seconds.
 
 Six sections:
 
@@ -68,7 +83,7 @@ Six sections:
    - SubagentStop → accepts both markdown and JSONL transcripts with a `Status:` block, warns (exit 0) when missing
    - Stop hook → prunes `memory/.trash/` older than retention
 3. **Portable lock** — sources `scripts/lib/orch-lock.sh`, runs 10 concurrent writers, expects 10 lines; tests `append_line` for shell-injection safety.
-4. **Classifier** — runs the `/remember` section classifier on 9 canonical facts (`pnpm not npm` → Conventions; `Sara owns auth` → People; `we picked tRPC over GraphQL` → Decisions; etc.). Each fact must land in the expected section.
+4. **Classifier** — runs the `/remember` section classifier on 10 canonical facts (`pnpm not npm` → Conventions; `Sara owns auth` → People; `we picked tRPC over GraphQL` → Decisions; etc.). Each fact must land in the expected section.
 5. **--copy install** — runs `install.sh --copy` against a fresh git project, verifies every required file landed (`scripts/lib/orch-lock.sh`, `settings.json`, `output-styles/`, `concise-agent-protocol.md`, etc.), checks the generated `settings.json` is valid JSON, checks `hooks.json` paths are absolute, re-runs SessionStart from the copied install.
 6. **Documentation** — no stale `OrchestraKit`/`OK_` identifiers remain, README has the Quick Start block, no auto-loading `.mcp.json` is present (only `.mcp.json.example`).
 
@@ -106,8 +121,9 @@ Add to `test-portability.sh` when:
 
 ## The full suite
 
-`tests/smoke.sh` runs the structural checks and shells out to the suites below;
-each is also runnable on its own. Every one exits non-zero on failure.
+`./tests/run-all.sh` runs all of these. `tests/smoke.sh` runs the structural checks and
+shells out to several of them; each is also runnable on its own, and every one exits
+non-zero on failure.
 
 | Suite | Covers |
 |---|---|
@@ -123,6 +139,9 @@ each is also runnable on its own. Every one exits non-zero on failure.
 | `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |
 | `test-detect.sh`, `test-lib-resolution.sh`, `test-telemetry.sh`, `test-retry-cap.sh`, `test-hook-latency.sh` | toolchain detection, lib lookup, opt-in telemetry, retry breaker, per-hook latency budget |
+| `test-eval-cases.sh` | every eval case is red before the agent runs, its regexes compile, its checks parse as shell, and it carries a `why` |
+| `test-eval-reporter.sh` | the eval reporter still calls the archived 2026-08-03 behavioural drop a regression, and reports each check separately |
+| `handoff/smoke-handoff.sh`, `handoff/test-precompact.sh`, `handoff/test-token-floor.sh` | handoff artifact lifecycle, pre-compaction capture, token floor |
 
 **Isolation is a hard requirement for new suites.** Use `mktemp -d` for both the
 scratch dir and `ORCH_HOME`, and clean up with a `trap`. Suites used to share
@@ -132,9 +151,21 @@ exactly like a real bug and costs a day.
 
 ## CI integration
 
-`.github/workflows/ci.yml` runs `validate-skills.sh`, `smoke.sh`, and the
-safety-critical suites directly (guards, evidence ledger, verify gate, reaper,
-protocol drift, worktree integrate) — directly, so a break is attributed to the
-suite rather than to smoke. CI runs on Linux; several defects in this area were
-BSD-vs-GNU differences that passed silently on one platform, so run the suite
-locally on macOS too.
+`.github/workflows/ci.yml` has two steps: a `node --check` on the brainstorming server, and
+`bash tests/run-all.sh`. It used to have twenty-three, one per suite, and that enumeration
+is what drifted — adding the ten missing suites would have fixed the gap and left the
+mechanism that made it, so the enumeration is gone instead. Adding a test file is now
+enough to have CI run it.
+
+CI sets `ORCH_REQUIRE_DEPS=1`, and relaxes the hook latency budget to 800ms/1800ms
+(from 500/1200): those budgets are calibrated on a dedicated laptop, and a shared 2-vCPU
+runner measures the runner. The looser bound still catches the failure that matters — an
+unbounded hook is seconds, not tens of milliseconds.
+
+CI runs on Linux; several defects in this area were BSD-vs-GNU differences that passed
+silently on one platform, so run the suite locally on macOS too.
+
+Evals are not part of CI and never will be: they make paid API calls. See
+[`evals/README.md`](evals/README.md). What *is* in CI is the eval harness's own correctness
+— `test-eval-cases.sh` (every case is red before the agent runs) and `test-eval-reporter.sh`
+(the reporter still calls the archived 2026-08-03 regression a regression).

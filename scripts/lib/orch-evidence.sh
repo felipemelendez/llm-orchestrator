@@ -25,7 +25,7 @@
 # gaps: a green run that executed no tests.
 #
 # Ledger line format (TSV):
-#   <stamp>\t<exit>\t<epoch>\t<substance>\t<command-first-160>
+#   <stamp>\t<exit>\t<epoch>\t<substance>\t<command-first-400>
 # where substance ∈ ok | none (explicitly ran zero tests) | red.
 # Ledger path: ${ORCH_HOME}/state/<project-hash>/evidence.<session_id>.tsv
 #

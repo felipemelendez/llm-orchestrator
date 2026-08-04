@@ -388,6 +388,72 @@ else
 fi
 
 # ------------------------------------------------------------
+# P9 — a --copy install must ship every transitive dependency the hooks load,
+# and must ENFORCE the same things the source tree does.
+#
+# The copy loop was `scripts/lib/*.sh`, and both PreToolUse guards source
+# scripts/lib/orch-git-classify.py. So every --copy install shipped the guards
+# with their semantic classifier missing; they degraded to spelling rules
+# without saying so, and `git reset --har HEAD~1` went from BLOCKED in the
+# source tree to ALLOWED in an install. Nothing caught it, because both
+# existing verifiers assert hooks.json COMMAND paths and a transitive
+# dependency is not one — the check shared the blind spot of the code it
+# checked, which is the defect class this whole suite exists for.
+#
+# Two assertions, deliberately independent: file parity (catches a new lib of
+# any extension being left behind) and a behavioural probe (catches the guard
+# degrading for any reason at all, including one parity cannot see).
+# ------------------------------------------------------------
+section "--copy ships transitive deps and enforces identically (P9)"
+
+MISSING_LIB=""
+for f in "$ROOT/scripts/lib/"*; do
+  [[ -f "$f" ]] || continue
+  b="$(basename "$f")"
+  [[ -f "$TMP/proj/.claude/scripts/lib/$b" ]] || MISSING_LIB="${MISSING_LIB}${b} "
+done
+if [[ -z "$MISSING_LIB" ]]; then
+  ok "every scripts/lib/* file reaches the install"
+else
+  fail "every scripts/lib/* file reaches the install" "missing: $MISSING_LIB"
+fi
+
+# Behavioural probe: a spelling only the classifier resolves. `--har` is an
+# unambiguous prefix of `--hard`, so git really does reset with it.
+probe_guard() {  # $1 = guard path, $2 = command; echoes the exit code
+  local g="$1" cmd="$2" r rc
+  r="$(mktemp -d)"
+  ( cd "$r" && git init -q >/dev/null 2>&1 )
+  ( cd "$r" && printf '{"tool_name":"Bash","tool_input":{"command":"%s"}}' "$cmd" \
+      | bash "$g" >/dev/null 2>&1 )
+  rc=$?
+  rm -rf "$r"
+  printf '%s' "$rc"
+}
+if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  for probe in "guard-destructive-git.sh:git reset --har HEAD~1" \
+               "guard-no-verify.sh:git commit -m x --no-verif"; do
+    guard="${probe%%:*}"; cmd="${probe#*:}"
+    src_rc="$(probe_guard "$ROOT/scripts/hooks/$guard" "$cmd")"
+    ins_rc="$(probe_guard "$TMP/proj/.claude/scripts/hooks/$guard" "$cmd")"
+    if [[ "$src_rc" == "2" && "$ins_rc" == "2" ]]; then
+      ok "$guard blocks '$cmd' from the install, same as from source"
+    elif [[ "$src_rc" != "2" ]]; then
+      fail "$guard blocks '$cmd' from source" "source exit=$src_rc (expected 2)"
+    else
+      fail "$guard blocks '$cmd' from the install" \
+           "source exit=$src_rc but install exit=$ins_rc — the install degraded silently"
+    fi
+  done
+else
+  if [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
+    fail "guard parity probe" "git/python3 required under ORCH_REQUIRE_DEPS=1"
+  else
+    printf '  skip guard parity probe (git or python3 missing)\n'
+  fi
+fi
+
+# ------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------
 printf '\n'

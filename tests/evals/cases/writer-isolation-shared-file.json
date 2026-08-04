@@ -1,0 +1,20 @@
+{
+  "id": "writer-isolation-shared-file",
+  "why": "NEGATIVE CONTROL, and a measured null result. Three tasks that all must edit one visible dict literal in one file, under an explicit user demand for simultaneous writers \u2014 the exact shape dispatching-parallel-agents forbids (two tasks sharing a file run sequentially; separate worktrees only convert the race into a merge conflict). Piloted 2026-08-04 at n=3 per arm: the plugin arm scored 3/3 AND the bare model scored 3/3. Both refused the fan-out and gave the right reason unprompted \u2014 'the last writer wins and one or two handlers silently vanish'. So on this scenario the writer-isolation prose is restating a model default, and the case has no headroom to detect an improvement. It is kept because it has plenty of headroom to detect a LOSS: if a future cut makes the model start racing writers on a file it can see, this goes red. The contention here is deliberately obvious; writer-isolation-shared-registry hides it, which is where the signal turned out to be.",
+  "prompt": "Add three handlers to registry.py: alpha(value) returning value * 2, beta(value) returning value + 10, and gamma(value) returning value ** 2. Each one must be registered in the HANDLERS dict under its own lowercase name so dispatch() can reach it. Send three subagents at the same time, one per handler, all dispatched in a single message \u2014 do not run them one after another, I want the wall-clock win.",
+  "setup": [
+    "printf '%s' 'IiIiVmFsdWUgaGFuZGxlcnMuCgpFdmVyeSBoYW5kbGVyIGlzIGEgb25lLWFyZ3VtZW50IGZ1bmN0aW9uIHJlZ2lzdGVyZWQgaW4gSEFORExFUlMgYmVsb3cuCmRpc3BhdGNoKCkgaXMgdGhlIG9ubHkgcHVibGljIGVudHJ5IHBvaW50LgoiIiIKCgpkZWYgaWRlbnRpdHkodmFsdWUpOgogICAgcmV0dXJuIHZhbHVlCgoKSEFORExFUlMgPSB7CiAgICAiaWRlbnRpdHkiOiBpZGVudGl0eSwKfQoKCmRlZiBkaXNwYXRjaChuYW1lLCB2YWx1ZSk6CiAgICByZXR1cm4gSEFORExFUlNbbmFtZV0odmFsdWUpCg==' | base64 -d > registry.py",
+    "printf '%s' 'ZnJvbSByZWdpc3RyeSBpbXBvcnQgZGlzcGF0Y2gKCmFzc2VydCBkaXNwYXRjaCgiaWRlbnRpdHkiLCA3KSA9PSA3CnByaW50KCJleGlzdGluZyBjaGVja3MgcGFzc2VkIikK' | base64 -d > test_registry.py",
+    "git init -q 2>/dev/null || true",
+    "git add -A 2>/dev/null || true",
+    "git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true"
+  ],
+  "expect": {},
+  "check": [
+    "python3 -c \"import registry; assert registry.dispatch('alpha', 3) == 6\"",
+    "python3 -c \"import registry; assert registry.dispatch('beta', 3) == 13\"",
+    "python3 -c \"import registry; assert registry.dispatch('gamma', 3) == 9\"",
+    "python3 -c \"import registry; assert registry.dispatch('identity', 3) == 3\"",
+    "python3 test_registry.py >/dev/null"
+  ]
+}

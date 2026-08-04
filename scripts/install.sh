@@ -165,8 +165,17 @@ case "${cmd}" in
     [[ -f "${ROOT}/scripts/protocol-lint.sh" ]] && cp "${ROOT}/scripts/protocol-lint.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/orch-worktree-materialize.sh" ]] && cp "${ROOT}/scripts/orch-worktree-materialize.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/orch-worktree-integrate.sh" ]] && cp "${ROOT}/scripts/orch-worktree-integrate.sh" "${dest}/.claude/scripts/"
-    # Copy the portable lock helper — memory commands source it.
-    for f in "${ROOT}/scripts/lib/"*.sh; do
+    # Copy EVERY lib, not only the shell ones. This loop was `*.sh` and the two
+    # PreToolUse guards source scripts/lib/orch-git-classify.py — so a --copy
+    # install shipped both guards with their semantic classifier missing, and
+    # they silently fell back to spelling rules. `git reset --har HEAD~1` and
+    # `git commit --no-verif` were BLOCKED from the source tree and ALLOWED from
+    # an install. The verifier could not see it: check-hook-paths.py and
+    # test-install.sh both assert hooks.json command paths, and a transitive
+    # dependency is not one — the check shared the blind spot of the thing it
+    # checked. tests/test-install.sh now asserts installed-vs-source lib parity
+    # AND runs a classifier-only bypass against the installed guard.
+    for f in "${ROOT}/scripts/lib/"*; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/lib/"
     done
     # Copy the protocol doc so the meta-skill's relative link resolves.
@@ -175,6 +184,9 @@ case "${cmd}" in
     # it, and docs/ is otherwise not part of a --copy install — the pointer
     # would dangle.
     cp "${ROOT}/docs/install.md" "${dest}/.claude/docs/" 2>/dev/null || true
+    # dispatching-subagents points at this for model/effort guidance; without it
+    # the reference dangles in every --copy install.
+    cp "${ROOT}/docs/anthropic-ecosystem.md" "${dest}/.claude/docs/" 2>/dev/null || true
 
     sed_inplace() {
       if sed --version >/dev/null 2>&1; then

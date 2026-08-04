@@ -18,7 +18,7 @@ cd ~/LLM-Orchestrator
 ./tests/validate-skills.sh        # → "OK: 18 skills, 14 commands, 7 agents"
 ./tests/test-portability.sh       # → "7 portability checks passed."
 ./tests/test-lib-resolution.sh    # → "PASS: test-lib-resolution (5 checks)"
-./tests/smoke.sh                  # → "All 68 checks passed."
+./tests/smoke.sh                  # → "81 checks passed, 1 skipped."
 ```
 
 **Pass criterion:** all four exit 0. If any fails, fix before continuing — Claude Code testing won't tell you anything useful until the mechanics are sound.
@@ -61,7 +61,7 @@ In a Claude Code session:
 
 **Pass criteria:**
 - `llm-orchestrator` appears in the list
-- Version `0.1.0`
+- Version `0.6.0`
 - Status: enabled
 
 **Troubleshooting:**
@@ -310,7 +310,7 @@ If all of 5.1–5.5 pass, the orchestration loop is sound. This is the most impo
 
 ## Phase 6 — BLOCKED recovery — 10 min
 
-The 4-branch recovery tree is what makes this system recover on its own instead of stopping to ask. Test it.
+The 5-branch recovery tree is what makes this system recover on its own instead of stopping to ask. Test it — branch 5 is the one that stops and asks you, and it has to stay rare.
 
 ### 6.1 Force a BLOCKED → missing context
 

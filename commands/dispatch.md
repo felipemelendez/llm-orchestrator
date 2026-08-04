@@ -19,7 +19,7 @@ Steps:
 3. Use `TaskCreate` (native Claude Code task tool) to create one task per resolved plan task, in plan order. This is your state board for the rest of the run.
 
 4. Decide routing per task by reading its `Independent:` line:
-   - All selected tasks `Independent: yes` and no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 7 does per-task review for high-risk surface and a combined-diff review otherwise).
+   - **Three or more** selected tasks, all `Independent: yes`, no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 7 does per-task review for high-risk surface and a combined-diff review otherwise). Below three, coordination cost beats the speedup and the skill itself declines the work, so route them sequentially.
    - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with per-task two-stage review).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
 
@@ -27,7 +27,7 @@ Steps:
    writer envelope declares its isolation mode.** Default: run
    `scripts/orch-worktree-materialize.sh` first and give each agent its own
    worktree. Only when the project rules out worktrees, use the declared
-   shared-checkout mode ("Steps — shared-checkout writers" in
+   shared-checkout mode ("Shared-checkout writers (declared)" in
    `dispatching-parallel-agents`): the exact line
    `shared checkout; controller-partitioned file ownership` plus that writer's
    exclusive files, pairwise-disjoint lists across writers, a stated writer

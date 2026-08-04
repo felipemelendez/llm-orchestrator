@@ -63,6 +63,7 @@ Controllers route by Status, not by parsing prose.
 | `/llm-orchestrator:dispatch` | Run a focused subagent with a constructed context envelope. |
 | `/llm-orchestrator:review` | Two-stage review (spec + code quality), plus optional security pass. |
 | `/llm-orchestrator:debug` | Root-cause debugging. |
+| `/llm-orchestrator:research` | Verify a planned approach against current sources before building on it, and write a brief the human can read in 30 seconds. |
 | `/llm-orchestrator:verify` | Run tests/lint/typecheck and report evidence. |
 | `/llm-orchestrator:finish` | Decide between merge / PR / keep / discard. |
 | `/llm-orchestrator:remember` | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |

@@ -13,6 +13,12 @@ jobs:
       # runner image that silently lost python3 or perl would otherwise turn
       # six guard/gate suites into no-ops that still report green.
       ORCH_REQUIRE_DEPS: "1"
+      # The latency budgets are calibrated on a dedicated laptop. A shared
+      # 2-vCPU runner measures the runner, not the hooks, so CI gets a looser
+      # bound that still catches a real regression (an unbounded hook is
+      # seconds, not tens of milliseconds). Local runs keep 500/1200.
+      ORCH_LATENCY_BUDGET_MS: "800"
+      ORCH_SESSION_LATENCY_BUDGET_MS: "1800"
     steps:
       - uses: actions/checkout@v4
 
@@ -25,107 +31,20 @@ jobs:
         if: always()
         run: node --check skills/brainstorming/scripts/server.cjs
 
-      - name: Validate skills
+      # One step, every suite, DISCOVERED rather than enumerated.
+      #
+      # This used to be 23 hand-written steps, and the list had drifted: ten
+      # suites were never run by CI at all — the writer-mutex modes, the retry
+      # cap, telemetry, detect, hook latency, and all three handoff suites —
+      # while CI reported green across the board. Adding the missing ten would
+      # have fixed today's gap and left the mechanism that produced it, so the
+      # enumeration is gone instead. tests/run-all.sh globs the suites, prints
+      # any deliberate exclusion with its reason, and fails with the names of
+      # the suites that broke. Adding a test file is now enough to have it run.
+      #
+      # It runs on Linux here and on macOS locally on purpose: several defects
+      # in the guard and worktree code were BSD-vs-GNU differences that passed
+      # silently on one platform.
+      - name: Run every test suite
         if: always()
-        run: bash tests/validate-skills.sh
-
-      - name: Validate workflows
-        if: always()
-        run: bash tests/validate-workflows.sh
-
-      # Meta-test: the workflow validator's syntax layer could never fail
-      # (node --check returns 0 on invalid ESM), so it is now itself mutation-
-      # tested — inject one defect at a time and assert it goes red.
-      - name: Workflow validator mutation tests
-        if: always()
-        run: bash tests/test-validate-workflows.sh
-
-      - name: Workflow distribution
-        if: always()
-        run: bash tests/test-workflow-distribution.sh
-
-      - name: review-diff behavior
-        if: always()
-        run: bash tests/test-review-diff-behavior.sh
-
-      - name: Smoke tests
-        if: always()
-        run: bash tests/smoke.sh
-
-      - name: Research gate tests
-        if: always()
-        run: bash tests/test-research-gate.sh
-
-      - name: Research classifier tests
-        if: always()
-        run: bash tests/test-research-classifier.sh
-
-      - name: Protocol grader tests
-        if: always()
-        run: bash tests/test-protocol-grader.sh
-
-      - name: Protocol hook e2e tests
-        if: always()
-        run: bash tests/test-protocol-hooks.sh
-
-      - name: Research brief and agent contract tests
-        if: always()
-        run: bash tests/test-research-brief.sh
-
-      - name: Portability tests
-        if: always()
-        run: bash tests/test-portability.sh
-
-      # Safety-critical guards and the verification path. These run on Linux
-      # here and on macOS locally, which is the point: several defects in this
-      # area were BSD-vs-GNU differences that passed silently on one platform.
-      - name: Destructive-git guard tests
-        if: always()
-        run: bash tests/test-destructive-git-guard.sh
-
-      - name: No-verify guard tests
-        if: always()
-        run: bash tests/test-guard-no-verify.sh
-
-      - name: Worktree reaper ownership tests
-        if: always()
-        run: bash tests/test-worktree-reaper.sh
-
-      - name: Evidence ledger contract tests
-        if: always()
-        run: bash tests/test-evidence-ledger.sh
-
-      - name: Verify gate tests
-        if: always()
-        run: bash tests/test-verify-gate.sh
-
-      - name: Protocol single-source drift tests
-        if: always()
-        run: bash tests/test-protocol-drift.sh
-
-      - name: Worktree integrate tests
-        if: always()
-        run: bash tests/test-worktree-integrate.sh
-
-      - name: Worktree materialize tests
-        if: always()
-        run: bash tests/test-worktree-materialize.sh
-
-      # Forces the no-flock mkdir fallback via a constructed PATH — this
-      # runner has flock, so without that the stale-lock reclaim would never
-      # execute here at all.
-      - name: Lock reclaim tests
-        if: always()
-        run: bash tests/test-lock-reclaim.sh
-
-      - name: Lib resolution contract tests
-        if: always()
-        run: bash tests/test-lib-resolution.sh
-
-      # Installer + packaging: the --copy hook-path rewrite shipped broken for
-      # its whole life because the only check guarding it shared its blind
-      # spot. This suite asserts the positive property (every installed hook
-      # command is an absolute path that exists) with an independent checker.
-      - name: Installer and packaging contract tests
-        if: always()
-        run: bash tests/test-install.sh
+        run: bash tests/run-all.sh
