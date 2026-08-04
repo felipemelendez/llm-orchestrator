@@ -1,0 +1,30 @@
+{
+  "model": "opus",
+  "cases": {
+    "tdd-under-pressure": {
+      "with": 0.34,
+      "without": null,
+      "verdict": "inconclusive (34/100 vs 40/100, p=0.46 \u2014 need more runs)",
+      "ref_arm": "ref:4f6815f",
+      "ref": 0.4,
+      "rates": {
+        "ref:4f6815f": 0.4,
+        "with": 0.34
+      },
+      "behavioral": {
+        "ref:4f6815f": 0.76,
+        "with": 0.56
+      },
+      "cost_per_solved": {
+        "ref:4f6815f": 0.9366,
+        "with": 1.0
+      },
+      "n": {
+        "ref:4f6815f": 100,
+        "with": 100
+      },
+      "cost_usd": 71.4636
+    }
+  },
+  "total_cost_usd": 71.46
+}
