@@ -28,11 +28,22 @@ ok()   { printf '  %s✓%s %s\n' "$GREEN" "$RESET" "$1"; PASS=$((PASS+1)); }
 fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((FAIL+1)); FAILED+=("$1"); }
 
 [[ -f "$VALIDATOR" ]] || { printf 'FAIL — not found: %s\n' "$VALIDATOR"; exit 1; }
-if ! command -v node >/dev/null 2>&1; then
-  # A skip is not a pass. Six sibling suites printed `PASS: ... (skipped)` and
-  # smoke.sh grepped the PASS: prefix, so a missing dependency read as green.
-  printf 'SKIP: test-validate-workflows — node unavailable, nothing to assert\n'
+# A skip is not a pass. Six sibling suites printed `PASS: ... (skipped)` and
+# smoke.sh grepped the PASS: prefix, so a missing dependency read as green.
+# Under ORCH_REQUIRE_DEPS=1 (set in CI) a missing dependency is a hard failure
+# instead — same contract as the other suites' skip_suite helper; this one
+# exited 0 SKIP under the flag, so a node-less runner reported this suite green
+# under the very flag meant to prevent that.
+skip_suite() { # <suite-name> <reason>
+  if [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
+    printf '%sFAIL: %s — %s (ORCH_REQUIRE_DEPS=1)%s\n' "$RED" "$1" "$2" "$RESET"
+    exit 1
+  fi
+  printf '%sSKIP: %s (%s)%s\n' "$DIM" "$1" "$2" "$RESET"
   exit 0
+}
+if ! command -v node >/dev/null 2>&1; then
+  skip_suite test-validate-workflows 'node unavailable, nothing to assert'
 fi
 
 # The validator scans <its own root>/workflows, so mutations are staged in an
@@ -128,6 +139,26 @@ import fs from "fs"
 rejects "require call" 'export const meta = { name:"a", description:"y" }
 const fs = require("fs")
 '
+# Dynamic import is parse-valid in the async-function-body grammar (so Layer A
+# accepts it) and the statement pattern requires whitespace after `import` —
+# both layers passed `await import("node:fs")` until the `import(` ban landed.
+rejects "dynamic import()" 'export const meta = { name:"a", description:"y" }
+const fs = await import("node:fs")
+'
+rejects "Math computed access" 'export const meta = { name:"a", description:"y" }
+const r = Math["random"]()
+'
+rejects "Date aliased to a variable" 'export const meta = { name:"a", description:"y" }
+const D = Date
+const t = D.now()
+'
+rejects "new + newline + Date()" 'export const meta = { name:"a", description:"y" }
+const d = new
+Date()
+'
+rejects "performance aliased" 'export const meta = { name:"a", description:"y" }
+const p = performance
+'
 
 printf '\n%s== positive controls: the engine grammar must be accepted ==%s\n' "$DIM" "$RESET"
 # These are the reason a .mjs copy is the WRONG checker: top-level return and
@@ -170,6 +201,32 @@ accepts "leading comments before meta" '// a comment
 export const meta = { name: "mini", description: "d" }
 return {}
 '
+# Math stays usable for deterministic arithmetic — review-diff.js ships
+# Math.ceil, so a bare \bMath\b ban would reject the real workflow.
+accepts "Math.ceil (deterministic)" 'export const meta = { name: "mini", description: "d" }
+const n = Math.ceil(3 / 2)
+return { n }
+'
+
+printf '\n%s== a failing file is SEEN, not double-reported ==%s\n' "$DIM" "$RESET"
+# A file that fails the meta check is still a file that EXISTS: rc must be 1
+# for the true failure alone, WITHOUT the end-of-run "no *.js at the top
+# level" second diagnosis — that line used to print because `checked` counted
+# passes, not files seen. Needs its own sandbox: the shared one always
+# contains the real (passing) workflow, which masks the bug.
+SOLO="$SBX/solo"
+mkdir -p "$SOLO/tests/lib" "$SOLO/workflows"
+cp "$ROOT/tests/validate-workflows.sh" "$SOLO/tests/"
+cp "$ROOT/tests/lib/check-workflow-script.mjs" "$SOLO/tests/lib/"
+printf 'export const metadata = { name:"x", description:"y" }\n' > "$SOLO/workflows/only.js"
+rc=0; SOLO_OUT=$(bash "$SOLO/tests/validate-workflows.sh" 2>&1) || rc=$?
+if [[ $rc -ne 0 ]]; then ok "bad-meta-only dir still fails"
+else fail "bad-meta-only dir still fails" "validator exited 0"; fi
+if printf '%s' "$SOLO_OUT" | command grep -q 'no \*\.js at the top level'; then
+  fail "no false 'no *.js' second failure" "a .js exists; got: $(printf '%s' "$SOLO_OUT" | command grep 'no \*\.js')"
+else
+  ok "no false 'no *.js' second failure"
+fi
 
 TOTAL=$((PASS + FAIL))
 printf '\n'

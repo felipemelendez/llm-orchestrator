@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Tests the research-classifier skill's stated rules against the curated
-# Examples table in skills/research-classifier/SKILL.md.
+# examples table in skills/research-classifier/EXAMPLES.md.
 #
 # The classifier itself runs in-model (zero-shot prompt). What we can test
 # deterministically: that the documented signal heuristics, applied
 # mechanically to the curated examples, produce the expected verdict.
 #
-# If a SKILL.md heuristic change moves any curated example to the wrong
-# verdict, this script fails. Edit the table AND the heuristics together.
+# The table rows are PARSED from EXAMPLES.md at run time — they are the case
+# source, not documentation of one. Flipping an expected verdict there, or
+# changing a heuristic in SKILL.md, fails this script until both sides agree.
 #
 # Bash 3.2 compatible.
 
@@ -106,20 +107,34 @@ expect() {
 
 printf '%s== Research classifier — curated examples ==%s\n' "$DIM" "$RESET"
 
-# These match the Examples table in skills/research-classifier/SKILL.md.
-# Drift in either side fails the test.
-expect "Add a function that returns the current ISO timestamp"                       "SKIP"
-expect "Fix the typo in README.md"                                                   "SKIP"
-expect "Rename users to accounts throughout users.ts"                                "SKIP"
-expect "Add a test for users.ts:42"                                                  "SKIP"
-expect "Add OAuth login with Auth0"                                                  "NEEDED"
-expect "Migrate the test suite from Mocha to Vitest"                                 "NEEDED"
-expect "Set up Next.js 14 middleware for tenant routing"                             "NEEDED"
-expect "Add a Prisma migration for the user_policy table"                            "NEEDED"
-expect "Implement JWT token refresh"                                                 "NEEDED"
-expect "Reduce the cyclomatic complexity of users.ts:checkAccess"                    "SKIP"
-expect "Add a debounce util in src/lib/"                                             "SKIP"
-expect "Wire Stripe Checkout with the v15 SDK"                                       "NEEDED"
+# The cases come FROM skills/research-classifier/EXAMPLES.md — its table rows
+# are parsed as this test's input, so the file's "if a heuristic change moves
+# any of these, the test fails" claim is true by construction. This list used
+# to be hardcoded here: flipping a row's expected verdict in EXAMPLES.md
+# changed nothing, and three files all claimed a wiring that did not exist.
+EXAMPLES="$ROOT/skills/research-classifier/EXAMPLES.md"
+rows=0; rows_needed=0; rows_skip=0
+while IFS= read -r line; do
+  # Rows look like: | "Input text" | `NEEDED` | why |
+  input=$(printf '%s\n' "$line" | sed -nE 's/^\| *"(.*)" *\| *`(NEEDED|SKIP)`.*$/\1/p' | tr -d '`')
+  wantv=$(printf '%s\n' "$line" | sed -nE 's/^\| *"(.*)" *\| *`(NEEDED|SKIP)`.*$/\2/p')
+  [[ -z "$input" || -z "$wantv" ]] && continue
+  rows=$((rows+1))
+  case "$wantv" in
+    NEEDED) rows_needed=$((rows_needed+1)) ;;
+    SKIP)   rows_skip=$((rows_skip+1)) ;;
+  esac
+  expect "$input" "$wantv"
+done < "$EXAMPLES"
+
+# A parser that silently matches zero (or lopsided) rows is this same suite's
+# dead-guard failure mode one level up: assert the table actually fed us cases
+# of BOTH verdicts, so a format drift in EXAMPLES.md cannot erase the coverage.
+if (( rows >= 10 && rows_needed >= 1 && rows_skip >= 1 )); then
+  ok "EXAMPLES.md supplied $rows cases ($rows_needed NEEDED, $rows_skip SKIP)"
+else
+  fail "EXAMPLES.md row parsing" "parsed $rows rows ($rows_needed NEEDED, $rows_skip SKIP) from $EXAMPLES — table missing or format drifted"
+fi
 
 # Skill structural checks
 printf '\n%s== Skill file checks ==%s\n' "$DIM" "$RESET"

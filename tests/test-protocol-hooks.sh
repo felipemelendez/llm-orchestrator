@@ -377,19 +377,34 @@ rc=0; pipe_hook_exit "$SUBAGENT" "$T_MULTI" || rc=$?
 if [[ $rc -eq 0 ]]; then ok "(p) two text blocks concatenated form valid Status: DONE → exit 0"
 else fail "(p) two text blocks concatenated" "expected exit 0, got $rc"; fi
 
-# python3 guard: verify the guard lines exist in both hook scripts.
-# (Simulating python3 absence via PATH manipulation is not reliable across shells;
-#  the guard is covered by code inspection — verified with grep below.)
-if grep -q 'command -v python3' "$GRADER" && grep -q 'python3 not found' "$GRADER"; then
-  ok "(q) orch-protocol-grader.sh has python3 not-found guard"
+# python3 guard: run the hooks BEHAVIORALLY under a PATH shim without python3
+# (the approach test-install.sh's P8 section uses for node). The old check
+# grepped the hooks' SOURCE for the guard's strings, so changing the guard to
+# `if false; then` while keeping the strings in a comment left both ticks
+# green — a test of the text, not of the behavior. The transcript would BLOCK
+# under the strict env, so exit 0 also proves the guard short-circuits BEFORE
+# strict enforcement; the notice on stderr proves the guard branch (not an
+# accidental fail-open further down) is what ran.
+write_string_jsonl "$T_STRING" "just prose no header"
+NOPY=$(mktemp -d /tmp/orch-test-nopy-XXXXXX)
+for t in sh grep sed head cat dirname wc tr mkdir rm date uname awk tail cut find sort; do
+  p=$(command -v "$t" 2>/dev/null) && ln -s "$p" "$NOPY/$t"
+done
+rc=0
+out=$(env ORCH_STRICT_PROTOCOL=1 PATH="$NOPY" "$BASH" "$GRADER" < <(mk_hook_input "$T_STRING") 2>&1) || rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q 'python3 not found'; then
+  ok "(q) grader: python3 absent → fail-open exit 0 with notice (behavioral)"
 else
-  fail "(q) orch-protocol-grader.sh missing python3 guard" "grep found no guard"
+  fail "(q) grader python3-absent behavior" "rc=$rc out=$(printf '%s' "$out" | head -2 | tr '\n' ' ')"
 fi
-if grep -q 'command -v python3' "$SUBAGENT" && grep -q 'python3 not found' "$SUBAGENT"; then
-  ok "(q) subagent-stop.sh has python3 not-found guard"
+rc=0
+out=$(env ORCH_STRICT_STATUS=1 PATH="$NOPY" "$BASH" "$SUBAGENT" < <(mk_hook_input "$T_STRING") 2>&1) || rc=$?
+if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q 'python3 not found'; then
+  ok "(q) subagent-stop: python3 absent → fail-open exit 0 with notice (behavioral)"
 else
-  fail "(q) subagent-stop.sh missing python3 guard" "grep found no guard"
+  fail "(q) subagent-stop python3-absent behavior" "rc=$rc out=$(printf '%s' "$out" | head -2 | tr '\n' ' ')"
 fi
+rm -rf "$NOPY"
 
 printf '\n%s== Fail-open and profile gate ==%s\n' "$DIM" "$RESET"
 

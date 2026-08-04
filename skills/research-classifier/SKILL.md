@@ -71,4 +71,4 @@ On `RESEARCH_SKIP`, say nothing; announcing an automatic non-event is noise. The
 
 ## Examples
 
-The curated input→outcome table lives in [`EXAMPLES.md`](./EXAMPLES.md), as documentation for a human reader. It is **not** wired to the test: `tests/test-research-classifier.sh` hardcodes its cases and never opens `EXAMPLES.md`, so editing the table alone changes nothing and fails nothing. When a heuristic or example changes, update this file, `EXAMPLES.md`, and the test together — otherwise they drift silently.
+The curated input→outcome table lives in [`EXAMPLES.md`](./EXAMPLES.md), and it is wired to the test: `tests/test-research-classifier.sh` parses its rows as the case source. Flipping an expected outcome there, or changing a heuristic here, fails the test until both sides agree again.

@@ -196,7 +196,11 @@ SYNTH_SIZE=$(wc -c < "$SYNTH_TRANSCRIPT" | tr -d ' ')
 if [[ "$SYNTH_SIZE" -gt 100000 ]]; then
   ok "synthetic transcript is > 100KB (${SYNTH_SIZE} bytes) — tail path exercised"
 else
-  ok "synthetic transcript functional correctness confirmed (${SYNTH_SIZE} bytes)"
+  # NOT a pass: a fixture too small to reach the tail path proves nothing
+  # about it. Both branches of this if/else used to print ok, so the check
+  # could not fail in any world and inflated the pass count by one either way.
+  printf '  %snote%s synthetic transcript is only %s bytes — tail path NOT exercised this run\n' \
+    "$DIM" "$RESET" "$SYNTH_SIZE"
 fi
 
 # ============================================================

@@ -12,8 +12,15 @@
 #             and `await` are legal) and validates the pure-literal meta.
 #   Layer B — static token scan: catches constructs that are parse-valid JS but
 #             throw (or are banned) at runtime — the nondeterministic time/random
-#             builtins and module imports. A parse exits 0 on these, so a grep
-#             scan is required.
+#             builtins and module imports (static AND dynamic `import(...)`,
+#             which is parse-valid in the async-function-body grammar Layer A
+#             compiles). A parse exits 0 on these, so a grep scan is required.
+#             It is a TOKEN scan, not data-flow analysis: any mention of `Date`
+#             or `performance` is banned (which also catches aliasing like
+#             `const D = Date`), but an indirection that never writes the
+#             token — `globalThis["Date"]`, or aliasing `Math` before a
+#             computed access — is inherently beyond it. Layer B narrows the
+#             escape surface; it does not close it.
 #
 # Also enforces project-specific invariants:
 #   - meta must be a pure literal (script begins with `export const meta`).
@@ -44,6 +51,11 @@ fi
 
 while IFS= read -r file; do
   rel="${file#$ROOT/}"
+  # Counted when SEEN, not when passed: a file failing the meta check below
+  # used to `continue` before this increment, so a directory whose only .js
+  # failed also printed the end-of-run "no *.js at the top level" failure — a
+  # second, false diagnosis on top of the true one.
+  checked=$((checked+1))
 
   # The script must OPEN with the meta literal (pure-literal contract).
   first=$(grep -vE '^[[:space:]]*(//|$)' "$file" | head -1)
@@ -75,7 +87,15 @@ while IFS= read -r file; do
     fi
   fi
 
-  # Layer B — banned runtime-throw builtins + imports (parse-valid; a syntax check misses these)
+  # Layer B — banned runtime-throw builtins + imports (parse-valid; a syntax
+  # check misses these). Token bans, deliberately blunt in the fail-safe
+  # direction: `\bDate\b` / `\bperformance\b` reject ANY mention (so `new
+  # Date`, `Date.now`, `const D = Date`, and `new\nDate()` all fail — even in
+  # a comment, which is a false reject we accept). `Math` cannot be banned
+  # bare (Math.ceil ships in review-diff.js), so only `.random` and computed
+  # access `Math[...]` are. `import` is banned as a statement AND as dynamic
+  # `import(...)`. Not caught, per the docstring: indirection that never
+  # writes the token, e.g. `globalThis["Date"]`.
   while IFS= read -r pat; do
     [[ -z "$pat" ]] && continue
     if grep -nE "$pat" "$file" >/dev/null 2>&1; then
@@ -84,11 +104,12 @@ while IFS= read -r file; do
       fail=1
     fi
   done <<'PATS'
-Date\.now
+\bDate\b
 Math\.random
-performance\.now
-new[[:space:]]+Date
+Math[[:space:]]*\[
+\bperformance\b
 ^[[:space:]]*import[[:space:]]
+\bimport[[:space:]]*\(
 \brequire[[:space:]]*\(
 PATS
 
@@ -97,8 +118,6 @@ PATS
     echo "FAIL: $rel — contains a security-token regex; that set lives only in scripts/lib/orch-signals.sh and must arrive via args"
     fail=1
   fi
-
-  checked=$((checked+1))
 done < <(find "$DIR" -maxdepth 1 -name '*.js' | sort)
 
 # A directory that exists but holds nothing is not a pass. `workflows/` is named

@@ -692,6 +692,16 @@ if [[ -f "$SIGNALS_FILE" ]]; then
   # Extract the map block — everything inside ORCH_SIGNAL_CLASSES_MAP='\n ... \n'
   MAP_CONTENT=$(awk "/^ORCH_SIGNAL_CLASSES_MAP=/,/^'\$/" "$SIGNALS_FILE" \
                 | grep -E '^ORCH_SIG_[A-Z_]+=' || true)
+  # The extraction feeding zero rows into the loop below is not a clean pass —
+  # it is the guard silently ceasing to exist. Deleting (or emptying) the map
+  # in orch-signals.sh used to leave this suite green because the while loop
+  # simply never ran. A drift guard must fail when its source vanishes.
+  if [[ -z "$MAP_CONTENT" ]]; then
+    fail "SIGNAL_CLASSES_MAP extraction" \
+         "ORCH_SIGNAL_CLASSES_MAP in $SIGNALS_FILE is missing or empty — the drift loop below would run zero iterations and guard nothing"
+  else
+    ok "SIGNAL_CLASSES_MAP extracted ($(printf '%s\n' "$MAP_CONTENT" | wc -l | tr -d ' ') signal classes)"
+  fi
   while IFS='=' read -r var_name keyword; do
     [[ -z "$var_name" ]] && continue
     # (a) variable must be defined in the file

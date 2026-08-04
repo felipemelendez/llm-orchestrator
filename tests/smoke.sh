@@ -160,7 +160,7 @@ if should_run structural; then
     # catch, just relocated into the reporter.
     skipped "review-diff behavior (node not installed)"
   fi
-  check_out "research-classifier curated examples pass" "All 15 classifier checks passed" \
+  check_out "research-classifier curated examples pass" "classifier checks passed" \
             "${ROOT}/tests/test-research-classifier.sh"
   check_out "research-brief + orch-researcher contract pass" "All 42 brief/agent checks passed" \
             "${ROOT}/tests/test-research-brief.sh"
@@ -299,12 +299,17 @@ if should_run lock; then
   source "${ROOT}/scripts/lib/orch-lock.sh"
   TF="$SMOKE_TMP/lock.txt"
   rm -f "$TF" "$TF.lock" "$TF.lockdir"
+  # Each writer READ-MODIFY-WRITES the whole file: read it, pause, rewrite it
+  # with one line appended. The old writers were single `>>` appends — atomic
+  # at the syscall level on their own — so stubbing with_lock to a no-op still
+  # produced 10 lines and the check could not detect a missing lock. With a
+  # rewrite in the middle, an unserialised interleaving loses lines.
   for i in 1 2 3 4 5 6 7 8 9 10; do
-    ( with_lock "$TF" bash -c "echo line-$i >> '$TF'" ) &
+    ( with_lock "$TF" bash -c "c=\$(cat '$TF' 2>/dev/null || true); sleep 0.05; { [ -n \"\$c\" ] && printf '%s\n' \"\$c\"; echo line-$i; } > '$TF'" ) &
   done
   wait
   LINES=$(wc -l < "$TF" 2>/dev/null | tr -d ' ')
-  if [[ "$LINES" == "10" ]]; then ok "10 concurrent with_lock writers → 10 lines"
+  if [[ "$LINES" == "10" ]]; then ok "10 concurrent with_lock read-modify-write writers → 10 lines"
   else fail "Portable lock concurrent" "expected 10 lines, got $LINES"; fi
 
   # Stress: injection-safe append

@@ -1,6 +1,6 @@
 # Research classifier — curated examples
 
-These are the inputs `tests/test-research-classifier.sh` runs to verify the rules stay consistent. They are ground truth: if a heuristic change in [`SKILL.md`](./SKILL.md) moves any of these to the wrong outcome, the test fails — surface it before merge.
+These rows are parsed by `tests/test-research-classifier.sh` as its case source — the table below is the input, not a copy of it. They are ground truth: if a heuristic change in [`SKILL.md`](./SKILL.md) moves any of these to the wrong outcome, or an Expected cell here stops matching the heuristics, the test fails — surface it before merge. Keep the row format (`| "Input" | \`NEEDED\`/\`SKIP\` | why |`); the test also fails if the table stops parsing.
 
 | Input                                                       | Expected | Why                                              |
 |-------------------------------------------------------------|----------|--------------------------------------------------|

@@ -27,6 +27,25 @@ checked_skills=0
 checked_commands=0
 checked_agents=0
 
+# Frontmatter fields must come from the FIRST ---…--- block ONLY. These scans
+# used to match `^name:`/`^description:` anywhere in the file, so a key deleted
+# from the frontmatter was satisfied by a body line — and that masking was live,
+# not theoretical: skills/writing-skills/SKILL.md's body carries literal
+# `name:`/`description:` example lines. Emits nothing when line 1 is not `---`
+# or the key is absent from the block.
+fm_field() { # <file> <key>
+  awk -v key="$2" '
+    NR==1 { if ($0 !~ /^---[[:space:]]*$/) exit; next }
+    /^---[[:space:]]*$/ { exit }
+    substr($0, 1, length(key) + 1) == key ":" {
+      v = substr($0, length(key) + 2)
+      sub(/^[[:space:]]+/, "", v)
+      print v
+      exit
+    }
+  ' "$1" | tr -d '\r'
+}
+
 # Existing skill names (used to validate command references). Bash 3.2 compatible.
 skill_names=()
 while IFS= read -r line; do
@@ -44,16 +63,16 @@ while IFS= read -r dir; do
     continue
   fi
 
-  # The file must OPEN with a frontmatter block. The name/description scans
-  # below match `^name:` anywhere in the file, so without this a body line
-  # that happens to start with "name:" satisfies them with no frontmatter.
+  # The file must OPEN with a frontmatter block. fm_field also scopes itself
+  # to that block, so a body line starting with "name:" can no longer satisfy
+  # the scans below.
   if [[ "$(head -1 "$file" | tr -d '\r')" != "---" ]]; then
     echo "FAIL: $file does not open with a --- frontmatter block"
     fail=1
   fi
 
-  fm_name=$(awk '/^name:/ {print $2; exit}' "$file" | tr -d '\r')
-  fm_desc=$(awk '/^description:/ {sub(/^description:[ ]*/,""); print; exit}' "$file" | tr -d '\r')
+  fm_name=$(fm_field "$file" name)
+  fm_desc=$(fm_field "$file" description)
   lines=$(wc -l < "$file" | tr -d ' ')
 
   if [[ "$fm_name" != "$name" ]]; then
@@ -169,7 +188,7 @@ fi
 
 # Commands
 while IFS= read -r file; do
-  fm_desc=$(awk '/^description:/ {sub(/^description:[ ]*/,""); print; exit}' "$file" | tr -d '\r')
+  fm_desc=$(fm_field "$file" description)
   if [[ -z "$fm_desc" ]]; then
     echo "FAIL: $file missing description"
     fail=1
@@ -203,9 +222,9 @@ done < <(find "$ROOT/commands" -maxdepth 1 -name '*.md' | sort)
 if [[ -d "$ROOT/agents" ]]; then
   while IFS= read -r file; do
     name_field=$(basename "$file" .md)
-    fm_name=$(awk '/^name:/ {print $2; exit}' "$file" | tr -d '\r')
-    fm_desc=$(awk '/^description:/ {sub(/^description:[ ]*/,""); print; exit}' "$file" | tr -d '\r')
-    fm_model=$(awk '/^model:/ {print $2; exit}' "$file" | tr -d '\r')
+    fm_name=$(fm_field "$file" name)
+    fm_desc=$(fm_field "$file" description)
+    fm_model=$(fm_field "$file" model)
 
     if [[ "$fm_name" != "$name_field" ]]; then
       echo "FAIL: $file frontmatter name='$fm_name' but filename='$name_field'"
@@ -215,12 +234,12 @@ if [[ -d "$ROOT/agents" ]]; then
       echo "FAIL: $file missing description"
       fail=1
     fi
-    fm_effort=$(awk '/^effort:/ {print $2; exit}' "$file" | tr -d '\r')
+    fm_effort=$(fm_field "$file" effort)
     if [[ -n "$fm_effort" && ! "$fm_effort" =~ ^(low|medium|high|xhigh|max)$ ]]; then
       echo "FAIL: $file effort='$fm_effort' not in low|medium|high|xhigh|max"
       fail=1
     fi
-    fm_maxturns=$(awk '/^maxTurns:/ {print $2; exit}' "$file" | tr -d '\r')
+    fm_maxturns=$(fm_field "$file" maxTurns)
     if [[ -n "$fm_maxturns" && ! "$fm_maxturns" =~ ^[1-9][0-9]*$ ]]; then
       echo "FAIL: $file maxTurns='$fm_maxturns' is not a positive integer"
       fail=1
@@ -260,6 +279,23 @@ for req in $REQUIRED_SKILLS; do
     echo "FAIL: core skill missing: skills/$req/SKILL.md (deletion must be deliberate — update REQUIRED_SKILLS in the same commit)"
     fail=1
   fi
+done
+
+# The command catalogue tables rot the same way the counts did: AGENTS.md and
+# docs/commands-guide.md are hand-maintained listings of commands/*.md, and by
+# 2026-08 they had drifted to 13 and 11 of the 14 commands that exist — fixed by
+# hand, which without this check they will need again. Every command file must
+# have a `| `/llm-orchestrator:<name>`` table row in BOTH documents. Adding a
+# command therefore forces its catalogue rows in the same commit.
+for _cmd_file in "$ROOT"/commands/*.md; do
+  [[ -f "$_cmd_file" ]] || continue
+  _cmd="$(basename "$_cmd_file" .md)"
+  for _doc in "$ROOT/AGENTS.md" "$ROOT/docs/commands-guide.md"; do
+    if ! command grep -qE "^\| *\`/llm-orchestrator:${_cmd}\`" "$_doc"; then
+      echo "FAIL: ${_doc#$ROOT/} catalogue table has no row for /llm-orchestrator:${_cmd} (commands/${_cmd}.md exists — the listing has rotted)"
+      fail=1
+    fi
+  done
 done
 
 # Docs quote this script's own summary line as an example of a passing run, and a

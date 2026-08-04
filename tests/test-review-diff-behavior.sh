@@ -36,7 +36,19 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 fail=0
 
-command -v node >/dev/null 2>&1 || { echo "SKIP: node not found"; exit 0; }
+# A skip is not a pass: under ORCH_REQUIRE_DEPS=1 (set in CI) a missing
+# dependency is a hard failure — same contract as the other suites' skip_suite
+# helper. This line used to exit 0 SKIP unconditionally, so a node-less runner
+# reported this suite green under the very flag meant to prevent that.
+skip_suite() { # <suite-name> <reason>
+  if [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
+    echo "FAIL: $1 — $2 (ORCH_REQUIRE_DEPS=1)"
+    exit 1
+  fi
+  echo "SKIP: $1 ($2)"
+  exit 0
+}
+command -v node >/dev/null 2>&1 || skip_suite test-review-diff-behavior 'node not found'
 
 TMP=$(mktemp -d)
 cleanup() { rm -rf "${TMP}" 2>/dev/null || true; }
@@ -94,6 +106,12 @@ const FINDINGS = {
   'floor-edge':   [F('at-floor', 'critical', 0.8), F('near-floor', 'critical', 0.79)],
   'sec-finds':    [F('sec-crit', 'critical', 0.9), F('sec-low', 'important', 0.4)],
   'junk-only':    ['junk'],
+  // Confidence missing entirely, and typed as a string: both demote to notes
+  // (visible — not a fail-open) and both must be COUNTED, the way a coerced
+  // severity is. Before the counter, this loss was the one silent asymmetry
+  // left in the return's accounting.
+  'bad-confidence': [{ file: 'q-noconf', line: '1', severity: 'critical', claim: 'c', fix: 'f' },
+                     F('q-strconf', 'critical', '0.9')],
 }
 
 const shaped = (mode) => {
@@ -295,6 +313,7 @@ want   "${OK}" '"failedDimensions":\[\]'                "healthy: no losses"
 want   "${OK}" '"refuted":\[\]'                         "healthy: empty refuted list present"
 want   "${OK}" '"droppedFindings":0[,}]'                "healthy: zero dropped"
 want   "${OK}" '"coercedSeverities":0[,}]'              "healthy: zero coerced"
+want   "${OK}" '"nonNumericConfidences":0[,}]'          "healthy: zero non-numeric confidences"
 want   "${OK}" '"unverifiedFindings":0[,}]'             "healthy: zero unverified"
 
 # =============================================================================
@@ -364,7 +383,8 @@ want "${EARLY}" 'early-exit before quality/security'  "early exit: logged"
 # BOTH paths — a caller reading one gets `undefined` otherwise, which is how
 # `incomplete` was silently absent here before.
 for f in verifyBatches unjudgedFindings malformedVerdicts stagesRun failedDimensions \
-         incomplete refuted droppedFindings coercedSeverities unverifiedFindings; do
+         incomplete refuted droppedFindings coercedSeverities nonNumericConfidences \
+         unverifiedFindings; do
   want "${EARLY}" "\"${f}\":" "early exit: carries ${f}"
 done
 
@@ -411,6 +431,15 @@ want   "${BSEVQ}" '"confirmedFiles":\["q-caps","q-imp","q-weird"\]' \
                   "bad severity (quality): all three reach the skeptic pass"
 reject "${BSEVQ}" '"severity":"blocker"'           "bad severity (quality): junk severity never surfaces"
 want   "${BSEVQ}" '"coercedSeverities":1[,}]'      "bad severity (quality): clamp counted"
+
+# A missing or non-numeric confidence demotes the finding to a note — visible,
+# so not a fail-open — but the demotion must be COUNTED like a coerced
+# severity is. It used to be the one silent asymmetry in the accounting.
+NC=$(run '{"quality":"bad-confidence"}')
+want   "${NC}" '"noteFiles":\["q-noconf","q-strconf"\]'  "bad confidence: demoted to notes, still visible"
+reject "${NC}" '"confirmedFiles":\[[^]]*q-'              "bad confidence: never confirmed"
+want   "${NC}" '"nonNumericConfidences":2[,}]'           "bad confidence: both counted"
+want   "${NC}" '"coercedSeverities":0[,}]'               "bad confidence: not double-booked as a severity clamp"
 
 # =============================================================================
 # 6. The confidence floor and the blocking split.
@@ -599,8 +628,8 @@ for d in '{"diff":""}' '{"diff":"  \n  "}'; do
   want   "${ED}" '"stagesRun":\[\]'                "empty diff: no stage ran"
   want   "${ED}" '"confirmed":\[\]'                "empty diff: no findings invented"
   want   "${ED}" 'No diff'                         "empty diff: logged"
-  for f in refuted droppedFindings coercedSeverities unverifiedFindings verifyBatches \
-           unjudgedFindings malformedVerdicts notes; do
+  for f in refuted droppedFindings coercedSeverities nonNumericConfidences \
+           unverifiedFindings verifyBatches unjudgedFindings malformedVerdicts notes; do
     want "${ED}" "\"${f}\":" "empty diff: carries ${f}"
   done
 done

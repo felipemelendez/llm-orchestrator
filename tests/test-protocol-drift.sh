@@ -34,9 +34,16 @@ fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((
 HEADERS="Changed: Found: Blocked: Issues: Plan: Status:"
 
 printf '%s== canonical file defines the protocol ==%s\n' "$DIM" "$RESET"
+# Each shape must have its own numbered `### N. <Shape>` section heading. A
+# bare-word grep could never fail: every shape word also appears in prose (the
+# intro, cross-references), so deleting an entire section — verified with
+# "### 3. Blocked" — left this check green. The heading is the definition; the
+# word is not.
 missing=""
-for h in $HEADERS; do grep -q "${h%:}" "$CANON" || missing="$missing $h"; done
-[[ -z "$missing" ]] && ok "canonical names all six shapes" || fail "canonical shapes" "missing:$missing"
+for h in $HEADERS; do
+  grep -qE "^### [0-9]+\. ${h%:}( |$)" "$CANON" || missing="$missing $h"
+done
+[[ -z "$missing" ]] && ok "canonical defines all six shapes (numbered section headings)" || fail "canonical shapes" "no '### N. <shape>' heading for:$missing"
 grep -q 'DONE | DONE_WITH_CONCERNS | PARTIAL | BLOCKED | NEEDS_CONTEXT' "$CANON" \
   && ok "canonical Status enum includes PARTIAL" || fail "canonical enum" "PARTIAL missing from enum line"
 

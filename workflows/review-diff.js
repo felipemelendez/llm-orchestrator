@@ -89,6 +89,16 @@ const normalizeSeverity = (f) => {
   coercedSeverities += 1
   return { ...f, severity: 'important' }
 }
+// A missing or non-numeric confidence fails passesFloor and demotes the
+// finding to a note. That is deliberate (it stays visible, so it is not a
+// fail-open) but it is a loss of standing all the same, and it was the one
+// demotion the return did not count — unlike a bad severity, which is clamped
+// AND tallied in coercedSeverities. Same accounting, same unit: per finding.
+let nonNumericConfidences = 0
+const countConfidence = (f) => {
+  if (typeof f.confidence !== 'number') nonNumericConfidences += 1
+  return f
+}
 
 // A review of nothing must not read as a clean review: no agents are paid for,
 // and the return is loudly incomplete.
@@ -107,6 +117,7 @@ if (diff.trim() === '') {
     malformedVerdicts: 0,
     droppedFindings: 0,
     coercedSeverities: 0,
+    nonNumericConfidences: 0,
     unverifiedFindings: 0,
   }
 }
@@ -122,7 +133,7 @@ const stage1 = await agent(
 // counted; severity is normalised before any blocking decision is made.
 const specDied = !liveFindings(stage1)
 const specDropped = droppedOf(stage1)
-const specAll = specDied ? [] : stage1.findings.filter(isFinding).map(normalizeSeverity)
+const specAll = specDied ? [] : stage1.findings.filter(isFinding).map(normalizeSeverity).map(countConfidence)
 const specFindings = specAll.filter(passesFloor)
 const specBlocks = specFindings.filter(isBlocking)
 
@@ -153,6 +164,7 @@ if (specBlocks.length > 0) {
     malformedVerdicts: 0,
     droppedFindings: specDropped,
     coercedSeverities,
+    nonNumericConfidences,
     unverifiedFindings: confirmed.length,
   }
 }
@@ -198,7 +210,7 @@ if (failedDimensions.length) {
 
 // Only live dimensions contribute findings; junk elements are dropped (counted
 // above per stage) and severity is normalised before any partitioning.
-const otherAll = stage23.filter(liveFindings).flatMap((r) => r.findings).filter(isFinding).map(normalizeSeverity)
+const otherAll = stage23.filter(liveFindings).flatMap((r) => r.findings).filter(isFinding).map(normalizeSeverity).map(countConfidence)
 const otherFindings = otherAll.filter(passesFloor)
 const droppedFindings = specDropped + stageDropped.reduce((x, y) => x + y, 0)
 if (droppedFindings > 0) {
@@ -383,5 +395,8 @@ return {
   droppedFindings,
   // Findings whose severity was outside the enum and clamped to important.
   coercedSeverities,
+  // Findings whose confidence was missing or non-numeric: they demoted to
+  // notes (visible, not dropped), counted here the way coerced severities are.
+  nonNumericConfidences,
   unverifiedFindings,
 }

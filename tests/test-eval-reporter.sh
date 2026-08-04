@@ -21,7 +21,18 @@ fails=0
 ok()   { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1"; fails=$((fails + 1)); }
 
-command -v python3 >/dev/null 2>&1 || { echo "SKIP: python3 not found"; exit 0; }
+# A skip is not a pass: under ORCH_REQUIRE_DEPS=1 (set in CI) a missing
+# dependency is a hard failure — same contract as the other suites' skip_suite
+# helper. This line used to exit 0 SKIP unconditionally.
+skip_suite() { # <suite-name> <reason>
+  if [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
+    echo "FAIL: $1 — $2 (ORCH_REQUIRE_DEPS=1)"
+    exit 1
+  fi
+  echo "SKIP: $1 ($2)"
+  exit 0
+}
+command -v python3 >/dev/null 2>&1 || skip_suite test-eval-reporter 'python3 not found'
 [[ -f "$RUNNER" ]] || { echo "FAIL: $RUNNER missing"; exit 1; }
 
 echo "== eval reporter =="
