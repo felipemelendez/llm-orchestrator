@@ -101,7 +101,11 @@ else
 
   # Frontmatter — match the validator's expectations
   must_grep "$AGENT" '^name: orch-researcher$' "Frontmatter name matches filename"
-  must_grep "$AGENT" '^model: opus$' "Model is opus (fresher knowledge cutoff than fable)"
+  # 2026-08-03: repinned opus -> fable per the owner's standing model policy.
+  # The researcher verifies against LIVE sources, so retrieval capability
+  # outranks cutoff freshness; the trade-off (Opus 5's May-2026 cutoff is
+  # fresher than Fable 5's Jan-2026) is recorded in docs/anthropic-ecosystem.md.
+  must_grep "$AGENT" '^model: fable$' "Model is fable (owner policy; live-source retrieval outranks cutoff freshness)"
   # Effort must NOT be pinned: agents inherit the session preference (HAL found
   # higher effort reduced accuracy in most runs; Anthropic says effort is a
   # general preference, and pinning would override the user's session choice).

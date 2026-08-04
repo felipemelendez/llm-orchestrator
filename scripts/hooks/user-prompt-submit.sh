@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # LLM Orchestrator UserPromptSubmit hook.
-# Fires before Claude processes each user message. Injects a one-line reminder
-# of the Concise Agent Protocol so the agent's reply lands in a named shape.
+# Fires before Claude processes each user message. Injects a one-line nudge
+# toward the Concise Agent Protocol so the agent's reply lands in a named shape.
+# One line is the whole budget: this is the only surface billed on every turn.
 #
 # Gated by ORCH_HOOK_PROFILE: skipped under minimal.
 # Disabled if ORCH_DISABLED_HOOKS contains "orch-user-prompt-submit".
@@ -49,20 +50,31 @@ if [[ -n "${INPUT}" && "${ORCH_HOOK_DRY_RUN:-0}" != "1" ]]; then
   fi
 fi
 
-# The reminder's single source is concise-agent-protocol.md — the marked
-# "Per-turn reminder" block. Extract it at runtime; the embedded copy below is
-# ONLY the fallback for a broken install (canonical file unreadable), and
+# The nudge's single source is concise-agent-protocol.md — the marked
+# "Turn nudge" block. Extract it at runtime; the embedded copy below is ONLY the
+# fallback for a broken install (canonical file unreadable), and
 # tests/test-protocol-drift.sh fails if the two ever diverge.
+#
+# This block is a DISTILLATION of the protocol, not a copy of it. Everything the
+# agent needs once — the skill-precedence ordering, the working rules, the
+# routing table — is injected once by SessionStart (the using-orchestrator eager
+# block) or read from the skill on demand. Restating it here bought a second copy
+# of text already in the window: the behaviour that made per-turn repetition pay
+# off ("Earlier Claude models could sometimes need repeated instructions or be
+# more likely to listen to instructions at the end of their context window than
+# at the start") is named as an EARLIER-model trait in Anthropic's Claude 5
+# context-engineering guidance, and this repo's own ablation
+# (tests/evals/cases/shape-header-no-turn-hook.json) measured the hook's turn-one
+# contribution at zero. What survives is the output-format contract the Stop-hook
+# grader enforces, kept short per the Opus 5 guidance to "pair the instruction
+# with a short reminder near the end of the prompt".
 CANON="${HOOK_DIR}/../../concise-agent-protocol.md"
 REMINDER=""
 if [[ -f "${CANON}" ]]; then
-  REMINDER=$(awk '/<!-- orch-turn-reminder-start -->/{f=1;next} /<!-- orch-turn-reminder-end -->/{f=0} f' "${CANON}" 2>/dev/null)
+  REMINDER=$(awk '/<!-- orch-turn-nudge-start -->/{f=1;next} /<!-- orch-turn-nudge-end -->/{f=0} f' "${CANON}" 2>/dev/null)
 fi
 if [[ -z "${REMINDER}" ]]; then
-  REMINDER='LLM Orchestrator — every turn:
-- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
-- When two skills both match, run them in this order: process (brainstorming, systematic-debugging, research-classifier) → implementation (test-driven-development, writing-plans, dispatching-*) → verification (requesting-code-review, verification-before-completion, finishing-a-branch).
-- Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.'
+  REMINDER='LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.'
 fi
 
 # Native shell JSON escape — no python3 dependency.
@@ -80,7 +92,7 @@ json_escape() {
 }
 
 if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
-  printf 'orch-dry-run[user-prompt-submit]: would inject protocol reminder (%s chars) as UserPromptSubmit additionalContext\n' "${#REMINDER}" >&2
+  printf 'orch-dry-run[user-prompt-submit]: would inject protocol turn nudge (%s chars) as UserPromptSubmit additionalContext\n' "${#REMINDER}" >&2
   exit 0
 fi
 

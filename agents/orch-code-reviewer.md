@@ -2,7 +2,7 @@
 name: orch-code-reviewer
 description: Stage 2 reviewer — answers "is the code correct, safe, idiomatic, minimal?" Use after stage 1 passes. Returns an Issues block.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: fable
 maxTurns: 30
 ---
 

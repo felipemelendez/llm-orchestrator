@@ -3,14 +3,17 @@
 #
 # Workflow scripts (workflows/*.js) run inside Claude Code's Workflow engine, which
 # imposes constraints that a syntax-only parse cannot fully enforce. This validator
-# runs TWO layers, because `node --check` is necessary but NOT sufficient:
+# runs TWO layers. Neither is `node --check`: on a .js file containing `export`
+# (which every workflow must), `node --check` exits 0 whatever the syntax, so it
+# can never fail here (measured on node v24.10.0; see the block comment at Layer A).
 #
-#   Layer A — node --check: catches syntax errors and most TypeScript annotations.
+#   Layer A — tests/lib/check-workflow-script.mjs: compiles the script as an async
+#             function body (the grammar the engine runs, where top-level `return`
+#             and `await` are legal) and validates the pure-literal meta.
 #   Layer B — static token scan: catches constructs that are parse-valid JS but
 #             throw (or are banned) at runtime — the nondeterministic time/random
-#             builtins and module imports. `node --check` exits 0 on these, so a
-#             grep scan is required. (Confirmed: a file containing Date.now /
-#             Math.random / import passes `node --check`.)
+#             builtins and module imports. A parse exits 0 on these, so a grep
+#             scan is required.
 #
 # Also enforces project-specific invariants:
 #   - meta must be a pure literal (script begins with `export const meta`).
@@ -31,10 +34,8 @@ if [[ ! -d "$DIR" ]]; then
 fi
 
 have_node=1
-command -v node >/dev/null 2>&1 || { have_node=0; echo "WARN: node not found — skipping Layer A (node --check); Layer B still runs" >&2; }
+command -v node >/dev/null 2>&1 || { have_node=0; echo "WARN: node not found — skipping Layer A (syntax + meta check); Layer B still runs" >&2; }
 
-TMPDIR_VW="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR_VW"' EXIT
 SCRIPT_CHECKER="$ROOT/tests/lib/check-workflow-script.mjs"
 if (( have_node )) && [[ ! -f "$SCRIPT_CHECKER" ]]; then
   echo "FAIL: script checker missing: $SCRIPT_CHECKER"
@@ -74,7 +75,7 @@ while IFS= read -r file; do
     fi
   fi
 
-  # Layer B — banned runtime-throw builtins + imports (parse-valid; node --check misses these)
+  # Layer B — banned runtime-throw builtins + imports (parse-valid; a syntax check misses these)
   while IFS= read -r pat; do
     [[ -z "$pat" ]] && continue
     if grep -nE "$pat" "$file" >/dev/null 2>&1; then
@@ -118,7 +119,7 @@ if (( fail == 0 )); then
     # Layer A did not run, so this was not a full validation and must not
     # print the full-validation pass line — callers (smoke.sh) key off the
     # wording and would otherwise book a half-run as a full pass.
-    echo "OK (degraded): $checked workflow script(s) scanned — node missing, Layer A (node --check) skipped"
+    echo "OK (degraded): $checked workflow script(s) scanned — node missing, Layer A (syntax + meta check) skipped"
   fi
 else
   echo "FAILED"

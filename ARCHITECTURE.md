@@ -1,6 +1,6 @@
 # Architecture
 
-LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory. One optional, additive exception: `workflows/*.js` — deterministic orchestration scripts for Claude Code's `Workflow` tool. These run only inside that harness and are a *preferred accelerator* for two layers (parallel dispatch and code review); the markdown path stays canonical. The skills/commands/agent prompts (markdown) are portable to any harness that can read them; the hook-based **enforcement** (protocol grader, research gate, guards, handoff) is Claude Code-specific — see "Why this shape" for the precise split. See the "Workflows" entry in the Component contract.
+LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory. One optional, additive exception: `workflows/*.js` — deterministic orchestration scripts for Claude Code's `Workflow` tool. These run only inside that harness and are a *preferred accelerator* for exactly one layer — code review (Layer 6); the markdown path stays canonical, and Layer 4 is deliberately not scripted (see Layer 6's scope decision). The skills/commands/agent prompts (markdown) are portable to any harness that can read them; the hook-based **enforcement** (protocol grader, research gate, guards, handoff) is Claude Code-specific — see "Why this shape" for the precise split. See the "Workflows" entry in the Component contract.
 
 This document has two parts. The first part — **Nine layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
 
@@ -93,8 +93,9 @@ gates Stage 2 (early-exit on a spec mismatch), Stage 3 stays conditional on the
 confidence-filtered and adversarially verified before they surface. The canonical markdown stages
 remain the fallback. Routing lives in the `using-workflows` skill.
 
-**One workflow is the whole intended surface** — see
-[`docs/llm-orchestrator/research/2026-08-03-workflow-scope-decision.md`](./docs/llm-orchestrator/research/2026-08-03-workflow-scope-decision.md).
+**One workflow is the whole intended surface.** The full evidence is a dated scope-decision brief
+under `docs/llm-orchestrator/research/` (a local working directory, gitignored and not
+distributed); the operative reasons are recorded here.
 Layer 4 (parallel dispatch) is *not* a planned second script: `agent()` has no `cwd` option, so a
 scripted writer fan-out cannot be pinned to a pre-materialized worktree, and the native
 `isolation: 'worktree'` branches from the default branch rather than the parent's `HEAD`. The two
@@ -139,7 +140,7 @@ Reinforced two more ways: a `UserPromptSubmit` hook injects a per-turn reminder 
 
 ### Layer 8 — Pre-spec verification
 
-Before `brainstorming` writes a spec or `writing-plans` writes a plan, the controller dispatches `orch-researcher` (Opus) to verify the planned approach against current docs and on-disk state. The researcher returns one of four outcomes: `VERIFIED`, `CONTRADICTED` (halts the workflow until the spec is revised), `COULDN'T_VERIFY` (annotates the spec), or `NOT_APPLICABLE`. The classifier in front of it is biased toward `SKIP` — most tasks don't trigger research.
+Before `brainstorming` writes a spec or `writing-plans` writes a plan, the controller dispatches `orch-researcher` (Fable 5) to verify the planned approach against current docs and on-disk state. The researcher returns one of four outcomes: `VERIFIED`, `CONTRADICTED` (halts the workflow until the spec is revised), `COULDN'T_VERIFY` (annotates the spec), or `NOT_APPLICABLE`. The classifier in front of it is biased toward `SKIP` — most tasks don't trigger research.
 
 ### Layer 9 — Context-aware handoff
 
@@ -208,7 +209,7 @@ How the pieces fit together at the file level.
 ### Templates
 
 - File: `templates/<name>.md`.
-- Used by commands. Output committed to `docs/llm-orchestrator/{specs,plans,reviews,research,handoffs}/YYYY-MM-DD-<slug>.md`.
+- Used by commands. Output lands at `docs/llm-orchestrator/{specs,plans,reviews,research,handoffs}/YYYY-MM-DD-<slug>.md` in the user's project, where it is committed as a version-controlled handoff. (In *this* repo, `.gitignore` keeps the internally-generated `specs/`, `plans/`, `handoffs/`, and `research/` local-only; only `reviews/` is committed — so never point a shipped skill at a file under the ignored four.)
 
 ### Workflows (Claude-Code-only accelerator)
 
@@ -226,8 +227,12 @@ How the pieces fit together at the file level.
   structured `schema`); it adds no new agent roles.
 - Gate logic is never re-derived in JS — the controller computes it in shell (e.g.
   `security_sensitive` from `scripts/lib/orch-signals.sh`) and passes it in via `args`.
-- Linter: `tests/validate-workflows.sh` (syntax via `node --check` **plus** a static token scan,
-  because parse-only validation does not catch the runtime-throw builtins).
+- Linter: `tests/validate-workflows.sh`. It compiles each script as an **async-function body** via
+  `tests/lib/check-workflow-script.mjs` — the grammar the engine runs, where top-level `return`
+  and `await` are legal — and validates the pure-literal `meta`, **plus** a static token scan for
+  the runtime-throw builtins a parse cannot catch. It deliberately does not use `node --check`:
+  on a `.js` file containing `export` (which every workflow must), `node --check` exits 0 whatever
+  the syntax.
 
 ### Context-handoff components
 
@@ -261,7 +266,7 @@ How the pieces fit together at the file level.
 ┌──────────────────────────────────────────────────────────────────┐
 │ Bootstrap: SessionStart hook                                     │
 │   - injects using-orchestrator (Concise Agent Protocol)          │
-│     plain-voice protocol core (~545 tokens; body on demand)      │
+│     plain-voice protocol core (~610 tokens; body on demand)      │
 └─────┬────────────────────────────────────────────────────────────┘
       │
       ▼
@@ -349,12 +354,12 @@ Claude Code itself, not by this plugin's SessionStart hook).
 | `skills/`, `commands/`        | Machine-readable artifacts the harness loads     |
 | `agents/`                     | Subagent definitions (`orch-implementer`, etc.)  |
 | `templates/`                  | Spec / plan / review templates committed per use |
-| `workflows/`                  | Claude-Code-only `Workflow` scripts; preferred accelerator for Layer 6 today (Layer 4 planned); markdown canonical |
+| `workflows/`                  | Claude-Code-only `Workflow` scripts; preferred accelerator for Layer 6, the whole intended surface (Layer 4 deliberately not scripted); markdown canonical |
 | `hooks/`, `scripts/`          | Glue + runtime guardrails                        |
 | `examples/`                   | Plugin manifest examples                          |
 | `docs/examples/`              | Illustrative response-shape examples             |
 | `tests/`                      | Validators (smoke, drift detection, portability) |
-| `docs/llm-orchestrator/handoffs/` | Versioned controller-handoff artifacts (one per long task) |
+| `docs/llm-orchestrator/handoffs/` | Controller-handoff artifacts (one per long task; committed in user projects, gitignored here) |
 
 ---
 

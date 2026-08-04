@@ -5,6 +5,105 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed — the per-turn injection is now a 230-character nudge
+
+The `UserPromptSubmit` hook injected a 607-character reminder every turn (785 characters at
+v0.6.0) that restated what the SessionStart eager block already taught. The repo's own ablation
+(`tests/evals/cases/shape-header-no-turn-hook.json`) had measured the hook's turn-one contribution
+at zero, and Anthropic's Claude 5 context-engineering guidance names per-turn repetition an
+earlier-model trait. The injected surface is now two blocks with two schedules, both
+single-sourced from marked blocks in `concise-agent-protocol.md`:
+
+- **Post-compaction recovery core** (`SessionStart`, `source=compact`) — the one moment earlier
+  context is genuinely gone, so this block stands alone.
+- **230-character per-turn nudge** — only the output-format contract the Stop-hook grader
+  enforces. `tests/test-protocol-drift.sh` pins both blocks to their sources, enforces a 300-byte
+  ceiling on the nudge so it cannot re-bloat, and rejects a nudge that duplicates the recovery
+  core. The skill-precedence ordering moved to the `using-orchestrator` eager block (paid once per
+  session, not per turn).
+
+Two skills were trimmed in the same pass. `using-workflows` and `requesting-code-review` had
+grown 1.68× and 1.40× (bytes, since the workflow work began) with maintainer-facing prose —
+multi-agent cost attribution, `ORCH_WORKFLOWS` history, return-field semantics, review-filter
+methodology, anti-pattern bullets restating rules already in the same file. That prose moved to
+the dated scope-decision brief under `docs/llm-orchestrator/research/` (local-only) or was cut;
+every operative rule stays in the skills. Shipped skills no longer point readers at files under
+`docs/llm-orchestrator/research/`, which `.gitignore` keeps out of every clone and install —
+remaining references say plainly that the briefs are local working artifacts.
+
+Eval metadata was corrected to match: the ablation case and `results/benchmark.json` now state
+that the 2026-07-28 run measured the 785-character pre-trim surface (annotation added; the
+recorded rates and costs are untouched).
+
+### Fixed — guard, lock, and worktree-engine defects from three cold-review passes
+
+Beyond the adversarial-review fixes recorded below, this branch closed a second wave, each
+reproduced end-to-end before fixing and each pinned by a test:
+
+- **`ORCH_HOOK_PROFILE=strict` now blocks.** Documented as "all hooks active and blocking" since
+  it existed, but no script branched on it — blocking came only from the four `ORCH_STRICT_*`
+  knobs. The profile now implies all four; an explicit `ORCH_STRICT_X=0` still opts a single
+  check out. The verify gate's cosmetic exemption was scoped to the prescribed form in the same
+  commit — as a bare substring it was a kill switch trippable by merely quoting the phrase.
+- **`--force` revokes the checkout/switch creation exemption.** `git checkout -f -b new` was
+  allowed because the `-b` exemption was checked before force — measured on git 2.54 to discard
+  an uncommitted edit that plain `-b` carries over.
+- **A TOCTOU race in the stale-lock steal.** `mv` renames a path, not the inode a waiter
+  inspected, so two waiters judging the same dead holder could both proceed — two writers. Both
+  steal paths now verify after winning the rename (re-read the pid/age of the directory actually
+  moved) and move it straight back if it is not the one condemned.
+- **SIGKILL stranded the `mkdir`-fallback lock forever.** No trap runs, nothing recorded the
+  holder, and the pruner used `find -type f` — which can never remove a lockdir *directory* —
+  while claiming it cleared stranded locks. Holders now record their PID; a waiter steals via
+  atomic `mv` only from a dead holder or a stale dir; a live holder is never stolen
+  (`tests/test-lock-reclaim.sh`).
+- **`rollback_all` could force-remove another session's live worktree.** Two independent
+  ownership proofs (registry owner + the worktree's own lock stamp) each veto the removal,
+  failing toward SKIP — a leaked worktree is recoverable, a destroyed one is not.
+- **The worktree engine was Linux-broken.** GNU `stat -f %m` succeeds and prints the *mount
+  point*, so age arithmetic died fatally inside registry pruning on every Linux run after the
+  first claim.
+- **Brace expansion in the guard is bounded.** Expansion is multiplicative; 26 decorative groups
+  cost 26 s, and a PreToolUse hook that times out is a hook *failure*, which lets the command
+  run — padding a destructive command was a denial-of-guard.
+- **Five more guard bypasses and three more lock defects** from a second cold review, every one
+  reproduced through the real hook: a bare env-assignment prefix consumed the command word
+  (`FOO=1 rm -rf .git` allowed), uppercase `rm -R` unmatched, unexpanded globs (`rm -rf .git*`)
+  defeating the exact-string path rule, one poisoned brace token disarming the entire semantic
+  layer via exit 3, and `git branch -M` force-renaming over a branch exactly as `-D` drops it.
+  On the lock side: a put-back `mv` that *nested* into the new owner's live lockdir (stranding it
+  for the full TTL), a failed pid write making a lock unreleasable by its own holder, and a
+  non-numeric `ORCH_LOCK_STALE_SECS` silently disabling the mutex under `set -u`. The amplifier
+  behind the guard set: the hook exits 0 on a confident classifier verdict, so each classifier
+  gap was a full allow. Also fixed earlier in the same review series: an unbounded steal spin
+  (100% CPU with an unreachable timeout).
+- **The suite stopped lying.** Skips printed as `PASS: … (skipped)` and smoke greped the prefix,
+  so a missing dependency read as green exactly where the guards are weakest. Skips now print
+  `SKIP:`, and `ORCH_REQUIRE_DEPS=1` (set in CI) makes a missing dependency a hard failure.
+
+### Fixed — test fixtures are concurrency-safe
+
+`tests/test-validate-workflows.sh` staged its mutation fixtures at
+`workflows/_mutation-under-test.js` — inside the real repo. Anything scanning that directory
+concurrently — `tests/validate-workflows.sh` standalone, or `tests/test-install.sh` (whose P8
+check runs the real validator against the checkout) — went red when it caught a mutation
+mid-flight. Mutations now stage in a per-run `mktemp -d` sandbox holding a copy of the validator,
+the checker, and the shipped workflows; the repo tree is never touched. Reproduced
+deterministically before the fix (a staged `Date.now` mutation failed both neighbours), stable
+across 8 concurrent iterations after it.
+
+### Changed — six agents repin `model: opus` → `model: fable`
+
+The owner's standing model policy is Fable 5, which sits above Opus in capability.
+`orch-explorer`, `orch-implementer`, `orch-spec-reviewer`, `orch-code-reviewer`,
+`orch-debugger`, and `orch-researcher` now pin `fable`; `AGENTS.md`, `README.md`, and
+`docs/anthropic-ecosystem.md` match. **`orch-security-reviewer` deliberately stays `opus`**: the
+recorded rationale in `docs/anthropic-ecosystem.md` is that Fable 5's safety classifiers fire on
+benign security work, which would break exactly that seat. This leaves the security seat one tier
+below the implementer — accepted because Stage 3 is advisory, and noted in the table. The
+researcher's trade-off (Opus 5's fresher knowledge cutoff) is recorded there too; its job is
+verifying against live sources, so retrieval outranks cutoff freshness.
+
 ### Fixed — `--copy` installs shipped a dead enforcement layer
 
 `scripts/install.sh` rewrote hook paths with a sed pattern matching the *unbraced*
@@ -226,7 +325,10 @@ discount the channel it shares with the accurate signals.
   to return a Status block, a contract only these agents have.
 - `orch-explorer` is Opus: a scout's false negative silently narrows every
   decision downstream of it. `AGENTS.md` and `docs/anthropic-ecosystem.md` now
-  agree with the frontmatter.
+  agree with the frontmatter. *(Superseded later in this same unreleased
+  section: the six non-security seats were repinned to Fable 5. The reasoning
+  above — a scout must not be the weakest seat — is what motivated the move
+  up, not a case for Opus specifically.)*
 
 ### Fixed — found by adversarial review, after the first round of fixes
 

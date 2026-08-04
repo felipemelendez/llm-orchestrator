@@ -31,7 +31,7 @@ Checks per **command** (`commands/<name>.md`):
 Checks per **agent** (`agents/<name>.md`):
 - Filename matches `name:` field
 - `description` present
-- `model:` (if set) is one of `haiku | sonnet | opus`
+- `model:` (if set) is one of `haiku | sonnet | opus | fable | inherit`, or a full model id
 
 Output: `OK: 18 skills, 14 commands, 7 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
 

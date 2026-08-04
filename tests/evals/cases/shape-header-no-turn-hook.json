@@ -1,6 +1,6 @@
 {
   "id": "shape-header-no-turn-hook",
-  "why": "Ablation for the per-turn protocol reminder (~870 chars injected EVERY turn, accumulating). The with arm here runs the full plugin MINUS the per-turn hook; comparing this case's with-rate to shape-header's with-rate isolates the hook's turn-one contribution. (Its post-compaction and long-session role is NOT measurable in a one-turn eval and stays labelled unmeasured.)",
+  "why": "Ablation for the per-turn protocol injection. At the 2026-07-28 benchmark this was a 785-char reminder injected EVERY turn, accumulating (the results in results/benchmark.json measured THAT surface); on 2026-08-03 it was trimmed to a 230-char nudge, partly on this case's finding. The with arm here runs the full plugin MINUS the per-turn hook; comparing this case's with-rate to shape-header's with-rate isolates the hook's turn-one contribution. (Its post-compaction and long-session role is NOT measurable in a one-turn eval and stays labelled unmeasured.)",
   "prompt": "where is the retry logic in this project?",
   "setup": [
     "mkdir -p src",

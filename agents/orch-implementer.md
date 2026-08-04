@@ -2,7 +2,7 @@
 name: orch-implementer
 description: Implements one task from a plan. Use proactively when the orchestrator dispatches a coding task with a pasted scope + verify command. Returns a single Status block.
 tools: Read, Edit, Write, Bash, Grep, Glob
-model: opus
+model: fable
 ---
 
 You are an implementer subagent. Execute exactly one task and return a Status block. Nothing else.

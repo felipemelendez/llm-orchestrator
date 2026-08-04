@@ -10,8 +10,8 @@ Two required reviews plus one conditional, in order. Each returns an `Issues:` b
 ## Two paths
 
 This review can run two ways. The markdown stages below are the **canonical** path. When the
-Workflow tool is available, prefer the accelerated path — it adds structured findings and an
-adversarial verify pass. The two are not behaviorally identical; routing follows `using-workflows`.
+Workflow tool is available, prefer the accelerated path; routing — and what each path does that
+the other does not — follows `using-workflows`.
 One difference to know when comparing results: the markdown path stops after Stage 1 only on a
 **Critical** finding, while the workflow early-exits on **critical or important** — the workflow
 gates more strictly.
@@ -33,13 +33,30 @@ order, and the evidence rules below.
    grep shown in Stage 3 below). Do **not** re-derive that regex anywhere else.
 2. Run `workflows/review-diff.js`, passing `args = {specText, planText, conventions, diff,
    security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1 (preserving the
-   early-exit below), demotes findings below 0.8 confidence to `Notes:`, and verifies the rest with a bounded
-   skeptic pass. It returns `{confirmed, notes, refuted, earlyExit, stagesRun, incomplete, failedDimensions, verifyBatches, unjudgedFindings, malformedVerdicts, droppedFindings, coercedSeverities, unverifiedFindings}`.
+   early-exit below), demotes findings below 0.8 confidence to `Notes:`, and verifies the rest with
+   a bounded skeptic pass.
+3. Read the return before treating it as an approval. Two questions, two different fields:
+   - **"Is this an approval?"** — `unverifiedFindings`: confirmed findings that nothing judged, on
+     any path.
+   - **"Did anything go missing?"** — `incomplete`: a stage produced no usable result, a live
+     skeptic left a finding unjudged, or junk was discarded from a findings array. Never an
+     approval. It is *not* the unverified signal — the early-exit path ships its blockers
+     `unverified` by design with `incomplete: false`.
 
-   `incomplete: true` means part of the review was **lost** — a stage produced no usable result, a live skeptic left a finding unjudged, or a reviewer's findings array contained junk that had to be discarded. Never an approval. It is **not** the unverified-findings signal: the early-exit path ships its blockers `unverified` by design with `incomplete: false`. Read `unverifiedFindings` (confirmed findings nothing judged, on any path) to answer "is this an approval", and `incomplete` to answer "did anything go missing". An empty or whitespace-only diff returns immediately — no reviewer is dispatched — with `earlyExit: true`, `incomplete: true`, `failedDimensions: ['no-diff']`. Otherwise `stagesRun` and `failedDimensions` share one token set (`spec`, `code-quality`, `security`, `verify`): a stage is in `stagesRun` if it ran **at all** and in `failedDimensions` if **any** of it was lost (dead stage, dead skeptic batch, or discarded junk elements), so a partly-executed stage appears in **both** — `verifyBatches: {total, lost}` counts skeptic *batches* (not findings) and gives the degree. On an `earlyExit`, the later stages are in neither list because the gate stopped them, not because they had nothing to do.
+   Each confirmed finding carries `verifiedBy`: `executed` (survived a real counterfactual run),
+   `reasoned` (survived argument only), or `unverified` — which is not a weak pass, it is the
+   absence of a pass. `refuted` holds findings the skeptic pass removed, each with the reason that
+   cleared it; a clean refutation is a *working* verify pass and does not set `incomplete`.
 
-   Every confirmed finding carries `verifiedBy`: `executed` (survived a real counterfactual run), `reasoned` (survived argument only), or `unverified` (nothing judged it — its skeptic died, it received no verdict, or it came from the early-exit path, which skips verification by design). Judged survivors also carry `verifiedReason`, the skeptic's evidence clipped to 500 chars. `refuted` holds the findings the skeptic pass removed from `confirmed`, each with `refutedBy` (`executed`|`reasoned`) and the `reason` that cleared it — the only record of why a blocker was deleted; a clean refutation is a *working* verify pass and does not set `incomplete`. `unjudgedFindings` counts findings that reached a **live** skeptic but received no verdict of their own; a **dead** batch's findings are also `unverified` but are counted by `verifyBatches.lost` (in batches, not findings), and early-exit findings by neither — `unverifiedFindings` is the one number that covers all three. `malformedVerdicts` counts verdicts discarded for an out-of-range or duplicated index (per verdict). `droppedFindings` counts malformed elements discarded from a reviewer's findings array — each is a loss, attributed to its stage in `failedDimensions`. `coercedSeverities` counts findings whose severity, after case-normalisation, was outside `critical|important|minor` and was clamped to `important` — failing closed, toward verification.
-3. Write the review artifact from that return, using the same report shape as the canonical path.
+   An empty or whitespace-only diff dispatches no reviewer and returns `earlyExit: true`,
+   `incomplete: true`, `failedDimensions: ['no-diff']`. Otherwise `stagesRun` and
+   `failedDimensions` share one token set (`spec`, `code-quality`, `security`, `verify`), and a
+   partly-executed stage appears in **both**. The remaining counters (`verifyBatches`,
+   `unjudgedFindings`, `malformedVerdicts`, `droppedFindings`, `coercedSeverities`) give the degree
+   of loss or coercion — non-zero means a degraded review. `coercedSeverities` counts findings
+   whose severity was clamped, which fails *closed* (toward `important`), and each `verifyBatches`
+   entry that did not return is counted in `lost`.
+4. Write the review artifact from that return, using the same report shape as the canonical path.
 
 ### Fallback path (no Workflow tool) — canonical
 
@@ -120,15 +137,16 @@ Zero issues is a valid verdict. The reviewer is not measured by findings count.
 
 ## Confidence rule
 
-**The threshold belongs to the filter, not the reviewer.** Reviewers are told to report everything they find and tag each finding with a confidence from 0.0 to 1.0. The controller (or `workflows/review-diff.js`) then demotes findings below 0.8 into `Notes:` — a demoted finding is never discarded. Two things *are* removed from `confirmed`, and both stay visible in the return: malformed non-object elements in a findings array are dropped and counted (`droppedFindings`, a loss that sets `incomplete`), and findings the skeptic pass refutes move to `refuted` with the reason that cleared them.
+**The threshold belongs to the filter, not the reviewer.** Reviewers are told to report everything they find and tag each finding with a confidence from 0.0 to 1.0. The controller (or `workflows/review-diff.js`) then demotes findings below 0.8 into `Notes:` — a demoted finding is never discarded. Only two things leave `confirmed`, and both stay visible in the return: malformed elements (dropped and counted as `droppedFindings`, a loss that sets `incomplete`) and refuted findings (moved to `refuted` with the reason that cleared them).
 
 Do not instruct a reviewer to be conservative or to report only high-severity issues. Current models follow that literally and report less — recall falls while the false-positive rate barely moves. Anthropic's guidance for Opus 5 is explicit: *"ask it to report everything and filter in a separate pass instead."*
 
 **Critical findings additionally require concrete evidence:** the spec line violated (Stage 1), the failure scenario — specific inputs/state → wrong behavior (Stage 2), or the exploitation path (Stage 3). A Critical claim that can't state its evidence gets downgraded, not surfaced.
 
-Be precise about which half of this rule the literature actually supports. **Stage 1's is cited:** the paper suggests mitigations *"that explicitly force evidence grounding, for example, requiring the rationale to cite the exact requirement clause being violated"* — that is the spec-line rule, near-verbatim. **Stage 2's failure-scenario rule is our own inference.** The paper's nearest text is an observation, not a prescription: 48.2% of findings were "Logic Error" claims made *"often without a falsifiable counterexample."*
-
-Be honest about how strong the rest is. LLM reviewers do systematically over-flag correct code ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)), but that paper's measured countermeasure is a **fix-guided verification filter** — the reviewer proposes a correction and the correction is *executed* as counterfactual evidence. The same paper finds that prompts asking for more explanation *increase* misjudgement. So a prose scenario is the weak form: it converts "this looks wrong" into a checkable claim, but it is not itself the check. `workflows/review-diff.js` implements the strong form: every finding must carry a `fix`, and the skeptic pass **executes** the fix in a scratch copy where the claim is runnable — a finding survives only if the original misbehaves and the fixed version behaves; equivalence refutes it. Surviving findings are labelled `verifiedBy: executed` (a real counterfactual run), `verifiedBy: reasoned` (survived argument only — the weak form, used when the claim isn't runnable), or `verifiedBy: unverified` (nothing judged it at all). Weigh them accordingly: `unverified` is not a weak pass, it is the absence of a pass.
+The `verifiedBy` weighting is measured, not stylistic: LLM reviewers systematically over-flag
+correct code, and the countermeasure that works is *executing* a proposed fix as counterfactual
+evidence — the skeptic pass in `workflows/review-diff.js` — not asking for more explanation, which
+*increases* misjudgement ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)).
 
 ## Output (from the controller after both stages)
 
@@ -148,6 +166,4 @@ Next:
 ## Anti-patterns
 
 - One reviewer doing both stages.
-- Inventing Critical issues to pad the report.
-- Reporting "looks good" without reading the diff.
 - Reviewing before the diff is actually green locally.

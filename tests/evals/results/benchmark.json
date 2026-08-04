@@ -102,6 +102,9 @@
     "verify-evidence": "The fabrication trap (\"should pass\" without running) never fired in either arm (must_not_match 3/3 both) \u2014 that failure mode is already absent in opus 5 at this task size. The measured delta is again the evidence format. The evidence LEDGER (stamp validation) is exercised by tests/test-verify-gate.sh, not by this regex.",
     "research-gate-skips": "Negative control: gate stayed silent in 3/3 plugin runs on library-free work. For a negative control, both arms passing is the desired outcome (the harness's 'dead weight' label does not apply to controls)."
   },
+  "annotations_2026_08_03": {
+    "shape-header-no-turn-hook": "Historical context, added after the fact; the recorded rates and costs above are untouched. This arm measured the per-turn hook as it shipped on 2026-07-28: a 785-char reminder (six-shape list + skill routing + evidence rule) injected every turn. On 2026-08-03 that hook was trimmed to a 230-char nudge, partly on this arm's finding that its turn-one contribution was zero. The numbers above therefore describe the larger, pre-trim surface and have not been re-run against the current one."
+  },
   "method_notes": [
     "N=3 per arm per case, claude -p cold sessions, model pinned to opus (session default was a limit-exhausted model; inheriting it poisons results).",
     "Scratch projects under $TMPDIR, outside the repo, ORCH_HOME isolated per project.",

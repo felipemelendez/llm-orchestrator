@@ -7,38 +7,31 @@ description: Use when deciding whether an already-chosen fan-out (multi-dimensio
 
 Claude Code's `Workflow` tool runs a deterministic JavaScript script that fans out subagents
 (`agent()`/`parallel()`/`pipeline()`, structured `schema`, token `budget`, resume). It is a
-*preferred Claude-Code-only accelerator* for a few orchestrator layers — not a hard dependency.
-The markdown flow stays canonical and portable. See the contract brief at
-`docs/llm-orchestrator/research/2026-05-31-workflow-tool-contract.md`.
+*preferred Claude-Code-only accelerator* for exactly one orchestrator layer today (code review) —
+not a hard dependency. The markdown flow stays canonical and portable. The tool contract is
+documented at [workflows](https://code.claude.com/docs/en/workflows).
 
 ## When a chosen fan-out should run on the Workflow tool
 
 Whether to fan out at all is `dispatching-parallel-agents`' decision. Once a fan-out is chosen,
-route it through a workflow only if all three hold — a fan-out has to earn its coordination cost:
+route it through a workflow only if all three hold — a fan-out has to earn its coordination cost,
+and multi-agent runs use 3–10× the tokens of a single agent on the same task
+([Anthropic](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)):
 
 1. **Breadth-first** — the work splits into parts that can run at once.
 2. **Independent** — the parts don't share context or depend on each other's output mid-flight.
 3. **High enough value** — the result justifies the multiplier (review of a real diff, a real
    migration, a real research sweep — not a one-line edit).
 
-**This plugin ships exactly one workflow, and that is the intended surface** — the scope decision
-and its evidence are in `docs/llm-orchestrator/research/2026-08-03-workflow-scope-decision.md`.
-Do not add a second script without re-opening that decision. In particular: a *writer* fan-out has
-no scripted form worth having (`agent()` has no `cwd` option, so it cannot be pinned to a
-materialized worktree), and a research sweep is already covered by Claude Code's bundled
-`/deep-research`.
+Prefer a plain subagent unless the workflow buys something a subagent cannot: orchestration that is
+itself repeatable, or a quality pattern one pass can't apply — independent agents adversarially
+checking each other. A handful of delegated tasks in one turn is subagent-shaped.
 
-Before reaching for a workflow at all, check whether a plain subagent is the better primitive. The
-platform's own framing is that a workflow earns its keep by making *the orchestration* repeatable
-and by applying a quality pattern one pass cannot — independent agents adversarially checking each
-other — not by running more agents. A handful of delegated tasks in one turn is subagent-shaped.
-
-**The cost, correctly attributed.** Multi-agent runs use **3–10× the tokens of a single agent on the
-same task** ([Anthropic, 2026-01-23](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them)).
-The widely-quoted **15×** is against *chat*, not against a single agent
-([Anthropic, 2025-06-13](https://www.anthropic.com/engineering/multi-agent-research-system)); don't
-use it as the bar here. Anthropic publishes no multiplier for dynamic workflows specifically, and
-the "5–10× expected tokens" figure in secondary write-ups is not theirs. All directional.
+This plugin ships one workflow, `workflows/review-diff.js`, and that is the intended surface: a
+scripted *writer* fan-out is blocked by the API gap below, and a research sweep is already covered
+by the bundled `/deep-research`. Do not add a second script without reopening that decision —
+`ARCHITECTURE.md` records it under Layer 6. (The full evidence lives in a dated brief under
+`docs/llm-orchestrator/research/`, which is a local working directory and is not distributed.)
 
 ## The isolation invariant (applies inside scripts too)
 
@@ -53,22 +46,17 @@ just because the fan-out is scripted.
   worktree created by `scripts/orch-worktree-materialize.sh`, with the path pasted into the agent's
   prompt; the script then merges the branches back sequentially.
 
-**Inside a workflow script, do not use `isolation: 'worktree'`.** (This is scoped to scripted
-fan-out, where the engine gives you no hook to fix up what the option gets wrong.
-`using-git-worktrees` governs the interactive case.) The native option looks like the right
-primitive and is not:
-it branches from the **default branch**, not the parent's `HEAD`, unless `worktree.baseRef: "head"`
-is set — a *user* setting a plugin cannot ship ([sub-agents](https://code.claude.com/docs/en/sub-agents),
-retrieved 2026-08-03). It also provides no slug→path mapping, has no atomic batch rollback, and its
-native cleanup skips worktrees still holding work — all three assessed in
-`docs/llm-orchestrator/research/2026-07-28-v0.6-platform-drift-brief.md:259`, which rejected the
-option for exactly this substitution. `scripts/orch-worktree-materialize.sh` supplies the first
-three; worktree removal is handled separately by `scripts/orch-worktree-integrate.sh`.
+**Inside a workflow script, do not use `isolation: 'worktree'`.** It branches from the **default
+branch**, not the parent's `HEAD`, unless `worktree.baseRef: "head"` is set — a *user* setting a
+plugin cannot ship ([sub-agents](https://code.claude.com/docs/en/sub-agents)). It also provides no
+slug→path mapping and no atomic batch rollback, which is why
+`scripts/orch-worktree-materialize.sh` exists. (Scoped to scripted fan-out, where the engine gives
+you no hook to fix any of that up; `using-git-worktrees` governs the interactive case.)
 
-Be honest about what enforces this: it is a **prompt-level convention, not an API guarantee**.
-`agent()` has no `cwd` option, so nothing mechanically stops a writer from editing the shared
-checkout. The mechanical backstop is `scripts/hooks/guard-destructive-git.sh`, which blocks
-tree-destroying git outside an isolated worktree.
+This is a prompt-level convention, not an API guarantee: `agent()` has no `cwd` option, so nothing
+mechanically stops a writer from editing the shared checkout. The mechanical backstop is
+`scripts/hooks/guard-destructive-git.sh`, which blocks tree-destroying git outside an isolated
+worktree.
 
 ## When to stay inline
 
@@ -85,12 +73,8 @@ capability it cannot verify. Instead:
 1. If the `Workflow` tool is available, run the preferred workflow path.
 2. If the tool is absent or errors, run the canonical markdown path for that skill.
 
-There is no `ORCH_WORKFLOWS` switch. This section used to document `=0` / `=1`
-overrides; no code anywhere reads that variable — `grep -r ORCH_WORKFLOWS
-scripts/` comes back empty, and that grep is the test that matters. (Absence
-from `templates/settings.json` proves nothing: real knobs, including the two
-hard-guard escape hatches, have gone undeclared there before.) A documented
-toggle that does nothing is worse than none — it gets set, and then trusted.
+There is no `ORCH_WORKFLOWS` switch: no code reads that variable. Do not document one — a toggle
+that does nothing is worse than none, because it gets set and then trusted.
 
 The two paths are **not** claimed equivalent: the workflow path adds structured findings and an
 adversarial verify pass the prose path does not reproduce step-for-step. The markdown path is the
@@ -113,25 +97,14 @@ The security-sensitive token set lives once, in `scripts/lib/orch-signals.sh`
 - Bound any per-finding fan-out so a noisy input can't exhaust the budget.
 - **Size agents for resume.** Replay follows the order agents *started*: cached results stop at the
   first agent that didn't finish, and everything started after it re-runs even if it completed
-  ([workflows](https://code.claude.com/docs/en/workflows), retrieved 2026-08-03). Many small agents
-  therefore preserve more progress than one long one. Live trade-off: `review-diff.js` batches into
-  4 fat skeptics — cheaper in tokens, worse on resume. Deliberate, not accidental.
+  ([workflows](https://code.claude.com/docs/en/workflows)). Many small agents therefore preserve
+  more progress than one long one.
 - **This skill is main-thread-only.** The `Workflow` tool is stripped from every subagent
-  ([sub-agents](https://code.claude.com/docs/en/sub-agents), retrieved 2026-08-03), so a dispatched
-  agent cannot start a workflow. Only the controller can route here.
-- Validate with `tests/validate-workflows.sh`. Note what it does NOT do: `node --check` on a `.js`
-  file containing `export` returns 0 on invalid syntax, so it could never reject anything. The
-  validator now compiles the script as an **async function body** — the grammar the engine runs,
-  where top-level `return` and `await` are legal — via `tests/lib/check-workflow-script.mjs`, and
-  still runs the static scan for the runtime-throw builtins a parse cannot catch.
+  ([sub-agents](https://code.claude.com/docs/en/sub-agents)), so a dispatched agent cannot start a
+  workflow. Only the controller can route here.
+- Validate with `tests/validate-workflows.sh`. It compiles the script as an **async function body**
+  — the grammar the engine runs, where top-level `return` and `await` are legal — and statically
+  scans for the runtime-throw builtins a parse cannot catch. Plain `node --check` is not a
+  substitute: on a `.js` file containing `export` it returns 0 whatever the syntax.
 - Distribution is automatic: `workflows/` at the plugin root is discovered on install and
   namespaced `/<plugin>:<meta.name>`, so this script is `/llm-orchestrator:review-diff`.
-
-## Anti-patterns
-
-- Routing sequential, shared-context work through a workflow to look sophisticated.
-- A shell `orch_workflow_available` probe with no real input signal.
-- Re-deriving the security regex (or any gate) inside a script instead of taking it via `args`.
-- Claiming the workflow and markdown paths are behaviorally identical.
-- One skeptic agent per finding with no cap.
-- Fanning out writer agents onto the shared checkout without a materialized worktree path.

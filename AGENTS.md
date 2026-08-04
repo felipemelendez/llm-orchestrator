@@ -16,13 +16,13 @@ Subagents:
 
 | `subagent_type`        | Model  | Used by                | Purpose                                                          |
 |------------------------|--------|------------------------|------------------------------------------------------------------|
-| `orch-explorer`        | opus   | `/llm-orchestrator:onboard`      | Read-only codebase search; returns `Found:` with file:line refs   |
-| `orch-implementer`     | opus   | `/llm-orchestrator:dispatch`            | Executes one task from a plan; returns `Status:` block           |
-| `orch-spec-reviewer`   | opus   | `/llm-orchestrator:review` stage 1      | "Does the diff match the spec/plan?"                             |
-| `orch-code-reviewer`   | opus   | `/llm-orchestrator:review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
-| `orch-debugger`        | opus   | `/llm-orchestrator:debug` (dispatch it when the investigation is read-heavy; the command's default path runs `systematic-debugging` in-context) | Root-cause investigation before any edit; returns `Found:` |
-| `orch-researcher`      | opus   | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
-| `orch-security-reviewer` | opus   | `/llm-orchestrator:review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps) |
+| `orch-explorer`        | fable  | `/llm-orchestrator:onboard`      | Read-only codebase search; returns `Found:` with file:line refs   |
+| `orch-implementer`     | fable  | `/llm-orchestrator:dispatch`            | Executes one task from a plan; returns `Status:` block           |
+| `orch-spec-reviewer`   | fable  | `/llm-orchestrator:review` stage 1      | "Does the diff match the spec/plan?"                             |
+| `orch-code-reviewer`   | fable  | `/llm-orchestrator:review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
+| `orch-debugger`        | fable  | `/llm-orchestrator:debug` (dispatch it when the investigation is read-heavy; the command's default path runs `systematic-debugging` in-context) | Root-cause investigation before any edit; returns `Found:` |
+| `orch-researcher`      | fable  | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
+| `orch-security-reviewer` | opus | `/llm-orchestrator:review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps). Deliberately not Fable 5: its safety classifiers fire on benign security work |
 
 Prompt templates live in `templates/`:
 - `implementer-prompt.md`

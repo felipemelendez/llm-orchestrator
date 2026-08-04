@@ -35,12 +35,20 @@ if ! command -v node >/dev/null 2>&1; then
   exit 0
 fi
 
-# The validator scans $ROOT/workflows, so mutations are staged there and always
-# removed. Refuse to run if a leftover is present rather than clobber it.
-MUT="${ROOT}/workflows/_mutation-under-test.js"
-[[ -e "$MUT" ]] && { printf 'FAIL — leftover fixture present: %s\n' "$MUT"; exit 1; }
-cleanup() { rm -f "$MUT"; }
-trap cleanup EXIT
+# The validator scans <its own root>/workflows, so mutations are staged in an
+# ISOLATED per-run sandbox copy — never in the real repo. Staging them in
+# $ROOT/workflows made this suite unsafe to run concurrently with anything else
+# that scans that directory: tests/validate-workflows.sh standalone, and
+# tests/test-install.sh's P8 check (which runs the real validator against $ROOT)
+# both went red whenever they caught a mutation mid-flight.
+SBX="$(mktemp -d)"
+trap 'rm -rf "$SBX"' EXIT
+mkdir -p "$SBX/tests/lib" "$SBX/workflows"
+cp "$VALIDATOR" "$SBX/tests/validate-workflows.sh"
+cp "$ROOT/tests/lib/check-workflow-script.mjs" "$SBX/tests/lib/"
+cp "$ROOT"/workflows/*.js "$SBX/workflows/" 2>/dev/null
+VALIDATOR="$SBX/tests/validate-workflows.sh"
+MUT="$SBX/workflows/_mutation-under-test.js"
 
 # rejects <name> <script-source>: the validator must exit non-zero.
 rejects() {

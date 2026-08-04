@@ -59,13 +59,13 @@ Our agents ship pre-configured on that basis:
 
 | Agent | Model | Why |
 |---|---|---|
-| `orch-explorer` | Opus | Retrieval that MISSES is indistinguishable from code that isn't there — a scout's false negative silently narrows every decision downstream of it |
-| `orch-implementer` | Opus | Anthropic's stated starting point for coding and agentic work |
-| `orch-spec-reviewer` | Opus | Reviewer tier ≥ implementer tier |
-| `orch-code-reviewer` | Opus | Same |
-| `orch-security-reviewer` | Opus | Same. **Not Fable 5** — its safety classifiers fire on benign security work |
-| `orch-debugger` | Opus | Ambiguous root-cause work |
-| `orch-researcher` | Opus | Opus 5's reliable knowledge cutoff (May 2026) is fresher than Fable 5's (Jan 2026) |
+| `orch-explorer` | Fable 5 | Retrieval that MISSES is indistinguishable from code that isn't there — a scout's false negative silently narrows every decision downstream of it |
+| `orch-implementer` | Fable 5 | Highest-capability coding tier available |
+| `orch-spec-reviewer` | Fable 5 | Reviewer tier ≥ implementer tier |
+| `orch-code-reviewer` | Fable 5 | Same |
+| `orch-security-reviewer` | Opus | The one deliberate exception to the Fable 5 roster: Fable 5's safety classifiers fire on benign security work, which would break exactly this seat. This leaves the security seat one tier below the Fable 5 implementer — accepted because Stage 3 is advisory and a misfiring reviewer is worse than a slightly weaker one |
+| `orch-debugger` | Fable 5 | Ambiguous root-cause work |
+| `orch-researcher` | Fable 5 | Its job is verifying against *live* sources, so retrieval discipline outranks cutoff freshness. Trade-off noted: Opus 5's reliable knowledge cutoff (May 2026) is fresher than Fable 5's (Jan 2026) |
 
 Haiku 4.5 is absent by design: it accepts no `effort` parameter at all, and its reliable knowledge cutoff is Feb 2025.
 
@@ -115,7 +115,7 @@ Claude Code now ships first-party versions of several capabilities this plugin p
 | Code review | `/code-review` (multi-agent, confidence-filtered; `ultra` for cloud review) and `/security-review` | Stage 1 spec-compliance review (native review doesn't check a diff against a spec), the spec-gates-quality order, and the failure-scenario evidence rule | Native review cannot be model-invoked (v2.1.215), so the plugin's reviewer agents are the only automatable substrate. `/code-review xhigh` is an excellent manual pass. Stage 1 and the gating order are this plugin's contract |
 | Worktree isolation | Per-agent worktree isolation on agent dispatch | Ownership registry with atomic claims, `.orch-worktree` provenance, green-baseline capture, test-gated sequential merge-back | Prefer native isolation for the checkout itself; the registry/baseline/merge-back discipline still applies |
 | Memory | CLAUDE.md hierarchy (native, automatic) plus the assistant's auto-memory directory | Write-side classification (`/remember` → Conventions/Decisions/People/Notes) and recoverable `/forget` | Native surfaces store; the plugin only classifies and soft-deletes |
-| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Opus variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
+| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Fable 5 variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
 | Planning | Native plan mode and Plan agent | Durable spec/plan artifacts under `docs/llm-orchestrator/` with checkbox state that survives `/clear` | Native plan mode for the proposal loop; plugin artifacts for cross-session state |
 | Fan-out orchestration | `Workflow` tool (deterministic scripts, structured schema, resume) | The routing rule (`using-workflows`) and ready-made scripts (`workflows/review-diff.js`) | Already delegation-shaped: the plugin only supplies scripts and the when-to-fan-out policy |
 

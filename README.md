@@ -29,7 +29,7 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 
 **Requirements:** Claude Code, plus `bash` and `git`. Two optional features have their own dependency: visual brainstorming needs **Node.js** (to run the panel server) and the protocol grader needs **`python3`** (to parse transcripts). If either is missing, that one feature is skipped with a notice — the rest of the orchestrator works normally.
 
-**Model recommendation:** Run Claude Code's controller on **Opus** (or whatever is the latest, most-capable Claude Code model). The orchestrator is tuned for the best available model — multi-stage research, parallel dispatch, two-stage review, and the handoff layer all benefit from Opus-class reasoning. The handoff nudge's ~950K-token (≈95%) default assumes Opus's 1M-token context window; lower `ORCH_CONTEXT_HANDOFF_TOKENS` if you run the controller on a smaller-window model (e.g. Haiku).
+**Model recommendation:** Run Claude Code's controller on **Fable 5** (or whatever is the latest, most-capable Claude Code model). The orchestrator is tuned for the best available model — multi-stage research, parallel dispatch, two-stage review, and the handoff layer all benefit from frontier-class reasoning. The handoff nudge's ~950K-token (≈95%) default assumes a 1M-token context window; lower `ORCH_CONTEXT_HANDOFF_TOKENS` if you run the controller on a smaller-window model (e.g. Haiku).
 
 ---
 
@@ -62,7 +62,7 @@ Claude Code ships first-party versions of several things this kit does. This plu
 | Worktrees | Per-agent isolated worktrees | Atomic ownership registry, green-baseline capture, speculative test-gated merge queue |
 | Memory | CLAUDE.md + auto-memory | Write-side classification (`/llm-orchestrator:remember`) and recoverable `/llm-orchestrator:forget` |
 | Planning | Native plan mode | Durable spec/plan artifacts whose checkboxes survive `/clear` |
-| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Opus variant with a `file:line` output contract |
+| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Fable 5 variant with a `file:line` output contract |
 | Fan-out orchestration | `Workflow` tool | The when-to-fan-out policy (`using-workflows`) and ready-made scripts like `workflows/review-diff.js` |
 
 Still exclusively this plugin's ground: the Concise Agent Protocol response shapes, the research gate, TDD and root-cause-first debugging enforcement, and the BLOCKED recovery tree. Full map with the delegation rules: [`docs/anthropic-ecosystem.md`](./docs/anthropic-ecosystem.md).
@@ -152,18 +152,18 @@ Controller (the agent you talk to)
  ├─ orch-code-reviewer       → is it idiomatic, safe, minimal?
  ├─ orch-security-reviewer   → injection, auth, secrets, unsafe deps
  ├─ orch-debugger            → root cause
- └─ orch-explorer            → read-only sweeps (Opus — a scout's false negative silently narrows every downstream decision)
+ └─ orch-explorer            → read-only sweeps (Fable 5 — a scout's false negative silently narrows every downstream decision)
 ```
 
 | Agent                  | Model  | Job                                                                  |
 |------------------------|--------|----------------------------------------------------------------------|
-| `orch-implementer`     | Opus   | Executes one plan task with TDD. Returns `Status:` block.            |
-| `orch-spec-reviewer`   | Opus   | Stage 1 of review: does the diff match the spec?                     |
-| `orch-code-reviewer`   | Opus   | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
-| `orch-debugger`        | Opus   | Root-cause investigator. Diagnoses bugs; does not patch them.        |
-| `orch-explorer`        | opus | Read-only codebase scout. Returns `file:line` refs. Cheap and fast.  |
-| `orch-researcher`      | Opus   | Verifies external APIs against current sources before any spec.      |
-| `orch-security-reviewer` | Opus | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
+| `orch-implementer`     | Fable 5 | Executes one plan task with TDD. Returns `Status:` block.            |
+| `orch-spec-reviewer`   | Fable 5 | Stage 1 of review: does the diff match the spec?                     |
+| `orch-code-reviewer`   | Fable 5 | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
+| `orch-debugger`        | Fable 5 | Root-cause investigator. Diagnoses bugs; does not patch them.        |
+| `orch-explorer`        | Fable 5 | Read-only codebase scout. Returns `file:line` refs.                  |
+| `orch-researcher`      | Fable 5 | Verifies external APIs against current sources before any spec.      |
+| `orch-security-reviewer` | Opus  | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. (Deliberately not Fable 5 — its safety classifiers fire on benign security work.) |
 
 The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 

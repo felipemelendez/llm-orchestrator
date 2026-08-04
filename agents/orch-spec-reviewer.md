@@ -2,7 +2,7 @@
 name: orch-spec-reviewer
 description: Stage 1 reviewer — answers "does this diff implement the spec?" Use after the implementer returns DONE. Reads spec + plan + diff, does not run code. Returns an Issues block.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: fable
 maxTurns: 30
 ---
 

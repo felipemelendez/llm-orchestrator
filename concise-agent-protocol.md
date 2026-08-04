@@ -155,15 +155,32 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 
 The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's last reply against the six shapes after every turn (non-blocking by default; set `ORCH_STRICT_PROTOCOL=1` to block on failure). `scripts/protocol-lint.sh` is a standalone CLI for the same check. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block).
 
-## Per-turn reminder (single source)
+## Injected blocks (single source)
 
-The `UserPromptSubmit` hook injects the text between the markers below on every turn. Edit it HERE — the hook extracts this block at runtime and only falls back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
+Two hooks inject protocol text, on two different schedules, from the two marked blocks below. Edit them HERE — both hooks extract at runtime and only fall back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
 
-**Keep it short, and keep it non-redundant with SessionStart.** This text is paid for on every single turn. The `using-orchestrator` eager block already teaches the six shapes and the trigger list at session start; repeating them here bought nothing and taught the agent that this corpus repeats itself, which is what trains skimming. What belongs here is the part an agent cannot get anywhere else at the moment it needs it: the **precedence** that resolves two skills firing at once. Previously the agent was reminded of the ambiguity on 100% of turns and of its resolution on 0%.
+The two schedules are not interchangeable, and the split follows Anthropic's current guidance:
+
+- **After compaction — re-establish.** `SessionStart` (`source=compact`) injects the *recovery core* below. Compaction is the one moment the earlier context is genuinely gone: the `using-orchestrator` eager block was injected before the boundary and did not survive it, so this block has to stand alone. Anthropic names compaction as a place to re-hydrate context deliberately ("consider hydrating through tools … or during context compaction" — [Prompting best practices → Migrating away from prefilled responses](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices)).
+- **Every turn — nudge, don't restate.** `UserPromptSubmit` injects the *turn nudge* below. This text is paid for on every single exchange and accumulates for the life of the session, so it carries only the format contract the Stop-hook grader actually enforces, in its shortest self-contained form. It is deliberately a distillation, not a copy: Anthropic's Claude 5 guidance retired the practice of stating the same instruction in two places ("Earlier Claude models could sometimes need repeated instructions or be more likely to listen to instructions at the end of their context window than at the start… we could delete these repeat examples" — [The new rules of context engineering](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models)), while still sanctioning one short end-of-context reminder for output shape and length ("In a long system prompt, pair the instruction with a short reminder near the end of the prompt" — [Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)).
+
+Anything an agent needs *once* — skill precedence, the working rules, the routing table — belongs in the `using-orchestrator` eager block or the skill body, not here. Repeating it per turn buys nothing on Claude 5 models and teaches the agent that this corpus repeats itself, which is what trains skimming.
+
+### Recovery core — SessionStart, post-compaction only
+
+Marker name is historical (`scripts/hooks/session-start.sh` reads it); the block is no longer per-turn.
 
 <!-- orch-turn-reminder-start -->
-LLM Orchestrator — every turn:
+LLM Orchestrator — the protocol still applies after this compaction boundary:
 - Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
 - When two skills both match, run them in this order: process (brainstorming, systematic-debugging, research-classifier) → implementation (test-driven-development, writing-plans, dispatching-*) → verification (requesting-code-review, verification-before-completion, finishing-a-branch).
 - Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.
 <!-- orch-turn-reminder-end -->
+
+### Turn nudge — UserPromptSubmit, every turn
+
+Budget: 300 bytes. `tests/test-protocol-drift.sh` enforces the ceiling.
+
+<!-- orch-turn-nudge-start -->
+LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.
+<!-- orch-turn-nudge-end -->
