@@ -5,6 +5,84 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Fixed — CI ran 23 of 33 suites and reported green; a `--copy` install shipped its guards disarmed
+
+Two defects of the shape this audit keeps finding: a guard applied to one path and not its
+siblings, and a check that shares the blind spot of the thing it checks.
+
+**CI listed its suites by hand and the list had drifted.** Ten were never run —
+`test-writer-mutex-modes` (the writer-isolation contract), `test-retry-cap`, `test-telemetry`,
+`test-detect`, `test-hook-latency`, and all three `handoff/` suites — while CI reported green
+across the board. Adding the missing ten would have closed today's gap and left the mechanism
+that produced it, so the enumeration is gone: `tests/run-all.sh` globs the suites, prints any
+deliberate exclusion with its reason, and refuses to report success when it discovers nothing.
+CI is two steps now, and adding a test file is enough to have it run.
+
+**`install.sh --copy` copied `scripts/lib/*.sh`, and both PreToolUse guards source
+`scripts/lib/orch-git-classify.py`.** Every copy install therefore ran the guards with their
+semantic classifier missing and silently fell back to spelling rules:
+
+```
+git reset --har HEAD~1        source: BLOCKED (2)    copy install: ALLOWED (0)
+```
+
+`--har` is an unambiguous prefix of `--hard`, so git really does reset with it. Neither verifier
+could see this — `check-hook-paths.py` and `test-install.sh` both assert hooks.json *command*
+paths, and a transitive dependency is not one. Fixed by copying every lib, guarded now by two
+independent assertions: source↔install file parity, and a behavioural probe that runs the
+*installed* guard. Reverting the one-line install fix turns all three red.
+
+### Changed — the eval harness leads with the behavioural rate, and results are append-only
+
+The summary table printed a verdict computed from the overall pass rate, which mixes
+protocol-format regexes into the criterion. On the run that mattered it printed
+`inconclusive, p=0.46` while the behaviour underneath had moved 76/100 → 56/100 at p=0.004 —
+the regression was three lines below the headline that said there wasn't one. The verdict now
+runs Fisher's exact test on the execution checks and falls back to the overall rate only for
+cases that have none. Each `check` command is graded and reported separately (`per_check`), so
+one case can carry two independent measurements — reviewer recall and reviewer precision are the
+first pair. `tests/test-eval-reporter.sh` replays the archived numbers through the shipped
+reporter on every CI run and was written red first.
+
+Results are append-only (`raw.<case>.<UTC>.jsonl`); the un-timestamped names are copies of the
+newest run. The stable names used to be the only ones, and the confirmation run for that
+regression had begun overwriting the rows that proved it.
+
+### Added — four behavioural eval cases, and a validator that makes a case prove it can fail
+
+`writer-isolation-shared-file`, `writer-isolation-shared-registry`,
+`reviewer-recall-planted-defect`, and `verify-under-pressure`. `tests/test-eval-cases.sh`
+enforces the property two of these violated on their first build: **a case must be RED before
+the agent runs**, or it is grading its own setup. Nine injected defects, nine caught.
+
+Both broken drafts failed silently rather than loudly. One graded a *correct* reviewer finding
+as a false positive, because the "decoy" had a genuine bug. One accepted "exceeds the order
+total" as evidence of a find — a phrase lifted from the function's own docstring, so a review
+that quoted the contract and cleared the code would have scored as a catch. A third graded prose
+with a regex and fired on "label_for's bounds check is correct — no off-by-one"; regexes cannot
+tell an accusation from an exoneration, so grading now reads a machine-readable index.
+
+### Fixed — twenty-six documentation claims that were false
+
+Each verified against the code, not read: the evidence ledger records **400** characters, not 160
+(three docs plus a lib comment); **six** read-only agents carry `maxTurns`, not five; the
+handoff marker lives under `handoff/`, not `llm-orchestrator:handoff/`; `smoke.sh` prints
+`81 checks passed, 1 skipped` and takes ~90 seconds, not ~5; `docs/anthropic-ecosystem.md`
+described a three-event hook surface for a plugin that wires sixteen scripts across seven events;
+`examples/` holds a worked plan/review/walkthrough, not plugin manifests; the command catalogue
+had drifted to 11 and 13 of the 14 that exist; `docs/install.md` shipped a `<your-org>`
+placeholder in the first command a new user runs.
+
+Two removals rather than corrections. The skill frontmatter key `profile:` was documented in two
+places, set by no skill, and read by nothing — the same class as the `ORCH_WORKFLOWS` toggle this
+changelog already calls "worse than none: it gets set, and then trusted." And `templates/skill.md`
+still taught the five-section shape the catalogue abandoned, while `CONTRIBUTING.md` and
+`docs/skills-guide.md` both start a new skill by copying it — a scaffold quietly regenerating the
+retired form.
+
+`validate-skills.sh` now fails when a doc quotes its summary line with counts that no longer
+match, so this particular claim cannot rot again.
+
 ### Changed — the per-turn injection is now a 230-character nudge
 
 The `UserPromptSubmit` hook injected a 607-character reminder every turn (785 characters at

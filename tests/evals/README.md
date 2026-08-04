@@ -193,6 +193,15 @@ At n=15 there is a 90% chance of missing a real 20-point regression and reportin
 "inconclusive" as though it were reassurance. Binary pass/fail needs ~200 runs to speak
 about an effect that size.
 
+**Measured between-run variance on an identical arm.** `ref:4f6815f` was run twice on
+`tdd-under-pressure`, same commit, n=100 each: behavioural **76%** then **68%**. Eight
+points of swing with nothing changed. That is consistent with binomial noise (SE ≈ 4.5pp per
+arm at that rate, so SE of the difference ≈ 6.3pp), and it is the number to hold in your head
+when reading any single comparison here: **a 100-run-per-arm result cannot resolve anything
+smaller than roughly 12–13 points.** The TDD regression was measurable because it was 20.
+Do not re-run an arm and treat the second number as a correction of the first — average them
+or say the interval.
+
 ## Results are append-only
 
 Every run writes `raw.<case>.<UTC-timestamp>.jsonl` and
