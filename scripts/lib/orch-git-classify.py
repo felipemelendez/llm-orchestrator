@@ -41,6 +41,16 @@ import sys
 # A leading `NAME=value` word is an env assignment, not the command.
 ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
+# A token that is NOTHING BUT a variable reference (`$BODY`, `${DIR}`). In
+# ARGUMENT position such a token expands to data the command receives — it
+# cannot re-enter a shell and it cannot fuse with adjacent characters to
+# assemble a flag, because there are no adjacent characters. Bailing on these
+# turned both guards into raw-payload scanners for any command that mentioned
+# a variable, which blocked `grep -rn "git reset --hard" "$DIR"` — a read-only
+# search. A `$` fused to other text (`--hard$X`) or in command position still
+# bails: there the expansion can change what runs.
+PURE_VAR_RE = re.compile(r"^\$([A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})$")
+
 # Tokens that can hand the string back to a shell, an interpreter, or another
 # host. Deliberately broad and matched on basename. Only meaningful in COMMAND
 # position: `.` is the source builtin there and the commonest path argument
@@ -64,6 +74,8 @@ OPS = {";", "|", "&", "&&", "||", ";;", "(", ")"}
 DESTRUCTIVE_NAMES = (
     "hard", "keep", "merge", "force", "delete", "worktree", "exec", "extcmd",
     "reset", "recursive", "no-verify", "no-gpg-sign",
+    "abort", "force-with-lease", "force-if-includes", "prune", "mirror",
+    "force-create", "stdin", "discard-changes",
 )
 
 # git global options that consume a following argument.
@@ -359,6 +371,57 @@ def classify_destructive(inv, relax):
     if sub == "worktree" and pos[:1] == ["remove"]:
         if has_long(flags, "force") or has_short(flags, "f"):
             return "git worktree remove --force — discards a worktree's uncommitted changes"
+    if sub == "update-ref":
+        # Plumbing ref deletion: `git update-ref -d refs/heads/X` deletes a
+        # branch with none of porcelain's protections (measured: branch gone).
+        # --stdin batches arbitrary ref updates/deletes the flags never show.
+        if has_short(flags, "d") or has_short(flags, "D") or has_long(flags, "stdin"):
+            return ("git update-ref -d / --stdin — deletes or rewrites refs "
+                    "directly, bypassing every porcelain protection")
+    if sub == "push":
+        # Remote destruction is the LEAST recoverable class this guard covers:
+        # a force-push rewrites shared history (measured against a bare remote:
+        # main went from 3 commits to 1) and a deleted remote branch has no
+        # reflog you own. --force-with-lease is blocked too, deliberately: the
+        # lease only protects against refs moved since YOUR last fetch, and on
+        # a shared checkout with parallel agents that state is exactly what you
+        # cannot trust — it is still history rewriting, so it still needs the
+        # explicit human opt-in (ORCH_ALLOW_DESTRUCTIVE_GIT=1).
+        for f in flags:
+            name = long_opt_name(f)
+            if name and ("force".startswith(name)
+                         or "force-with-lease".startswith(name)
+                         or "force-if-includes".startswith(name)
+                         or "delete".startswith(name)
+                         or "prune".startswith(name)
+                         or "mirror".startswith(name)):
+                return ("git push --force/--force-with-lease/--delete/--prune/"
+                        "--mirror — rewrites or deletes refs on the shared "
+                        "remote; unrecoverable from this checkout")
+        if has_short(flags, "f") or has_short(flags, "d"):
+            return ("git push -f/-d — force-pushes or deletes a ref on the "
+                    "shared remote; unrecoverable from this checkout")
+        for p in pos:
+            if (p.startswith(":") and len(p) > 1) or p.startswith("+"):
+                return ("git push with a ':<ref>' or '+<ref>' refspec — "
+                        "deletes or force-overwrites the remote ref")
+    if sub in ("checkout", "switch"):
+        # -B / -C / --force-create RESET an existing branch to a new start
+        # point. `git checkout -B main HEAD~2` rode the branch-CREATION
+        # exemption and dropped commits (measured: c3 c2 c1 -> c1) — the same
+        # harm `git branch -M` is blocked for above, so it is blocked in the
+        # same always-on tier: branch refs are repo-global, worktree or not.
+        forced_create = has_short(flags, "B") \
+            or (sub == "switch" and has_short(flags, "C"))
+        for f in flags:
+            name = long_opt_name(f)
+            if name and "force-create".startswith(name) \
+                    and not "force".startswith(name):
+                forced_create = True
+        if forced_create:
+            return ("git checkout -B / switch -C — force-resets an existing "
+                    "branch to a new start point, dropping its commits "
+                    "(plain -b/-c creation is allowed)")
 
     if relax:
         return None
@@ -373,6 +436,16 @@ def classify_destructive(inv, relax):
             return None                     # read-only / no tree mutation
         return ("git stash — 'save' runs an internal 'git reset --hard'; "
                 "pop/apply overwrite whatever files the stash touches")
+    if sub in ("merge", "rebase", "am", "cherry-pick", "revert"):
+        # --abort runs an internal hard reset back to the pre-operation state,
+        # discarding conflict-resolution work sitting in the tree (measured:
+        # resolved hunks gone after `git merge --abort`). Worktree-local harm,
+        # so it is relax-scoped like `reset --hard`; `--quit` (which leaves the
+        # tree alone) is deliberately not matched.
+        if has_long(flags, "abort"):
+            return ("git %s --abort — internally hard-resets to the "
+                    "pre-operation state, discarding conflict-resolution "
+                    "work in the tree" % sub)
     if sub == "reset":
         for mode in ("hard", "keep", "merge"):
             if has_long(flags, mode):
@@ -395,10 +468,11 @@ def classify_destructive(inv, relax):
         # `switch --force`/`-f` and `--discard-changes`.
         forcing = (has_short(flags, "f") or has_long(flags, "force")
                    or has_long(flags, "discard-changes"))
-        # Pure branch CREATION is the documented exception.
-        creating = (has_short(flags, "b") or has_short(flags, "B")
-                    or has_long(flags, "create") or has_long(flags, "force-create")
-                    or (sub == "switch" and (has_short(flags, "c") or has_short(flags, "C"))))
+        # Pure branch CREATION is the documented exception. -B / -C /
+        # --force-create are NOT creation — they reset an existing branch and
+        # are always-blocked above, so they never reach this exemption.
+        creating = (has_short(flags, "b") or has_long(flags, "create")
+                    or (sub == "switch" and has_short(flags, "c")))
         if forcing:
             return ("git %s --force — discards uncommitted changes to every "
                     "differing tracked file, including alongside -b/-c branch "
@@ -417,6 +491,18 @@ def classify_destructive(inv, relax):
         if worktree or not staged:
             return "git restore (worktree) — discards uncommitted changes"
     if sub == "rm":
+        # --cached removes from the INDEX ONLY and never touches the working
+        # tree — it is the documented remedy git itself prints for an
+        # accidentally-added embedded repo, and the standard way to un-track a
+        # file. -n/--dry-run touches nothing at all. Blocking these taught
+        # users the guard is noise (it blocked the fix git recommends).
+        # Safe because --cached/-n neutralize the tree-touching forms
+        # entirely: `git rm -rf --cached x` is still index-only.
+        # A `--c*` prefix can only mean --cached here (no destructive rm long
+        # option starts with 'c'), and `--d*` only --dry-run.
+        if has_long(flags, "cached") or has_long(flags, "dry-run") \
+                or has_short(flags, "n"):
+            return None
         if has_long(flags, "force") or has_short(flags, "f") or has_short(flags, "r"):
             return "git rm -f/-r — force-deletes tracked files from index and worktree"
     if sub == "read-tree":
@@ -438,6 +524,21 @@ def classify_no_verify(inv):
             return "git -c alias.<name>=... — can carry the bypass past every option rule"
         if low.startswith("commit.gpgsign=false") or low.startswith("commit.gpgsign=0"):
             return "git -c commit.gpgsign=false — signing bypass"
+        if "hookspath" in low.split("=", 1)[0]:
+            return ("git -c core.hooksPath override — redirects hook lookup, "
+                    "so every hook this guard exists to protect is skipped")
+    # `git config core.hooksPath <dir>` PERMANENTLY disables every hook for
+    # all future commands — one invocation, and every later `git commit` looks
+    # clean to this guard forever (proven: a plain commit then passed a
+    # failing pre-commit hook). Same class: `git config commit.gpgsign false`.
+    # Config keys are case-insensitive; the read form is blocked too — losing
+    # a rare `--get` costs one round-trip, missing the write costs the guard.
+    if inv.sub == "config":
+        for p in inv.positionals:
+            if p.lower() in ("core.hookspath", "commit.gpgsign"):
+                return ("git config %s — permanently disables hook execution "
+                        "or commit signing for every future git command "
+                        "in this repository" % p)
     flags = inv.flags
     if has_long(flags, "no-verify"):
         return "--no-verify — bypasses the project's pre-commit/pre-push hooks"
@@ -471,18 +572,36 @@ def classify_no_verify(inv):
 def main():
     mode = "destructive"
     relax = False
+    paranoid = False
     argv = sys.argv[1:]
     while argv:
         if argv[0] == "--mode":
             mode = argv[1]; argv = argv[2:]
         elif argv[0] == "--relax":
             relax = argv[1] == "1"; argv = argv[2:]
+        elif argv[0] == "--paranoid":
+            paranoid = argv[1] == "1"; argv = argv[2:]
         else:
             argv = argv[1:]
 
     cmd = sys.stdin.read()
     if not cmd.strip():
         sys.exit(3)
+
+    if paranoid:
+        # Second pass, requested by the caller after a confident-mode exit 3.
+        # Any failure here (CannotParse or a crash) is exit 3, never a crash
+        # code — the caller's raw rules are the last line, and a hook error
+        # reads as ALLOW.
+        try:
+            reason = paranoid_scan(cmd, mode, relax)
+        except Exception:
+            sys.exit(3)
+        if reason:
+            print(reason)
+            sys.exit(2)
+        sys.exit(0)
+
     try:
         tokens = tokenize(cmd)
     except Exception:
@@ -490,15 +609,25 @@ def main():
     if not tokens:
         sys.exit(3)
 
-    # An unexpanded expansion or a re-entry point means quoted text becomes code
-    # again and we cannot know what runs. Hand back to the caller's raw rules.
+    # A re-entry point means quoted text becomes code again and we cannot know
+    # what runs. Hand back to the caller — which re-runs this file in paranoid
+    # mode. But bail PRECISELY: bailing on every `$` made both guards
+    # raw-payload scanners for any command that mentioned a variable, which
+    # blocked `grep -rn "git reset --hard" "$DIR"` — a read-only search. A
+    # token that is nothing but a variable reference, in argument position, is
+    # data: it cannot re-enter a shell and has no adjacent characters to fuse
+    # with. Everything else `$`-shaped still bails — command position (the
+    # command itself becomes unknowable), a fused token like `--hard$X` (the
+    # expansion completes a flag), `$(...)` and backticks (code, anywhere).
     at_cmd_position = True
     for t in tokens:
-        if "$" in t or "`" in t:
+        if "`" in t or "$(" in t:
             sys.exit(3)
         if t in OPS:
             at_cmd_position = True
             continue
+        if "$" in t and (at_cmd_position or not PURE_VAR_RE.match(t)):
+            sys.exit(3)
         # `FOO=1 bash -c '...'` still runs bash. An env-assignment word does
         # NOT consume the command position, so it must not clear the flag —
         # otherwise the interpreter behind it is never seen and the whole
@@ -509,6 +638,15 @@ def main():
             sys.exit(3)
         at_cmd_position = False
 
+    reason = scan_segments(tokens, mode, relax)
+    if reason:
+        print(reason)
+        sys.exit(2)
+    sys.exit(0)
+
+
+def scan_segments(tokens, mode, relax):
+    """Apply the per-segment rules to a token stream. Reason string, or None."""
     for seg in segments(tokens):
         if mode == "destructive":
             # Raw filesystem destruction of the work containers themselves is
@@ -521,8 +659,14 @@ def main():
             # the classifier's confident exit 0 — was allowed outright with no
             # fallback. `env rm -rf .git` was already caught (env is an
             # interpreter → exit 3), so the bare assignment prefix was the hole.
+            # Launcher words are skipped the same way Invocation skips them
+            # for git: on the paranoid path `nice rm -R .git` reaches this
+            # rule with `nice` as seg[0], and requiring seg-position-0 to BE
+            # rm let every wrapped form through. (On the confident path an
+            # INTERP word has already forced exit 3, so the skip is inert.)
             _ci = 0
-            while _ci < len(seg) and ASSIGNMENT_RE.match(seg[_ci]):
+            while _ci < len(seg) and (ASSIGNMENT_RE.match(seg[_ci])
+                                      or os.path.basename(seg[_ci]) in INTERP):
                 _ci += 1
             if _ci < len(seg) and os.path.basename(seg[_ci]) == "rm":
                 # `-R` is a documented recursive flag on GNU and BSD rm alike;
@@ -553,9 +697,9 @@ def main():
                         parts = [p.rstrip("*?") for p in a.split("/") if p]
                         if ".git" in parts or ".worktrees" in parts \
                                 or any(p.endswith(".git") for p in parts):
-                            print("rm -rf of .git/.worktrees — irrecoverably "
-                                  "destroys a repository or an isolated worktree")
-                            sys.exit(2)
+                            return ("rm -rf of .git/.worktrees — irrecoverably "
+                                    "destroys a repository or an isolated "
+                                    "worktree")
         if not any(os.path.basename(t) in ("git", "git.exe") for t in seg):
             continue
         inv = Invocation(seg)
@@ -564,9 +708,81 @@ def main():
         reason = classify_destructive(inv, relax) if mode == "destructive" \
             else classify_no_verify(inv)
         if reason:
-            print(reason)
-            sys.exit(2)
-    sys.exit(0)
+            return reason
+    return None
+
+
+class CannotParse(Exception):
+    """Paranoid mode could not extract tokens; the caller's raw rules decide."""
+
+
+# `$VAR` / `${VAR}` references, stripped in paranoid mode. Stripping is the
+# block-biased direction: `--hard$X` (which bash may expand to `--hard`)
+# becomes `--hard` and matches; a reference that expands to something benign
+# costs nothing, because on this path an allow was never going to be refined
+# further anyway.
+VAR_STRIP_RE = re.compile(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*")
+
+
+def paranoid_tokenize(text):
+    # ${IFS} is the classic whitespace stand-in (`git${IFS}reset`); make it
+    # real whitespace so adjacency reappears. Backticks become separators so
+    # a backtick-substituted `git reset --hard` contributes its words to the
+    # stream instead of fusing into unmatchable tokens.
+    text = re.sub(r"\$\{IFS\}|\$IFS", " ", text)
+    text = text.replace("`", " ")
+    text = VAR_STRIP_RE.sub("", text)
+    try:
+        return tokenize(text)
+    except Exception:
+        # Unbalanced quotes: retry with quote characters blanked. That can
+        # only EXPOSE more words to match against — a mention inside a broken
+        # quote now looks like an invocation, which errs toward blocking.
+        try:
+            return tokenize(text.replace("'", " ").replace('"', " "))
+        except Exception:
+            raise CannotParse()
+
+
+def paranoid_scan(text, mode, relax, depth=0):
+    """Block-biased re-parse for commands the confident path refused.
+
+    WHY THIS EXISTS. Exit 3 used to hand the command to the caller's spelling
+    regexes, and those only match full canonical spellings — so every prefix
+    form the classifier exists to catch came back the moment a `$`, a
+    backtick, or a launcher word appeared: `nice git reset --h HEAD~1` and
+    `git reset --h HEAD~1 && echo $HOME` were both measured ALLOWED while
+    really resetting against git 2.54. A weaker second rule set will always
+    drift from the first; re-running the SAME classifier in a paranoid mode
+    keeps one source of truth.
+
+    Paranoid rules: no bailing on `$`/interpreters; variable references are
+    stripped (see VAR_STRIP_RE); and any token that still carries whitespace
+    or an operator character — a quoted blob — is recursively scanned, because
+    on this path an interpreter that can make quoted text run again is either
+    present or unprovable. The recursion is why `bash -c "git reset --hard"`
+    and an os.system() payload inside `python3 -c '...'` both block. A quoted
+    blob blocks only when it contains a full git invocation: a heredoc or
+    string that merely QUOTES `--no-verify` scans clean, because the flag
+    never sits inside a git segment.
+
+    Verdicts: a reason string blocks; None allows; CannotParse propagates so
+    the caller's raw-text rules run (noisy, never fail-open).
+    """
+    if depth > 5:
+        raise CannotParse()
+    tokens = paranoid_tokenize(text)
+    reason = scan_segments(tokens, mode, relax)
+    if reason:
+        return reason
+    for t in tokens:
+        if t in OPS:
+            continue
+        if any(c.isspace() for c in t) or any(c in ";|&" for c in t):
+            reason = paranoid_scan(t, mode, relax, depth + 1)
+            if reason:
+                return reason
+    return None
 
 
 if __name__ == "__main__":

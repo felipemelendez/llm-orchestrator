@@ -54,6 +54,28 @@ print(json.dumps({'tool_name':'Bash','tool_input':{'command':sys.argv[1],'descri
 blocks() { [[ "$(rc_for "$1" "${2:-}")" == "2" ]] && ok "BLOCK: $1" || fail "BLOCK: $1" "expected exit 2"; }
 allows() { [[ "$(rc_for "$1" "${2:-}")" == "0" ]] && ok "ALLOW: $1" || fail "ALLOW: $1" "expected exit 0"; }
 
+# --- Fallback parity: cross the two axes the suite never crossed --------------
+# The spelling cases below used to run ONLY through the classifier's confident
+# path; the fallback cases ONLY with canonical spellings the raw rules happened
+# to cover. `nice ` (a launcher word) and a trailing `$?` each force the
+# classifier off its confident path, so the same spelling must also block via
+# the paranoid re-parse. Measured pre-fix: `nice git commit --no-verif -m x`
+# was rc=0 while committing past a failing pre-commit hook.
+blocks_fallback() {
+  local cmd="$1"
+  [[ "$(rc_for "nice ${cmd}")" == "2" ]] && ok "FB-launcher BLOCK: $cmd" \
+    || fail "FB-launcher BLOCK: nice $cmd" "expected exit 2"
+  [[ "$(rc_for "${cmd} && echo \$?")" == "2" ]] && ok "FB-dollar BLOCK: $cmd" \
+    || fail "FB-dollar BLOCK: $cmd && echo \$?" "expected exit 2"
+}
+allows_fallback() {
+  local cmd="$1"
+  [[ "$(rc_for "nice ${cmd}")" == "0" ]] && ok "FB-launcher ALLOW: $cmd" \
+    || fail "FB-launcher ALLOW: nice $cmd" "expected exit 0"
+  [[ "$(rc_for "${cmd} && echo \$?")" == "0" ]] && ok "FB-dollar ALLOW: $cmd" \
+    || fail "FB-dollar ALLOW: $cmd && echo \$?" "expected exit 0"
+}
+
 printf '%s== real bypasses still block ==%s\n' "$DIM" "$RESET"
 blocks 'git commit --no-verify -m x'
 blocks 'git commit -m x --no-verify'
@@ -105,6 +127,49 @@ blocks "$(printf 'git commit \\\n--no-verify -m x')"
 blocks 'git --no-pager commit --no-verify -m x'
 blocks 'git -P commit --no-verif -m x'
 
+printf '\n%s== FALLBACK PARITY: the same spellings must block off the confident path ==%s\n' "$DIM" "$RESET"
+blocks_fallback 'git commit --no-verify -m x'
+blocks_fallback 'git commit --no-verif -m x'
+blocks_fallback 'git commit --no-veri -m x'
+blocks_fallback 'git commit --no-ver -m x'
+blocks_fallback 'git commit --no-gpg -m x'
+blocks_fallback 'git commit --no-gpg-sig -m x'
+blocks_fallback 'git push --no-verify'
+blocks_fallback 'git commit -a -n -m x'
+blocks_fallback 'git commit -an -m x'
+blocks_fallback 'git -c commit.gpgsign=false commit -m x'
+blocks_fallback 'git -c commit.gpgSign=false commit -m x'
+allows_fallback 'git commit -m x'
+allows_fallback 'git log -n 5'
+allows_fallback 'git push --dry-run'
+allows_fallback 'git status --short'
+
+printf '\n%s== the PERMANENT bypass: git config core.hooksPath / commit.gpgsign ==%s\n' "$DIM" "$RESET"
+# One `git config core.hooksPath /dev/null` and every later plain commit
+# passes a failing pre-commit hook FOREVER while looking clean to this guard
+# (proven end-to-end). The transient `-c` form was covered; the permanent form
+# was not. Config keys are case-insensitive; the read form is blocked too —
+# a rare `--get` costs one round-trip, missing the write costs the guard.
+blocks 'git config core.hooksPath /dev/null'
+blocks 'git config core.hookspath /dev/null'
+blocks 'git config CORE.HOOKSPATH /dev/null'
+blocks 'git config --global core.hooksPath /dev/null'
+blocks 'git config commit.gpgsign false'
+blocks 'git config --global commit.gpgsign false'
+blocks 'git config set core.hooksPath /dev/null'
+blocks 'git config unset core.hooksPath'
+blocks_fallback 'git config core.hooksPath /dev/null'
+blocks_fallback 'git config commit.gpgsign false'
+# the -c (transient) form, in every case git accepts
+blocks 'git -c core.hooksPath=/dev/null commit -m x'
+blocks 'git -c core.hookspath=/dev/null commit -m x'
+blocks_fallback 'git -c core.hooksPath=/dev/null commit -m x'
+# ...but config keys OUTSIDE the bypass set stay free, or the guard is noise
+allows 'git config user.name Felipe'
+allows 'git config --get core.abbrev'
+allows 'git config core.autocrlf false'
+allows 'git config --global user.email f@x.y'
+
 printf '\n%s== the alias rule runs even when the classifier is confident ==%s\n' "$DIM" "$RESET"
 # Regression found by cold review: gating the raw `-c alias.` scan on "the
 # classifier decided" made the classifier's blind spots into the guard's. An
@@ -121,6 +186,24 @@ allows 'git commit --help'
 allows 'git log -n 5'
 allows 'git push --dry-run'
 allows 'git commit -m x'
+
+printf '\n%s== variables and quoted mentions: block the flag, never the mention ==%s\n' "$DIM" "$RESET"
+# A `$` used to bail the classifier into a raw-payload scan, which blocked a
+# commit whose MESSAGE mentioned the bypass and a read-only search carrying
+# "$DIR". A token that is nothing but a variable reference, in argument
+# position, is data — the command is still fully classifiable around it.
+allows 'git commit -m "chore: stop using the bypass flag in CI" -m "$BODY"'
+allows 'grep -rn -- "--no-verify" "$DIR"'
+allows 'git log --grep="--no-verify" -- "$FILE"'
+allows 'MSG="do not pass --no-verify" git commit -m ok'
+# A script that merely QUOTES the flag is a mention: a python heredoc carrying
+# the literal `--no-verify` inside a string is a documentation edit, not a
+# commit (measured pre-fix: rc=2, two wasted round-trips). A shell heredoc
+# that IS a bypassing invocation still blocks.
+allows "$(printf 'python3 - <<PY\ntext = "--no-verify is blocked by policy"\nprint(text)\nPY')"
+allows "$(printf 'python3 - <<PY\ndoc = "guards: never bypass hooks"\nprint(doc)\nPY')"
+blocks "$(printf 'bash - <<SH\ngit commit --no-verify -m x\nSH')"
+blocks 'bash -c "git commit --no-verify -m x"'
 
 printf '\n%s== opt-in and profile gates ==%s\n' "$DIM" "$RESET"
 RC=$(rc_for 'git commit --no-verify -m x' 'x' ORCH_ALLOW_NO_VERIFY=1)
