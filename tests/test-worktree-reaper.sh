@@ -143,6 +143,48 @@ OUT=$(fire "$W" 'Status: DONE
 Summary: finished in .worktrees/only')
 held "$W/.worktrees/only" && ok "non-empty mutex refused (inspect by hand)" || fail "removed non-empty mutex" "$OUT"
 
+printf '\n%s== end-to-end: the LEDGER writes the map — a polite losing mkdir must not become a claim ==%s\n' "$DIM" "$RESET"
+# The handwritten-map cases above pin the reaper's agent-id keying, but they
+# cannot catch a ledger that records a FALSE claim. Drive the real
+# orch-evidence-ledger.sh with the commands agents actually run: a1 wins the
+# mutex with a plain mkdir; a2 loses the race POLITELY (`mkdir X || echo
+# BLOCKED` — exits 0, PostToolUse fires). If the ledger records a claim for
+# the loser, a2's stop releases the mutex a1 is live inside — the two-writers
+# corruption the whole mechanism exists to prevent.
+LHOOK="${ROOT}/scripts/hooks/orch-evidence-ledger.sh"
+W3="$TMP/e2e"; mkdir -p "$W3"
+( cd "$W3" && git init -q && git config user.email t@t.t && git config user.name t \
+  && echo s > s.txt && git add s.txt && git commit -qm s ) >/dev/null 2>&1
+mkdir -p "$W3/.worktrees/mine" "$W3/.worktrees/other"
+post_event() { # post_event <agent_id> <command> — a real PostToolUse (success) event
+  python3 -c "
+import json, sys
+print(json.dumps({'session_id':'reap-test','hook_event_name':'PostToolUse','tool_name':'Bash',
+                  'agent_id':sys.argv[1],'tool_input':{'command':sys.argv[2]},
+                  'tool_response':{'stdout':sys.argv[3] if len(sys.argv)>3 else '','stderr':'',
+                                   'interrupted':False,'isImage':False,'noOutputExpected':False}}))" "$@" \
+  | ( cd "$W3" && bash "$LHOOK" ) >/dev/null 2>&1
+}
+# a1 actually takes the mutex, and the ledger sees the winning command.
+( cd "$W3" && mkdir .worktrees/mine/.orch-active )
+post_event a1 'mkdir .worktrees/mine/.orch-active'
+# a2 races the same path, loses, and reports the loss politely — exit 0.
+post_event a2 'mkdir .worktrees/mine/.orch-active || echo BLOCKED' 'BLOCKED'
+# a2 stops BLOCKED while a1 is still writing. The map is consulted BEFORE the
+# message-shape gate, so a false a2 claim bypasses even the BLOCKED carve-out.
+OUT=$(cd "$W3" && fire_as a2 "$W3" 'Status: BLOCKED
+Need: a worktree not already being written — .worktrees/mine is held by another writer')
+held "$W3/.worktrees/mine" \
+  && ok "the losing mkdir left no claim: a2's stop does not release a1's live mutex" \
+  || fail "ledger-driven false claim" "a polite losing 'mkdir X || echo BLOCKED' recorded a claim and the reaper released a LIVE writer's mutex. $OUT"
+# The positive path must survive the stricter ledger: a1's own recorded claim
+# still releases when a1 stops without rmdir.
+OUT=$(cd "$W3" && fire_as a1 "$W3" 'Status: DONE
+Summary: finished')
+held "$W3/.worktrees/mine" \
+  && fail "winner's abandoned mutex not reaped" "the entailment fix must not lose real claims. $OUT" \
+  || ok "a1's genuine ledger-recorded claim is still reaped on a1's stop"
+
 printf '\n%s== no worktree named → nothing reaped, state reported ==%s\n' "$DIM" "$RESET"
 W="$TMP/g"; mkwt "$W/.worktrees/only"
 OUT=$(fire "$W" 'Status: DONE

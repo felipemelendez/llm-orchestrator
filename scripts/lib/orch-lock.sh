@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
 # Portable file lock for LLM Orchestrator memory writes.
-# Works on macOS (no flock by default), Linux (with or without flock),
-# and any POSIX system with mkdir (which is atomic).
+# Works on macOS, Linux, and any POSIX system with mkdir (which is atomic).
+#
+# ONE mechanism on purpose. There used to be a flock fast path with the mkdir
+# loop as fallback, and the two locked DIFFERENT objects (<t>.lock file vs
+# <t>.lockdir directory) — so a process with flock on its PATH and one without
+# excluded each other not at all: both entered. The flock branch also ran the
+# command in a subshell while the fallback ran it in the caller's shell, a
+# side-effect divergence between Linux and macOS. A mutex whose behaviour
+# depends on the caller's PATH is not a mutex; mkdir is atomic everywhere, so
+# it is the only mechanism.
 #
 # Usage:
 #   source scripts/lib/orch-lock.sh
@@ -11,6 +19,26 @@
 #   ORCH_LOCK_TIMEOUT=10 with_lock /path/to/file bash -c 'cat >> /path/to/file <<EOF
 #   content
 #   EOF'
+
+# True pid of the CALLING process — call it ONLY as `$(_orch_self_pid)`. `$$`
+# is the ORIGINAL shell's pid inside any subshell, and bash 3.2 has no BASHPID
+# — so a holder that acquired inside `( ... ) &` recorded its PARENT, and the
+# moment the parent exited every waiter judged the recorded pid dead and stole
+# the lock mid-critical-section (measured: two processes inside the lock at
+# once). The command substitution forks exactly one child; `exec` replaces
+# that child with sh, whose $PPID is therefore the real calling process. The
+# function must exec directly (no nested $(...)), or the answer would be the
+# pid of a substitution shell that is already gone.
+_orch_self_pid() { exec sh -c 'echo "$PPID"'; }
+
+# Liveness that does not mistake EPERM for death. `kill -0` returns non-zero
+# both for "no such process" and for a LIVE process owned by another uid
+# (EPERM) — and a lock steal justified by the latter robs a live holder. ps
+# can see any uid's process; it is the arbiter whenever kill -0 says no.
+_orch_pid_alive() {
+  kill -0 "$1" 2>/dev/null && return 0
+  ps -p "$1" >/dev/null 2>&1
+}
 
 # _restore_steal <moved-dir> <original-path>
 # Put back a lockdir we moved but did not condemn — WITHOUT nesting it.
@@ -42,7 +70,6 @@ _restore_steal() {
 
 with_lock() {
   local target="$1"; shift
-  local lockfile="${target}.lock"
   local lockdir="${target}.lockdir"
   # Numeric-only, with a fallback to the default. Under `set -u` an arithmetic
   # test against a non-numeric value ("abc") is an UNBOUND VARIABLE error, so
@@ -50,16 +77,13 @@ with_lock() {
   # did so — a typo in an env var silently disabled the mutex.
   local timeout="${ORCH_LOCK_TIMEOUT:-10}"
   case "${timeout}" in ''|*[!0-9]*) timeout=10 ;; esac
+  # Resolved ONCE, before acquisition, and reused verbatim at release: the
+  # write and the compare must talk about the same process. Falls back to $$
+  # only if the probe produced garbage (no sh?) — degraded, but never empty.
+  local _mypid; _mypid="$(_orch_self_pid 2>/dev/null)"
+  case "${_mypid}" in (''|*[!0-9]*) _mypid="$$" ;; esac
 
-  if command -v flock >/dev/null 2>&1; then
-    # GNU/BSD systems with util-linux flock or compatible.
-    ( flock -w "${timeout}" 9 || { echo "lock timeout on ${target}" >&2; exit 1; }
-      "$@"
-    ) 9>>"${lockfile}"
-    return $?
-  fi
-
-  # Portable fallback: mkdir is atomic on POSIX.
+  # mkdir is atomic on POSIX.
   #
   # STALE-LOCK RECLAIM. A SIGKILLed holder used to strand the lockdir
   # PERMANENTLY: no trap can run on SIGKILL, nothing recorded who held it, and
@@ -96,7 +120,7 @@ with_lock() {
   local _steal _moved_pid
   while ! mkdir "${lockdir}" 2>/dev/null; do
     holder_pid="$(cat "${lockdir}/pid" 2>/dev/null || true)"
-    if [[ -n "${holder_pid}" && "${holder_pid}" != *[!0-9]* ]] && ! kill -0 "${holder_pid}" 2>/dev/null; then
+    if [[ -n "${holder_pid}" && "${holder_pid}" != *[!0-9]* ]] && ! _orch_pid_alive "${holder_pid}"; then
       _steal="${lockdir}.stale.$$.${RANDOM}"
       if mv "${lockdir}" "${_steal}" 2>/dev/null; then
         _moved_pid="$(cat "${_steal}/pid" 2>/dev/null || true)"
@@ -115,7 +139,7 @@ with_lock() {
     # death, and treating it as one let a slow-but-alive holder be robbed
     # (measured: two holders inside the lock at once).
     if [[ -z "${holder_pid}" ]] || [[ "${holder_pid}" == *[!0-9]* ]] \
-       || ! kill -0 "${holder_pid}" 2>/dev/null; then
+       || ! _orch_pid_alive "${holder_pid}"; then
       lock_age="$( _orch_lock_age_secs "${lockdir}" )"
       if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )); then
         _steal="${lockdir}.stale.$$.${RANDOM}"
@@ -126,7 +150,7 @@ with_lock() {
           _moved_pid="$(cat "${_steal}/pid" 2>/dev/null || true)"
           if [[ -n "${lock_age}" ]] && (( lock_age > stale_secs )) \
              && { [[ -z "${_moved_pid}" ]] || [[ "${_moved_pid}" == *[!0-9]* ]] \
-                  || ! kill -0 "${_moved_pid}" 2>/dev/null; }; then
+                  || ! _orch_pid_alive "${_moved_pid}"; }; then
             rm -rf "${_steal}" 2>/dev/null
             echo "orch-lock: reclaimed lock on ${target} — ${lock_age}s old (> ${stale_secs}s TTL), no live holder" >&2
           else
@@ -158,8 +182,9 @@ with_lock() {
   # A holder that cannot record its identity cannot release its own lock: the
   # ownership check below would read an empty pid, conclude "not ours", and
   # skip the rmdir — stranding a lock we legitimately held. Give it up instead
-  # of proceeding with a lock we can never hand back.
-  if ! printf '%s\n' "$$" > "${lockdir}/pid" 2>/dev/null; then
+  # of proceeding with a lock we can never hand back. The pid recorded is the
+  # TRUE pid of this process (_orch_self_pid), never `$$` — see the helper.
+  if ! printf '%s\n' "${_mypid}" > "${lockdir}/pid" 2>/dev/null; then
     rm -f "${lockdir}/pid" 2>/dev/null
     rmdir "${lockdir}" 2>/dev/null
     echo "orch-lock: could not record ownership of ${target}; releasing rather than holding an unreleasable lock" >&2
@@ -176,7 +201,7 @@ with_lock() {
   # stolen lock a no-op on release instead of a cascade.
   local rc=0
   "$@" || rc=$?
-  if [[ "$(cat "${lockdir}/pid" 2>/dev/null)" == "$$" ]]; then
+  if [[ "$(cat "${lockdir}/pid" 2>/dev/null)" == "${_mypid}" ]]; then
     rm -f "${lockdir}/pid" 2>/dev/null
     rmdir "${lockdir}" 2>/dev/null
   else

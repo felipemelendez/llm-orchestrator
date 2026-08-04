@@ -166,6 +166,80 @@ OUT="$(bash "$INTEG" --serial --test "echo run >> '$CNT3'" "$SID" r1 r2 2>&1)"; 
 runs=$(wc -l < "$CNT3" | tr -d ' ')
 [[ "$runs" == "2" ]] && ok "--serial runs the suite once per branch (2 for 2)" || fail "serial run count" "runs=$runs"
 
+printf '\n%s== concurrent integrates: the second run REFUSES instead of clobbering ==%s\n' "$DIM" "$RESET"
+# Reproduction of the field corruption: two integrates on one base. Run B lands
+# its merge, prints MERGED, releases its claim and removes its worktree; run
+# A's restore_base then `reset --hard`s the base back past B's commit because
+# B's merge is a DESCENDANT of A's recorded pre-sha. B reported success for a
+# commit that is no longer on the base. The fix is an exclusive integration
+# lock at engine entry; deterministic here via a slow suite for A and a
+# wait-for-lockdir gate before B starts.
+mat ci1 ci2; mk ci1 fci1.txt one; mk ci2 fci2.txt two
+GD="$(git rev-parse --git-dir)"
+AOUT="${TMP}/ci-a.out"; BOUT="${TMP}/ci-b.out"
+bash "$INTEG" --serial --test "sleep 3; true" "$SID" ci1 >"$AOUT" 2>&1 &
+APID=$!
+lockseen=0
+for _ in $(seq 1 100); do
+  [[ -d "${GD}/orch-integrate.lockdir" ]] && { lockseen=1; break; }
+  kill -0 "$APID" 2>/dev/null || break
+  perl -e 'select(undef,undef,undef,0.05)' 2>/dev/null || sleep 1
+done
+[[ $lockseen -eq 1 ]] && ok "run A takes an exclusive integration lock" \
+  || fail "no integration lock" "run A never created ${GD}/orch-integrate.lockdir — nothing excludes a concurrent integrate"
+bash "$INTEG" --serial --test true "$SID" ci2 >"$BOUT" 2>&1; brc=$?
+wait "$APID"; arc=$?
+[[ $brc -ne 0 ]] && ok "run B refused while A held the lock" \
+  || fail "concurrent B ran to completion" "brc=0 — two integrates interleaved on one base: $(head -3 "$BOUT" | tr '\n' '|')"
+grep -q 'another integration' "$BOUT" && ok "B names the live integration as the reason" \
+  || fail "B's refusal reason" "$(head -3 "$BOUT" | tr '\n' '|')"
+[[ $arc -eq 0 ]] && ok "run A completed green" || fail "A failed" "arc=$arc $(head -5 "$AOUT" | tr '\n' '|')"
+[[ -f fci1.txt ]] && ok "A's merge survived on the base" || fail "A's landed commit lost" "fci1.txt missing"
+git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && fail "base left mid-merge" "" || ok "base is not mid-merge"
+[[ ! -d "${GD}/orch-integrate.lockdir" ]] && ok "the lock is released when A finishes" || fail "integration lock leaked" ""
+bash "$INTEG" --serial --test true "$SID" ci2 >/dev/null 2>&1; rc=$?
+[[ $rc -eq 0 && -f fci2.txt ]] && ok "B lands cleanly once A has released" || fail "B re-run" "rc=$rc"
+
+printf '\n%s== integration lock: dead holder reclaimed, live holder refused ==%s\n' "$DIM" "$RESET"
+# A SIGKILLed integrate must not deadlock every later one; a LIVE one must.
+mat sl1; mk sl1 fsl1.txt x
+DEADPID=999999; while kill -0 "$DEADPID" 2>/dev/null; do DEADPID=$((DEADPID+1)); done
+mkdir -p "${GD}/orch-integrate.lockdir"; printf '%s\n' "$DEADPID" > "${GD}/orch-integrate.lockdir/pid"
+bash "$INTEG" --serial --test true "$SID" sl1 >/dev/null 2>&1; rc=$?
+[[ $rc -eq 0 && -f fsl1.txt ]] && ok "a dead holder's leftover lock is reclaimed (no deadlock)" \
+  || fail "dead-lock deadlock" "rc=$rc — a SIGKILLed integrate bricked all later ones"
+mat sl2; mk sl2 fsl2.txt y
+mkdir -p "${GD}/orch-integrate.lockdir"; printf '%s\n' "$$" > "${GD}/orch-integrate.lockdir/pid"
+bash "$INTEG" --serial --test true "$SID" sl2 >/dev/null 2>&1; rc=$?
+[[ $rc -ne 0 && ! -f fsl2.txt ]] && ok "a LIVE holder's lock is refused, never stolen" \
+  || fail "live integration lock stolen" "rc=$rc"
+rm -rf "${GD}/orch-integrate.lockdir"
+bash "$INTEG" --serial --test true "$SID" sl2 >/dev/null 2>&1 || true
+
+printf '\n%s== white-box: restore_base refuses to reset away a FOREIGN commit ==%s\n' "$DIM" "$RESET"
+# "HEAD is a descendant of pre" is NOT proof the extra commits are ours — a
+# parallel integrate's freshly landed merge commit is a descendant too, and
+# hard-resetting it away destroys a merge its run already reported MERGED.
+# Only commits THIS run committed may be discarded.
+WB2="$(cd "${REPO}" && SCRIPT="${INTEG}" bash -c '
+  . "${SCRIPT}"
+  pre="$(git rev-parse HEAD)"
+  git commit --allow-empty -qm "another run landed this merge"   # descendant, NOT ours
+  if restore_base "${pre}" >/dev/null 2>&1; then echo RC0; else echo REFUSED; fi
+  if [[ "$(git rev-parse HEAD)" == "${pre}" ]]; then echo BASE_REWOUND; else echo BASE_KEPT; fi
+')"
+printf '%s' "$WB2" | grep -q REFUSED && ok "restore_base returns non-zero on a foreign descendant" \
+  || fail "restore_base foreign rc" "got: ${WB2}"
+printf '%s' "$WB2" | grep -q BASE_KEPT && ok "the foreign commit survives (no hard reset past it)" \
+  || fail "foreign commit hard-reset away" "got: ${WB2}"
+printf '%s' "$WB2" | grep -q BASE_KEPT && git reset -q --hard HEAD~1 2>/dev/null   # undo scaffolding commit
+
+printf '\n%s== sanitize: newline-bearing slug is flattened, not line-split ==%s\n' "$DIM" "$RESET"
+SN="$(SCRIPT="${INTEG}" bash -c '. "${SCRIPT}" >/dev/null 2>&1; sanitize "a
+b"')"
+[[ "$SN" == "a_b" ]] && ok "integrate sanitize flattens an embedded newline to _" \
+  || fail "integrate sanitize newline" "got: $(printf '%s' "$SN" | od -c | head -2 | tr '\n' ' ')"
+
 printf '\n%s== no test command: refuse unless --allow-no-tests ==%s\n' "$DIM" "$RESET"
 mat g; mk g fg.txt ggg
 bash "$INTEG" "$SID" g >/dev/null 2>&1; [[ $? -eq 2 ]] && ok "no test cmd, no flag → exit 2" || fail "no-test exit2"

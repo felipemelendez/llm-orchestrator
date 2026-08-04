@@ -44,7 +44,10 @@ set -uo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 MAT="${_SCRIPT_DIR}/orch-worktree-materialize.sh"   # for --release
 
-sanitize() { printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
+# tr flattens newlines BEFORE line-based sed sees them — an embedded newline
+# used to survive sanitization and corrupt every branch/claim name built from
+# the slug (same defect class as the materialize engine's sanitize; both fixed).
+sanitize() { printf '%s' "$1" | tr '\n' '_' | sed 's/[^A-Za-z0-9._-]/_/g'; }
 
 # --- report state ----------------------------------------------------------
 I_LINE=()        # completed "Integrated:" lines
@@ -61,10 +64,56 @@ NOREMOVE=0       # --no-remove, reproduced in the Re-run line
 RAW=()           # original slug args (global so on_signal can slice them)
 INT_BR=""        # speculative: integration branch (kept when it holds a failure)
 INT_WT=""        # speculative: integration worktree path (always cleaned)
+INT_LOCK=""      # exclusive integration lock path (empty when not held)
+OWN_LANDED=""    # newline-separated shas of merge commits THIS run created
+
+# --- integration lock ------------------------------------------------------
+# Two integrates interleaving on one base is how a landed merge got hard-reset
+# away: run B landed its merge, printed MERGED at exit 0, released its claim
+# and removed its worktree — and run A's restore_base then `reset --hard`ed
+# the base back past B's commit, because B's fresh merge is a DESCENDANT of
+# A's recorded pre-sha. B reported success for a commit that is not on the
+# base. The engines mutate one shared checkout; they get one exclusive lock.
+#
+# `mkdir` is the atomic primitive; the pid inside lets a later run distinguish
+# a SIGKILLed integrate (reclaim, or every future integrate deadlocks) from a
+# LIVE one (refuse — never steal). Released by report_and_exit, which every
+# engine path funnels through, plus an EXIT trap for the pre-flight exits.
+acquire_int_lock() {
+  local gd pid
+  gd="$(git rev-parse --git-dir 2>/dev/null)" || return 1
+  local lock="${gd}/orch-integrate.lockdir"
+  if ! mkdir "${lock}" 2>/dev/null; then
+    pid="$(cat "${lock}/pid" 2>/dev/null || true)"
+    if [[ -n "${pid}" && "${pid}" != *[!0-9]* ]] \
+       && ! kill -0 "${pid}" 2>/dev/null && ! ps -p "${pid}" >/dev/null 2>&1; then
+      # Recorded holder is provably dead (ps sees any uid, so EPERM ≠ death).
+      rm -rf "${lock}" 2>/dev/null
+      if ! mkdir "${lock}" 2>/dev/null; then
+        echo "orch-integrate: another integration grabbed the lock while a dead one was being reclaimed — refusing to run two integrations against one base (lock: ${lock})" >&2
+        return 1
+      fi
+      echo "orch-integrate: reclaimed integration lock from dead pid ${pid}" >&2
+    else
+      echo "orch-integrate: another integration is in progress (holder pid ${pid:-unknown}, lock ${lock}) — two integrates interleaving on one base is how landed merges get reset away. Re-run when it finishes; if the holder is truly gone, remove the lock by hand." >&2
+      return 1
+    fi
+  fi
+  printf '%s\n' "$$" > "${lock}/pid" 2>/dev/null || true
+  INT_LOCK="${lock}"
+}
+
+release_int_lock() {
+  [[ -n "${INT_LOCK}" ]] || return 0
+  rm -f "${INT_LOCK}/pid" 2>/dev/null
+  rmdir "${INT_LOCK}" 2>/dev/null
+  INT_LOCK=""
+}
 
 report_and_exit() {
   local code="$1" s
   trap - EXIT INT TERM HUP    # clear first so no path double-reports
+  release_int_lock
   [[ -n "${TESTOUT:-}" ]] && rm -f "${TESTOUT}" >/dev/null 2>&1; true
   [[ ${UNVERIFIED} -eq 1 ]] && printf 'WARNING: no test command — this run is UNVERIFIED.\n'
   printf 'Integrated:\n'
@@ -117,17 +166,30 @@ restore_base() {
   git merge --abort >/dev/null 2>&1 || git reset -q --merge >/dev/null 2>&1 || true
   if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || \
      [[ "$(git rev-parse HEAD 2>/dev/null)" != "${pre}" ]]; then
-    # Only ever rewind to `pre` when HEAD is a DESCENDANT of it — i.e. the
-    # only commits being discarded are ones made after we recorded it. If HEAD
-    # is unrelated, something outside this run moved the base (a parallel agent
-    # committing on the shared checkout), and discarding that is not ours to do.
-    if [[ "$(git rev-parse HEAD 2>/dev/null)" == "${pre}" ]] \
-       || git merge-base --is-ancestor "${pre}" HEAD 2>/dev/null; then
+    # Only ever rewind to `pre` when every commit being discarded is one THIS
+    # RUN committed. "HEAD is a descendant of pre" is NOT that proof: a
+    # parallel integrate's freshly landed merge commit is a descendant too,
+    # and hard-resetting past it destroys a merge whose run already reported
+    # MERGED at exit 0 — the corruption the integration lock exists to
+    # prevent, closed here independently so restore_base is safe even if some
+    # future path reaches it unlocked. OWN_LANDED holds the shas this run's
+    # own `git commit`s created; anything else in pre..HEAD is foreign.
+    if [[ "$(git rev-parse HEAD 2>/dev/null)" == "${pre}" ]]; then
       git reset -q --hard "${pre}" >/dev/null 2>&1 || true
     else
-      printf 'the base moved to %s, which is NOT a descendant of the pre-merge sha %s — something outside this run changed it; refusing to reset, resolve by hand' \
-             "$(git rev-parse --short HEAD 2>/dev/null)" "$(git rev-parse --short "${pre}" 2>/dev/null)"
-      return 1
+      local _extra _sha _foreign=""
+      _extra="$(git rev-list "${pre}..HEAD" 2>/dev/null)"
+      [[ -n "${_extra}" ]] || _foreign=1   # empty = not even a descendant (base rewound/unrelated)
+      for _sha in ${_extra}; do
+        case "${OWN_LANDED}" in *"${_sha}"*) ;; *) _foreign=1 ;; esac
+      done
+      if [[ -z "${_foreign}" ]]; then
+        git reset -q --hard "${pre}" >/dev/null 2>&1 || true
+      else
+        printf 'the base moved to %s and the commits past the pre-merge sha %s are NOT this run'\''s own merges — a parallel run may have landed them; refusing to reset, resolve by hand' \
+               "$(git rev-parse --short HEAD 2>/dev/null)" "$(git rev-parse --short "${pre}" 2>/dev/null)"
+        return 1
+      fi
     fi
   fi
   if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
@@ -196,6 +258,8 @@ do_serial() {
       testline="UNVERIFIED"
       git commit -q --no-edit -m "integrate ${slug}" >/dev/null 2>&1 || true
       mergesha="$(git rev-parse --short HEAD)"
+      OWN_LANDED="${OWN_LANDED}$(git rev-parse HEAD 2>/dev/null)
+"
     else
       TESTOUT="$(mktemp)"
       if eval "${TESTCMD}" >"${TESTOUT}" 2>&1; then
@@ -211,6 +275,8 @@ do_serial() {
           PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
         fi
         mergesha="$(git rev-parse --short HEAD)"
+        OWN_LANDED="${OWN_LANDED}$(git rev-parse HEAD 2>/dev/null)
+"
       else
         rm -f "${TESTOUT}"; TESTOUT=""
         # Red: discard the staged merge — and VERIFY the discard, because the
@@ -456,6 +522,7 @@ checkout_or_abort() {
 }
 
 do_integrate() {
+  OWN_LANDED=""   # reset for sourced re-runs; only THIS run's commits count
   local dry=0 allow_no_tests=0 serial=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -477,6 +544,14 @@ do_integrate() {
   # pre-flight (no mutation)
   git rev-parse --show-toplevel >/dev/null 2>&1 || { echo "orch-integrate: not inside a git repository" >&2; exit 2; }
   [[ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]] || { echo "orch-integrate: must be run from the repo root" >&2; exit 2; }
+
+  # Exclusive from here on: even the dirty-base check below can be looking at
+  # a CONCURRENT integrate's staged merge, and reporting that as "your base is
+  # dirty" sends the operator chasing the wrong problem. The EXIT trap covers
+  # the pre-flight exits; the engines' own traps hand release duty to
+  # report_and_exit, which every engine path funnels through.
+  acquire_int_lock || exit 1
+  trap 'release_int_lock' EXIT
   git diff --quiet >/dev/null 2>&1 && git diff --cached --quiet >/dev/null 2>&1 || { echo "orch-integrate: base branch is dirty — commit or stash your own changes first" >&2; exit 2; }
   for raw in "${RAW[@]}"; do
     slug="$(sanitize "${raw}")"; branch="orch/${SID}/${slug}"

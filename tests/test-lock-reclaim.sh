@@ -7,9 +7,13 @@
 # directory. Every later with_lock on that file timed out, and callers that
 # proceed unlocked on timeout turned the lock into a permanent no-op.
 #
-# The mkdir fallback only runs when `flock` is absent, so every case here runs
-# under a constructed PATH that omits flock — otherwise CI (Linux, flock
-# present) would test the flock path and this suite would assert nothing.
+# These cases run under the REAL PATH on purpose. The suite used to construct
+# a no-flock PATH so the mkdir fallback would run even on Linux — which meant
+# the flock branch and the mixed-mechanism case (one process with flock on its
+# PATH, one without, locking DIFFERENT objects and both entering) were tested
+# by nothing. The lib now has exactly one mechanism (mkdir), so the real PATH
+# exercises the real code on every platform, and a pinned check below fails if
+# a second mechanism ever reappears.
 #
 # Bash 3.2 compatible. Exits non-zero on any failure.
 
@@ -29,24 +33,23 @@ fail() { printf '  %s✗%s %s\n    %s\n' "$RED" "$RESET" "$1" "${2:-}"; FAIL=$((
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# PATH without flock: symlink every tool the lib and these tests need.
-NOFLOCK="${TMP}/noflock-bin"; mkdir -p "$NOFLOCK"
-for t in bash sh cat grep sed awk printf mktemp rm rmdir mkdir mv cp ls dirname basename env date stat kill sleep perl touch head tail tr; do
-  p="$(command -v "$t" 2>/dev/null)" && ln -s "$p" "$NOFLOCK/$t" 2>/dev/null
-done
-
-# run_locked <timeout> <stale_secs> <target> <cmd...> — under the no-flock PATH.
+# run_locked <timeout> <stale_secs> <target> <cmd...> — real PATH, real code.
 run_locked() {
   local to="$1" st="$2" tgt="$3"; shift 3
-  PATH="$NOFLOCK" ORCH_LOCK_TIMEOUT="$to" ORCH_LOCK_STALE_SECS="$st" \
+  ORCH_LOCK_TIMEOUT="$to" ORCH_LOCK_STALE_SECS="$st" \
     bash -c '. "$1"; tgt="$2"; shift 2; with_lock "$tgt" "$@"' _ "$LIB" "$tgt" "$@"
 }
 
-printf '%s== sanity: the fallback path is the one under test ==%s\n' "$DIM" "$RESET"
-if PATH="$NOFLOCK" bash -c 'command -v flock' >/dev/null 2>&1; then
-  fail "no-flock PATH" "flock still visible — every case below would test the wrong path"
+printf '%s== sanity: ONE lock mechanism, so these cases test the code that runs ==%s\n' "$DIM" "$RESET"
+# Two mechanisms meant two processes with different PATHs locked DIFFERENT
+# objects (flock → <t>.lock file, fallback → <t>.lockdir) and BOTH entered the
+# critical section — and the flock branch ran the command in a subshell while
+# the fallback ran it in the caller's shell, a side-effect divergence between
+# Linux and macOS. The lib must not branch on flock at all.
+if grep -q 'command -v flock' "$LIB"; then
+  fail "mixed lock mechanisms" "orch-lock.sh still branches on flock — a flock-PATH process and a no-flock process would lock different objects and both enter"
 else
-  ok "flock absent from the constructed PATH (mkdir fallback active)"
+  ok "orch-lock.sh has a single (mkdir) mechanism — no PATH-dependent divergence"
 fi
 
 printf '\n%s== uncontended lock works and releases ==%s\n' "$DIM" "$RESET"
@@ -63,7 +66,7 @@ T2="${TMP}/t2"; : > "$T2"
 # stdio to /dev/null — an inherited pipe kept this suite's own output stream
 # open for the orphan's whole lifetime, which read as a 5-minute hang.
 SLEEP_TAG="299.731"
-PATH="$NOFLOCK" ORCH_LOCK_TIMEOUT=5 bash -c '. "$1"; with_lock "$2" sleep "$3"' _ "$LIB" "$T2" "$SLEEP_TAG" >/dev/null 2>&1 &
+ORCH_LOCK_TIMEOUT=5 bash -c '. "$1"; with_lock "$2" sleep "$3"' _ "$LIB" "$T2" "$SLEEP_TAG" >/dev/null 2>&1 &
 HOLDER=$!
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
   [[ -d "${T2}.lockdir" ]] && break
@@ -194,7 +197,7 @@ printf '\n%s== release is a no-op once the lock is no longer ours ==%s\n' "$DIM"
 # (measured: max 2 concurrent holders). Simulated by swapping the pid under a
 # holder while it runs: its release must leave the directory alone.
 T8="${TMP}/t8"; : > "$T8"
-out=$(PATH="$NOFLOCK" ORCH_LOCK_TIMEOUT=5 bash -c '
+out=$(ORCH_LOCK_TIMEOUT=5 bash -c '
   . "$1"
   with_lock "$2" bash -c "printf 99999\\\n > \"$2.lockdir/pid\""
 ' _ "$LIB" "$T8" 2>&1)
@@ -218,7 +221,7 @@ printf '\n%s== a put-back never NESTS into a re-taken lock path ==%s\n' "$DIM" "
 T9="${TMP}/t9"; : > "$T9"
 mkdir "${T9}.lockdir.stale.probe"; printf '111\n' > "${T9}.lockdir.stale.probe/pid"
 mkdir "${T9}.lockdir";             printf '222\n' > "${T9}.lockdir/pid"
-PATH="$NOFLOCK" bash -c '. "$1"; _restore_steal "$2" "$3"' _ "$LIB" \
+bash -c '. "$1"; _restore_steal "$2" "$3"' _ "$LIB" \
   "${T9}.lockdir.stale.probe" "${T9}.lockdir" >/dev/null 2>&1
 [[ ! -d "${T9}.lockdir/$(basename "${T9}.lockdir.stale.probe")" ]] \
   && ok "the moved dir was not nested inside the new owner's lockdir" \
@@ -239,10 +242,61 @@ printf '\n%s== a non-numeric env override must not disable the lock ==%s\n' "$DI
 for _bad in ORCH_LOCK_STALE_SECS=abc ORCH_LOCK_TIMEOUT=abc ORCH_LOCK_TIMEOUT=; do
   T10="${TMP}/t10.${RANDOM}"; : > "$T10"
   rc=0
-  PATH="$NOFLOCK" env "${_bad}" bash -c '. "$1"; with_lock "$2" true' _ "$LIB" "$T10" >/dev/null 2>&1 || rc=$?
+  env "${_bad}" bash -c '. "$1"; with_lock "$2" true' _ "$LIB" "$T10" >/dev/null 2>&1 || rc=$?
   [[ $rc -eq 0 ]] && ok "lock still works with ${_bad}" \
     || fail "env typo disabled the lock: ${_bad}" "with_lock rc=$rc"
 done
+
+printf '\n%s== a LIVE holder inside a background subshell is not robbed when its parent dies ==%s\n' "$DIM" "$RESET"
+# with_lock recorded `$$` — which inside ANY subshell is still the ORIGINAL
+# shell's pid (bash 3.2 has no BASHPID). A holder that acquires inside
+# `( ... ) &` therefore records its parent; once the parent exits, every
+# waiter judges the recorded pid dead and steals the lock MID-CRITICAL-SECTION
+# — two writers. The holder must record its own true pid.
+T11="${TMP}/t11"; : > "$T11"; L11="${TMP}/t11.log"; : > "$L11"
+SLEEP11="297.313"
+bash -c '
+  ( . "$1"; with_lock "$2" sh -c "echo enter >> \"$3\"; sleep '"$SLEEP11"'; echo exit >> \"$3\"" ) >/dev/null 2>&1 &
+' _ "$LIB" "$T11" "$L11"
+# The wrapper bash has already exited; the subshell holder lives on inside the lock.
+for _ in $(seq 1 50); do grep -q enter "$L11" 2>/dev/null && break; perl -e 'select(undef,undef,undef,0.1)' 2>/dev/null || sleep 1; done
+if ! grep -q enter "$L11" 2>/dev/null; then
+  fail "subshell holder setup" "the background holder never entered the critical section"
+else
+  out=$(run_locked 1 600 "$T11" sh -c "echo intruder >> '$L11'" 2>&1); rc=$?
+  if [[ $rc -ne 0 ]] && ! grep -q intruder "$L11"; then
+    ok "waiter timed out — the live subshell holder kept its lock (true pid recorded)"
+  else
+    fail "live subshell holder robbed" "rc=$rc log='$(tr '\n' ' ' < "$L11")' — \$\$ recorded the dead parent, so the waiter judged the LIVE holder dead and stole mid-critical-section"
+  fi
+fi
+pkill -9 -f "sleep ${SLEEP11}" 2>/dev/null || true
+rm -rf "${T11}.lockdir" 2>/dev/null
+
+printf '\n%s== the Stop-hook janitor: age alone is not proof of death ==%s\n' "$DIM" "$RESET"
+# orch-stop.sh swept hour-old *.lockdir dirs with a bare rm -rf — no kill -0 on
+# the recorded pid — robbing a live holder mid-write: the exact rule
+# with_lock's own TTL branch was fixed to enforce. It exists to break the
+# PID-reuse deadlock, so it must still sweep dead locks; it must READ the pid
+# and skip a live one.
+STOPHOOK="${ROOT}/scripts/hooks/orch-stop.sh"
+SH_HOME="${TMP}/stophome"
+mkdir -p "${SH_HOME}/toolchain" "${SH_HOME}/memory"
+LIVE_LD="${SH_HOME}/toolchain/detect.json.lockdir"
+DEAD_LD="${SH_HOME}/memory/CLAUDE.md.lockdir"
+NOPID_LD="${SH_HOME}/memory/notes.md.lockdir"
+mkdir -p "$LIVE_LD" "$DEAD_LD" "$NOPID_LD"
+printf '%s\n' "$$" > "$LIVE_LD/pid"                     # us — alive
+DEADPID4=999999; while kill -0 "$DEADPID4" 2>/dev/null; do DEADPID4=$((DEADPID4+1)); done
+printf '%s\n' "$DEADPID4" > "$DEAD_LD/pid"              # provably dead
+touch -t 202401010000 "$LIVE_LD" "$DEAD_LD" "$NOPID_LD" # all past the 60-minute gate
+ORCH_HOME="$SH_HOME" bash "$STOPHOOK" >/dev/null 2>&1
+[[ -d "$LIVE_LD" ]] && ok "an hour-old lockdir with a LIVE recorded pid survives the janitor" \
+  || fail "janitor robbed a live holder" "orch-stop rm -rf'd a lock whose recorded pid is alive — age alone is not proof of death"
+[[ ! -d "$DEAD_LD" ]] && ok "an hour-old lockdir with a dead pid is still swept (PID-reuse deadlock breaker intact)" \
+  || fail "dead lockdir kept" "the janitor no longer clears dead locks"
+[[ ! -d "$NOPID_LD" ]] && ok "an hour-old pid-less lockdir is swept (kill-in-window orphan)" \
+  || fail "pid-less lockdir kept" ""
 
 TOTAL=$((PASS + FAIL))
 printf '\n'

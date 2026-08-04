@@ -30,11 +30,33 @@ HANDOFF_STATE_DIR="${HOME_DIR}/handoff"
 # Toolchain cache: prune stale detection results.
 [[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && find "${TOOLCHAIN_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 # Stranded .lockdir directories: `-type f -delete` above can NEVER remove one —
-# a lockdir is a DIRECTORY — yet this file used to claim it did. Depth-first
-# rm of hour-old lockdirs; with_lock's own dead-pid/TTL steal is the primary
-# recovery, this is the janitor for lock paths nothing contends on anymore.
-[[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && find "${TOOLCHAIN_CACHE_DIR}" -name '*.lockdir' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
-[[ -d "${HOME_DIR}/memory" ]] && find "${HOME_DIR}/memory" -name '*.lockdir' -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+# a lockdir is a DIRECTORY — yet this file used to claim it did. With_lock's
+# own dead-pid/TTL steal is the primary recovery; this is the janitor for lock
+# paths nothing contends on anymore, and it exists to break the PID-reuse
+# deadlock (a rebooted host where the recorded pid now names an unrelated live
+# process that with_lock will wait on forever).
+#
+# Age alone is NOT proof of death — the exact rule with_lock's TTL branch was
+# fixed to enforce. A bare `find ... -exec rm -rf` robbed a live holder mid-
+# write on the strength of a slow turn. So: read the lockdir's recorded pid
+# and SKIP when that process is alive (ps as the arbiter when kill -0 fails —
+# EPERM against another uid's live process is not death). A missing or
+# non-numeric pid proves nothing is holding it: sweep.
+_orch_sweep_lockdirs() { # <dir>
+  local d pid
+  while IFS= read -r d; do
+    [[ -n "${d}" && -d "${d}" ]] || continue
+    pid="$(cat "${d}/pid" 2>/dev/null || true)"
+    if [[ -n "${pid}" && "${pid}" != *[!0-9]* ]]; then
+      if kill -0 "${pid}" 2>/dev/null || ps -p "${pid}" >/dev/null 2>&1; then
+        continue   # live holder — a slow turn is not a stranded lock
+      fi
+    fi
+    rm -rf "${d}" 2>/dev/null || true
+  done < <(find "$1" -name '*.lockdir' -type d -mmin +60 2>/dev/null)
+}
+[[ -d "${TOOLCHAIN_CACHE_DIR}" ]] && _orch_sweep_lockdirs "${TOOLCHAIN_CACHE_DIR}" || true
+[[ -d "${HOME_DIR}/memory" ]] && _orch_sweep_lockdirs "${HOME_DIR}/memory" || true
 # Architecture study cache: prune stale decisions files at same retention as toolchain.
 [[ -d "${ARCH_CACHE_DIR}" ]] && find "${ARCH_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 # Handoff nudge markers (Layer 9 fire-once state): short-lived, prune after 1 day.
