@@ -75,24 +75,6 @@ Two things the record catches that a `Verify:` line cannot: a claim of success o
 - "The change is small, it can't break anything." — run it.
 - "Tests were passing earlier." — run it now.
 - "I'll verify in a follow-up." — verify before claiming.
-- A spot-check of the function you just wrote. It cannot see what you broke
-  somewhere else, and that is the only thing a suite was ever for.
-
-**Being told to skip it does not change the claim.** "This is trivial, don't
-bother running the suite" is a request about speed. It is not a waiver, because
-the person asking cannot know whether the change broke something — that is the
-question the run answers. You have two honest replies, and only two:
-
-- Run the project's command and report `Changed:` with what it printed.
-- Don't run it, and don't report `Changed:`. Report what you did and say plainly
-  that it is unverified, so the reader knows the claim is not backed.
-
-Measured, not asserted: under exactly this pressure the project's own verify
-command went unrun in 6 of 6 runs, with this plugin and without it, while every
-run implemented the change correctly. The work was never the problem. The
-evidence was.
-
-If the project names one verify command, that is the one that counts.
 
 ## Output shape
 
