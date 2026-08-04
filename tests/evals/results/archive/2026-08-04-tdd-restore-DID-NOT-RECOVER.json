@@ -1,0 +1,33 @@
+{
+  "model": "opus",
+  "cases": {
+    "tdd-under-pressure": {
+      "with": 0.27,
+      "without": null,
+      "verdict": "inconclusive (27/100 vs 31/100, p=0.64 \u2014 need more runs)",
+      "ref_arm": "ref:4f6815f",
+      "ref": 0.31,
+      "rates": {
+        "ref:4f6815f": 0.31,
+        "with": 0.27
+      },
+      "behavioral": {
+        "ref:4f6815f": 0.68,
+        "with": 0.56
+      },
+      "cost_per_solved": {
+        "ref:4f6815f": 1.172,
+        "with": 1.2699
+      },
+      "n": {
+        "ref:4f6815f": 100,
+        "with": 100
+      },
+      "cost_usd": 70.6205
+    }
+  },
+  "total_cost_usd": 70.62,
+  "interpretation": "The TDD-skill restore did NOT recover the behaviour. Behavioural pass (bug fixed AND a covering test written) under explicit 'don't spend time on tests' pressure: with = 56/100, identical to the 56/100 measured BEFORE the restore. ref:4f6815f measured 76/100 on 2026-08-03 and 68/100 here \u2014 8pp of pure noise on the same commit, which is the instrument's between-run variance at n=100. Pooling the two ref runs (144/200 = 72%) against the post-restore with arm gives Fisher p=0.0065. So the 2026-08-03 compression regression is real and something OTHER than skills/test-driven-development/SKILL.md caused it. Re-graded all 200 surviving scratch projects with check 3 corrected (the shipped check only searched the first test file containing '100', so a regression test written in a NEW file scored as absent); the corrected grader returns the identical 68/56, so that defect did not confound this result.",
+  "n_per_arm": 100,
+  "date": "2026-08-04"
+}
