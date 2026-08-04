@@ -6,7 +6,7 @@ Three ways to get LLM Orchestrator running.
 
 ```
 /plugin marketplace add https://github.com/felipemelendez/llm-orchestrator
-/plugin install llm-orchestrator
+/plugin install llm-orchestrator@llm-orchestrator
 ```
 
 (`/plugin marketplace add` and `/plugin install` are built-in Claude Code commands, not orchestrator commands.)
@@ -28,7 +28,7 @@ This creates `~/.claude/llm-orchestrator -> /path/to/llm-orchestrator`. To make 
 
 ```
 /plugin marketplace add ~/.claude/llm-orchestrator
-/plugin install llm-orchestrator
+/plugin install llm-orchestrator@llm-orchestrator
 ```
 
 The symlink keeps the install in sync with your local checkout — `git pull` in the original directory updates the plugin in place.
@@ -55,7 +55,7 @@ Two options:
 **A. Install as a plugin (recommended).** Even on a single project, you can install LLM Orchestrator as a plugin via marketplace:
 ```
 /plugin marketplace add /path/to/llm-orchestrator
-/plugin install llm-orchestrator
+/plugin install llm-orchestrator@llm-orchestrator
 ```
 This uses the plugin schema directly; no settings.json edits needed.
 

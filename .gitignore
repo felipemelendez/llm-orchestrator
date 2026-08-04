@@ -18,3 +18,6 @@ tests/evals/results/work/
 tests/evals/results/run-*.log
 tests/evals/results/raw.*.jsonl
 tests/evals/results/benchmark.*.json
+
+# Agent worktrees created by the Agent tool. Real git worktrees, never content.
+.claude/worktrees/

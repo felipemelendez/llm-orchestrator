@@ -112,11 +112,23 @@ Should print valid JSON with the protocol body inside `additionalContext`.
 Type `/` and look for the commands:
 
 ```
-/llm-orchestrator:init  /llm-orchestrator:plan  /llm-orchestrator:worktree  /llm-orchestrator:dispatch  /llm-orchestrator:review  /llm-orchestrator:verify  /llm-orchestrator:finish
-/llm-orchestrator:debug  /llm-orchestrator:remember  /llm-orchestrator:forget  /llm-orchestrator:onboard
+/llm-orchestrator:debug
+/llm-orchestrator:dispatch
+/llm-orchestrator:finish
+/llm-orchestrator:forget
+/llm-orchestrator:handoff
+/llm-orchestrator:init
+/llm-orchestrator:onboard
+/llm-orchestrator:plan
+/llm-orchestrator:remember
+/llm-orchestrator:research
+/llm-orchestrator:review
+/llm-orchestrator:skills
+/llm-orchestrator:verify
+/llm-orchestrator:worktree
 ```
 
-**Pass:** all 11 appear in the completion menu.
+**Pass:** all 14 appear in the completion menu (`ls commands/*.md | wc -l` is the source of truth).
 **Fail:** none appear → `commands/` directory not discovered. Check `/plugin list` shows the plugin enabled.
 
 ---

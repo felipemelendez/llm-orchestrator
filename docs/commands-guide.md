@@ -57,7 +57,7 @@ $EDITOR commands/<name>.md
 
 The validator checks the `description:` field on every command. Body validation (Constraints section, output shape) is not currently enforced.
 
-## Built-in commands (v0.1)
+## Built-in commands
 
 | Command            | What it does                                                            |
 |--------------------|--------------------------------------------------------------------------|
@@ -72,3 +72,6 @@ The validator checks the `description:` field on every command. Body validation 
 | `/llm-orchestrator:finish`          | Decide between merge / PR / keep / discard.                             |
 | `/llm-orchestrator:remember`        | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
 | `/llm-orchestrator:forget`          | Soft-delete matching lines from CLAUDE.md or plugin memory.             |
+| `/llm-orchestrator:research`        | Verify an approach, API surface, or version assumption against current sources before building on it. |
+| `/llm-orchestrator:handoff`         | Write a short handoff note so work resumes cleanly after the context is compacted. |
+| `/llm-orchestrator:skills`          | List installed skills and commands with their trigger conditions. Optional keyword filter. |
