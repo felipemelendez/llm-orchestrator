@@ -20,12 +20,34 @@ to build the eval first and establish a baseline without the skill.
 
 Each case runs the same prompt twice, in a scratch project:
 
-- **arm `with`** — the plugin's skills and hooks installed
+- **arm `with`** — the plugin's skills and hooks installed, from the working tree
 - **arm `without`** — a bare project, no plugin
+- **arm `ref:<gitref>`** — the plugin as of that commit
 
 and grades both. A case earns its keep only if `with` beats `without`. A case where both
 arms pass is telling you the model already does it — that rule is restating a default and
 is costing tokens for nothing.
+
+`ref:` is what makes this a **regression** instrument and not only an existence proof.
+`with` vs `without` answers *does the plugin do anything*. It cannot answer *did this
+week's edit make it better or worse* — and that is the question every compression or
+rule-deletion pass raises. Compare the two plugin versions directly:
+
+```bash
+tests/evals/run-evals.sh --arm "ref:4f6815f with" --case tdd-bugfix --n 5
+```
+
+`ref:` exports the whole commit, not just `skills/` — the hook scripts and libs of that
+commit are part of what the arm is testing, and pairing old prose with new enforcement
+would measure neither. Exports are cached per SHA, so N iterations pay for one export,
+and an unknown ref fails loudly rather than quietly building a half-populated arm.
+
+Use it before deleting instructional content. Deleting a rule that turns out to be
+load-bearing is the failure this instrument exists to catch: obra/superpowers cut their
+TDD skill's rationale as padding, measured it, found test-first behaviour under pressure
+dropped from 8/10 to 5/10, and reversed the cut. `tdd-bugfix` is the case in this suite
+most likely to show that effect, because its checks execute the code rather than grading
+the prose.
 
 Both directions are tested on purpose. `research-gate-skips` asserts the gate stays
 *quiet*; a gate that fires on everything is as broken as one that never fires. One-sided
@@ -51,6 +73,9 @@ tests/evals/run-evals.sh                  # all cases, N=3
 tests/evals/run-evals.sh --n 1            # smoke, one run per arm
 tests/evals/run-evals.sh --case shape-header
 tests/evals/run-evals.sh --arm with       # one arm only
+
+# Did an edit help or hurt? Compare two plugin versions on the same case.
+tests/evals/run-evals.sh --arm "ref:4f6815f with" --case tdd-bugfix --n 5
 ```
 
 Results land in `tests/evals/results/benchmark.json` and a human summary is printed.

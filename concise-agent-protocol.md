@@ -173,7 +173,7 @@ Marker name is historical (`scripts/hooks/session-start.sh` reads it); the block
 <!-- orch-turn-reminder-start -->
 LLM Orchestrator — the protocol still applies after this compaction boundary:
 - Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
-- When two skills both match, run them in this order: process (brainstorming, systematic-debugging, research-classifier) → implementation (test-driven-development, writing-plans, dispatching-*) → verification (requesting-code-review, verification-before-completion, finishing-a-branch).
+- When two skills both match: process → implementation → verification (decide how, then build, then check).
 - Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.
 <!-- orch-turn-reminder-end -->
 

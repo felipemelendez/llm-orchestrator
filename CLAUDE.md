@@ -11,13 +11,7 @@ All replies use the Concise Agent Protocol. The canonical reference is [`concise
 - Short over long. If you can answer in one section, do.
 - No preamble. The `Changed:` / `Found:` / `Plan:` header is the announcement.
 - Verify before claiming done — run the command, paste the relevant line.
-- Plan before non-trivial implementation. Use `/llm-orchestrator:plan`.
-- Use `/llm-orchestrator:worktree` when work needs isolation.
-- Use `/llm-orchestrator:dispatch` to execute plan tasks; it routes to sequential or parallel based on independence.
-- Use `/llm-orchestrator:review` before declaring a feature complete.
-- Use `/llm-orchestrator:debug` when something is broken — root cause first, fix second.
-- Use `/llm-orchestrator:remember` when the user shares a fact that should survive the session.
-- Use `/llm-orchestrator:handoff` when the controller's context is straining — the system fires automatically at tier seams, but you can invoke it manually.
+- Non-trivial work runs through the plugin's process: plan before building (`/llm-orchestrator:plan`), root cause before fixing (`/llm-orchestrator:debug`), review before calling it complete (`/llm-orchestrator:review`). The rest of the catalog — worktrees, dispatch, memory, handoff — is in context already; each command and skill description says when it applies.
 
 ## Skills
 

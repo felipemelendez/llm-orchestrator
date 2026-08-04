@@ -17,7 +17,7 @@ Follow `systematic-debugging`:
 3. Form one hypothesis. Smallest test that distinguishes it. Run.
 4. If wrong, form another. After 3 wrong, escalate.
 
-Don't refactor. Don't run "let's try this" patches. Identify, then return.
+Don't refactor. Don't run "let's try this" patches — a patch that makes the symptom vanish without a confirmed cause hides the bug instead of finding it, and so does a catch-and-ignore. Identify, then return.
 
 **Read-only.** Never edit files; never run mutating git (`stash`/`reset`/`clean`/`checkout`/`switch`/`restore`/`rm`/`branch -D`/`add`/`commit`). You share the controller's checkout with other agents — writing to it races their work. Reproduce and inspect with read-only commands only; the fix is the implementer's job, not yours.
 
@@ -47,10 +47,3 @@ Tried:
 - Hypothesis 2: <h> → <result>
 - Hypothesis 3: <h> → <result>
 ```
-
-## Anti-patterns
-
-- Patching the bug instead of diagnosing it.
-- Refactoring while debugging.
-- "Let me try a few things" — pick one.
-- Catching and ignoring the error.

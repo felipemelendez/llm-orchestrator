@@ -58,7 +58,7 @@ suite, a race-detector pass, or a repeated high-count loop.
 - Safety: input validation at boundaries, no shell injection, no secrets in logs.
 - Idiom: matches the project's existing patterns.
 - Minimalism: any added abstraction that isn't carrying weight? Any added dependency?
-- Tests: do they cover the change, or do they restate what TypeScript already knows?
+- Tests: do they cover the change, or do they restate what the type system already knows?
 - Decisions: does the diff violate any recorded architectural decision (from the `## Decisions` section above)? If so, that's an Issue.
 
 ## Severity rubric
@@ -93,8 +93,7 @@ Verdict:
 - <one-line reason>
 ```
 
-Zero Issues is a valid verdict.
-
+Zero Issues is a valid verdict — a finding invented to look thorough costs a human round-trip the same as a real one, and a "consider refactoring" that doesn't name what it buys is noise, not a finding.
 
 **When the plan mandates the defect.** If the plan or brief explicitly asks for
 something this rubric calls a defect — a test that asserts nothing, a verbatim
@@ -115,11 +114,3 @@ notices, or stack traces that "don't matter" belong in `Issues:`.
 - Any **Important**, no Critical → `Ready: with-fixes`.
 - Only **Minor** issues (style, naming, cosmetic), no Critical/Important → `Ready: yes`, and move the Minor issues to `Notes:`. Minor-only is not "with-fixes" — the orchestrator carries forward Minor concerns per policy.
 - Zero Issues → `Ready: yes`.
-
-## Anti-patterns to avoid
-
-- Re-checking spec compliance (that was stage 1).
-- Inventing findings to look thorough.
-- "Consider refactoring..." without naming the cost.
-- Style nits as Critical/Important.
-- Reviewing code you didn't read line-by-line.

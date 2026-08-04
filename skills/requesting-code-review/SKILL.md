@@ -9,58 +9,54 @@ Two required reviews plus one conditional, in order. Each returns an `Issues:` b
 
 ## Two paths
 
-This review can run two ways. The markdown stages below are the **canonical** path. When the
-Workflow tool is available, prefer the accelerated path; routing — and what each path does that
-the other does not — follows `using-workflows`.
-One difference to know when comparing results: the markdown path stops after Stage 1 only on a
-**Critical** finding, while the workflow early-exits on **critical or important** — the workflow
-gates more strictly.
+The markdown stages below are canonical and portable. When the Workflow tool is available, prefer
+`workflows/review-diff.js`; routing follows `using-workflows`. One difference when comparing
+results: the markdown path stops after Stage 1 only on a **Critical** finding, while the workflow
+early-exits on **critical or important** — the workflow gates more strictly.
 
-**This flow cannot delegate to the native review skills.** As of Claude Code v2.1.215,
-*"Claude no longer runs the `/verify` and `/code-review` skills on its own"* — both carry
-`disable-model-invocation: true` and cannot be preloaded into a subagent. They are excellent
-**manual** passes (`/code-review xhigh` on a real diff is worth running by hand), but a skill
-cannot invoke them, so the plugin's own reviewer agents are the only automatable substrate.
+**This flow cannot delegate to the native review skills.** As of Claude Code v2.1.215, `/verify`
+and `/code-review` carry `disable-model-invocation: true` — Claude cannot invoke them and they
+cannot be preloaded into a subagent. They are excellent manual passes (`/code-review xhigh` on a
+real diff is worth running by hand), so the plugin's own reviewer agents are the only automatable
+substrate.
 
-What stays this skill's contract either way: Stage 1 spec compliance (native review checks
-correctness, never whether the diff implements the approved spec), the spec-gates-quality
-order, and the evidence rules below.
+On either path the contract is the same: Stage 1 spec compliance (native review checks
+correctness, never whether the diff implements the approved spec), spec gates quality, and the
+evidence rules below.
 
 ### Preferred path (Workflow tool present)
 
 1. Compute the security boolean from the single source of truth — source
    `scripts/lib/orch-signals.sh` and test the diff against `$ORCH_SIG_SECURITY_DIFF` (the same
-   grep shown in Stage 3 below). Do **not** re-derive that regex anywhere else.
-2. Run `workflows/review-diff.js`, passing `args = {specText, planText, conventions, diff,
-   security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1 (preserving the
-   early-exit below), demotes findings below 0.8 confidence to `Notes:`, and verifies the rest with
-   a bounded skeptic pass.
+   grep shown in Stage 3 below). Do not re-derive that regex anywhere else.
+2. Run `workflows/review-diff.js` with `args = {specText, planText, conventions, diff,
+   security_sensitive}`. The script gates Stage 2/3 behind a non-blocking Stage 1, demotes
+   findings below 0.8 confidence to `Notes:`, and verifies the rest with a bounded skeptic pass.
 3. Read the return before treating it as an approval. Two questions, two different fields:
-   - **"Is this an approval?"** — `unverifiedFindings`: confirmed findings that nothing judged, on
-     any path.
+   - **"Is this an approval?"** — `unverifiedFindings`: confirmed findings nothing judged, on any
+     path.
    - **"Did anything go missing?"** — `incomplete`: a stage produced no usable result, a live
      skeptic left a finding unjudged, or junk was discarded from a findings array. Never an
-     approval. It is *not* the unverified signal — the early-exit path ships its blockers
+     approval — but *not* the unverified signal either: the early-exit path ships its blockers
      `unverified` by design with `incomplete: false`.
 
-   Each confirmed finding carries `verifiedBy`: `executed` (survived a real counterfactual run),
-   `reasoned` (survived argument only), or `unverified` — which is not a weak pass, it is the
-   absence of a pass. `refuted` holds findings the skeptic pass removed, each with the reason that
-   cleared it; a clean refutation is a *working* verify pass and does not set `incomplete`.
+   `verifiedBy` per confirmed finding: `executed` (survived a real counterfactual run), `reasoned`
+   (survived argument only), or `unverified` — the absence of a pass, not a weak pass. `refuted`
+   holds findings the skeptic removed, each with the reason; a clean refutation is a *working*
+   verify pass and does not set `incomplete`.
 
-   An empty or whitespace-only diff dispatches no reviewer and returns `earlyExit: true`,
-   `incomplete: true`, `failedDimensions: ['no-diff']`. Otherwise `stagesRun` and
-   `failedDimensions` share one token set (`spec`, `code-quality`, `security`, `verify`), and a
-   partly-executed stage appears in **both**. The remaining counters (`verifyBatches`,
-   `unjudgedFindings`, `malformedVerdicts`, `droppedFindings`, `coercedSeverities`) give the degree
-   of loss or coercion — non-zero means a degraded review. `coercedSeverities` counts findings
-   whose severity was clamped, which fails *closed* (toward `important`), and each `verifyBatches`
-   entry that did not return is counted in `lost`.
-4. Write the review artifact from that return, using the same report shape as the canonical path.
+   An empty or whitespace-only diff dispatches no reviewer: `earlyExit: true`, `incomplete: true`,
+   `failedDimensions: ['no-diff']`. Otherwise `stagesRun` and `failedDimensions` share one token
+   set (`spec`, `code-quality`, `security`, `verify`) and a partly-executed stage appears in
+   **both**. The counters (`verifyBatches`, `unjudgedFindings`, `malformedVerdicts`,
+   `droppedFindings`, `coercedSeverities`) give the degree of loss — non-zero means a degraded
+   review. Severity clamping fails *closed* (toward `important`), and each verify batch that did
+   not return is counted in `lost`.
+4. Write the review artifact from that return, in the same report shape as the canonical path.
 
 ### Fallback path (no Workflow tool) — canonical
 
-Run the ordered stages below as written. Unchanged.
+Run the ordered stages below as written.
 
 ## Stages
 
@@ -68,30 +64,21 @@ Run the ordered stages below as written. Unchanged.
 
 Question: does the diff implement the approved spec/plan?
 
-The reviewer is told explicitly: "Do not trust the implementer's report. Read the diff against the spec."
-
-Inputs to the reviewer:
-- The spec (paste, don't reference)
-- The plan (paste, don't reference)
-- `git diff <base>..HEAD`
-
-Each paste goes in its own tag — `<spec>`, `<plan>`, `<diff>` — as the templates in `templates/` do. A diff carries the ``` fences and `##` headings of every markdown file it touches, so a fence is not a boundary the reviewer can rely on.
+Tell the reviewer explicitly: "Do not trust the implementer's report. Read the diff against the
+spec." Paste (don't reference) the spec, the plan, and `git diff <base>..HEAD`, each in its own
+tag — `<spec>`, `<plan>`, `<diff>` — as the templates in `templates/` do. A diff carries the
+``` fences and `##` headings of every markdown file it touches, so a fence is not a boundary the
+reviewer can rely on.
 
 ### Stage 2 — Code quality
 
-Question: is the code correct, safe, idiomatic, and minimal?
-
-Inputs to the reviewer:
-- `git diff <base>..HEAD`
-- Project conventions (paste `CLAUDE.md` or relevant section)
-
-Run only after Stage 1 passes or its concerns are addressed.
+Question: is the code correct, safe, idiomatic, and minimal? Inputs: the diff plus project
+conventions (paste `CLAUDE.md` or the relevant section). Run only after Stage 1 passes or its
+concerns are addressed.
 
 ### Stage 3 — Security (conditional)
 
-Question: does the diff introduce security vulnerabilities?
-
-Run only when the diff touches security-sensitive areas. Check by grepping the diff and changed file paths (source `scripts/lib/orch-signals.sh` for `$ORCH_SIG_SECURITY_DIFF`):
+Run only when the diff touches security-sensitive areas, per the shared signal:
 
 ```bash
 # Locate the lib across install layouts (CLAUDE_PLUGIN_ROOT is often unset here;
@@ -101,47 +88,36 @@ L=$(orch_lib orch-signals.sh); [ -n "$L" ] && source "$L" || echo "orch-signals.
 echo "$DIFF" | grep -qiE "$ORCH_SIG_SECURITY_DIFF"
 ```
 
-If the grep matches: dispatch `orch-security-reviewer`. Pass: diff only.
-If the grep does not match: skip silently — do not mention Stage 3 in the report.
+Match → dispatch `orch-security-reviewer` with the diff only. No match → skip silently; do not
+mention Stage 3 in the report. Stage 3 is advisory: Critical findings block the merge, Important
+and below are recorded, non-blocking.
 
-Stage 3 is advisory. Critical findings block the merge; Important and below are advisory (recorded, non-blocking).
+## Severity
 
-Inputs to the reviewer (when triggered):
-- `git diff <base>..HEAD`
+**Critical** (breaks correctness, security, or a contract) blocks the merge. **Important** is
+fixed before continuing in that area. **Minor** is noted, never blocking. Zero issues is a valid
+verdict — the reviewer is not measured by findings count.
 
-Checklist: authentication & authorization, secret/credential handling, input validation & injection (SQL/command/path), crypto misuse, unsafe deserialization, SSRF/CSRF, sensitive data in logs.
-
-## Reviewer response shape
-
-```
-Issues:
-- Critical:
-  - <file:line> — <what + why it matters + suggested fix>
-- Important:
-  - <file:line> — ...
-- Minor:
-  - <file:line> — ...
-
-Verdict:
-- Ready: yes | no | with-fixes
-- <one-line reason>
-```
-
-Zero issues is a valid verdict. The reviewer is not measured by findings count.
-
-## What is "Critical" vs "Important" vs "Minor"
-
-- **Critical**: breaks correctness, security, or a contract; must fix before merge.
-- **Important**: meaningful problem (perf, maintainability, missing case); fix before continuing in this area.
-- **Minor**: style, nit, opinion. Note but don't block.
+Reviewers return `Issues:` grouped by severity, each finding as `<file:line> — what + why it
+matters + suggested fix`, plus `Verdict: Ready: yes | no | with-fixes` and a one-line reason.
 
 ## Confidence rule
 
-**The threshold belongs to the filter, not the reviewer.** Reviewers are told to report everything they find and tag each finding with a confidence from 0.0 to 1.0. The controller (or `workflows/review-diff.js`) then demotes findings below 0.8 into `Notes:` — a demoted finding is never discarded. Only two things leave `confirmed`, and both stay visible in the return: malformed elements (dropped and counted as `droppedFindings`, a loss that sets `incomplete`) and refuted findings (moved to `refuted` with the reason that cleared them).
+**The threshold belongs to the filter, not the reviewer.** Reviewers report everything they find
+and tag each finding with a confidence from 0.0 to 1.0. The controller (or
+`workflows/review-diff.js`) demotes findings below 0.8 into `Notes:` — a demoted finding is never
+discarded. Only two things leave `confirmed`, both still visible in the return: malformed elements
+(dropped, counted as `droppedFindings`, sets `incomplete`) and refuted findings (moved to
+`refuted` with the reason).
 
-Do not instruct a reviewer to be conservative or to report only high-severity issues. Current models follow that literally and report less — recall falls while the false-positive rate barely moves. Anthropic's guidance for Opus 5 is explicit: *"ask it to report everything and filter in a separate pass instead."*
+Do not instruct a reviewer to be conservative or to report only high-severity issues. Current
+models follow that literally and report less — recall falls while the false-positive rate barely
+moves. Anthropic's guidance for Opus 5 is explicit: *"ask it to report everything and filter in a
+separate pass instead."*
 
-**Critical findings additionally require concrete evidence:** the spec line violated (Stage 1), the failure scenario — specific inputs/state → wrong behavior (Stage 2), or the exploitation path (Stage 3). A Critical claim that can't state its evidence gets downgraded, not surfaced.
+**Critical findings additionally require concrete evidence:** the spec line violated (Stage 1),
+the failure scenario — specific inputs/state → wrong behavior (Stage 2), or the exploitation path
+(Stage 3). A Critical claim that can't state its evidence gets downgraded, not surfaced.
 
 The `verifiedBy` weighting is measured, not stylistic: LLM reviewers systematically over-flag
 correct code, and the countermeasure that works is *executing* a proposed fix as counterfactual

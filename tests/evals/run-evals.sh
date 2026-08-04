@@ -46,18 +46,62 @@ RESULTS="${OUT_DIR}/raw${ONLY_CASE:+.$ONLY_CASE}.jsonl"
 BENCH="${OUT_DIR}/benchmark${ONLY_CASE:+.$ONLY_CASE}.json"
 : > "$RESULTS"
 
+# --- arm sources ------------------------------------------------------------------
+# An arm names WHICH plugin the scratch project gets:
+#   without      nothing (bare model)
+#   with         the working tree — what you are about to ship
+#   ref:<gitref> the plugin as of that commit
+#
+# The `ref:` arm is what makes this a regression instrument rather than only an
+# existence proof. Comparing "with" against "without" answers *does the plugin
+# do anything*; it cannot answer *did this week's edit make it better or
+# worse*, which is the question every compression pass raises. Anthropic's own
+# instruction is to set a baseline you can measure against, and a baseline you
+# cannot reconstruct is not one.
+#
+#   ./run-evals.sh --arm "ref:4f6815f with" --case tdd-bugfix --n 5
+#
+# materialize_ref exports a whole commit once and caches it, so N iterations
+# pay for one export.
+materialize_ref() {
+  local ref="$1" sha out
+  sha="$(git -C "$ROOT" rev-parse --short=12 "$ref" 2>/dev/null)" || {
+    echo "run-evals: unknown git ref: $ref" >&2; return 1; }
+  out="${WORK_ROOT}/.refs/${sha}"
+  # The sentinel, not the directory, is the cache key: a Ctrl-C mid-extract
+  # otherwise leaves a partial tree that every later run reuses forever, and a
+  # half-populated baseline is worse than none because it looks valid.
+  if [[ ! -f "${out}/.complete" ]]; then
+    rm -rf "$out"; mkdir -p "$out"
+    # A whole-tree export, not just skills/: the hook scripts and libs of that
+    # commit are part of what the arm is testing. Exporting only the markdown
+    # would silently pair old prose with new enforcement.
+    git -C "$ROOT" archive "$sha" | tar -x -C "$out" || { rm -rf "$out"; return 1; }
+    : > "${out}/.complete"
+  fi
+  printf '%s\n' "$out"
+}
+
 # --- scratch project construction ------------------------------------------------
-# "with" gets the plugin's skills + agents + the hook wiring, rewritten to absolute
+# A plugin arm gets skills + agents + the hook wiring, rewritten to absolute
 # paths so the scratch copy is self-contained. "without" gets nothing.
 build_project() {
   local arm="$1" dir="$2" case_file="$3"
   rm -rf "$dir"; mkdir -p "$dir/.claude"
   git -C "$dir" init -q 2>/dev/null || true
 
-  if [[ "$arm" == "with" ]]; then
-    cp -R "${ROOT}/skills" "$dir/.claude/skills"
-    cp -R "${ROOT}/agents" "$dir/.claude/agents"
-    python3 - "$ROOT" "$dir" "$case_file" <<'PY'
+  local src=""
+  case "$arm" in
+    without) return 0 ;;
+    with)    src="$ROOT" ;;
+    ref:*)   src="$(materialize_ref "${arm#ref:}")" || return 1 ;;
+    *)       echo "run-evals: unknown arm: $arm" >&2; return 1 ;;
+  esac
+
+  if [[ -n "$src" ]]; then
+    cp -R "${src}/skills" "$dir/.claude/skills"
+    cp -R "${src}/agents" "$dir/.claude/agents"
+    python3 - "$src" "$dir" "$case_file" <<'PY'
 import json, sys, pathlib
 root, dest, case_file = sys.argv[1], sys.argv[2], sys.argv[3]
 case = json.load(open(case_file))
@@ -79,7 +123,15 @@ run_case() {
   local prompt; prompt="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['prompt'])" "$case_file")"
   local dir="${WORK_ROOT}/${cid}-${arm}-${iter}"
 
-  build_project "$arm" "$dir" "$case_file"
+  # A failed build must NOT fall through into a paid run. Unchecked, a one-char
+  # typo in `--arm ref:<sha>` produced a BARE scratch project that still ran
+  # `claude -p` and recorded rows labelled with the ref — so a compression pass
+  # would "validate" against a plugin-less arm masquerading as its baseline.
+  # That is the exact failure this arm exists to prevent, so it aborts.
+  if ! build_project "$arm" "$dir" "$case_file"; then
+    echo "run-evals: could not build arm '$arm' — aborting rather than running a mislabelled arm" >&2
+    exit 1
+  fi
 
   # per-case setup commands, run inside the scratch project
   python3 -c "import json,sys;print('\n'.join(json.load(open(sys.argv[1])).get('setup',[])))" "$case_file" \
@@ -176,7 +228,19 @@ for case, arms in sorted(agg.items()):
         spent = sum(x["cost_usd"] or 0 for x in v)
         cps[a] = round(spent / solved, 4) if solved else None
     w, o = rate.get("with"), rate.get("without")
-    if w is None or o is None:
+    # A `ref:<sha>` arm is a PLUGIN VERSION, so the interesting comparison is
+    # with-vs-ref (did this week's edit help?), not with-vs-without (does the
+    # plugin do anything?). Reporting only the latter left the version
+    # comparison computed and invisible — the run cost money and printed
+    # "single-arm", which is how a regression ships unnoticed.
+    ref_arms = sorted(a for a in rate if a.startswith("ref:"))
+    ref_arm = ref_arms[0] if ref_arms else None
+    r = rate.get(ref_arm) if ref_arm else None
+    if w is not None and r is not None:
+        if   w > r:  verdict = f"BETTER than {ref_arm}"
+        elif w == r: verdict = f"no change vs {ref_arm}"
+        else:        verdict = f"WORSE than {ref_arm} — REGRESSION"
+    elif w is None or o is None:
         verdict = "single-arm"
     elif w > o:   verdict = "plugin helps"
     elif w == o == 1.0: verdict = "already default — rule may be dead weight"
@@ -191,6 +255,8 @@ for case, arms in sorted(agg.items()):
               for x in v if any(c["kind"] == "check_cmds" for c in x["checks"])]
         beh[a] = round(sum(cc) / len(cc), 3) if cc else None
     summary[case] = {"with": w, "without": o, "verdict": verdict,
+                     "ref_arm": ref_arm, "ref": r,
+                     "rates": rate,
                      "behavioral": beh,
                      "cost_per_solved": cps,
                      "n": {a: len(v) for a, v in arms.items()},

@@ -91,7 +91,7 @@ Verdict:
 - <one-line reason>
 ```
 
-Zero Issues is a valid verdict. Do not invent findings to pad the report.
+Zero Issues is a valid verdict — a finding invented to pad the report costs a human round-trip the same as a real one.
 
 
 **When the plan mandates the defect.** If the plan or brief explicitly asks for
@@ -113,10 +113,3 @@ notices, or stack traces that "don't matter" belong in `Issues:`.
 - Any **Important**, no Critical → `Ready: with-fixes`.
 - Only **Minor** issues (style, naming, cosmetic), no Critical/Important → `Ready: yes`, and move the Minor issues to `Notes:`. Minor-only is not "with-fixes" — the orchestrator carries forward Minor concerns per policy.
 - Zero Issues → `Ready: yes`.
-
-## Anti-patterns to avoid
-
-- Reviewing code style. That's stage 2.
-- Restating the spec.
-- "Looks good!" without naming what you checked.
-- Treating the implementer's report as evidence.

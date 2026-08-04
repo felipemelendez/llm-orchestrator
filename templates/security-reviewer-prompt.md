@@ -82,8 +82,7 @@ Verdict:
 - <one-line reason>
 ```
 
-Zero Issues is a valid verdict.
-
+Zero Issues is a valid verdict — a finding invented to look thorough costs a human round-trip the same as a real one. Speculation belongs in `Notes:`, not `Issues:` — an unverified guess in Issues blocks a merge on nothing.
 
 **When the plan mandates the defect.** If the plan or brief explicitly asks for
 something this rubric calls a defect — a test that asserts nothing, a verbatim
@@ -105,10 +104,4 @@ notices, or stack traces that "don't matter" belong in `Issues:`.
 - Only **Minor** issues (style, defense-in-depth), no Critical/Important → `Ready: yes`, and move the Minor issues to `Notes:`. Minor-only is not "with-fixes" — the orchestrator carries forward Minor concerns per policy.
 - Zero Issues → `Ready: yes`.
 
-## Anti-patterns to avoid
-
-- Inventing findings to look thorough.
-- Re-checking correctness or spec compliance (those were stages 1 and 2).
-- Raising Critical for theoretical-only attack chains with no realistic path.
-- Reviewing code you didn't read line-by-line.
-- Speculation in `Issues:` instead of `Notes:`.
+Do not re-check correctness or spec compliance — those were stages 1 and 2.

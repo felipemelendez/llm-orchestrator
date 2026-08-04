@@ -80,6 +80,46 @@ while IFS= read -r dir; do
     fail=1
   fi
 
+  # BODY WORD BUDGET — a RATCHET, not a target.
+  #
+  # The 250-line cap never fired on the inflation that actually happened: a
+  # 2,232-word skill sat comfortably under it, because words, not lines, are
+  # what the catalog inflated in. Each skill's ceiling below is its own
+  # measured size after the 2026-08-03 compression pass. A skill may shrink
+  # freely; growing past its recorded size fails, which forces the author to
+  # justify the growth by editing this list in the same commit — where a
+  # reviewer sees it.
+  #
+  # Lowering an entry after a real trim is expected and encouraged. Raising
+  # one is the thing this check exists to make visible, not to forbid: some
+  # skills legitimately carry API contracts where a deleted fact is a bug, and
+  # a word budget must never license deleting a fact to hit a number.
+  body_words=$(awk '/^---$/{c++; next} c>=2' "$file" | wc -w | tr -d ' ')
+  case "$name" in
+    dispatching-subagents)          limit=1600 ;;
+    dispatching-parallel-agents)    limit=1220 ;;
+    using-orchestrator)             limit=1100 ;;
+    requesting-code-review)         limit=1090 ;;
+    using-git-worktrees)            limit=960  ;;
+    test-driven-development)        limit=950  ;;
+    using-workflows)                limit=900  ;;
+    writing-skills)                 limit=820  ;;
+    finishing-a-branch)             limit=750  ;;
+    research-classifier)            limit=740  ;;
+    systematic-debugging)           limit=725  ;;
+    brainstorming)                  limit=710  ;;
+    verification-before-completion) limit=700  ;;
+    executing-plans)                limit=695  ;;
+    writing-plans)                  limit=675  ;;
+    managing-memory)                limit=645  ;;
+    *)                              limit=500  ;;
+  esac
+  if (( body_words > limit )); then
+    echo "FAIL: $file body is $body_words words (ceiling $limit)"
+    echo "      Trim it, or raise the ceiling in tests/validate-skills.sh in this same commit and say why."
+    fail=1
+  fi
+
   # Shouting check — skip inside code fences only. The skills no longer use
   # <EXTREMELY-IMPORTANT> directive blocks (house style is plain imperative
   # voice), so there is no shouting carveout to honour.

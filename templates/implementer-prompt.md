@@ -156,6 +156,5 @@ Ask:
 - Run the verify command; paste the actual output line. Nothing needs to be cited — a hook records what actually ran and the gate reads that record.
 - Don't refactor adjacent code "while you're there".
 - Don't invent new dependencies.
-- Don't write commentary outside the Status block.
 - Apply the `// docs:` comment policy above. Brief findings beat training knowledge; if the brief contradicts an instinct, follow the brief.
 - If you encounter an API surface in scope that the brief didn't cover and you suspect it may have shifted, return `Status: NEEDS_CONTEXT` and ask for a follow-up research dispatch rather than guessing.

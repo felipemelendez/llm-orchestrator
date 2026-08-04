@@ -92,7 +92,10 @@ fi
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
 for h in $HEADERS; do printf '%s' "$CORE" | grep -q "${h}" || { fail "skill core headers" "EAGER core missing ${h}"; break; }; done
-printf '%s' "$CORE" | grep -q 'Verify:' && ok "using-orchestrator EAGER core carries the six headers + Verify rule" || fail "skill core Verify" "missing"
+# Match the HARD-RULE SENTENCE, not the bare token: `Verify:` also appears in
+# the eager core's sub-section list, so a token grep stayed green with the rule
+# deleted — verified by removing the sentence and watching the tick persist.
+printf '%s' "$CORE" | grep -q 'MUST include a `Verify:` line' && ok "using-orchestrator EAGER core carries the six headers + Verify rule" || fail "skill core Verify" "the Changed:-requires-Verify: hard-rule sentence is missing from the EAGER core"
 # The precedence ordering left the per-turn hook; the eager block is now its only
 # eagerly-loaded home. If it is not here, it is nowhere until the skill is read.
 #

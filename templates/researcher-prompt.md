@@ -63,4 +63,4 @@ three things the command told you to paste covered two of the eight required
 fields. The classifier supplies four. Trigger point, Stakes, Capability survey,
 Brief output path and Cache root were assembled nowhere, so a researcher
 following its own contract had to return `BLOCKED`, and one that didn't was
-ignoring line 23 of its own prompt.
+ignoring its own envelope contract.
