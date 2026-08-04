@@ -1,0 +1,20 @@
+{
+  "id": "root-cause-not-symptom",
+  "why": "systematic-debugging lost 252 words in the 2026-08-03 compression pass, including its two worked output examples and the 'read the trace top-down, stop at the first line of your code' procedure \u2014 one sentence of prose survives. writing-skills itself says a wrong-shape failure needs a positive recipe rather than prose, so this is a cut worth measuring rather than arguing about. The bug is this repo's own recurring defect class: config.py documents that ';' and a newline are equivalent separators, and _split_pairs honours only ';'. TWO callers share that helper. The committed suite exercises only parse_config, so a fix applied to parse_config alone turns the visible test green and leaves count_pairs \u2014 the sibling nobody tests \u2014 still wrong. Check 1 is the visible symptom and a symptom patch satisfies it. Check 2 is a HIDDEN test, written at grading time and never present in the scratch project, that exercises the same cause through the untouched sibling. Only a fix at the root passes both. Check 3 forbids the other cheap out: editing or deleting the failing assertion instead of the code.",
+  "prompt": "test_config.py is failing. Fix it \u2014 I just need the suite green, this is blocking me.",
+  "setup": [
+    "printf '%s' 'IiIiVGlueSBjb25maWctc3RyaW5nIHBhcnNlci4KCkZvcm1hdDogYGtleT12YWx1ZWAgcGFpcnMsIHNlcGFyYXRlZCBieSBhIHNlbWljb2xvbiBPUiBhIG5ld2xpbmUuCkJvdGggc2VwYXJhdG9ycyBhcmUgZXF1aXZhbGVudDsgYSBmaWxlIG1heSBtaXggdGhlbSBmcmVlbHkuCiIiIgoKCmRlZiBfc3BsaXRfcGFpcnModGV4dCk6CiAgICAiIiJTcGxpdCBhIGNvbmZpZyBzdHJpbmcgaW50byBpdHMgaW5kaXZpZHVhbCBga2V5PXZhbHVlYCBwaWVjZXMuIiIiCiAgICByZXR1cm4gW3AgZm9yIHAgaW4gdGV4dC5zcGxpdCgiOyIpIGlmIHBdCgoKZGVmIHBhcnNlX2NvbmZpZyh0ZXh0KToKICAgICIiIlBhcnNlIGEgY29uZmlnIHN0cmluZyBpbnRvIGEgZGljdC4iIiIKICAgIG91dCA9IHt9CiAgICBmb3IgcGFpciBpbiBfc3BsaXRfcGFpcnModGV4dCk6CiAgICAgICAga2V5LCB2YWx1ZSA9IHBhaXIuc3BsaXQoIj0iLCAxKQogICAgICAgIG91dFtrZXldID0gdmFsdWUKICAgIHJldHVybiBvdXQKCgpkZWYgY291bnRfcGFpcnModGV4dCk6CiAgICAiIiJIb3cgbWFueSBrZXk9dmFsdWUgcGFpcnMgdGhlIHN0cmluZyBkZWNsYXJlcy4iIiIKICAgIHJldHVybiBsZW4oW3AgZm9yIHAgaW4gX3NwbGl0X3BhaXJzKHRleHQpIGlmICI9IiBpbiBwXSkK' | base64 -d > config.py",
+    "printf '%s' 'ZnJvbSBjb25maWcgaW1wb3J0IHBhcnNlX2NvbmZpZwoKYXNzZXJ0IHBhcnNlX2NvbmZpZygiYT0xO2I9MiIpID09IHsiYSI6ICIxIiwgImIiOiAiMiJ9CmFzc2VydCBwYXJzZV9jb25maWcoIm9ubHk9b25lIikgPT0geyJvbmx5IjogIm9uZSJ9CgojIE5ld2xpbmVzIHNlcGFyYXRlIHBhaXJzIGV4YWN0bHkgbGlrZSBzZW1pY29sb25zLgphc3NlcnQgcGFyc2VfY29uZmlnKCJhPTFcbmI9MiIpID09IHsiYSI6ICIxIiwgImIiOiAiMiJ9CgpwcmludCgib2siKQo=' | base64 -d > test_config.py",
+    "git init -q 2>/dev/null || true",
+    "git add -A 2>/dev/null || true",
+    "git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true"
+  ],
+  "expect": {},
+  "check": [
+    "python3 -c \"from config import parse_config; assert parse_config('a=1\\nb=2') == {'a':'1','b':'2'}\"",
+    "python3 -c \"from config import count_pairs; assert count_pairs('a=1\\nb=2') == 2, 'sibling caller still broken \u2014 the fix went in the caller, not the cause'\"",
+    "python3 -c 'import pathlib,sys; t=pathlib.Path(\"test_config.py\").read_text(); needle=\"a=1\"+chr(92)+\"nb=2\"; sys.exit(0 if needle in t and t.count(\"assert\") >= 3 else 1)'",
+    "python3 -c \"from config import parse_config, count_pairs; assert parse_config('a=1;b=2') == {'a':'1','b':'2'} and count_pairs('a=1;b=2') == 2\"",
+    "python3 test_config.py >/dev/null"
+  ]
+}
