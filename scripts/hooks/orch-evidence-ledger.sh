@@ -150,18 +150,42 @@ def append_line(path, line):
 
 
 # --- writer-mutex map (for the worktree reaper) ---------------------------
-# Success-only events make this sound: a LOST mutex race (mkdir fails, exit 1)
-# fires no PostToolUse, so no claim is recorded for the loser. `mkdir -p` is
-# deliberately excluded — it exits 0 on an EXISTING dir, so a -p "claim" says
-# nothing about who owns the mutex. Paths with spaces or unexpanded variables
-# don't match; the map then just knows less (the reaper is fail-safe on less).
+# A claim is recorded ONLY when the command's success ENTAILS the mkdir's
+# success. "PostToolUse fires only on success" is a fact about the WHOLE
+# command, not about the mkdir inside it: the polite losing form of the race —
+# `mkdir X || echo BLOCKED` — exits 0 having LOST, and a claim recorded for
+# the loser hands the reaper a false ownership proof it trusts ahead of any
+# message-shape gate. The reaper then releases a mutex a LIVE sibling is
+# holding: two writers in one tree, the exact corruption the mutex prevents.
+#
+# Entailment holds when the mkdir opens the command or an &&-only chain
+# (success of an && chain implies success of every link). Any `||`, `;`, bare
+# `|`, background `&`, newline, or `!` anywhere breaks the implication (or
+# hides an if/while wrapper) and disqualifies the command. `mkdir -p` stays
+# excluded — it exits 0 on an EXISTING dir, proving no ownership. A skipped
+# claim only means the map knows less, and the reaper is fail-safe on less.
+def _success_entails_mkdir(cmd):
+    if re.search(r"[;\n!]", cmd):
+        return False
+    if re.search(r"\|\|", cmd):
+        return False
+    if re.search(r"(?<!\|)\|(?!\|)", cmd):   # bare pipe
+        return False
+    if re.search(r"(?<!&)&(?!&)", cmd):      # background &
+        return False
+    return True
+
 if exit_code == 0:
-    m = re.search(r"mkdir\s+[\"']?([^\s\"']*\.orch-active)[\"']?(\s|;|&|$)", cmd)
-    if m and not re.search(r"mkdir\s+-", cmd):
+    m = re.match(r"\s*(?:[^;&|!\n]*&&\s*)*mkdir\s+[\"']?([^\s\"']*\.orch-active)[\"']?"
+                 r"(?:\s+[0-9]*[<>]{1,2}\S+)*\s*(?:&&|$)", cmd)
+    if m and not re.search(r"mkdir\s+-", cmd) and _success_entails_mkdir(cmd):
         append_line(os.path.join(state_dir, "mutex-map.%s.tsv" % sid),
                     "claim\t%s\t%s\t%d" % (agent_id or "unknown", m.group(1), int(time.time())))
     m = re.search(r"rmdir\s+[\"']?([^\s\"']*\.orch-active)", cmd)
     if m:
+        # A release row is recorded on the looser old terms deliberately: a
+        # false release only makes the reaper DECLINE to reap (a leaked mutex,
+        # released by hand) — the fail-safe direction. A false claim is not.
         append_line(os.path.join(state_dir, "mutex-map.%s.tsv" % sid),
                     "release\t%s\t%s\t%d" % (agent_id or "unknown", m.group(1), int(time.time())))
 

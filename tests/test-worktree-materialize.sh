@@ -163,25 +163,30 @@ CL="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SCRIPT="${SCRIPT}" bash -c '
 ')"
 [[ "$CL" == "CLEANED" ]] && ok "registry_claim removes its claim dir when the meta write fails" || fail "claim cleanup" "got: ${CL}"
 
-printf '\n%s== white-box: rollback_all reverse-order, incl. meta-less claim ==%s\n' "$DIM" "$RESET"
+printf '\n%s== white-box: rollback_all reverse-order; meta-less claim goes to PRUNE, not rm ==%s\n' "$DIM" "$RESET"
 # Source the script (BASH_SOURCE guard skips main), build a 2-worktree batch plus
 # a simulated in-progress (meta-less) claim, then verify rollback_all removes all
-# claims, worktrees, and branches.
+# provably-ours claims, worktrees, and branches. A META-LESS claim carries no
+# proof of ownership: registry_release refuses to delete one, and rollback must
+# hold the same line — it is left for the age-gated prune (which reclaims it
+# here under TTL 0), never rm -rf'd on the strength of nothing.
 WB="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SID="${SID}" SCRIPT="${SCRIPT}" bash -c '
   . "${SCRIPT}"; init_paths
   do_materialize "${SID}" wa wb >/dev/null 2>&1 || { echo SETUP_FAIL; exit 0; }
   [[ -d .worktrees/wa && -d .worktrees/wb && -d "${OWNERS}/wa" && -d "${OWNERS}/wb" ]] || { echo SETUP2; exit 0; }
   mkdir "${OWNERS}/wc"                          # meta-less in-progress claim
-  # rollback_all uses rm -rf directly (no ownership check) — there is no R_SID array.
   R_SLUG+=(wc); R_PATH+=("${PWD}/.worktrees/wc"); R_BRANCH+=("orch/${SID}/wc")
-  rollback_all
+  rollback_all 2>/dev/null
   [[ ! -d .worktrees/wa && ! -d .worktrees/wb ]] || { echo WT_LEFT; exit 0; }
-  [[ ! -d "${OWNERS}/wa" && ! -d "${OWNERS}/wb" && ! -d "${OWNERS}/wc" ]] || { echo CLAIM_LEFT; exit 0; }
+  [[ ! -d "${OWNERS}/wa" && ! -d "${OWNERS}/wb" ]] || { echo CLAIM_LEFT; exit 0; }
+  [[ -d "${OWNERS}/wc" ]] || { echo METALESS_DESTROYED; exit 0; }   # absence of proof is not authorization
+  STALE_SECS=0 registry_prune
+  [[ ! -d "${OWNERS}/wc" ]] || { echo METALESS_NOT_PRUNED; exit 0; }
   git show-ref --verify --quiet "refs/heads/orch/${SID}/wa" && { echo BRANCH_WA_LEFT; exit 0; }
   git show-ref --verify --quiet "refs/heads/orch/${SID}/wb" && { echo BRANCH_WB_LEFT; exit 0; }
   echo OK
 ')"
-[[ "$WB" == "OK" ]] && ok "rollback_all clears worktrees+claims+branches (and a meta-less claim)" || fail "rollback_all" "got: ${WB}"
+[[ "$WB" == "OK" ]] && ok "rollback_all clears what is provably ours; a meta-less claim is prune's job" || fail "rollback_all" "got: ${WB}"
 
 printf '\n%s== white-box: rollback_all refuses to destroy ANOTHER session'"'"'s worktree ==%s\n' "$DIM" "$RESET"
 # The one place this engine can lose uncommitted work with no second command.
@@ -205,6 +210,65 @@ XS="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SID="${SID}" SCRIPT="${SCRIPT}" b
 ')"
 [[ "$XS" == "OK" ]] && ok "rollback_all skips a path owned by another session (work preserved)" \
   || fail "cross-session rollback" "got: ${XS} — rollback destroyed another session's worktree"
+
+printf '\n%s== white-box: absence of evidence is NOT authorization — the in-progress windows ==%s\n' "$DIM" "$RESET"
+# The test above hands the other session BOTH ownership proofs. But during that
+# session's mkdir→meta window `registry_owner` prints NOTHING, and during its
+# add→stamp window there is no .orch-worktree-lock — and vetoes guarded on
+# `-n owner` / `-n locked` simply do not fire. Destruction must instead require
+# POSITIVE proof: the claim's owner IS us; the worktree's checked-out branch IS
+# this run's branch (the branch name embeds the sid). Neither proof exists here,
+# so the other session's in-progress claim, its worktree, and its uncommitted
+# file must all survive.
+XW="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SID="${SID}" SCRIPT="${SCRIPT}" bash -c '
+  . "${SCRIPT}"; init_paths
+  mkdir "${OWNERS}/xwin" || { echo SETUP_FAIL; exit 0; }         # other session, meta not yet written
+  git worktree add -b "orch/other-session/xwin" .worktrees/xwin HEAD >/dev/null 2>&1 || { echo SETUP_FAIL2; exit 0; }
+  echo "precious uncommitted work" > .worktrees/xwin/WORK.txt    # stamp not yet written
+  R_SID="${SID}"
+  R_SLUG=(xwin); R_PATH=("${PWD}/.worktrees/xwin"); R_BRANCH=("orch/${SID}/xwin")
+  rollback_all 2>/dev/null
+  [[ -d "${OWNERS}/xwin" ]] || { echo CLAIM_DESTROYED; exit 0; }
+  [[ -d .worktrees/xwin ]] || { echo WORKTREE_DESTROYED; exit 0; }
+  [[ -f .worktrees/xwin/WORK.txt ]] || { echo WORK_LOST; exit 0; }
+  echo OK
+')"
+[[ "$XW" == "OK" ]] && ok "mkdir→meta and add→stamp windows: rollback destroys nothing it cannot positively claim" \
+  || fail "fail-open rollback window" "got: ${XW} — a proof that was merely ABSENT authorized destruction"
+# scaffolding cleanup
+( cd "${REPO}" && git worktree remove --force .worktrees/xwin >/dev/null 2>&1; git worktree prune >/dev/null 2>&1
+  git branch -D "orch/other-session/xwin" >/dev/null 2>&1; rm -rf "${OWNERS}/xwin" ) || true
+
+printf '\n%s== sanitize: a newline-bearing slug cannot corrupt the claim meta ==%s\n' "$DIM" "$RESET"
+# sanitize was LINE-based (sed), so slug $'"'"'a\nb'"'"' survived intact; the meta
+# printf then wrote a two-line record, registry_owner'"'"'s cut -f1 returned a
+# value that never equals R_SID, and rollback SKIPPED ITS OWN CLAIM with a
+# misleading "held by another session" diagnostic — a leaked claim.
+NL="$(SCRIPT="${SCRIPT}" bash -c '. "${SCRIPT}" >/dev/null 2>&1; sanitize "a
+b"')"
+[[ "$NL" == "a_b" ]] && ok "sanitize flattens an embedded newline to _" \
+  || fail "sanitize newline" "got: $(printf '%s' "$NL" | od -c | head -2 | tr '\n' ' ')"
+# The trailing-newline contract the duplicate guard depends on must survive.
+DUPN="$(SCRIPT="${SCRIPT}" bash -c '. "${SCRIPT}" >/dev/null 2>&1; { sanitize "p q"; sanitize "p_q"; } | sort | uniq -d | head -1')"
+[[ "$DUPN" == "p_q" ]] && ok "dup guard still sees one line per sanitized slug" \
+  || fail "trailing-newline contract broken" "got: '$DUPN'"
+# Behavioural: a failed materialize with a newline slug must roll its claim back.
+NLOUT="$(run --base does-not-exist-ref "$SID" "$(printf 'nl\nslug')" 2>&1)"; nlrc=$?
+[[ $nlrc -ne 0 ]] && ok "newline slug + bad base → non-zero" || fail "newline-slug exit" "rc=$nlrc"
+if ls "${OWNERS}" 2>/dev/null | grep -q '^nl'; then
+  fail "newline slug leaked its claim" "rollback's own owner check was defeated: $(ls "${OWNERS}" | tr '\n' ' ')"
+else
+  ok "the claim was rolled back (owner check not defeated by its own meta)"
+fi
+printf '%s' "$NLOUT" | grep -q 'held by' \
+  && fail "misleading held-by diagnostic" "rollback claimed its own claim was another session's" \
+  || ok "no misleading held-by-another-session diagnostic"
+
+printf '\n%s== registry_release: dot-dot is refused explicitly ==%s\n' "$DIM" "$RESET"
+# `--release sid ..` aimed rm -rf at the sessions dir itself; it was refused
+# only by the ACCIDENT that ../meta does not exist. Refuse it by name.
+run --release "$SID" ".." >/dev/null 2>&1; [[ $? -ne 0 ]] && ok "release of '..' refused" || fail "dot-dot release" ""
+[[ -d "${OWNERS}" ]] && ok "owners registry still exists" || fail "registry destroyed" "rm -rf followed .."
 
 printf '\n%s== duplicate-slug guard is live (not dead code) ==%s\n' "$DIM" "$RESET"
 # `sanitize` printed with no trailing newline, so `... | sort | uniq -d` saw one

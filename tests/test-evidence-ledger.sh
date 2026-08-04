@@ -295,6 +295,37 @@ mutexmap | grep -q 'agent-2' && fail "-p exclusion" "mkdir -p recorded a claim (
 fire 'rmdir ".worktrees/task-a/.orch-active"' "" "agent-1" >/dev/null
 mutexmap | grep -q 'release	agent-1' && ok "rmdir records a release" || fail "release" "$(mutexmap)"
 
+printf '\n%s== mutex map: a claim only when success ENTAILS mkdir success ==%s\n' "$DIM" "$RESET"
+# "PostToolUse fires only on success" is a fact about the WHOLE command. The
+# polite losing form of the race — `mkdir X || echo BLOCKED` — exits 0 for the
+# LOSER, and recording a claim for it hands the reaper a false ownership proof:
+# the reaper then releases a mutex a LIVE sibling is holding — two writers in
+# one tree, the exact corruption the mutex exists to prevent.
+for c in \
+  'mkdir ".worktrees/task-l/.orch-active" || echo BLOCKED' \
+  'mkdir .worktrees/task-l/.orch-active || true' \
+  'mkdir .worktrees/task-l/.orch-active; echo done' \
+  'if mkdir .worktrees/task-l/.orch-active; then echo mine; else echo BLOCKED; fi' \
+  '! mkdir .worktrees/task-l/.orch-active' \
+  'mkdir .worktrees/task-l/.orch-active &' \
+  'mkdir .worktrees/task-l/.orch-active && rm -f x || echo BLOCKED'; do
+  fire "$c" "" "loser-agent" >/dev/null
+done
+if mutexmap | grep -q 'claim	loser-agent'; then
+  fail "polite-loser form recorded a claim" "success does not entail mkdir success: $(mutexmap | grep loser-agent | head -2 | tr '\n' '|')"
+else
+  ok "no claim for any form whose success does not entail mkdir success (||, ;, if, !, &)"
+fi
+# Being stricter must not lose the forms whose success DOES entail the mkdir's.
+fire 'cd /repo && mkdir .worktrees/task-m/.orch-active' "" "winner-agent" >/dev/null
+mutexmap | grep -q 'claim	winner-agent	.worktrees/task-m/.orch-active' \
+  && ok "an &&-chained mkdir (success entails mkdir success) still records a claim" \
+  || fail "entailing && claim lost" "$(mutexmap)"
+fire 'mkdir .worktrees/task-n/.orch-active 2>/dev/null' "" "winner-agent" >/dev/null
+mutexmap | grep -q 'claim	winner-agent	.worktrees/task-n/.orch-active' \
+  && ok "a redirect-suffixed plain mkdir still records a claim" \
+  || fail "redirect claim lost" "$(mutexmap)"
+
 printf '\n%s== profile / disable gates ==%s\n' "$DIM" "$RESET"
 # stderr is dropped: a gated hook exits before reading stdin, so the writer
 # takes a harmless SIGPIPE. That is correct hook behaviour, not a defect.

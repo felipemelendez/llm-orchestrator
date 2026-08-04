@@ -9,8 +9,11 @@
 #
 #   1. The mutex map written by orch-evidence-ledger.sh: claims recorded with
 #      THIS agent_id and no matching release → reap those paths exactly.
-#      (Sound because PostToolUse fires only on success: a lost mkdir race
-#      records no claim, so a claim really means this agent held the mutex.)
+#      (Sound because the ledger records a claim only when the COMMAND's
+#      success entails the mkdir's success — "PostToolUse fires only on
+#      success" alone was not enough: the polite losing form `mkdir X || echo
+#      BLOCKED` exits 0 for the LOSER, and recording it had this reaper
+#      releasing a mutex a live sibling held.)
 #   2. A `.worktrees/<slug>` path named in the agent's final message, ONLY
 #      when that message is a success-shaped Status (DONE / DONE_WITH_CONCERNS
 #      / PARTIAL) — i.e. the agent reports having worked there and stopped

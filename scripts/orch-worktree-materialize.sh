@@ -57,7 +57,13 @@ init_paths() {
 # lines to compare and reported nothing. The suite named for that guard passed
 # because a DIFFERENT check (the claim mkdir) happened to reject the second
 # slug — a test green for a reason other than the one it names.
-sanitize() { printf '%s\n' "$1" | sed 's/[^A-Za-z0-9._-]/_/g'; }
+#
+# The newline must be flattened by `tr` BEFORE sed sees the input: sed is
+# LINE-based, so an embedded newline in the slug sailed straight through and
+# split the claim meta into extra lines — registry_owner's `cut -f1` then
+# returned a value that never equals R_SID, and rollback SKIPPED ITS OWN CLAIM
+# with a misleading "held by another session" diagnostic (a leaked claim).
+sanitize() { printf '%s' "$1" | tr '\n' '_' | sed 's/[^A-Za-z0-9._-]/_/g'; printf '\n'; }
 
 # epoch mtime of a path — GNU stat first, then BSD. The order matters: GNU
 # `stat -f %m` does NOT fail — `-f` is filesystem mode there and %m prints the
@@ -100,6 +106,13 @@ registry_claim() {
 # non-owner, and refuses an in-progress (empty-meta) claim rather than delete it.
 registry_release() {
   local slug="$1" sid="$2" dir="${OWNERS}/$1"
+  # `--release <sid> ..` aimed the rm -rf below at the sessions dir itself and
+  # was refused only by the ACCIDENT that ../meta does not exist. Refuse the
+  # path-traversal shapes by name. (sanitize strips slashes for CLI callers;
+  # this guards the function's other entry points too.)
+  case "${slug}" in
+    .|..|*/*) printf 'orch-materialize: refusing suspicious slug "%s"\n' "${slug}" >&2; return 1 ;;
+  esac
   [[ -d "${dir}" ]] || return 0
   [[ -s "${dir}/meta" ]] || { printf 'orch-materialize: refusing to release in-progress claim "%s"\n' "${slug}" >&2; return 1; }
   local owner; owner="$(registry_owner "${slug}")"
@@ -156,9 +169,9 @@ do_list() {
 R_SLUG=(); R_PATH=(); R_BRANCH=(); R_SID=""
 
 rollback_all() {
-  local i owner locked
+  local i owner wt_branch
   for (( i=${#R_SLUG[@]}-1; i>=0; i-- )); do
-    # DESTROY ONLY WHAT IS STILL OURS.
+    # DESTROY ONLY WHAT IS PROVABLY STILL OURS.
     #
     # `git worktree remove --force` on a path we merely RECORDED is the one
     # place this engine can destroy uncommitted work with no second command.
@@ -169,30 +182,44 @@ rollback_all() {
     # path, and then our failure path force-removes it. Observed: the winning
     # session exited 0 and printed a path that no longer existed.
     #
-    # Two independent ownership proofs, either of which vetoes the removal.
-    # Both fail toward SKIPPING, because a leaked worktree is recoverable by
-    # hand and a destroyed one is not.
+    # The proofs must be POSITIVE. Two negative vetoes ("owner is someone
+    # else", "the stamp names someone else") each guarded on the evidence
+    # EXISTING — and during another session's mkdir→meta window registry_owner
+    # prints nothing, during its add→stamp window there is no stamp file, so
+    # neither veto fired and absence of evidence authorized destruction of the
+    # other session's in-progress claim, worktree, and uncommitted work. Now:
+    #
+    #   claim    → removed only when its recorded owner IS this run's sid.
+    #              A meta-less claim proves nothing (registry_release refuses
+    #              those too); it is the age-gated prune's job, never rm -rf's.
+    #   worktree → removed only when its checked-out branch IS this run's
+    #              branch for the slug (the branch name embeds the sid), or
+    #              the path is already absent. A tree we cannot positively
+    #              identify as ours is left in place: a leaked worktree is
+    #              recoverable by hand, a destroyed one is not.
+    #   branch   → orch/<our-sid>/<slug> is ours by construction; delete is
+    #              name-scoped and git itself refuses if it is checked out.
     owner="$(registry_owner "${R_SLUG[$i]}" 2>/dev/null)"
-    if [[ -n "${owner}" && -n "${R_SID}" && "${owner}" != "${R_SID}" ]]; then
-      printf 'orch-materialize: rollback SKIPPED for "%s" — the claim is now held by %s, not us (%s). Left in place; remove by hand if it is truly stale.\n' \
-             "${R_SLUG[$i]}" "${owner}" "${R_SID}" >&2
-      continue
+    if [[ -n "${R_SID}" && "${owner}" == "${R_SID}" ]]; then
+      rm -rf "${OWNERS}/${R_SLUG[$i]}" >/dev/null 2>&1 || true
+    elif [[ -d "${OWNERS}/${R_SLUG[$i]}" ]]; then
+      if [[ -n "${owner}" ]]; then
+        printf 'orch-materialize: rollback SKIPPED claim "%s" — held by %s, not us (%s). Left in place; remove by hand if it is truly stale.\n' \
+               "${R_SLUG[$i]}" "${owner}" "${R_SID}" >&2
+      else
+        printf 'orch-materialize: rollback left in-progress (meta-less) claim "%s" for the age-gated prune — no positive proof it is ours.\n' \
+               "${R_SLUG[$i]}" >&2
+      fi
     fi
-    locked=""
-    [[ -f "${R_PATH[$i]}/.orch-worktree-lock" ]] && \
-      locked="$(cat "${R_PATH[$i]}/.orch-worktree-lock" 2>/dev/null)"
-    if [[ -n "${locked}" && -n "${R_SID}" && "${locked}" != "${R_SID}" ]]; then
-      printf 'orch-materialize: rollback SKIPPED for "%s" — the worktree at %s is stamped for session %s. Left in place.\n' \
-             "${R_SLUG[$i]}" "${R_PATH[$i]}" "${locked}" >&2
-      continue
+    if [[ -e "${R_PATH[$i]}" ]]; then
+      wt_branch="$(git -C "${R_PATH[$i]}" symbolic-ref --short -q HEAD 2>/dev/null)"
+      if [[ -n "${wt_branch}" && "${wt_branch}" == "${R_BRANCH[$i]}" ]]; then
+        git worktree remove --force "${R_PATH[$i]}" >/dev/null 2>&1 || true
+      else
+        printf 'orch-materialize: rollback SKIPPED worktree %s — checked-out branch "%s" is not ours (%s). Left in place.\n' \
+               "${R_PATH[$i]}" "${wt_branch:-unreadable}" "${R_BRANCH[$i]}" >&2
+      fi
     fi
-    # We created these claims this run, so remove the claim dir directly with
-    # rm -rf — INTENTIONALLY bypassing registry_release's ownership/in-progress
-    # guards, which exist for external callers, not for our own teardown. Claim
-    # first (frees the slug before the tree disappears, closing the prune/
-    # re-claim window), then the worktree, then the branch.
-    rm -rf "${OWNERS}/${R_SLUG[$i]}" >/dev/null 2>&1 || true
-    git worktree remove --force "${R_PATH[$i]}" >/dev/null 2>&1 || true
     git branch -D "${R_BRANCH[$i]}" >/dev/null 2>&1 || true
   done
 }
