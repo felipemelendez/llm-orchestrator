@@ -519,17 +519,14 @@ if [[ -z "$LOCK_CACHE_FILE" ]]; then
 else
   ok "lock-fallback: cache file located for lock simulation"
 
-  # Hold the REAL lock for whichever mechanism with_lock uses on this platform,
-  # so it actually times out: flock on the .lock file (Linux), else the
-  # atomic-mkdir .lockdir (macOS without flock). Holding the wrong one lets
-  # with_lock sail through and the timeout path never fires.
-  HELD_FLOCK=0
+  # with_lock uses exactly ONE mechanism — the atomic-mkdir .lockdir — on every
+  # platform. This block used to branch on `command -v flock` and hold the .lock
+  # FILE on Linux; when the flock fast path was removed, that left the test
+  # holding an object with_lock no longer looks at, so it acquired the real lock
+  # immediately, never timed out, and the diagnostic assertion below failed on
+  # Linux while passing on macOS. Hold the one lock that exists.
   STRANDED_LOCKDIR="${LOCK_CACHE_FILE}.lockdir"
-  if command -v flock >/dev/null 2>&1; then
-    exec 9>"${LOCK_CACHE_FILE}.lock"
-    if flock -n 9; then HELD_FLOCK=1; fi
-  fi
-  [[ $HELD_FLOCK -eq 0 ]] && mkdir -p "$STRANDED_LOCKDIR"
+  mkdir -p "$STRANDED_LOCKDIR"
 
   # Modify the manifest to invalidate the cache sha, forcing the lock path.
   cat > "$LOCK_DIR/package.json" <<'PKGEOF'
@@ -554,13 +551,7 @@ PKGEOF
     fail "lock-fallback: diagnostic printed to stderr on lock timeout" "stderr was: $FALLBACK_STDERR"
   fi
 
-  # Release the held lock (whichever mechanism we used).
-  if [[ $HELD_FLOCK -eq 1 ]]; then
-    flock -u 9 2>/dev/null || true
-    exec 9>&- 2>/dev/null || true
-  else
-    rmdir "$STRANDED_LOCKDIR" 2>/dev/null || true
-  fi
+  rmdir "$STRANDED_LOCKDIR" 2>/dev/null || true
 fi
 
 unset ORCH_HOME
