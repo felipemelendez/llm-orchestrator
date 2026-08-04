@@ -55,6 +55,29 @@ allows()    { local cmd="$1"; [[ "$(rc_for "$cmd")" == "0" ]] && ok "ALLOW: $cmd
 blocks_wt() { local cmd="$1"; [[ "$(rc_for_wt "$cmd")" == "2" ]] && ok "WT-BLOCK: $cmd" || fail "WT-BLOCK: $cmd" "expected exit 2"; }
 allows_wt() { local cmd="$1"; [[ "$(rc_for_wt "$cmd")" == "0" ]] && ok "WT-ALLOW: $cmd" || fail "WT-ALLOW: $cmd" "expected exit 0"; }
 
+# --- Fallback parity: cross the two axes the suite never crossed --------------
+# Every check above picks ONE layer (which path decides) and ONE spelling, and
+# the suite historically never combined "a spelling only the classifier
+# understands" with "a command shape that knocks the classifier off its
+# confident path". That blind spot was shared with the code: `git reset --h`
+# blocked, `nice git reset --h` ran. These helpers force the bail: a launcher
+# word (`nice` is in the INTERP set) and a trailing `$?` each make the
+# confident pass exit 3, so the verdict must come from the paranoid re-parse.
+blocks_fallback() {
+  local cmd="$1"
+  [[ "$(rc_for "nice ${cmd}")" == "2" ]] && ok "FB-launcher BLOCK: $cmd" \
+    || fail "FB-launcher BLOCK: nice $cmd" "expected exit 2"
+  [[ "$(rc_for "${cmd} && echo \$?")" == "2" ]] && ok "FB-dollar BLOCK: $cmd" \
+    || fail "FB-dollar BLOCK: $cmd && echo \$?" "expected exit 2"
+}
+allows_fallback() {
+  local cmd="$1"
+  [[ "$(rc_for "nice ${cmd}")" == "0" ]] && ok "FB-launcher ALLOW: $cmd" \
+    || fail "FB-launcher ALLOW: nice $cmd" "expected exit 0"
+  [[ "$(rc_for "${cmd} && echo \$?")" == "0" ]] && ok "FB-dollar ALLOW: $cmd" \
+    || fail "FB-dollar ALLOW: $cmd && echo \$?" "expected exit 0"
+}
+
 printf '%s== blocks working-tree-destroying git ==%s\n' "$DIM" "$RESET"
 blocks "git stash"
 blocks "git stash push -m wip"
@@ -131,6 +154,142 @@ blocks "git --paginate reset --hard"
 blocks "git --no-optional-locks checkout main"
 blocks "$(printf 'git reset \\\n--hard HEAD~1')"
 blocks "$(printf 'git \\\n--no-pager \\\ncheckout -f main')"
+
+printf '\n%s== FALLBACK PARITY: the same spellings must block off the confident path ==%s\n' "$DIM" "$RESET"
+# Measured before the paranoid re-parse existed: every command below was
+# ALLOWED with a `nice ` prefix or a trailing `&& echo $?` while the bare form
+# blocked — the classifier bailed (exit 3) and the spelling regexes only knew
+# canonical spellings. rc=0 was reproduced for `nice git reset --h HEAD~1` and
+# `git reset --h HEAD~1 && echo $HOME` against real git; both really reset.
+blocks_fallback "git reset --hard"
+blocks_fallback "git reset --h HEAD~1"
+blocks_fallback "git reset --ha HEAD~1"
+blocks_fallback "git reset --k HEAD~1"
+blocks_fallback "git reset --mer HEAD~1"
+blocks_fallback "git clean -fd"
+blocks_fallback "git clean --for -d"
+blocks_fallback "git clean -x -f"
+blocks_fallback "git stash"
+blocks_fallback "git checkout main"
+blocks_fallback "git checkout -- src/file.ts"
+blocks_fallback "git restore --workt src/file.ts"
+blocks_fallback "git worktree remove --fo .worktrees/x"
+blocks_fallback "git branch -D feat/x"
+blocks_fallback "git branch -df feat"
+blocks_fallback "git branch --delete --forc feat/x"
+blocks_fallback "git branch -M main other"
+blocks_fallback "git --no-pager checkout -f main"
+blocks_fallback "git --no-pager switch main"
+blocks_fallback "git --paginate reset --hard"
+blocks_fallback "rm -rf .git"
+blocks_fallback "rm -R .git"
+blocks_fallback "rm -rf .git*"
+blocks_fallback "rm --recursive --force .git"
+blocks_fallback "rm -rf .worktrees/feat-x"
+# ...and the benign forms must stay benign on the SAME forced path, or the
+# fix for the fail-open is just a new false-positive machine.
+allows_fallback "git status --short"
+allows_fallback "git log --oneline"
+allows_fallback "git commit -m message"
+allows_fallback "git add -A"
+allows_fallback "git checkout -b feat/x"
+allows_fallback "git switch -c feat/y"
+allows_fallback "git stash list"
+allows_fallback "git push origin main"
+
+printf '\n%s== remote destruction: push is the least recoverable class ==%s\n' "$DIM" "$RESET"
+# Measured against a local bare remote: `git push --force` rewrote main from
+# 3 commits to 1. Blocking the recoverable local `branch -D` while allowing
+# the unrecoverable remote equivalent was the defect class exactly.
+# --force-with-lease is blocked BY DECISION: the lease only protects against
+# refs moved since the local remote-tracking state was fetched — precisely the
+# state a shared checkout with parallel agents cannot trust — and it is still
+# remote history rewriting, so it takes the same explicit human opt-in.
+blocks "git push --force"
+blocks "git push -f"
+blocks "git push origin --delete feat"
+blocks "git push origin :feat"
+blocks "git push origin +main"
+blocks "git push --force-with-lease"
+blocks "git push --force-with-lease=main origin main"
+blocks "git push --force-if-includes --force-with-lease"
+blocks "git push --mirror backup"
+blocks "git push --prune origin"
+blocks "git push --delete origin feat"
+blocks "git push -d origin feat"
+blocks_fallback "git push --force"
+blocks_fallback "git push origin :feat"
+allows "git push"
+allows "git push origin main"
+allows "git push -u origin feat/x"
+allows "git push --tags"
+allows "git push --dry-run origin main"
+allows "git push origin HEAD:refs/heads/feat"
+allows "git push git@example.com:org/repo.git main"
+
+printf '\n%s== plumbing ref deletion: update-ref ==%s\n' "$DIM" "$RESET"
+# Measured: `git update-ref -d refs/heads/X` deleted the branch with none of
+# porcelain's protections. --stdin batches the same operations invisibly.
+blocks "git update-ref -d refs/heads/feat"
+blocks "git update-ref --stdin"
+blocks_fallback "git update-ref -d refs/heads/feat"
+allows "git update-ref refs/heads/feat abc1234"
+
+printf '\n%s== the --abort family runs an internal hard reset ==%s\n' "$DIM" "$RESET"
+# Measured: conflict-resolution work in the tree was gone after `merge
+# --abort`. Worktree-local harm, so relax-scoped like reset --hard; --quit
+# and --continue leave the tree alone and stay allowed.
+blocks "git merge --abort"
+blocks "git rebase --abort"
+blocks "git am --abort"
+blocks "git cherry-pick --abort"
+blocks_fallback "git merge --abort"
+allows "git rebase --continue"
+allows "git merge --quit"
+allows "git cherry-pick --continue"
+allows_wt "git merge --abort"
+allows_wt "git rebase --abort"
+
+printf '\n%s== checkout -B / switch -C reset an existing branch ==%s\n' "$DIM" "$RESET"
+# Measured: `git checkout -B main HEAD~2` rode the branch-CREATION exemption
+# and dropped commits (c3 c2 c1 -> c1) — the same harm `git branch -M` is
+# blocked for. Branch refs are repo-global, so this blocks even in a worktree.
+blocks "git checkout -B main HEAD~2"
+blocks "git switch -C main HEAD~2"
+blocks "git switch --force-create main HEAD~2"
+blocks_fallback "git checkout -B main HEAD~2"
+blocks_wt "git checkout -B main HEAD~2"
+allows "git checkout -b feat/new"
+allows "git switch -c feat/new"
+
+printf '\n%s== git rm --cached is index-only and must not block ==%s\n' "$DIM" "$RESET"
+# --cached never touches the working tree — it is the remedy git itself
+# prints for an accidentally-added embedded repo, and this guard was blocking
+# the fix git recommends. -n/--dry-run touch nothing at all.
+allows "git rm -r --cached .claude/worktrees"
+allows "git rm --cached notes.txt"
+allows "git rm -rf --cached vendor/"
+allows "git rm -n -r src/"
+allows "git rm --dry-run -r src/"
+allows_fallback "git rm -r --cached .claude/worktrees"
+blocks "git rm -rf vendor/"
+
+printf '\n%s== variables and quoted mentions: block the flag, never the mention ==%s\n' "$DIM" "$RESET"
+# A token that is NOTHING BUT a variable reference, in argument position, is
+# data. Bailing on every `$` made the guard a raw-payload scanner: a read-only
+# search carrying "$DIR" was hard-blocked (measured rc=2 pre-fix).
+allows 'grep -rn "git reset --hard" "$DIR"'
+allows 'git log --grep="git clean -fd" -- "$FILE"'
+allows 'git commit -m "reset the counter" -m "$BODY"'
+blocks 'git reset --h HEAD~1 && echo $HOME'
+blocks 'git checkout $BRANCH'
+blocks 'bash -c "git reset --hard $BRANCH"'
+# A fused token can EXPAND into the flag; stripping the reference must expose it.
+blocks 'git reset --hard$X'
+# A heredoc that merely QUOTES a destructive form is a mention, not an
+# invocation — but a shell heredoc that IS the invocation still blocks.
+allows "$(printf 'python3 - <<PY\ntext = "the --hard flag discards work"\nprint(text)\nPY')"
+blocks "$(printf 'bash - <<SH\ngit reset --hard\nSH')"
 
 printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
 # Brace expansion must keep the PREFIX. Blanking the punctuation turned

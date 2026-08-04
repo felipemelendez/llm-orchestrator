@@ -41,8 +41,71 @@ INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 [[ -n "${INPUT}" ]] || exit 0
 
+# Linter, formatter and typecheck strictness. NOT pyproject.toml, Cargo.toml,
+# package.json or go.mod — those carry dependency and build metadata that
+# ordinary work legitimately edits, and blocking them would make the guard
+# something people turn off.
+#
+# ONE list, pattern-shaped, used by BOTH the Edit path and the Bash path.
+# The old exact-name enumeration had sibling gaps an audit walked straight
+# through: eslint.config.mts, .prettierrc.toml, .stylelintrc.yml,
+# .markdownlint.jsonc, .golangci.toml and tsconfig.build.json were all
+# editable while their siblings were blocked. Tools grow config dialects
+# faster than a name list grows arms; match the family, not the spelling.
+orch_is_protected_cfg() { # <lowercased basename> → 0 when protected
+  case "$1" in
+    .eslintrc|.eslintrc.*|eslint.config.*|.eslintignore) return 0 ;;
+    .prettierrc|.prettierrc.*|prettier.config.*|.prettierignore) return 0 ;;
+    biome.json|biome.jsonc|biome.config.*) return 0 ;;
+    .ruff.toml|ruff.toml) return 0 ;;
+    .flake8|setup.cfg|mypy.ini|.mypy.ini|pyrightconfig.json) return 0 ;;
+    tsconfig.json|tsconfig.*.json|jsconfig.json) return 0 ;;
+    .stylelintrc|.stylelintrc.*|stylelint.config.*|.stylelintignore) return 0 ;;
+    .markdownlint.*|.markdownlintrc|.markdownlintignore) return 0 ;;
+    .rubocop.yml|.golangci.*|clippy.toml|.clippy.toml) return 0 ;;
+    .editorconfig|.pre-commit-config.*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 TARGET=""
 declare -f orch_json_field >/dev/null 2>&1 && TARGET=$(orch_json_field "${INPUT}" tool_input.file_path)
+
+# --- Bash path -----------------------------------------------------------------
+# This hook also runs on the Bash matcher: `sed -i 's/error/off/'
+# eslint.config.js` loosens a checker exactly as an Edit does, and binding the
+# guard to Edit|Write|MultiEdit only meant the shell was a free side door.
+# Scoped to WRITERS: in-place editors and redirection targets. Reading a
+# config (cat/grep) stays free — a guard that blocks looking at the thing it
+# protects gets switched off.
+if [[ -z "${TARGET}" ]] && declare -f orch_json_field >/dev/null 2>&1; then
+  _CMD=$(orch_json_field "${INPUT}" tool_input.command)
+  if [[ -n "${_CMD}" ]]; then
+    _FLAT=$(printf '%s' "${_CMD}" | LC_ALL=C tr -c '[:print:]' ' ')
+    # (a) redirection targets: `> eslint.config.js`, `2>>`, `| tee <file>`.
+    _TGTS=$(printf '%s' "${_FLAT}" \
+      | command grep -oE '([0-9]?>>?|tee([[:space:]]+-a)?)[[:space:]]*[^[:space:];|&<>]+' \
+      | LC_ALL=C sed -E -e 's/^[0-9]?>>?[[:space:]]*//' -e 's/^tee([[:space:]]+-a)?[[:space:]]*//' || true)
+    # (b) in-place writers: every argument word is a candidate target.
+    if printf '%s' "${_FLAT}" | command grep -qE '(^|[;&|([:space:]])((sed|perl|ruby)[[:space:]][^;&|]*[[:space:]]-i|(sed|perl|ruby)[[:space:]]+-i|(sponge|truncate|mv|cp|install|ln|patch|ex|ed)([[:space:]]|$))'; then
+      _TGTS="${_TGTS}
+$(printf '%s' "${_FLAT}" | tr ' ' '\n')"
+    fi
+    while IFS= read -r _t; do
+      [[ -n "${_t}" ]] || continue
+      _t=$(printf '%s' "${_t}" | LC_ALL=C sed -e "s/[\"']//g")
+      [[ -n "${_t}" ]] || continue
+      _b=$(basename "${_t}" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+      [[ -n "${_b}" ]] || continue
+      if orch_is_protected_cfg "${_b}" && [[ -e "${_t}" || -L "${_t}" ]]; then
+        TARGET="${_t}"
+        break
+      fi
+    done <<< "${_TGTS}"
+    [[ -n "${TARGET}" ]] || exit 0
+  fi
+fi
+
 if [[ -z "${TARGET}" ]]; then
   # Could not decode a path. A truncated or unexpected payload must not be a
   # free pass, but neither should it block every edit in the session — so fall
@@ -55,23 +118,7 @@ fi
 # Basename, lowercased: on APFS and NTFS `.ESLINTRC.JS` is the same file.
 BASE=$(basename "${TARGET}" | tr '[:upper:]' '[:lower:]')
 
-# Linter, formatter and typecheck strictness. NOT pyproject.toml, Cargo.toml,
-# package.json or go.mod — those carry dependency and build metadata that
-# ordinary work legitimately edits, and blocking them would make the guard
-# something people turn off.
-case "${BASE}" in
-  .eslintrc|.eslintrc.js|.eslintrc.cjs|.eslintrc.mjs|.eslintrc.json|.eslintrc.yml|.eslintrc.yaml|eslint.config.js|eslint.config.cjs|eslint.config.mjs|eslint.config.ts) ;;
-  .prettierrc|.prettierrc.js|.prettierrc.cjs|.prettierrc.json|.prettierrc.yml|.prettierrc.yaml|prettier.config.js|prettier.config.cjs|prettier.config.mjs) ;;
-  biome.json|biome.jsonc) ;;
-  .ruff.toml|ruff.toml) ;;
-  .flake8|setup.cfg|mypy.ini|.mypy.ini|pyrightconfig.json) ;;
-  tsconfig.json|tsconfig.base.json|jsconfig.json) ;;
-  .stylelintrc|.stylelintrc.json|.stylelintrc.js|stylelint.config.js) ;;
-  .markdownlint.json|.markdownlint.yaml|.markdownlintrc) ;;
-  .rubocop.yml|.golangci.yml|.golangci.yaml|clippy.toml|.clippy.toml) ;;
-  .editorconfig|.pre-commit-config.yaml|.pre-commit-config.yml) ;;
-  *) exit 0 ;;
-esac
+orch_is_protected_cfg "${BASE}" || exit 0
 
 # Only an EXISTING file is protected. Adopting a linter is the opposite of
 # evading one. Absent means absent — any other stat failure (a permission

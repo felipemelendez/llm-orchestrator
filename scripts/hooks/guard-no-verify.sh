@@ -77,6 +77,18 @@ if [[ -n "${_DECODED_CMD}" && -f "${_CLASSIFIER}" ]] && command -v python3 >/dev
   _CR=0
   printf '%s' "${_DECODED_CMD}" \
     | python3 "${_CLASSIFIER}" --mode no-verify >/dev/null 2>&1 || _CR=$?
+  if [[ "${_CR}" != "0" && "${_CR}" != "2" ]]; then
+    # Exit 3 (a `$`, a backtick, a launcher word, an interpreter). The old
+    # handoff to the spelling fallbacks was prefix-blind — `nice git commit
+    # --no-verif -m x` committed past a failing pre-commit hook — and the raw
+    # substring scan blocked scripts that merely QUOTE the flag (a heredoc
+    # documenting `--no-verify` is not a commit). Paranoid mode is the same
+    # classifier, block-biased: it strips variables, recurses into quoted
+    # blobs, and blocks only a git invocation carrying the bypass.
+    _CR=0
+    printf '%s' "${_DECODED_CMD}" \
+      | python3 "${_CLASSIFIER}" --mode no-verify --paranoid 1 >/dev/null 2>&1 || _CR=$?
+  fi
   case "${_CR}" in
     2) HIT=1; CLASSIFIED=1 ;;
     0) HIT=0; CLASSIFIED=1 ;;   # parsed with confidence — skip the fallbacks
@@ -158,6 +170,12 @@ elif [[ ${HIT} -eq 0 ]] && [[ ${DECODED} -eq 1 ]] && declare -f orch_shell_segme
       case "${_tok}" in
         --no-verify|--no-gpg-sign|commit.gpgsign=false|commit.gpgSign=false) HIT=1; break ;;
       esac
+      # `git config core.hooksPath <dir>` permanently disables every hook and
+      # `git config commit.gpgsign false` disables signing — for all future
+      # commands, not just this one. Config keys are case-insensitive.
+      case "$(printf '%s' "${_tok}" | tr '[:upper:]' '[:lower:]')" in
+        core.hookspath|core.hookspath=*|commit.gpgsign|commit.gpgsign=*) HIT=1; break ;;
+      esac
       if [[ ${_prev_takes_value} -eq 1 ]]; then _prev_takes_value=0; continue; fi
       case "${_tok}" in
         -m|-F|-C|-c|-t) _prev_takes_value=1; continue ;;
@@ -186,6 +204,8 @@ elif [[ ${HIT} -eq 0 ]] && [[ ${DECODED} -eq 1 ]] && declare -f orch_shell_segme
 else
   # Undecodable payload → raw substring scan. Noisy, never fail-open.
   grep -qE -- '--no-verify|--no-gpg-sign|-c[[:space:]]+commit\.gpgsign=false' <<< "${SCAN}" && HIT=1
+  # The permanent forms of the same bypass; config keys are case-insensitive.
+  grep -qiE -- 'core\.hookspath|commit\.gpgsign' <<< "${SCAN}" && HIT=1
   # `-n` on a commit, in the undecodable case. Deliberately blunt here: this
   # path already accepts false positives in exchange for never failing open.
   grep -qE 'git([^;&|]*[[:space:]])?commit([[:space:]]+[^;&|]*)?[[:space:]]-[A-Za-z]*n([[:space:]]|$)' <<< "${SCAN}" && HIT=1

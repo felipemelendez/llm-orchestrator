@@ -151,10 +151,24 @@ if [[ -n "${_DECODED_CMD}" && -f "${_CLASSIFIER}" ]] && command -v python3 >/dev
   _CR=0
   _CREASON=$(printf '%s' "${_DECODED_CMD}" \
     | python3 "${_CLASSIFIER}" --mode destructive --relax "${RELAX}" 2>/dev/null) || _CR=$?
+  if [[ "${_CR}" != "0" && "${_CR}" != "2" ]]; then
+    # Exit 3 (a `$`, a backtick, a launcher word, an interpreter). This used
+    # to drop straight to the spelling regexes below, and those match only
+    # full canonical spellings — so `nice git reset --h HEAD~1` and
+    # `git reset --h HEAD~1 && echo $HOME` were measured ALLOWED while really
+    # resetting the tree. Re-run the SAME classifier in its block-biased
+    # paranoid mode instead of delegating to a weaker second rule set: one
+    # source of truth for what a destructive invocation looks like. Only if
+    # paranoid mode also cannot parse (exit 3 again) do the raw spelling
+    # rules below get the last word.
+    _CR=0
+    _CREASON=$(printf '%s' "${_DECODED_CMD}" \
+      | python3 "${_CLASSIFIER}" --mode destructive --relax "${RELAX}" --paranoid 1 2>/dev/null) || _CR=$?
+  fi
   case "${_CR}" in
     2) reason="${_CREASON}" ;;
     0) exit 0 ;;   # parsed with confidence and found nothing destructive
-    *) : ;;        # 3 (or a crash) → fall through to the spelling rules
+    *) : ;;        # still unparseable → fall through to the spelling rules
   esac
 fi
 
@@ -173,7 +187,7 @@ if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]
   reason="git -c alias.<name>=... — defines an alias inline and runs it; an alias body starting with '!' is arbitrary shell, and the option normalizer cannot see through it"
 fi
 # The same escape without an alias: verbs whose whole purpose is to run a command.
-if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(submodule[[:space:]]+foreach|bisect[[:space:]]+run|filter-branch|rebase([[:space:]]+[^[:space:]]+)*[[:space:]]+(-x|--exec)|difftool([[:space:]]+[^[:space:]]+)*[[:space:]]+--extcmd|(-c[[:space:]]*[^[:space:]]*(pager|editor|extcmd|hooksPath)=))' <<< "${RAWCMD}"; then
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(submodule[[:space:]]+foreach|bisect[[:space:]]+run|filter-branch|rebase([[:space:]]+[^[:space:]]+)*[[:space:]]+(-x|--exec)|difftool([[:space:]]+[^[:space:]]+)*[[:space:]]+--extcmd|(-c[[:space:]]*[^[:space:]]*(pager|editor|extcmd|[hH][oO][oO][kK][sS][pP][aA][tT][hH])=))' <<< "${RAWCMD}"; then
   reason="git subcommand that executes an arbitrary command (submodule foreach / bisect run / filter-branch / rebase --exec / difftool --extcmd / a -c pager|editor|extcmd|hooksPath override) — this is a shell re-entry point the guard cannot see through"
 fi
 # Plumbing that overwrites the working tree exactly like `reset --hard`. No rule
@@ -207,8 +221,10 @@ if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:spac
   reason="git reset --hard/--keep/--merge — discards uncommitted changes on the main checkout (use 'git reset --soft' to keep work staged; allowed inside an isolated .orch-worktree)"
 fi
 
-# --- git clean -f / -fd / -fdx / -df ...
-if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+clean([[:space:]]+-[a-zA-Z]*f|[[:space:]]+--force)' <<< "${SCAN}"; then
+# --- git clean -f / -fd / -fdx / -df ... The absorber between `clean` and the
+# force flag matters: `git clean -x -f` puts the force in the SECOND cluster,
+# and inspecting only the first measured as ALLOWED while really deleting.
+if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+clean([[:space:]]+-[^[:space:]]+)*([[:space:]]+-[a-zA-Z]*f|[[:space:]]+--force)' <<< "${SCAN}"; then
   reason="git clean -f — deletes untracked files irrecoverably on the main checkout (allowed inside an isolated .orch-worktree)"
 fi
 
@@ -227,14 +243,19 @@ fi
 # checkout -b x'; git checkout main` passed, lending a flag from inside a
 # quoted string to the next command. Segmentation is the fix; a command the
 # splitter cannot divide falls back to being tested whole (the old behaviour).
-if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git[[:space:]]+(checkout|switch)([[:space:]]|$)' <<< "${SCAN}"; then
+# The flag absorber `([[:space:]]+-[^[:space:]]+)*` after `git` matches every
+# sibling rule in this file; its absence here meant `nice git --no-pager
+# checkout main` walked past on the fallback path. Creation exemptions are
+# lowercase-only: `-B`/`-C` force-RESET an existing branch (same harm as
+# `branch -M`), so on this blunt path they must block, not exempt.
+if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(checkout|switch)([[:space:]]|$)' <<< "${SCAN}"; then
   _segs="${SCAN}"
   declare -f orch_shell_segments >/dev/null 2>&1 && _segs=$(orch_shell_segments "${SCAN}")
   while IFS= read -r _seg; do
     [[ -n "${_seg}" ]] || continue
-    grep -qE 'git[[:space:]]+(checkout|switch)([[:space:]]|$)' <<< "${_seg}" || continue
-    if ! grep -qE 'git[[:space:]]+checkout[[:space:]]+-[bB]([[:space:]]|$)' <<< "${_seg}" \
-       && ! grep -qE 'git[[:space:]]+switch[[:space:]]+-[cC]([[:space:]]|$)' <<< "${_seg}"; then
+    grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(checkout|switch)([[:space:]]|$)' <<< "${_seg}" || continue
+    if ! grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+checkout[[:space:]]+-b([[:space:]]|$)' <<< "${_seg}" \
+       && ! grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+switch[[:space:]]+-c([[:space:]]|$)' <<< "${_seg}"; then
       reason="git checkout/switch <branch> — a branch switch overwrites every differing tracked file, discarding uncommitted work on the main checkout (only 'checkout -b' / 'switch -c' creation allowed; switches allowed inside an isolated .orch-worktree)"
       break
     fi
@@ -253,8 +274,30 @@ if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:spac
 fi
 
 # --- git rm -f / --force / -r (force-deletes tracked files from index + worktree)
-if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+rm([[:space:]]+-[a-zA-Z]*f|[[:space:]]+--force|[[:space:]]+-r)' <<< "${SCAN}"; then
+# --cached is exempt even here: it removes from the INDEX ONLY — it is the
+# remedy git itself prints for an accidentally-added embedded repo, and
+# blocking it teaches users the guard is noise. Segment-bounded ([^&|;]) so a
+# --cached in one command cannot launder a real `git rm -rf` after `&&`.
+if [[ -z "${reason}" && ${RELAX} -eq 0 ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+rm([[:space:]]+-[a-zA-Z]*f|[[:space:]]+--force|[[:space:]]+-r)' <<< "${SCAN}" \
+   && ! grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+rm[^&|;]*--cached' <<< "${SCAN}"; then
   reason="git rm -f/-r — force-deletes tracked files from the index and working tree on the main checkout (allowed inside an isolated .orch-worktree)"
+fi
+
+# --- degraded-path parity for the classifier's newer rules. The classifier is
+# the source of truth for these (update-ref, push, the --abort family,
+# checkout -B); the regexes below exist only for the no-python3 environment
+# and are deliberately canonical-spelling-only.
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+update-ref([[:space:]]+[^&|;]*)?[[:space:]](-d|--stdin)([[:space:]]|$)' <<< "${SCAN}"; then
+  reason="git update-ref -d / --stdin — deletes or rewrites refs directly, bypassing every porcelain protection"
+fi
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+push([[:space:]]+[^&|;]*)?([[:space:]](--force[^[:space:]]*|--delete|--prune|--mirror|-[a-zA-Z]*[fd]([[:space:]]|$)|[+:][^[:space:]]+))' <<< "${SCAN}"; then
+  reason="git push --force/-f/--delete/:ref — rewrites or deletes refs on the shared remote; unrecoverable from this checkout"
+fi
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(merge|rebase|am|cherry-pick|revert)[^&|;]*[[:space:]]--abort([[:space:]]|$)' <<< "${SCAN}"; then
+  reason="git merge/rebase/am/cherry-pick --abort — internally hard-resets to the pre-operation state, discarding conflict-resolution work"
+fi
+if [[ -z "${reason}" ]] && grep -qE 'git([[:space:]]+-[^[:space:]]+)*[[:space:]]+(checkout[^&|;]*[[:space:]]-B|switch[^&|;]*[[:space:]]-C)([[:space:]]|$)' <<< "${SCAN}"; then
+  reason="git checkout -B / switch -C — force-resets an existing branch to a new start point, dropping its commits"
 fi
 
 # --- git branch -D / --delete --force
