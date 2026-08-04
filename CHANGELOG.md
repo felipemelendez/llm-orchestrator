@@ -3,7 +3,7 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0] - 2026-08-04
 
 ### Fixed — CI ran 23 of the 31 suites that existed and reported green; a `--copy` install shipped its guards disarmed
 

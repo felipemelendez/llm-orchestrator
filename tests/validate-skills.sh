@@ -323,6 +323,36 @@ while IFS= read -r hit; do
 done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* commands, [0-9]* agents' "$ROOT" 2>/dev/null \
          | command grep -v "$ROOT/docs/llm-orchestrator/" | command grep -v "$ROOT/CHANGELOG.md")
 
+# The plugin version is quoted in prose, and a quoted version rots: manual-testing
+# claimed 0.1.0 while the plugin shipped 0.6.0, and marketplace.json is a second
+# copy that must agree with plugin.json or an install advertises the wrong build.
+# One source of truth, checked against every copy.
+PLUGIN_VERSION=$(python3 -c "import json;print(json.load(open('${ROOT}/.claude-plugin/plugin.json'))['version'])" 2>/dev/null)
+if [[ -z "${PLUGIN_VERSION}" ]]; then
+  echo "FAIL: cannot read version from .claude-plugin/plugin.json"
+  fail=1
+else
+  MP_VERSION=$(python3 -c "
+import json
+d=json.load(open('${ROOT}/.claude-plugin/marketplace.json'))
+print(d['plugins'][0].get('version',''))" 2>/dev/null)
+  if [[ "${MP_VERSION}" != "${PLUGIN_VERSION}" ]]; then
+    echo "FAIL: marketplace.json says '${MP_VERSION}' but plugin.json says '${PLUGIN_VERSION}'"
+    fail=1
+  fi
+  while IFS= read -r hit; do
+    [[ -n "$hit" ]] || continue
+    f="${hit%%:*}"; rest="${hit#*:}"; ln="${rest%%:*}"
+    quoted=$(printf '%s' "$hit" | sed -n 's/.*Version `\([0-9][0-9.]*\)`.*/\1/p')
+    if [[ -n "$quoted" && "$quoted" != "${PLUGIN_VERSION}" ]]; then
+      echo "FAIL: $f:$ln quotes Version \`${quoted}\` but plugin.json says ${PLUGIN_VERSION}"
+      fail=1
+    fi
+  done < <(command grep -rn --include='*.md' -e 'Version `[0-9][0-9.]*`' "$ROOT" 2>/dev/null \
+           | command grep -v "$ROOT/docs/llm-orchestrator/" | command grep -v "$ROOT/CHANGELOG.md" \
+           | command grep -v "$ROOT/.claude/worktrees/")
+fi
+
 if (( fail == 0 )); then
   echo "OK: $checked_skills skills, $checked_commands commands, $checked_agents agents"
 else
