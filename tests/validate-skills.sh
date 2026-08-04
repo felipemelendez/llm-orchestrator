@@ -140,7 +140,7 @@ while IFS= read -r dir; do
     managing-memory)               limit=1012  ;;
     using-workflows)               limit=981   ;;
     systematic-debugging)          limit=972   ;;
-    verification-before-completion) limit=942   ;;
+    verification-before-completion) limit=1119   ;;
     executing-plans)               limit=903   ;;
     writing-skills)                limit=847   ;;
     finishing-a-branch)            limit=769   ;;
@@ -322,6 +322,34 @@ while IFS= read -r hit; do
   fi
 done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* commands, [0-9]* agents' "$ROOT" 2>/dev/null \
          | command grep -v "$ROOT/docs/llm-orchestrator/" | command grep -v "$ROOT/CHANGELOG.md")
+
+# Every agent's model pin is owner policy, and six of the seven had no assertion
+# anywhere. On 2026-08-04 the working tree drifted from `fable` to `opus` on six
+# agents at once; only orch-researcher had a check (in test-research-brief.sh), so
+# five drifted silently and the sixth is the only reason anyone noticed. That is the
+# sibling-path class the whole audit is about: a rule asserted on one path and not
+# its siblings.
+#
+# Policy: fable everywhere, EXCEPT orch-security-reviewer, which stays on opus
+# deliberately — Fable's safety classifiers fire on benign security-review work.
+# Changing a pin means editing this list in the same commit, where a reviewer sees it.
+while IFS= read -r agent_file; do
+  [[ -f "$agent_file" ]] || continue
+  agent_name=$(basename "$agent_file" .md)
+  case "$agent_name" in
+    orch-security-reviewer) want=opus ;;
+    *)                      want=fable ;;
+  esac
+  got=$(awk '/^---$/{c++; next} c==1 && /^model:/{print $2; exit}' "$agent_file")
+  if [[ -z "$got" ]]; then
+    echo "FAIL: $agent_file has no 'model:' pin (expected ${want})"
+    fail=1
+  elif [[ "$got" != "$want" ]]; then
+    echo "FAIL: $agent_file pins 'model: ${got}' but policy says '${want}'"
+    echo "      Change the policy list in tests/validate-skills.sh in this same commit and say why."
+    fail=1
+  fi
+done < <(find "$ROOT/agents" -maxdepth 1 -name '*.md' | sort)
 
 # The plugin version is quoted in prose, and a quoted version rots: manual-testing
 # claimed 0.1.0 while the plugin shipped 0.6.0, and marketplace.json is a second
