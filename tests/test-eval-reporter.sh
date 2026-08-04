@@ -214,6 +214,53 @@ case "$extra" in
   *) fail "second ref arm not compared: '${extra:-<none>}'" ;;
 esac
 
+# --- a run that never reached the model is not a failing run ------------------------
+# On 2026-08-04 a session limit returned "You've hit your session limit" as a
+# normal-looking result at $0 for 94 of 100 runs in one arm. Scored as failures,
+# those rows produced "WORSE - REGRESSION (2/100 vs 75/100, p=0.000)" — the most
+# confident verdict this harness can emit — from an arm that had simply stopped
+# being asked. Error rows are now excluded from every rate and invalidate the
+# comparison outright.
+python3 - > "${TMP}/poisoned.jsonl" <<'PY'
+import json
+def row(arm, i, ok, err):
+    checks = [{"kind": "check_one", "index": 0, "pattern": "x", "ok": ok},
+              {"kind": "check_cmds", "pattern": "x", "ok": ok}]
+    return {"case": "probe", "arm": arm, "iter": i, "pass": ok and not err,
+            "error": err, "cost_usd": 0 if err else 0.3, "checks": checks,
+            "text": "You have hit your session limit" if err else ""}
+for i in range(100):
+    print(json.dumps(row("ref:aaa", i + 1, i < 75, False)))
+for i in range(100):                      # 94 of 100 never reached the model
+    print(json.dumps(row("with", i + 1, i < 2, i >= 6)))
+PY
+ORCH_EVAL_BENCH_LATEST="" python3 "${TMP}/reporter.py" "${TMP}/poisoned.jsonl" \
+  "${TMP}/bench6.json" opus "ref:aaa with" >/dev/null 2>&1 || true
+v6="$(python3 -c "
+import json
+try: print(json.load(open('${TMP}/bench6.json'))['cases']['probe']['verdict'])
+except Exception: print('')
+" 2>/dev/null)"
+if printf '%s' "$v6" | command grep -q 'INVALID' \
+   && printf '%s' "$v6" | command grep -q 'never reached the model'; then
+  ok "a poisoned arm invalidates the verdict instead of reporting a regression"
+elif printf '%s' "$v6" | command grep -q 'REGRESSION'; then
+  fail "poisoned arm reported as a regression" "verdict: $v6"
+else
+  fail "poisoned arm verdict wrong" "verdict: ${v6:-<none>}"
+fi
+
+errct="$(python3 -c "
+import json
+try: print(json.load(open('${TMP}/bench6.json'))['cases']['probe']['errored_runs'].get('with'))
+except Exception: print('')
+" 2>/dev/null)"
+if [[ "$errct" == "94" ]]; then
+  ok "errored runs are counted and reported (94)"
+else
+  fail "errored run count not recoverable" "got '${errct}'"
+fi
+
 echo
 if [[ $fails -eq 0 ]]; then
   echo "PASS test-eval-reporter.sh"

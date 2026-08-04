@@ -227,6 +227,7 @@ print(json.dumps({
 PY
 }
 
+CONSEC_ERR=0
 echo "== behavioural evals =="
 echo "cases: $(ls -1 "$CASE_DIR"/*.json 2>/dev/null | wc -l | tr -d ' ')   arms: ${ARMS}   n: ${N}"
 echo
@@ -239,7 +240,31 @@ for case_file in "$CASE_DIR"/*.json; do
     for i in $(seq 1 "$N"); do
       printf '  %-28s %-8s %d/%d ... ' "$cid" "$arm" "$i" "$N"
       run_case "$case_file" "$arm" "$i"
-      tail -1 "$RESULTS" | python3 -c "import json,sys;r=json.load(sys.stdin);print('PASS' if r['pass'] else 'FAIL')"
+      verdict_line="$(tail -1 "$RESULTS" | python3 -c "
+import json,sys
+r = json.load(sys.stdin)
+print('ERROR' if r.get('error') else ('PASS' if r['pass'] else 'FAIL'))")"
+      echo "$verdict_line"
+      # A run that never reached the model is NOT a failing run. A session-limit
+      # notice comes back as a normal-looking result at \$0 and, scored as a
+      # FAIL, silently poisons the arm — on 2026-08-04 that produced
+      # "WORSE — REGRESSION (2/100 vs 75/100, p=0.000)" out of 94 limit
+      # notices. A limit does not heal mid-run, so three in a row aborts rather
+      # than spending two more hours manufacturing a confident wrong answer.
+      if [[ "$verdict_line" == "ERROR" ]]; then
+        CONSEC_ERR=$((CONSEC_ERR + 1))
+        if (( CONSEC_ERR >= 3 )); then
+          echo >&2
+          echo "run-evals: 3 consecutive runs returned no model result — aborting." >&2
+          echo "  last text: $(tail -1 "$RESULTS" | python3 -c "
+import json,sys; print((json.load(sys.stdin).get('text') or '')[:160])")" >&2
+          echo "  Rows already written are marked error:true and are EXCLUDED from rates." >&2
+          echo "  Re-run when the model is reachable; partial arms cannot be compared." >&2
+          exit 3
+        fi
+      else
+        CONSEC_ERR=0
+      fi
     done
   done
 done
@@ -247,6 +272,17 @@ done
 ORCH_EVAL_BENCH_LATEST="$BENCH_LATEST" python3 - "$RESULTS" "$BENCH" "$MODEL" "$ARMS" <<'PY'
 import json, sys, collections
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+
+# Rows where the model never answered are NOT data. They used to be counted as
+# failing runs, which is how a session limit produced a p=0.000 "REGRESSION"
+# against an arm that had simply stopped being asked. Excluded from every rate,
+# counted, and loud enough to invalidate the verdict.
+errored = collections.defaultdict(lambda: collections.defaultdict(int))
+for r in rows:
+    if r.get("error"):
+        errored[r["case"]][r["arm"]] += 1
+rows = [r for r in rows if not r.get("error")]
+
 agg = collections.defaultdict(lambda: collections.defaultdict(list))
 for r in rows:
     agg[r["case"]][r["arm"]].append(r)
@@ -305,6 +341,16 @@ for case, arms in sorted(agg.items()):
               for x in v if any(c["kind"] == "check_cmds" for c in x["checks"])]
         beh_n[a] = (sum(cc), len(cc)) if cc else None
     beh = {a: (round(t[0] / t[1], 3) if t else None) for a, t in beh_n.items()}
+
+    # An arm that lost a material share of its runs cannot be compared to one
+    # that did not. Report the loss; do not quietly compare what survived.
+    errs = errored.get(case, {})
+    invalid = []
+    for a in set(list(arms.keys()) + list(errs.keys())):
+        e = errs.get(a, 0)
+        total = e + len(arms.get(a, []))
+        if total and e / total > 0.10:
+            invalid.append("%s %d/%d runs never reached the model" % (a, e, total))
 
     w, o = rate.get("with"), rate.get("without")
     # A `ref:<sha>` arm is a PLUGIN VERSION, so the interesting comparison is
@@ -381,6 +427,9 @@ for case, arms in sorted(agg.items()):
             per_check[a] = {str(i): round(sum(o) / len(o), 3)
                             for i, o in sorted(idx_ok.items())}
 
+    if invalid:
+        verdict = "INVALID — " + "; ".join(sorted(invalid)) + " (re-run; not a result)"
+
     summary[case] = {"with": w, "without": o, "verdict": verdict,
                      "test_arm": test_arm, "extra_verdicts": extra_verdicts,
                      "ref_arm": ref_arm, "ref": r,
@@ -389,6 +438,8 @@ for case, arms in sorted(agg.items()):
                      "behavioral_counts": {a: (list(t) if t else None)
                                            for a, t in beh_n.items()},
                      "per_check": per_check,
+                     "errored_runs": dict(errs),
+                     "invalid": invalid,
                      "check_cmds": (agg[case] and next(
                          ([c["pattern"] for c in x["checks"] if c["kind"] == "check_one"]
                           for v in arms.values() for x in v
