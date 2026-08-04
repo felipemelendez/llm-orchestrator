@@ -5,43 +5,89 @@ description: Use when a spec is approved and implementation has not started. Pro
 
 # Writing plans
 
-A plan lets another agent — or you after `/clear` — execute task-by-task without re-deriving the design. One dated file per feature: `docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md`, copied from `templates/plan.md`. The template is the single source for structure because the executor depends on it mechanically:
+Plans are short, dated, and checkable. One file per feature. Lives in `docs/llm-orchestrator/plans/`.
 
-- Each `### N. <task name>  - [ ]` heading carries the task-level checkbox — the durable state `dispatching-subagents` ticks and `executing-plans` greps across `/clear`. A heading without it makes progress untrackable.
-- Each task's `Files:`, `Done when:`, `Stop if:`, `Owner:`, and optional `Interfaces:` blocks are pasted into the dispatch envelope; `## Global constraints` goes into every dispatch; `## References` carries the verified sources.
+## When to use
 
-Skip planning for trivial work (under ~15 minutes of editing) — just do it.
+After `brainstorming` writes a spec and the user approves it. Or when the user hands you requirements directly.
 
-## Before writing (Trigger B)
+Skip for trivial work (under ~15 minutes of editing). Just do it.
 
-Scan the spec's `## Approach` for libraries or version-specific APIs its `## Research` section doesn't already cover, and run `research-classifier` on that text if any appear. Act on the outcome before writing tasks — a `CONTRADICTED` brief halts the plan and sends the spec back for revision, because every task written against a contradicted approach is a task an implementer will execute faithfully and wrongly. Then re-read the whole spec; note any TBD, and confirm `## Research` is populated or explicitly "none".
+## Steps
 
-## Tasks
+0.5. **Research gate (Trigger B).** Before re-reading the spec, scan its `## Approach` section. If the approach names libraries or version-specific APIs that the spec's `## Research` section doesn't already cover (i.e. brainstorming's Trigger A didn't catch them, or the user wrote the spec directly), invoke `research-classifier` against the approach text. If `RESEARCH_NEEDED` fires, dispatch `orch-researcher` with the eight-field envelope in `templates/researcher-prompt.md` (it returns `BLOCKED` on a missing field) and act on its outcome BEFORE writing any plan tasks. `CONTRADICTED` halts the plan write — revise the spec's approach first.
 
-A task is the smallest unit worth a fresh reviewer's gate; a step is 2–5 minutes of work inside one. Split only where a reviewer could meaningfully reject one task while approving its neighbour; fold setup, config, and docs into the task whose deliverable needs them. Every task ends with something testable on its own, and its steps carry the full cycle: write test, run it (expect fail), implement, run it (expect pass), commit. Where files change together, they belong to the same task — split by responsibility, not technical layer.
+1. **Read the spec.** Re-read every section. Note any "TBD". Confirm `## Research` section is populated (verdict + brief path) or explicitly "none".
+2. **Map files.** List every file you will create or modify, with line ranges if obvious. If you can't list them, the spec isn't ready.
+3. **Order tasks.** Each task is independent enough to dispatch, or explicitly marked sequential. Where independence matters, declare an `Interfaces:` block per task — `introduces:` (symbols/endpoints/files the task creates) and `consumes:` (what it needs from other tasks). The executor treats declared interfaces as authoritative and falls back to body-scanning only when the block is absent.
+4. **For each task, write checkable steps.** 2–5 minutes of work each. Steps include: write test, run test (expect fail), implement, run test (expect pass), commit. Every step must be literal and executable (see the no-placeholder rule below) — the exact command with its expected output line, and the specific change, not a description of it.
+4.5. **For each task, write the termination contract** — a `Done when:` line (the observable end state; the verify command's green output is the usual one) and a `Stop if:` line (the abort conditions: N failed fix attempts on the same test, an edit needed outside the task's Files, a budget). An agent with an acceptance criterion but no stop rule knows how to prove success but not when to stop failing — "unaware of termination conditions" is 12.4% of multi-agent failures in the MAST taxonomy (arXiv:2503.13657, N=1642). The dispatcher pastes both lines into the implementer envelope; a fired `Stop if:` returns `PARTIAL` or `BLOCKED`, never more attempts.
+5. **Add risks.** One line per risk. Mitigation if obvious.
+6. **Self-review.** Run the no-placeholder rule below over the whole plan, and check cross-task consistency: a symbol introduced in one task is referenced by the exact same name in later tasks (no `clearLayers()` in task 2 then `clearFullLayers()` in task 5). Confirm `## References` section pulls citations from the brief (if any).
+7. **Save to** `docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md`.
+7.5. **Plan review — the step-6 self-review is the primary check.** Run it honestly; it catches most real gaps at a fraction of a subagent round-trip's cost. **Escalate to a fresh reviewer subagent only for high-stakes plans** — security-sensitive work, an irreversible migration, 5+ tasks, or a plan whose line-number/command claims you couldn't verify yourself: dispatch a general-purpose subagent with `skills/writing-plans/plan-document-reviewer-prompt.md`, passing the plan and spec paths. Advisory verdict; if `Issues Found`, fix and re-dispatch, cap 3 iterations, then surface what remains to the user rather than blocking.
 
-Every task carries a termination contract:
+## How big is a task
 
-- `Done when:` — the observable end state, usually the verify command's green output.
-- `Stop if:` — the abort conditions: N failed fix attempts on the same test, an edit needed outside the task's `Files:`, a budget. An agent with an acceptance criterion but no stop rule knows how to prove success but not when to stop failing — unawareness of termination conditions is one of the most common multi-agent failure modes (MAST, arXiv:2503.13657). A fired `Stop if:` returns `PARTIAL` or `BLOCKED`, never more attempts.
-- `Interfaces:` where independence matters — `introduces:` (symbols/endpoints/files the task creates) and `consumes:` (what it needs from other tasks). The executor treats declared interfaces as authoritative and body-scans only when the block is absent.
+A task is the smallest unit that carries its own test cycle and is worth a fresh
+reviewer's gate.
 
-Add a `## Risks` line per risk, with the mitigation when it's obvious.
+Fold setup, configuration, scaffolding and documentation into the task whose
+deliverable needs them. Split only where a reviewer could meaningfully reject
+one task while approving its neighbour. Every task ends with something that can
+be tested on its own.
 
-## No placeholders
+This is a different question from step size. Steps are minutes of work; a task
+is a unit of review. Getting it wrong in either direction is expensive — tasks
+too small means a review round per trivial edit, too large means a reviewer
+judging four unrelated things behind one verdict.
 
-Write for an engineer with no context for this codebase and no instinct for good test design — whatever the plan leaves implicit gets filled in with a guess. So every step states the literal change (the actual test or edit), the exact command, and the expected output line. `add validation`, `handle edge cases`, `wire it up`, `similar to task 3` are gaps wearing a costume: name the exact validation, the exact error, and spell it out per task. If you can't write the literal step, the spec isn't ready — go back to brainstorming rather than papering over the hole.
+Write for an engineer with no context for this codebase and no particular
+instinct for good test design. That assumption is why the no-placeholder rule
+below exists — anything you leave implicit gets filled in with a guess.
 
-## Self-review
+## No placeholders (hard rule)
 
-Re-read the whole plan against the no-placeholder rule, plus cross-task consistency: a symbol introduced in one task is referenced by the exact same name in later tasks (no `clearLayers()` in task 2 becoming `clearFullLayers()` in task 5 — the executor won't reconcile them). Confirm `## References` pulls citations from the brief. This honest pass is the primary check. Escalate to a fresh reviewer subagent (prompt: `skills/writing-plans/plan-document-reviewer-prompt.md`, with the plan and spec paths; advisory verdict, cap 3 iterations, then surface what remains) only for high-stakes plans: security-sensitive work, an irreversible migration, 5+ tasks, or line-number/command claims you couldn't verify yourself.
+A plan another agent can execute task-by-task has no gaps for them to invent. Forbidden in any step:
+
+- Vague stand-ins: `TODO`, `etc.`, `and so on`, `handle edge cases`, `add validation`, `add error handling`, `wire it up` — name the exact validation, the exact error, the exact wiring.
+- Back-references instead of content: `similar to task 3`, `same as above`, `repeat for the others` — spell it out per task.
+- A step with no command, or a `run:` step with no expected-output line.
+
+Required in each step instead: the literal change (the actual function/test to write, or the exact edit), the exact command to run, and the exact output line to expect. If you can't write the literal step, the spec isn't ready — go back to brainstorming, don't paper over it with a placeholder.
+
+## Plan format
+
+Copy `templates/plan.md` and fill it in — it is the single source for the
+plan's structure; do not reconstruct the format from memory. Load-bearing
+details the executor depends on:
+
+- Each `### N. <task name>  - [ ]` heading carries the task-level checkbox.
+  That checkbox is the durable state `dispatching-subagents` ticks and
+  `executing-plans` greps across `/clear`; sub-step checkboxes are progress
+  notes only. A heading without it makes progress untrackable.
+- Each task's `Files:`, `Done when:`, `Stop if:`, `Owner:`, and optional
+  `Interfaces:` blocks feed the dispatch envelope.
+- `## Global constraints` is pasted into every dispatch; `## References`
+  carries the verified sources. Map every file in `## Files` with what it is
+  responsible for — files that change together belong in the same task, and the
+  split follows responsibility, not technical layer.
 
 ## Output
 
+When done, return:
+
 ```
 Plan:
-- Saved to docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md
+- Saved to docs/llm-orchestrator/plans/2026-05-23-<slug>-plan.md
 - N tasks, M marked independent
 Next:
 - /llm-orchestrator:worktree to isolate, then /llm-orchestrator:dispatch task 1
 ```
+
+## Anti-patterns
+
+- Plans without commands to run.
+- "Add validation" as a step (specify what validation).
+- Plans where every task depends on the previous one (then it isn't a plan, it's prose — keep it short).
+- Plans that re-describe the spec. Reference the spec, don't duplicate it.

@@ -103,3 +103,12 @@ Summary: <what is missing>
 Ask:
 - <single specific question>
 ```
+
+## Anti-patterns
+
+- "Tests should pass" without running them.
+- Editing files outside scope without first BLOCKED.
+- Free-form prose outside the Status block.
+- Inventing a fix for a problem you didn't reproduce.
+- Retrying the same failing fix past a `Stop if:` condition instead of returning PARTIAL.
+- Stopping mid-task with no Status block — silence reads as success and it isn't.

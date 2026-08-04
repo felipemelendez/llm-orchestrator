@@ -103,41 +103,48 @@ while IFS= read -r dir; do
   #
   # The 250-line cap never fired on the inflation that actually happened: a
   # 2,232-word skill sat comfortably under it, because words, not lines, are
-  # what the catalog inflated in. Each skill's ceiling below is its own
-  # measured size after the 2026-08-03 compression pass. A skill may shrink
-  # freely; growing past its recorded size fails, which forces the author to
-  # justify the growth by editing this list in the same commit — where a
-  # reviewer sees it.
+  # what the catalog inflated in. A skill may shrink freely; growing past its
+  # recorded size fails, which forces the author to justify the growth by
+  # editing this list in the same commit — where a reviewer sees it.
   #
-  # Lowering an entry after a real trim is expected and encouraged. Raising
-  # one is the thing this check exists to make visible, not to forbid: some
-  # skills legitimately carry API contracts where a deleted fact is a bug, and
-  # a word budget must never license deleting a fact to hit a number.
+  # These ceilings were RAISED back to the pre-compression sizes on 2026-08-04,
+  # on measurement, and this is that justification.
+  #
+  # The 2026-08-03 pass cut the instructional layer 22%. A 200-run A/B on
+  # tdd-under-pressure (explicit "don't spend time on tests" pressure, graded on
+  # whether the bug was fixed AND a covering test written) measured:
+  #
+  #     ref:4f6815f (pre-compression)   76/100 then 68/100   pooled 144/200 = 72%
+  #     post-compression                        56/100                        56%
+  #     Fisher p = 0.0065
+  #
+  # Restoring only skills/test-driven-development/SKILL.md did NOT recover it —
+  # the with arm measured 56/100 both before and after that restore, identically.
+  # So the cause was elsewhere in the pass, and the whole instructional layer was
+  # returned to the measured-better state rather than guessed at file by file.
+  #
+  # Lowering an entry after a real trim is expected and encouraged, but a trim is
+  # now a claim about behaviour: re-measure before believing it. The budget cuts
+  # narration; it never cuts facts, and deleting a fact to hit a number is a bug.
   body_words=$(awk '/^---$/{c++; next} c>=2' "$file" | wc -w | tr -d ' ')
   case "$name" in
-    dispatching-subagents)          limit=1600 ;;
-    dispatching-parallel-agents)    limit=1220 ;;
-    using-orchestrator)             limit=1100 ;;
-    requesting-code-review)         limit=1090 ;;
-    using-git-worktrees)            limit=960  ;;
-    # RAISED back to the pre-compression size, deliberately, on measurement.
-    # The 2026-08-03 pass cut this file 1298 -> 998 words. A 200-run A/B then
-    # showed the behavioural pass rate (bug fixed AND a covering test written,
-    # under explicit "don't spend time on tests" pressure) fall 76/100 -> 56/100,
-    # Fisher p=0.004. This is the one skill where the catalogue-wide word budget
-    # was measurably wrong, and it replicates obra/superpowers' own finding
-    # almost exactly (they saw 8/10 -> 5/10 on the same deletion and reversed it).
-    test-driven-development)        limit=1300 ;;
-    using-workflows)                limit=900  ;;
-    writing-skills)                 limit=820  ;;
-    finishing-a-branch)             limit=750  ;;
-    research-classifier)            limit=740  ;;
-    systematic-debugging)           limit=725  ;;
-    brainstorming)                  limit=710  ;;
-    verification-before-completion) limit=700  ;;
-    executing-plans)                limit=695  ;;
-    writing-plans)                  limit=675  ;;
-    managing-memory)                limit=645  ;;
+    dispatching-subagents)         limit=2202  ;;
+    using-orchestrator)            limit=1535  ;;
+    dispatching-parallel-agents)   limit=1389  ;;
+    requesting-code-review)        limit=1249  ;;
+    test-driven-development)       limit=1247  ;;
+    research-classifier)           limit=1094  ;;
+    brainstorming)                 limit=1087  ;;
+    writing-plans)                 limit=1068  ;;
+    using-git-worktrees)           limit=1018  ;;
+    managing-memory)               limit=1012  ;;
+    using-workflows)               limit=981   ;;
+    systematic-debugging)          limit=972   ;;
+    verification-before-completion) limit=942   ;;
+    executing-plans)               limit=903   ;;
+    writing-skills)                limit=847   ;;
+    finishing-a-branch)            limit=769   ;;
+    receiving-code-review)         limit=664   ;;
     *)                              limit=500  ;;
   esac
   if (( body_words > limit )); then

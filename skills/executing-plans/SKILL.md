@@ -5,37 +5,78 @@ description: Use when you have a written plan and need to drive it task-by-task 
 
 # Executing plans
 
-The controller that walks a plan from first task to last, routing each group to `dispatching-subagents` or `dispatching-parallel-agents`. State lives in two places: the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`) are the in-flight board; the plan file's checkboxes are the durable copy that survives `/clear`.
+The controller that walks a plan from first task to last. Calls `dispatching-subagents` or `dispatching-parallel-agents` per task. Tracks state with the native Task tools (`TaskCreate` / `TaskUpdate` / `TaskList`). Persists state in the plan file's checkboxes so `/clear` can resume.
 
-Use when a plan exists at `docs/llm-orchestrator/plans/`, more than one task remains, and you're the top-level controller. A single task → dispatch it directly. A plan with TBDs → back to `writing-plans` first.
+## When to use
+
+- A plan exists at `docs/llm-orchestrator/plans/`.
+- More than one task remains.
+- You're the controller (top-level session), not a subagent.
+
+## When NOT to use
+
+- A single task → just dispatch directly.
+- The plan is unclear or has TBDs → return to `writing-plans` first.
 
 ## Steps
 
-1. **Verify the plan's dependency claims before trusting them.** Plans routinely mark tasks `Independent: yes` that aren't: an API spec depends on the routes it documents, tests on the code they exercise, a migration runbook on the migration it describes. If a task declares an `Interfaces:` block, treat it as authoritative — A consumes what B introduces → A depends on B. For tasks without one, scan bodies for symbols, endpoints, schemas, or files that a later task introduces (check those tasks' `Files:` and bodies). When a semantic dependency contradicts `Independent: yes`, fix the plan file in place (downgrade to `depends on B`) and continue — routing on the wrong claim dispatches a writer against ground truth that doesn't exist yet.
+1. **Load the plan.** Read every task. Note three lines per task:
+   - `Independent:` (yes / no — depends on N)
+   - `Files:` (paths the task creates/modifies)
+   - Body — to scan for **semantic** dependencies (see step 2).
 
-2. **Group for routing.** Walk the corrected plan in order: adjacent tasks with `Independent: yes` and no overlapping `Files:` form a parallel group; everything else is a sequential group of one. Groups of 3+ go to `dispatching-parallel-agents`; smaller groups to `dispatching-subagents` — below three, coordination cost beats the speedup.
+2. **Compute the real dependency set.** Trust but verify the plan's `Independent:` line:
+   - If a task declares an `Interfaces:` block, treat it as the authoritative signal: A consumes what B introduces → A depends on B. Only body-scan tasks without the block.
+   - For each task, scan the body for references to symbols, endpoints, schemas, types, or files that another later task introduces (look in those tasks' `Files:` and bodies).
+   - If task A references something task B creates, A depends on B — regardless of what `Independent:` says.
+   - Common semantic dependencies: API specs depend on the routes they document; tests depend on the code they exercise; migration runbooks depend on the migration they describe.
+   - If a semantic dep contradicts the plan, fix the plan file in place (downgrade `Independent: yes` to `depends on B`) and continue.
 
-3. **`TaskCreate` one task per plan task** in plan order; mark each `in_progress` via `TaskUpdate` as its group starts.
+3. **Group tasks for routing.** Walk the corrected plan in order:
+   - Adjacent tasks with `Independent: yes` and no overlapping `Files:` → parallel group.
+   - Anything else → sequential group of size 1.
 
-4. **After each group, assert before moving on:** every finished task is marked `completed`, and its plan-file `- [ ]` is ticked to `- [x]`. The tick is the only state that survives `/clear`, so a missed one is silently lost progress. Then route each `DONE_WITH_CONCERNS` by what the concern touches: correctness, security, or a public contract → address now (re-enter the inner loop with a fix prompt); ergonomics, perf, style, naming → carry into the final review pass, recorded under `## Outstanding concerns` in the plan file; future work ("no eviction policy yet") → record and move on. Treating every concern as "fix now" burns the schedule on polish; carrying a correctness concern forward ships a defect.
+4. **`TaskCreate` one task per plan task** in plan order. Mark each `in_progress` via `TaskUpdate` as you start its group.
 
-5. **At tier boundaries** — a tier completes with a green verify and material work remains — invoke `handing-off-to-fresh-context`: the clean seam is the right moment to write or refresh the handoff note. The handoff-nudge hook (fires once when context first crosses `ORCH_CONTEXT_HANDOFF_TOKENS`, default 950K, re-arming after each compaction) and `/llm-orchestrator:handoff` are fallbacks, not the primary trigger.
+5. **For each group:**
+   - Size ≥ 3, parallel-eligible → invoke `dispatching-parallel-agents`.
+   - Otherwise → invoke `dispatching-subagents`.
 
-6. **Run continuously**, group to group, without asking the user. Stops: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
+6. **After each group completes**, before moving on, run these post-group assertions:
+   - Every completed task is marked `completed` via `TaskUpdate`.
+   - Every completed task's `- [ ]` in the plan file is ticked to `- [x]`. If not, tick it now (this is the only durable state across `/clear`).
+   - `DONE_WITH_CONCERNS` items routed per the policy below.
 
-7. **When all groups complete:** run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the combined diff; `Ready: yes` → `/llm-orchestrator:finish`. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
+6a. **Tier-boundary handoff check.** After a tier completes with a green verify and material work remains, invoke the `handing-off-to-fresh-context` skill before starting the next tier — a clean seam is the right moment to write/refresh the handoff note. The clean seam is the primary trigger; the handoff-nudge hook (which fires once when context first crosses `ORCH_CONTEXT_HANDOFF_TOKENS`, default 950K, and re-arms after each compaction) and `/llm-orchestrator:handoff` are the fallbacks.
+
+7. **DONE_WITH_CONCERNS policy.** Read each concern:
+   - Touches **correctness, security, or a public contract** → address now (re-enter the inner loop with a fix prompt).
+   - Touches **ergonomics, perf, style, naming** → carry forward into the final `/llm-orchestrator:review` pass; record in the plan file under an `## Outstanding concerns` section.
+   - Touches **future work** (e.g., "no eviction policy yet") → record in the plan and move on.
+
+8. **Continuous execution.** Move from group to group without asking the user. Stops only on: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
+
+9. **When all groups complete:**
+   - Run `/llm-orchestrator:verify`. If green, run `/llm-orchestrator:review` (combined diff). If `Ready: yes`, hand to `/llm-orchestrator:finish`.
+   - If `/llm-orchestrator:verify` red, invoke `systematic-debugging` and re-enter step 5 for the affected task.
 
 ## Resuming from a handoff
 
-The fresh controller's first action is to run the handoff artifact's verification baseline and confirm green — only then pick up the next task. If verification diverges from the artifact's expected output, invoke `systematic-debugging` on the divergence before proceeding; never assume the baseline is current.
+On resuming from a handoff artifact, the fresh controller's first action is to run the artifact's verification baseline commands and confirm green. Only after green does it pick up the next task. If verification diverges from the artifact's expected output, invoke `systematic-debugging` on the divergence before proceeding — never assume the baseline is current.
 
 ## State invariants
 
-At any point you can answer: what's in flight (the `in_progress` task in `TaskList`), what's next (the next `pending`), what's done (`completed` items and plan-file ticks, agreeing). When they disagree, the plan file wins — it survived `/clear`; reset the tasks via `TaskUpdate` to match. The handoff artifact (under `docs/llm-orchestrator/handoffs/`) indexes plan-file checkbox state and TaskList; it never duplicates or overrides them.
+At any point you should be able to answer:
+- "Which task is in flight?" → the task marked `in_progress` (`TaskList`).
+- "What's next?" → the next `pending` item.
+- "What's done?" → all `completed` items AND the plan-file ticks must agree.
+
+If the task list and plan-file ticks disagree, re-anchor: trust the plan file (it survived `/clear`), reset the tasks (`TaskUpdate`) to match.
+- The handoff artifact (under `docs/llm-orchestrator/handoffs/`) indexes plan-file checkbox state and TaskList; it never duplicates or contradicts them — the plan file remains the durable source of truth and the Task tools the in-flight source of truth.
 
 ## Output shape
 
-Between groups:
+Mid-execution updates (between groups):
 
 ```
 Found:
@@ -58,5 +99,14 @@ Verify:
 - <full test suite command> → <line>
 Next:
 - /llm-orchestrator:review for combined-diff sweep
-- (or) /llm-orchestrator:finish if review already happened per-task
+- (or) /llm-orchestrator:finish if /llm-orchestrator:review already happened per-task
 ```
+
+## Anti-patterns
+
+- Trusting `Independent: yes` without scanning bodies for semantic deps.
+- Running the whole plan sequentially when half is independent.
+- Running parallel groups without confirming file-overlap absence.
+- Asking the user between groups.
+- Skipping the post-group plan-checkbox tick — that loses durable state on `/clear`.
+- Treating every concern as "address now"; sometimes carry-forward is correct.

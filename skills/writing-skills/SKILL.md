@@ -1,129 +1,142 @@
 ---
 name: writing-skills
-description: Use when adding a new skill or editing an existing one. Not for commands (commands/*.md) or agent definitions.
+description: Use when adding a new skill or editing an existing one. Keeps the catalog short, the frontmatter correct, and the body free of coercion and padding.
 ---
 
 # Writing skills
 
-House style for `skills/<name>/SKILL.md`. One test governs every line: would a
-capable model get this wrong without it? Anthropic cut over 80% of Claude
-Code's system prompt "with no measurable loss", and skills written for prior
-models "are often too prescriptive for Claude Fable 5 and can degrade output
-quality". State the opinion, contract, or fact the model cannot infer; let it
-judge the rest.
+How to add a skill that fits LLM Orchestrator's bar.
 
 ## Before you write
 
-Check nothing already triggers on this case — edit the near-match instead of
-adding a sibling:
+Check that an existing skill doesn't already cover the trigger:
 
 ```
-grep -h 'description:' skills/*/SKILL.md
+grep -l 'description:' skills/*/SKILL.md | xargs grep -h 'description:'
 ```
 
-A skill earns a directory when it carries a procedure or a house opinion; a
-single rule belongs in a hook or the linter.
+If something already triggers on this case, edit it. Don't add a near-duplicate.
 
-## Frontmatter
+## File shape
+
+```
+skills/<name>/SKILL.md
+```
+
+One directory, one file. Optional siblings (helper scripts, prompt fragments) live alongside.
+
+## Frontmatter (two keys)
 
 ```yaml
 ---
-name: <directory name>
-description: Use when <trigger>. Not for <adjacent non-trigger>.
+name: <name>
+description: Use when <trigger>. <Optional second sentence on scope.>
 ---
 ```
 
-Two keys. The description is triggers only — the situations and keywords an
-agent would match — never a workflow summary. Measured: a description saying
-"code review between tasks" made agents run one review when the body specified
-two; they followed the description and skipped the body.
+Rules the linter (`tests/validate-skills.sh`) enforces:
+- `name` must equal the directory name.
+- `description` must start with `Use when`.
+- The whole file must be ≤ 250 lines (target ≤ 150).
 
-## Body budget
+## Body conventions
 
-A loaded body stays in context for the rest of the session — every line is a
-recurring token cost.
+Nothing below the frontmatter is machine-checked, and no fixed section list is
+required — a previous version of this file mandated five sections in order that
+no skill in the corpus (including this one) satisfied. The working skeleton,
+used where each part earns its place:
 
-- Default skill: about 500 words.
-- Skill loaded in most sessions: about 200.
-- Hard cap (linted): 250 lines; target 150.
+- **One-line purpose** at the top (no header) — near-universal; keep it.
+- **When to use / when not to** — include when the trigger has a plausible
+  mis-fire; the frontmatter `description` already carries the primary trigger.
+- **Steps** — numbered, when the skill is a procedure rather than a reference.
+- **Output shape** — the Concise Agent Protocol block the skill produces, when
+  it produces one.
+- **Anti-patterns** — short bullets; the most consistently useful section in
+  practice.
 
-The budget cuts narration — coercion, recap, justification, examples of things
-the model already does right. It never cuts facts: a skill that encodes an API
-contract is done when each fact is stated once, plainly, and deleting a fact to
-hit a word count is a bug. If facts alone exceed the budget, move reference
-material to a sibling file and link it.
-
-## Steps vs judgment
-
-Number steps only when the order is the content (red before green; take the
-lock before writing). Otherwise state the goal and the constraints and let the
-model sequence the work — a step list is followed literally, including when it
-does not fit the case at hand.
-
-## Rationale: one clause, aimed at pressure
-
-Two measured results pull opposite ways:
-
-- "State what to do rather than narrating how or why" — narration is the bulk
-  of every over-budget body.
-- Deleting the TDD skill's why-order-matters rationale dropped test-first
-  behavior from 8/10 to 5/10 under "just write it, tests after" pressure. The
-  rationale was the counterargument the agent needed mid-rationalization.
-
-The line between them: rationale is load-bearing when the rule fights an
-incentive the agent will feel while working — keep it, one clause, next to the
-rule it defends. Rationale for a rule nothing tempts the agent to break is
-padding — cut it.
-
-## Match the form to the failure
-
-| Failure | Form |
-|---|---|
-| Rule gets skipped under pressure | Prohibition, with its defending rationale |
-| Output has the wrong shape | Positive recipe: what the output is, parts in order |
-| Required element gets omitted | A template slot to fill |
-| Behavior depends on context | Conditional keyed to something observable |
-
-Prohibitions suit discipline failures only. Aimed at output shape they
-measurably backfire: in wording tests the prohibition arm produced more of the
-unwanted content than the recipe arm, trending worse than no guidance at all.
-
-- No nuance clauses. "Don't X unless it matters" reopens the negotiation; one
-  appended hedge degraded a winning recipe from consistent to noisy. A real
-  exception is its own conditional on an observable predicate.
-- Exemption clauses don't scope — "does not apply to code blocks" still
-  suppresses code blocks. Restructure so the rule cannot reach the exempt part.
+A small table is fine when comparing options.
 
 ## Voice
 
-Plain prose, one short sentence per bullet. No all-caps register, no
-rationalization tables, no graphviz. Concrete file refs over abstract nouns.
+- Plain prose. No ALL CAPS. No "MUST", "ALWAYS", "NEVER" as the dominant register.
+- No rationalization tables. Trust the reader to follow steps.
+- No graphviz `dot` blocks. A numbered list communicates the same shape.
+- One short sentence per bullet.
+- Concrete file/line refs over abstract nouns.
 
-## Test against a control
+## Match the form to the failure
 
-Run the realistic task without the skill first. If the failure never appears,
-stop — there is nothing to author; most over-instruction starts here. If it
-does: five fresh-context runs per wording, every flagged result read by hand.
-Variance is the metric — five interpretations across five runs means the
-wording is not binding; tighten the form, don't add words.
+The shape of the guidance should match the shape of the thing going wrong.
 
-When a deployed skill fails, ask the failing agent what the file should have
-said. "I chose not to follow it" — not a documentation problem. "It should
-have said X" — add X verbatim. "I didn't see that section" — move it earlier.
+| The failure | The form that fixes it |
+|---|---|
+| A rule gets skipped under pressure | A prohibition |
+| The output has the wrong shape | A positive recipe: what the output **is**, and its parts in order |
+| A required element gets omitted | A structural slot in a template they fill in |
+| Behaviour should depend on context | A conditional keyed to something observable |
+
+Row two is the one that gets written wrong. Told "don't do X", a model produces
+measurably *more* X than one given a recipe for the right shape — and in
+measurement, worse than no guidance at all. If you catch yourself writing a
+prohibition about output shape, write the recipe instead.
+
+Two authoring rules that follow:
+
+- **No nuance clauses.** "Don't do X unless it matters" reopens the negotiation
+  you just closed. A single hedge appended to a working recipe degrades it from
+  consistent to noisy.
+- **Exemption clauses do not scope.** "This limit does not apply to code blocks"
+  still suppresses code blocks. If part of the output must be exempt, restructure
+  so the rule cannot reach it.
+
+## Testing a skill
+
+Write the body, then test it the way you would test code — but the first run is
+the control, not the skill.
+
+Run a **no-guidance control first.** Give a fresh agent the realistic task
+without the skill. If the failure you are writing against does not appear, there
+is nothing to fix — stop, and do not author the guidance. Most over-instruction
+starts here.
+
+If it does appear: five or more fresh-context runs per variant, the guidance in
+its real host context, and read every flagged result by hand — a template echo
+looks exactly like a hit until you read it.
+
+**Variance is the metric.** Five different interpretations across five runs
+means the wording is not binding. Tighten the form; do not add words.
+
+When a skill fails in real use, ask the agent that failed how it should have
+been written. Three answers, three different fixes:
+
+- "It was clear, I chose not to follow it" — not a documentation problem.
+- "It should have said X" — add X verbatim.
+- "I did not see that section" — an organisation problem; move it earlier.
 
 ## Cross-references
 
-Relative markdown links, never `@` — the `@` form force-loads the file before
-anything needs it. One level deep; a reference file over 100 lines carries a
-table of contents, because agents preview with `head -100` and act on partial
-reads.
+Link with a relative markdown path, never `@`. The `@` form force-loads the file
+immediately, spending context before anything needs it.
+
+Keep references one level deep. Agents preview a nested reference with something
+like `head -100` and act on a partial read. A reference file over 100 lines
+carries a table of contents.
 
 ## Output shape
 
 ```
 Changed:
-- skills/<name>/SKILL.md — <what changed>
+- skills/<name>/SKILL.md — new skill
 Verify:
 - ./tests/validate-skills.sh → OK
-- no-guidance control showed the failure; skilled runs converge on one shape
+- subagent with this skill produces the right shape on <example>
 ```
+
+## Anti-patterns
+
+- Skills that duplicate another skill 90%.
+- Skills that exist to enforce one rule (make it a hook or a lint instead).
+- Skills with paragraphs instead of bullets.
+- Skills that grow past 250 lines (split or trim; target 150).
+- Description fields that summarize the body instead of stating triggers.

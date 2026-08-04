@@ -30,10 +30,10 @@ git rev-parse --git-common-dir
 git status --porcelain                    # clean tree?
 ```
 
-If HEAD is detached, drop options 1 and 4 — there is no branch to merge and none to delete.
-Options 2 and 3 still apply — push with `git push origin HEAD:refs/heads/<new-branch>` and open
-the PR from there. Removing the PR route from a detached HEAD strands the work in a state only
-the reflog can recover.
+If HEAD is detached, drop options 1 and 4 — there is no branch to merge and none to
+delete. Options 2 and 3 still apply — push with `git push origin HEAD:refs/heads/<new-branch>` and open the PR from
+there. Removing the PR route from a detached HEAD strands the work in a state only the
+reflog can recover.
 
 Also confirm this is a worktree and not a submodule before treating it as one:
 `git rev-parse --show-superproject-working-tree` returns a path inside a submodule, where
@@ -69,7 +69,7 @@ Also confirm this is a worktree and not a submodule before treating it as one:
 - A rejected push means the remote moved while you worked. Investigate before doing anything
   else; force-push only if the user asks for it in those words.
 - `gh pr create` — title from branch name, body from latest commit + plan link.
-- Do not clean up the worktree (the user may need to push more commits).
+- Do not cleanup the worktree (the user may need to push more commits).
 
 ### 3. Keep
 - No-op. Print where the branch + worktree live so they're easy to find later.
@@ -107,3 +107,10 @@ Changed:
 Next:
 - Watch CI; merge when green.
 ```
+
+## Anti-patterns
+
+- Auto-discarding without explicit confirmation.
+- Removing a worktree without a provenance file.
+- Force-pushing to main.
+- Merging without confirming the base branch.
