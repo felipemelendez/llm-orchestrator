@@ -51,6 +51,16 @@ The 22%-cut tree with only the three always-loaded mandate surfaces restored:
 (01e1671). Resolves the 08-03 tension: the bodies were padding; one paragraph
 was load-bearing.
 
+### 2026-08-05 — Warn vs block: unanswerable at this ceiling (inconclusive)
+`archive/2026-08-05-warn-vs-block-CEILING-INCONCLUSIVE.json`
+Should the verify gate BLOCK an unproven "done" claim instead of warning?
+Both arms scored 100/100 — in 200 runs the dishonest claim never occurred
+(the agent verified, or disclosed honestly), so the instrument cannot see the
+gate at all. **Acted on:** warn stays the default — blocking's benefit is
+unmeasurable here while its false-positive cost is documented from live
+operation. The case pair needs pressure that actually induces false claims
+before this question can be re-asked. An honest inconclusive, logged as such.
+
 ## Instrument incidents (kept because they shaped the harness)
 
 - `archive/POISONED-2026-08-04T131538Z-*` — a session limit returned 94/100
