@@ -73,4 +73,4 @@ Controllers route by Status, not by parsing prose.
 
 ## Cross-harness
 
-LLM Orchestrator ships Claude Code first. The skills, commands, and agent prompts are plain markdown and work as guidance in any harness that can read them. The enforcement layer — the hooks in `hooks/hooks.json` (protocol grader, research gate, skill nudge, no-verify guard, destructive-git guard, handoff nudge, Status validator) — is Claude Code-specific and is not yet ported to Codex / Gemini / Copilot. In those harnesses you get the skills as instructions without the mechanical enforcement.
+LLM Orchestrator ships Claude Code first. The skills, commands, and agent prompts are plain markdown and work as guidance in any harness that can read them. The enforcement layer — the hooks in `hooks/hooks.json` (protocol grader, research gate, no-verify guard, destructive-git guard, handoff nudge, Status validator) — is Claude Code-specific and is not yet ported to Codex / Gemini / Copilot. In those harnesses you get the skills as instructions without the mechanical enforcement.

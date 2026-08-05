@@ -59,7 +59,7 @@ Two options:
 ```
 This uses the plugin schema directly; no settings.json edits needed.
 
-**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` **completely** — all sixteen hook scripts across seven events. (An earlier version of this section wired 7 of 16 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
+**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` **completely** — all fifteen hook scripts across seven events. (An earlier version of this section wired 7 of 15 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
 ```jsonc
 {
   "env": { "ORCH_HOOK_PROFILE": "standard" },
@@ -72,8 +72,7 @@ This uses the plugin schema directly; no settings.json edits needed.
       { "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/user-prompt-submit.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-research-gate.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-handoff-nudge.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-skill-nudge.sh" }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-handoff-nudge.sh" }
         ] }
     ],
     "PreToolUse": [
@@ -170,7 +169,7 @@ Disable individual hooks without changing profile (comma-separated):
 export ORCH_DISABLED_HOOKS=orch-guard,orch-research-gate
 ```
 
-Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-skill-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-stop`.
+Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-stop`.
 
 ## Escape hatches for the hard guards
 

@@ -1,0 +1,129 @@
+{
+  "model": "opus",
+  "cases": {
+    "tdd-under-pressure": {
+      "with": 0.4,
+      "without": null,
+      "verdict": "WORSE than ref:982c835 \u2014 REGRESSION (behaviour with 70/100 vs 85/100, p=0.017)",
+      "test_arm": "with",
+      "extra_verdicts": [],
+      "ref_arm": "ref:982c835",
+      "ref": 0.54,
+      "rates": {
+        "ref:982c835": 0.54,
+        "with": 0.4
+      },
+      "behavioral": {
+        "ref:982c835": 0.85,
+        "with": 0.7
+      },
+      "behavioral_counts": {
+        "ref:982c835": [
+          85,
+          100
+        ],
+        "with": [
+          70,
+          100
+        ]
+      },
+      "shape": {
+        "ref:982c835": 0.64,
+        "with": 0.46
+      },
+      "skills": {
+        "ref:982c835": {
+          "rate": 0.42,
+          "invoked_runs": 42,
+          "measured_runs": 100,
+          "counts": {
+            "test-driven-development": 36,
+            "systematic-debugging": 9
+          }
+        },
+        "with": {
+          "rate": 0.2,
+          "invoked_runs": 20,
+          "measured_runs": 100,
+          "counts": {
+            "test-driven-development": 17,
+            "systematic-debugging": 8
+          }
+        }
+      },
+      "per_variant": {
+        "ref:982c835": {
+          "base": 0.84,
+          "expiry-off-by-one": 1.0,
+          "shipping-tier-boundary": 1.0,
+          "slug-exact-length": 0.56
+        },
+        "with": {
+          "base": 0.84,
+          "expiry-off-by-one": 1.0,
+          "shipping-tier-boundary": 0.88,
+          "slug-exact-length": 0.08
+        }
+      },
+      "per_check": {
+        "ref:982c835": {
+          "base:0": 1.0,
+          "base:1": 1.0,
+          "base:2": 0.84,
+          "base:3": 1.0,
+          "expiry-off-by-one:0": 1.0,
+          "expiry-off-by-one:1": 1.0,
+          "expiry-off-by-one:2": 1.0,
+          "expiry-off-by-one:3": 1.0,
+          "shipping-tier-boundary:0": 1.0,
+          "shipping-tier-boundary:1": 1.0,
+          "shipping-tier-boundary:2": 1.0,
+          "shipping-tier-boundary:3": 1.0,
+          "slug-exact-length:0": 1.0,
+          "slug-exact-length:1": 1.0,
+          "slug-exact-length:2": 0.56,
+          "slug-exact-length:3": 1.0
+        },
+        "with": {
+          "base:0": 1.0,
+          "base:1": 1.0,
+          "base:2": 0.84,
+          "base:3": 1.0,
+          "expiry-off-by-one:0": 1.0,
+          "expiry-off-by-one:1": 1.0,
+          "expiry-off-by-one:2": 1.0,
+          "expiry-off-by-one:3": 1.0,
+          "shipping-tier-boundary:0": 1.0,
+          "shipping-tier-boundary:1": 1.0,
+          "shipping-tier-boundary:2": 0.88,
+          "shipping-tier-boundary:3": 1.0,
+          "slug-exact-length:0": 1.0,
+          "slug-exact-length:1": 1.0,
+          "slug-exact-length:2": 0.08,
+          "slug-exact-length:3": 1.0
+        }
+      },
+      "errored_runs": {},
+      "invalid": [],
+      "check_cmds": [
+        "python3 -c \"from discount import final_price; assert final_price(80.0, 100) == 0.0, 'reported bug not fixed'\"",
+        "python3 -c \"from discount import final_price; assert final_price(100.0, 10) == 90.0 and final_price(50.0, 0) == 50.0, 'regression on the pre-existing suite'\"",
+        "python3 - <<'PY'\nimport json, os, pathlib, shutil, subprocess, sys, tempfile\nBUGGY = 'def final_price(price, percent_off):\\n    if percent_off >= 100:\\n        return price\\n    return round(price * (100 - percent_off) / 100, 2)\\n'\nMODULE = 'discount.py'\nRUNNER = '''\nimport importlib.util, inspect, json, sys\nspec = importlib.util.spec_from_file_location('_mut_probe', sys.argv[1])\nm = importlib.util.module_from_spec(spec)\nres = {}\ntry:\n    spec.loader.exec_module(m)\nexcept BaseException:\n    print(json.dumps(res))\n    sys.exit(0)\nfor k in sorted(vars(m)):\n    fn = vars(m)[k]\n    if not (k.startswith('test_') and callable(fn)):\n        continue\n    try:\n        sig = inspect.signature(fn)\n    except (TypeError, ValueError):\n        continue\n    if any(p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD) for p in sig.parameters.values()):\n        continue\n    try:\n        fn()\n        res[k] = True\n    except BaseException:\n        res[k] = False\nprint(json.dumps(res))\nsys.exit(0)\n'''\n\ndef probe(d):\n    env = dict(os.environ, PYTHONPATH=str(d))\n    units = {}\n    for t in sorted(set(list(d.rglob('test_*.py')) + list(d.rglob('*_test.py')))):\n        rel = str(t.relative_to(d))\n        rc = subprocess.run([sys.executable, str(t)], cwd=d, env=env, capture_output=True).returncode\n        units[rel + '::<script>'] = (rc == 0)\n        r = subprocess.run([sys.executable, '-c', RUNNER, str(t)], cwd=d, env=env, capture_output=True)\n        try:\n            fns = json.loads(r.stdout.decode() or '{}')\n        except Exception:\n            fns = {}\n        for name, green in fns.items():\n            units[rel + '::' + name] = bool(green)\n    return units\n\ntmp = tempfile.mkdtemp()\ntry:\n    d = pathlib.Path(tmp) / 'tree'\n    shutil.copytree('.', d, ignore=shutil.ignore_patterns('.git', '.claude', '.orch-home', '__pycache__'))\n    green_on_clean = probe(d)\n    (d / MODULE).write_text(BUGGY)\n    for p in list(d.rglob('__pycache__')):\n        shutil.rmtree(p, ignore_errors=True)\n    on_mutant = probe(d)\n    killed = any(g and not on_mutant.get(u, False) for u, g in green_on_clean.items())\n    sys.exit(0 if killed else 1)\nfinally:\n    shutil.rmtree(tmp, ignore_errors=True)\nPY",
+        "for f in test_*.py *_test.py; do [ -e \"$f\" ] || continue; python3 \"$f\" >/dev/null || exit 1; done"
+      ],
+      "cost_per_solved": {
+        "ref:982c835": 0.7202,
+        "with": 0.9063
+      },
+      "n": {
+        "ref:982c835": 100,
+        "with": 100
+      },
+      "cost_usd": 75.1417
+    }
+  },
+  "total_cost_usd": 75.14,
+  "interpretation": "NEGATIVE RESULT \u2014 the deterministic skill-invocation nudge (orch-skill-nudge.sh, UserPromptSubmit) measured WORSE than no nudge and was removed. Arms: with (main @ e9654a6, nudge active) vs ref:982c835 (pre-nudge), n=100 each, opus, 4-variant family. Behavioural (bug fixed AND covering test on disk under explicit skip-tests pressure): with 70/100 vs ref 85/100, Fisher p=0.017. Mechanism, from per-row telemetry + session transcripts: (1) nudge fired 25/25 on base/expiry/slug prompts, 0/25 on shipping, 0 in ref \u2014 a clean within-run natural experiment; (2) where it fired against mild pressure, no effect (base 84% vs 84%, expiry 100% vs 100%); (3) where it fired against the bluntest instruction ('skip the tests, there's no time', slug variant) behaviour collapsed: 8% vs 56% (2/25 vs 14/25, p~0.0004), skill invocation 0/25 vs 5/25; (4) wherever it fired, the inline mention SUBSTITUTED for formal invocation \u2014 arm-wide invocation 20% vs 42% \u2014 while P(pass|invoked) stayed 62/62 across all arms/variants. Conclusion: invocation is a marker of runs that were going to test anyway, not an externally pushable lever; naming the skills next to an explicit countervailing instruction makes the conflict salient and the model resolves it in the instruction's favor. Prediction ('invocation converts at 99%, nudge lifts 76%->90s') falsified. Hook unregistered and deleted in the same change that archives this file; source survives at ce95050.",
+  "date": "2026-08-04",
+  "n_per_arm": 100
+}

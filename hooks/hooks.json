@@ -29,11 +29,6 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-handoff-nudge.sh",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-skill-nudge.sh",
-            "timeout": 10
           }
         ]
       }
@@ -134,7 +129,7 @@
           },
           {
             "type": "prompt",
-            "prompt": "You are validating an implementer subagent's final message — the last_assistant_message field of this hook input: $ARGUMENTS. Structure has ALREADY been checked deterministically by subagent-stop.sh: the presence of a line-leading Status: block, a valid enum, and a non-empty Verify: section on DONE/DONE_WITH_CONCERNS are all verified for free before you run. Do not re-check any of that. You are here for the one thing a grep cannot judge: whether a Verify: section that EXISTS actually contains pasted command output, rather than an assertion standing in for it — 'should pass', 'tests look fine', 'this will work', a described command with no result, or output that plainly does not correspond to the command named. Return {\"ok\": true} when the Verify: content is real evidence. Return {\"ok\": false, \"reason\": \"...\"} only for a DONE or DONE_WITH_CONCERNS whose Verify: is assertion rather than evidence. The reason must instruct the agent to run the command and paste its output, or to return an honest PARTIAL (Progress:/Remaining:) or BLOCKED (Need:) block — never to fabricate success. When in doubt, return {\"ok\": true}.",
+            "prompt": "You are validating an implementer subagent's final message \u2014 the last_assistant_message field of this hook input: $ARGUMENTS. Structure has ALREADY been checked deterministically by subagent-stop.sh: the presence of a line-leading Status: block, a valid enum, and a non-empty Verify: section on DONE/DONE_WITH_CONCERNS are all verified for free before you run. Do not re-check any of that. You are here for the one thing a grep cannot judge: whether a Verify: section that EXISTS actually contains pasted command output, rather than an assertion standing in for it \u2014 'should pass', 'tests look fine', 'this will work', a described command with no result, or output that plainly does not correspond to the command named. Return {\"ok\": true} when the Verify: content is real evidence. Return {\"ok\": false, \"reason\": \"...\"} only for a DONE or DONE_WITH_CONCERNS whose Verify: is assertion rather than evidence. The reason must instruct the agent to run the command and paste its output, or to return an honest PARTIAL (Progress:/Remaining:) or BLOCKED (Need:) block \u2014 never to fabricate success. When in doubt, return {\"ok\": true}.",
             "timeout": 30
           }
         ]
