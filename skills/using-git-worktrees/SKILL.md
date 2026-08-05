@@ -110,6 +110,11 @@ git worktree remove .worktrees/<slug>
 git worktree prune
 ```
 
+Run removal from the repo root as its own command, never mid-chain: `git worktree remove`
+deletes the directory the shell may be standing in, and every `&&`-chained command after it
+then fails with "unable to read current working directory" — a failure that recurred three
+times in one live session before the pattern was named.
+
 Refuse cleanup if `.orch-worktree` is missing — that worktree wasn't ours. If `--release` reports
 either "release denied" (the session id changed mid-batch, e.g. after a `/clear`) or "refusing to
 release in-progress claim" (a kill-in-window orphan), ignore it and continue with `git worktree

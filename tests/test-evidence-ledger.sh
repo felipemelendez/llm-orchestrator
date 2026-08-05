@@ -240,6 +240,142 @@ else fail "window none" "rc=$rc r=$R"; fi
 R=$(orch_evidence_window win-test ""); rc=$?
 [[ $rc -eq 2 ]] && ok "unknown turn start → rc 2, never a false accusation" || fail "window unknown" "rc=$rc"
 
+printf '\n%s== REGRESSION: a failed COMPOUND is healed via its verify-shaped component ==%s\n' "$DIM" "$RESET"
+# Observed live, three times: an integrate chain — `git worktree add … &&
+# git merge … && bash tests/run-all.sh 2>&1 | tail -1 && git push … &&
+# git worktree remove …` — exited 128 at the worktree-remove step, AFTER the
+# suite inside it had passed; `bash tests/run-all.sh` was then re-run
+# standalone, green, the same turn. The gate still flagged the reply: red/green
+# matching keyed on the whole compound string (runner `git`), so no green could
+# ever answer that red. The red row's verification content is its verify-shaped
+# COMPONENT, and a later green of that component is what "re-ran it" looks like.
+source "${ROOT}/scripts/lib/orch-signals.sh"
+CL="$WDIR/evidence.comp-test.tsv"
+COMPOUND='git worktree add .worktrees/fix main && git merge --no-ff fix -m msg && bash tests/run-all.sh 2>&1 | tail -1 && git push origin main && git worktree remove .worktrees/fix'
+
+# (a) failed compound + later standalone green of the component → resolved.
+printf 'aaaa00000001\t1\t%s\tred\t%s\n' "$NOW" "$COMPOUND" > "$CL"
+printf 'aaaa00000002\t0\t%s\tok\tbash tests/run-all.sh\n' "$((NOW + 1))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+[[ $rc -eq 0 ]] && ok "failed compound + standalone green of its verify component → rc 0 (healed)" \
+  || fail "compound healed by component green" "rc=$rc r=$R"
+
+# (b) failed compound + NO later green → still the hard verdict. The heal must
+# not soften the gate's whole point.
+printf 'bbbb00000001\t1\t%s\tred\t%s\n' "$NOW" "$COMPOUND" > "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "failed compound with NO later green → rc 1 (hard)"
+else fail "compound no-green still warns" "rc=$rc r=$R"; fi
+
+# (c) failed standalone + later green of the SAME command → resolved (the
+# behaviour that already existed must survive the componentization).
+printf 'cccc00000001\t1\t%s\tred\tbash tests/run-all.sh\n' "$NOW" > "$CL"
+printf 'cccc00000002\t0\t%s\tok\tbash tests/run-all.sh\n' "$((NOW + 1))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+[[ $rc -eq 0 ]] && ok "failed standalone + green re-run of the same command → rc 0 (unchanged)" \
+  || fail "standalone heal regressed" "rc=$rc r=$R"
+
+# (d) precision guard: a green row that merely MENTIONS the component — quoted
+# as data, or echoed alongside a different runner — heals nothing. (The real
+# ledger writer would not record the grep row at all — quoted spans are blanked
+# before classification — but the healing side must apply the same rules
+# rather than substring-match the mention.)
+printf 'dddd00000001\t1\t%s\tred\t%s\n' "$NOW" "$COMPOUND" > "$CL"
+printf 'dddd00000002\t0\t%s\tok\tgrep -c "bash tests/run-all.sh" docs/notes.md\n' "$((NOW + 1))" >> "$CL"
+printf 'dddd00000003\t0\t%s\tok\tpytest -q && echo "bash tests/run-all.sh"\n' "$((NOW + 2))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "mention-only greens (quoted grep pattern, echoed string) heal NOTHING → rc 1"
+else fail "mention-only green healed a red" "rc=$rc r=$R"; fi
+
+# (e) REGRESSION: a same-runner multi-component red must have EVERY component
+# healed. Red `pytest tests/unit -q && pytest tests/integration -q` produces
+# two pytest components from one row; keying reds by runner alone let the later
+# component overwrite the earlier (last-wins by sort order), so a green of ONLY
+# one twin silently resolved the pair — tests/integration never re-ran and the
+# gate said nothing. Which twin escaped depended on sort order, so BOTH
+# directions are pinned here.
+MULTI='pytest tests/unit -q && pytest tests/integration -q'
+printf 'eeee00000001\t1\t%s\tred\t%s\n' "$NOW" "$MULTI" > "$CL"
+printf 'eeee00000002\t0\t%s\tok\tpytest tests/unit -q\n' "$((NOW + 1))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "multi-component red + green of ONLY the unit leg → rc 1 (integration never re-ran)"
+else fail "green unit leg alone resolved a two-leg red" "rc=$rc r=$R"; fi
+
+printf 'eeee00000003\t1\t%s\tred\t%s\n' "$NOW" "$MULTI" > "$CL"
+printf 'eeee00000004\t0\t%s\tok\tpytest tests/integration -q\n' "$((NOW + 1))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "multi-component red + green of ONLY the integration leg → rc 1 (mirror direction)"
+else fail "green integration leg alone resolved a two-leg red" "rc=$rc r=$R"; fi
+
+printf 'eeee00000005\t1\t%s\tred\t%s\n' "$NOW" "$MULTI" > "$CL"
+printf 'eeee00000006\t0\t%s\tok\tpytest tests/unit -q\n' "$((NOW + 1))" >> "$CL"
+printf 'eeee00000007\t0\t%s\tok\tpytest tests/integration -q\n' "$((NOW + 2))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+[[ $rc -eq 0 ]] && ok "multi-component red + greens of BOTH legs → rc 0 (healed)" \
+  || fail "both-leg greens did not heal" "rc=$rc r=$R"
+
+printf 'eeee00000008\t1\t%s\tred\t%s\n' "$NOW" "$MULTI" > "$CL"
+printf 'eeee00000009\t0\t%s\tok\tpytest -q\n' "$((NOW + 1))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+[[ $rc -eq 0 ]] && ok "multi-component red + one pathless broad green → rc 0 (covers all pytest ground)" \
+  || fail "broad green did not heal both legs" "rc=$rc r=$R"
+
+# (f) REGRESSION: a heredoc body in a GREEN row is data being written, not an
+# invocation. The ledger stores commands newline-flattened, so the body of
+# `cat > notes.sh <<'EOS' … EOS` sits inline — and a `&&` inside that body
+# reified a segment anchor, minting `bash tests/run-all.sh …` as a green
+# component that healed a genuinely failed suite. (Executed reviewer fixture.)
+HD="pytest -q && cat > notes.sh <<'EOS' echo setup && bash tests/run-all.sh EOS"
+printf 'ffff00000001\t1\t%s\tred\tbash tests/run-all.sh\n' "$NOW" > "$CL"
+printf 'ffff00000002\t0\t%s\tok\t%s\n' "$((NOW + 1))" "$HD" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "a green heredoc BODY mentioning the failed suite heals NOTHING → rc 1"
+else fail "heredoc body minted a healing component" "rc=$rc r=$R"; fi
+
+# (g) REGRESSION: a backslash-escaped quote must not derail pair-blanking. In
+# `echo "a\" && bash tests/run-all.sh -x"` the naive pair-match closed the
+# string at `\"`, leaving the tail unblanked — a quoted MENTION minted a green
+# component for a genuinely failed suite. (Executed reviewer fixture.)
+EQ='pytest -q && echo "a\" && bash tests/run-all.sh -x"'
+printf 'gggg00000001\t1\t%s\tred\tbash tests/run-all.sh\n' "$NOW" > "$CL"
+printf 'gggg00000002\t0\t%s\tok\t%s\n' "$((NOW + 1))" "$EQ" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "an escaped-quote string mentioning the failed suite heals NOTHING → rc 1"
+else fail "escaped-quote mention minted a healing component" "rc=$rc r=$R"; fi
+rm -f "$CL"
+
+# (h) REGRESSION: heredoc truncation is GREEN-ONLY. On a red row, truncating
+# at `<<` drops a verify leg that ran AFTER the heredoc — a genuinely failed
+# `pytest … && python - <<EOF … EOF && mypy .` was then healed by re-running
+# only the pytest leg, a false all-clear. The red side must keep the mypy
+# component; healing needs BOTH legs green.
+# Fixture fidelity note: the real writer flattens a heredoc BODY after the
+# whole operator line (`… <<EOF && mypy . print(1) EOF`), where the red mypy
+# component absorbs body words and only a pathless `mypy` green heals —
+# the design-accepted spurious-warn direction. This fixture places the body
+# first so the healing direction is testable with an exact-args green.
+HDRED='pytest tests/x -q && python - <<EOF print(1) EOF && mypy .'
+printf 'hhhh00000001\t1\t%s\tred\t%s\n' "$NOW" "$HDRED" > "$CL"
+printf 'hhhh00000002\t0\t%s\tok\tpytest tests/x -q\n' "$((NOW + 1))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+if [[ $rc -eq 1 ]] && printf '%s' "$R" | grep -q 'FAILED'; then
+  ok "red with post-heredoc mypy leg + green pytest only → rc 1 (mypy never re-ran)"
+else fail "post-heredoc red leg was truncated away and healed" "rc=$rc r=$R"; fi
+
+printf 'hhhh00000003\t1\t%s\tred\t%s\n' "$NOW" "$HDRED" > "$CL"
+printf 'hhhh00000004\t0\t%s\tok\tpytest tests/x -q\n' "$((NOW + 1))" >> "$CL"
+printf 'hhhh00000005\t0\t%s\tok\tmypy .\n' "$((NOW + 2))" >> "$CL"
+R=$(orch_evidence_window comp-test "$NOW"); rc=$?
+[[ $rc -eq 0 ]] && ok "same red + greens of BOTH legs → rc 0 (healed)" \
+  || fail "both-leg greens did not heal the heredoc-bearing red" "rc=$rc r=$R"
+rm -f "$CL"
+
 printf '\n%s== cited-stamp validator (secondary path) ==%s\n' "$DIM" "$RESET"
 L=$(ls "$ORCH_HOME"/state/*/evidence.ev-test.tsv)
 CITED=$(orch_evidence_stamp_of "Verify: npm test → 142 passed [orch-evidence ${STAMP} exit=0]")

@@ -214,6 +214,32 @@ out=$(run "$tr_cos" ORCH_STRICT_VERIFY=1); rc=${out%%|*}; err=${out#*|}
 if [[ "$rc" == "0" && -z "$err" ]]; then ok "cosmetic exemption honoured over a red window"; else fail "cosmetic" "rc=$rc err=$err"; fi
 rm -f "$LEDGER" "$TURNSTART"
 
+printf '\n%s== REGRESSION: a failed compound heals via its verify-shaped component ==%s\n' "$DIM" "$RESET"
+# Observed live, three times: an integrate chain exited 128 at the
+# worktree-remove step AFTER the suite inside it had passed, the suite was
+# re-run standalone green the same turn, and the gate still flagged the reply —
+# red/green matching keyed on the whole compound string, so no green could
+# ever answer that red.
+printf '%s' "$NOW" > "$TURNSTART"
+_COMPOUND='git worktree add .worktrees/fix main && git merge --no-ff fix -m msg && bash tests/run-all.sh 2>&1 | tail -1 && git push origin main && git worktree remove .worktrees/fix'
+printf 'ffff11112222\t1\t%s\tred\t%s\n' "$NOW" "$_COMPOUND" > "$LEDGER"
+printf 'ffff22223333\t0\t%s\tok\tbash tests/run-all.sh\n' "$((NOW + 1))" >> "$LEDGER"
+tr_comp=$(mk_transcript "Changed: merged and pushed the fix.
+Verify: bash tests/run-all.sh → ALL PASS (14 suites)")
+out=$(run "$tr_comp" ORCH_STRICT_VERIFY=1); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" && -z "$err" ]]; then
+  ok "failed compound + standalone green re-run of its component → silent (even strict)"
+else fail "compound heal" "rc=$rc err=$err"; fi
+
+# The same red compound with NO green re-run must still warn — the heal must
+# not soften the gate's whole point.
+printf 'ffff11112222\t1\t%s\tred\t%s\n' "$NOW" "$_COMPOUND" > "$LEDGER"
+out=$(run "$tr_comp"); rc=${out%%|*}; err=${out#*|}
+if [[ "$rc" == "0" ]] && printf '%s' "$err" | grep -q 'orch-verify-gate'; then
+  ok "failed compound with NO later green → still warns"
+else fail "compound no-green warns" "rc=$rc err=$err"; fi
+rm -f "$LEDGER" "$TURNSTART"
+
 printf '\n%s== Claim extraction: the ways a command is actually pasted ==%s\n' "$DIM" "$RESET"
 # The extractor is the load-bearing surface: it decides what counts as a CLAIM.
 # It under-matched the header (`**Verify:**` extracted nothing), under-matched

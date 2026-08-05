@@ -36,7 +36,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-command -v claude >/dev/null 2>&1 || { echo "claude CLI not found on PATH" >&2; exit 1; }
+# A dry run never invokes the model, so it must not demand the CLI: requiring
+# claude here made the free plumbing tests FAIL on claude-less machines.
+if [[ "${ORCH_EVAL_DRY_RUN:-0}" != "1" ]]; then
+  command -v claude >/dev/null 2>&1 || { echo "claude CLI not found on PATH" >&2; exit 1; }
+fi
 command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 1; }
 
 mkdir -p "$OUT_DIR" "$WORK_ROOT"
@@ -134,7 +138,16 @@ PY
 run_case() {
   local case_file="$1" arm="$2" iter="$3"
   local cid; cid="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['id'])" "$case_file")"
-  local dir="${WORK_ROOT}/${cid}-${arm}-${iter}"
+  # Arm names are labels, not paths: a ref arm naming a branch ("ref:exp/foo")
+  # carries a slash that would turn the scratch name into a nonexistent
+  # subdirectory — the 2026-08-05 compression A/B died on exactly this after
+  # paying for its first arm. Sanitize for the filesystem; rows keep the real
+  # arm string. Distinct arms CAN sanitize identically ("ref:a/b" and
+  # "ref:a_b" both become ref_a_b) — safe within one sequential invocation
+  # because each run_case rebuilds its scratch dir, but concurrent colliding
+  # invocations would race.
+  local arm_safe; arm_safe="$(printf '%s' "$arm" | tr '/:' '__')"
+  local dir="${WORK_ROOT}/${cid}-${arm_safe}-${iter}"
 
   # Variant families: a case MAY carry "variants" — a list of COMPLETE,
   # independent scenarios (no field merging with the base; merging is where
@@ -146,7 +159,7 @@ run_case() {
   # malformed variant (missing field, non-object entry) crashed this heredoc and
   # `claude -p ""` still ran and recorded a normal-looking row — same failure
   # class as the build_project guard below, so it aborts the same way.
-  local scen_file="${WORK_ROOT}/${cid}-${arm}-${iter}.scenario.json"
+  local scen_file="${WORK_ROOT}/${cid}-${arm_safe}-${iter}.scenario.json"
   if ! python3 - "$case_file" "$iter" > "$scen_file" <<'PY'
 import json, sys
 case = json.load(open(sys.argv[1])); it = int(sys.argv[2])
@@ -198,7 +211,15 @@ PY
   # spurious Blocked. The scratch project is throwaway and outside the repo,
   # so skipping is safe by construction.
   local out
-  out="$( cd "$dir" && claude -p "$prompt" --model "$MODEL" --output-format json --dangerously-skip-permissions 2>/dev/null )"
+  # ORCH_EVAL_DRY_RUN=1 replaces the paid model call with a canned result so
+  # runner plumbing (path construction, arm labels, grading, row shape) is
+  # testable for free. Everything else — scratch build, setup, checks, row
+  # writing — runs exactly as in a paid run.
+  if [[ "${ORCH_EVAL_DRY_RUN:-0}" == "1" ]]; then
+    out='{"result":"dry-run: no model was invoked","total_cost_usd":0}'
+  else
+    out="$( cd "$dir" && claude -p "$prompt" --model "$MODEL" --output-format json --dangerously-skip-permissions 2>/dev/null )"
+  fi
 
   # behavioural checks against the real filesystem: every command in the case's
   # "check" array must exit 0 inside the scratch project. This is what lets a
@@ -333,13 +354,19 @@ if case.get("check"):
     checks.append({"kind": "check_cmds", "pattern": "; ".join(case["check"]),
                    "ok": graded_all and all(check_results)})
 
-print(json.dumps({
+row = {
     "case": case["case_id"], "arm": arm, "iter": it, "variant": case["name"],
     "pass": (not err) and all(c["ok"] for c in checks) and bool(checks),
     "error": err, "cost_usd": cost, "checks": checks,
     "skills_invoked": skills_invoked,
     "text": text[:2000],
-}))
+}
+# A dry-run row is plumbing output, not measurement: mark it so a stray row
+# can never masquerade as measured data.
+import os
+if os.environ.get("ORCH_EVAL_DRY_RUN") == "1":
+    row["dry_run"] = True
+print(json.dumps(row))
 PY
 }
 
@@ -688,10 +715,18 @@ json.dump(out, open(sys.argv[2], "w"), indent=2)
 PY
 
 # The stable names are a copy of the newest run, never the only copy of it.
-cp "$RESULTS" "$RESULTS_LATEST" 2>/dev/null || true
-cp "$BENCH"    "$BENCH_LATEST"  2>/dev/null || true
+# A dry run is unmeasured plumbing output — it must never overwrite the stable
+# copies real consumers resolve.
+if [[ "${ORCH_EVAL_DRY_RUN:-0}" != "1" ]]; then
+  cp "$RESULTS" "$RESULTS_LATEST" 2>/dev/null || true
+  cp "$BENCH"    "$BENCH_LATEST"  2>/dev/null || true
+fi
 
 echo
 echo "raw:       ${RESULTS}"
 echo "benchmark: ${BENCH}"
-echo "latest:    ${RESULTS_LATEST}  ${BENCH_LATEST}   (copies — the timestamped pair is the record)"
+if [[ "${ORCH_EVAL_DRY_RUN:-0}" != "1" ]]; then
+  echo "latest:    ${RESULTS_LATEST}  ${BENCH_LATEST}   (copies — the timestamped pair is the record)"
+else
+  echo "latest:    (dry-run — stable copies left untouched)"
+fi

@@ -47,7 +47,7 @@ To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the c
 | **Context-aware handoff** | On a long task, the agent is nudged once (when context crosses ≈95% of the window) to write a short handoff note; after auto-compaction, a reminder tells the next turn to re-read it, reconcile against the plan, and re-verify | A long run continues cleanly across a compaction instead of drifting on a lossy summary |
 | **CLAUDE.md classification** | `/llm-orchestrator:remember <fact>` appends the fact to your project's CLAUDE.md under the right section — `## Conventions`, `## Decisions`, `## People`, or `## Notes` — chosen automatically; `/llm-orchestrator:forget` soft-deletes recoverably | Persistent project memory without organizing it by hand |
 
-The mechanics behind these rows — the protocol grader, toolchain detection, convention detection, and the workflow-vs-markdown routing — are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+The mechanics behind these rows — the protocol grader, toolchain detection, convention detection, and the workflow-vs-markdown routing — are documented in [`ARCHITECTURE.md`](./ARCHITECTURE.md). The behavioural claims are not taken on faith: every measured bet — including the ones that lost — is recorded with its numbers and raw evidence in [`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md).
 
 ---
 

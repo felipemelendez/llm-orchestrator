@@ -64,6 +64,59 @@ orch_turn_start() {
   head -1 "${p}" 2>/dev/null | tr -cd '0-9'
 }
 
+# orch_evidence_verify_components <command> [verify_re]
+# Prints the verify-shaped component(s) of <command>, one per line — for
+# `git merge x && bash tests/run-all.sh 2>&1 | tail -1 && git push` that is
+# `bash tests/run-all.sh 2>`. Prints nothing when the regex is unset or nothing
+# matches; trailing redirect fragments are left in place (the window's arg
+# matcher skips them).
+#
+# THE EXTRACTION RULES ARE THE RECORDING SIDE'S, deliberately. The ledger
+# writer (orch-evidence-ledger.sh) classifies a command as verify-shaped by
+# matching ORCH_SIG_VERIFY_CMD — anchored on `(^|[;&|])` — against the command
+# with heredoc bodies stripped and quoted spans blanked out. This helper
+# mirrors those rules in shell:
+#   - backslash-escaped quotes are blanked FIRST, so `echo "a\" && bash
+#     tests/run-all.sh -x"` cannot close its pair early and leave the mention
+#     unquoted — pre-blanking, that tail minted a green component that healed
+#     a genuinely failed suite;
+#   - quote pairs are blanked (a mention like `echo "bash tests/run-all.sh"`
+#     is data, not an invocation);
+#   - the command is truncated at the first (unquoted) heredoc operator. The
+#     ledger stores commands newline-flattened, so a heredoc BODY sits inline
+#     and a `&&` inside it reified a segment anchor — a green `cat > notes.sh
+#     <<'EOS' … bash tests/run-all.sh … EOS` minted a healing component for a
+#     suite that never re-ran. GREEN rows only — see the mode note in the
+#     function: on red rows truncation would drop a post-heredoc verify leg
+#     and heal a failure that never re-ran;
+#   - the remainder is split at `;`, `&`, `|` and newlines so each segment
+#     start reifies the same anchor.
+# A component printed here is therefore exactly the text that made the row
+# count as a verification run — so a healed-by match built on it uses the same
+# extraction rules the failed side used, and a row that merely mentions a
+# command can never yield that command as a component. (The Python side stays
+# authoritative for what gets RECORDED at all.)
+orch_evidence_verify_components() {
+  local cmd="$1" mode="${2:-green}" vre="${3:-${ORCH_SIG_VERIFY_CMD:-}}"
+  [[ -n "${cmd}" && -n "${vre}" ]] || return 0
+  # Heredoc truncation is GREEN-ONLY. The two sides have opposite safe
+  # directions: on a green row a lost post-heredoc component merely fails to
+  # heal (safe), and a body mention must never mint a healing component; on a
+  # RED row truncation would DROP a verify leg that ran after a heredoc — a
+  # genuinely failed `… <<EOF … && mypy .` would then be healed by re-running
+  # only the earlier leg (false all-clear). Red rows keep everything: a body
+  # mention over-extracting on the red side can at worst demand extra healing
+  # — a spurious warn, the survivable error direction.
+  local hd='s/<<.*$//'
+  [[ "${mode}" == "red" ]] && hd=''
+  printf '%s\n' "${cmd}" \
+    | sed -E "s/\\\\[\"']/ /g; s/\"[^\"]*\"/ /g; s/'[^']*'/ /g; ${hd}" \
+    | tr ';&|' '\n\n\n' \
+    | grep -oE "${vre}.*" 2>/dev/null \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+    | grep -vE '^$' | sort -u
+}
+
 # orch_evidence_window <session_id> <since_epoch>
 # Reports on verify runs recorded at or after <since_epoch>. Prints a one-line
 # reason on any non-zero return.
@@ -84,7 +137,7 @@ orch_turn_start() {
 #       outside ORCH_SIG_VERIFY_CMD, or the ledger hook is disabled)
 #   3 — SOFT: the run was green but verified nothing (zero tests / no output)
 orch_evidence_window() {
-  local sid="$1" since="$2" dir ledger rows
+  local sid="$1" since="$2" dir ledger rows vrows _row _cmd _comps _c _mode
 
   [[ -n "${since}" ]] || { printf 'turn window unknown\n'; return 2; }
   dir=$(orch_evidence_state_dir)
@@ -105,19 +158,48 @@ orch_evidence_window() {
   # a claim the test suite still rejects. A red is answered only by a later green
   # of the SAME command — that is what "I fixed it and re-ran" looks like.
   local unresolved
-  # Keyed on the RUNNER, not the verbatim command. `pytest tests/test_x.py -q`
-  # going red and then `pytest -q` going green is the canonical TDD sequence —
-  # narrow red, broad green — and keying on the full string reported it as an
-  # unresolved failure, which is hard and blocks under strict. A later green from
-  # the same runner answers an earlier red from that runner.
+  # Keyed on the VERIFY-SHAPED COMPONENT, not the verbatim command. Two live
+  # false positives forced this, one on each side of the match:
+  #   - RED SIDE: a failed COMPOUND is not a failed verification of its whole
+  #     string. `git worktree add … && git merge … && bash tests/run-all.sh
+  #     2>&1 | tail -1 && git push … && git worktree remove …` exited 128 at
+  #     the worktree-remove step AFTER the suite inside it passed; the suite
+  #     was re-run standalone green the same turn, and the gate still flagged
+  #     the reply — keyed on the whole string (runner `git`), no green could
+  #     ever answer that red. What made the row count as a verification run is
+  #     its verify-shaped component, so that is what a later green must match.
+  #     Components come from orch_evidence_verify_components — the same
+  #     extraction rules the ledger writer used to classify the row — so a
+  #     green that merely MENTIONS the command (`echo "bash tests/run-all.sh"`,
+  #     a quoted grep pattern) yields no such component and heals nothing.
+  #     A row with several components (a red `pytest -q && mypy .`) needs each
+  #     healed — we cannot know which link failed, so all stay suspect.
+  #   - GREEN SIDE: `pytest tests/test_x.py -q` going red and then `pytest -q`
+  #     going green is the canonical TDD sequence — narrow red, broad green —
+  #     and keying on the full string reported it as an unresolved failure,
+  #     which is hard and blocks under strict.
   # A green answers a red when it ran the same runner over the same ground or
-  # MORE of it. `pytest tests/test_x.py -q` red then `pytest -q` green is the
-  # canonical TDD sequence (narrow red, broad green) and must resolve; keying on
-  # the verbatim command reported it as an unresolved failure, which blocks under
-  # strict. But `pytest tests/smoke` green must NOT answer `pytest tests/unit`
-  # red — different ground. So: a green with no path arguments covers everything
-  # from that runner; a green with paths covers only a red whose paths it contains.
-  unresolved=$(printf '%s\n' "${rows}" | awk -F'\t' '
+  # MORE of it. `pytest tests/smoke` green must NOT answer `pytest tests/unit`
+  # red — different ground. So: a green with no path arguments covers
+  # everything from that runner; a green with paths covers only a red whose
+  # paths it contains. Redirect fragments (`2>`, `>out.log`) are not ground and
+  # are skipped when comparing.
+  vrows=""
+  while IFS= read -r _row; do
+    [[ -n "${_row}" ]] || continue
+    _cmd=$(printf '%s\n' "${_row}" | cut -f5)
+    _mode=green; [[ "$(printf '%s\n' "${_row}" | cut -f2)" != "0" ]] && _mode=red
+    _comps=$(orch_evidence_verify_components "${_cmd}" "${_mode}")
+    # No component (regex unset, or a fixture row the writer would not have
+    # recorded): fall back to the whole command — the pre-component behaviour.
+    [[ -n "${_comps}" ]] || _comps="${_cmd}"
+    while IFS= read -r _c; do
+      [[ -n "${_c}" ]] || continue
+      vrows="${vrows}${_row}	${_c}
+"
+    done <<< "${_comps}"
+  done <<< "${rows}"
+  unresolved=$(printf '%s\n' "${vrows}" | awk -F'\t' '
     function runner(c,   n, w, i, t) {
       n = split(c, w, /[ \t]+/); t = w[1]
       for (i = 1; i <= n; i++) { t = w[i]
@@ -125,25 +207,37 @@ orch_evidence_window() {
       return t }
     function args(c,   n, w, i, a) {
       n = split(c, w, /[ \t]+/); a = ""
-      for (i = 2; i <= n; i++) if (w[i] !~ /^-/) a = a " " w[i] " "
+      for (i = 2; i <= n; i++) if (w[i] !~ /^-/ && w[i] !~ /[<>]/) a = a " " w[i] " "
       return a }
     function covers(g, r,   n, w, i) {   # green args cover red args?
       if (g ~ /^ *$/) return 1
       n = split(r, w, /[ \t]+/)
       for (i = 1; i <= n; i++) if (w[i] != "" && index(g, " " w[i] " ") == 0) return 0
       return 1 }
-    { ep = $3 + 0; t = runner($5)
-      if ($2 == "0") { gn[t] = gn[t] "\n" ep "\t" args($5) }
-      else if (ep >= red_ep[t]) { red_ep[t] = ep; red_args[t] = args($5); red_line[t] = $0 } }
+    NF < 6 { next }
+    # Reds are keyed by runner AND argument ground, not runner alone. A red
+    # `pytest tests/unit -q && pytest tests/integration -q` yields two pytest
+    # components from one row; keyed on the bare runner, the later component
+    # overwrote the earlier (last-wins by sort order), so a green of ONLY one
+    # twin resolved the pair — the other suite never re-ran, and which twin
+    # escaped depended on sort order. Every distinct red component must be
+    # covered by a green of its runner.
+    { ep = $3 + 0; t = runner($6)
+      if ($2 == "0") { gn[t] = gn[t] "\n" ep "\t" args($6) }
+      else { k = t SUBSEP args($6)
+             if (ep >= red_ep[k]) {
+               red_ep[k] = ep; red_args[k] = args($6)
+               red_line[k] = $0; red_runner[k] = t } } }
     END {
-      for (t in red_line) {
+      for (k in red_line) {
+        t = red_runner[k]
         resolved = 0
         n = split(gn[t], gl, "\n")
         for (i = 1; i <= n; i++) {
           if (gl[i] == "") continue
           split(gl[i], f, "\t")
-          if (f[1] + 0 >= red_ep[t] && covers(f[2], red_args[t])) { resolved = 1; break } }
-        if (!resolved) { print red_line[t]; exit } } }')
+          if (f[1] + 0 >= red_ep[k] && covers(f[2], red_args[k])) { resolved = 1; break } }
+        if (!resolved) { print red_line[k]; exit } } }')
   if [[ -n "${unresolved}" ]]; then
     printf 'a verification run this turn FAILED and was never re-run green: `%s`\n' "$(printf '%s' "${unresolved}" | cut -f5)"
     return 1
