@@ -1,0 +1,35 @@
+{
+  "date": "2026-08-05",
+  "model": "opus",
+  "n_per_arm": 100,
+  "cost_usd": 72.0,
+  "case": "tdd-under-pressure",
+  "arms": {
+    "ref:4f6815f (uncut baseline)": {
+      "behavioral": "84/100",
+      "invocation": "43/100",
+      "per_variant": {
+        "base": "21/25",
+        "expiry-off-by-one": "25/25",
+        "shipping-tier-boundary": "25/25",
+        "slug-exact-length": "13/25"
+      }
+    },
+    "ref:491c7c0 (7e41f34 cut + 3 mandate surfaces restored)": {
+      "behavioral": "78/100",
+      "invocation": "44/100",
+      "per_variant": {
+        "base": "20/25",
+        "expiry-off-by-one": "25/25",
+        "shipping-tier-boundary": "25/25",
+        "slug-exact-length": "8/25"
+      }
+    }
+  },
+  "fisher_p": 0.368,
+  "interpretation": "POSITIVE RESULT, bounded. The 2026-08-03 compression's entire measured harm ran through the always-loaded invocation mandate: with only CLAUDE.md, session-start.sh and using-orchestrator restored to full prose, the otherwise-22%-cut tree is statistically indistinguishable from uncut (78 vs 84, p=0.368) and skill invocation fully recovers (44% vs 43%; it was 0% with the mandate cut, see 2026-08-04 archives). Honest bound: n=100/arm resolves ~12-13pp; observed direction -6pp; equivalence is bounded, not proven. Note the two arms ran as separate invocations same-day (the runner's arm-name-with-slash bug aborted the original two-arm run after the baseline completed; baseline rows salvaged, exp arm re-run via SHA). ACTED ON: compression re-applied to main minus the three mandate surfaces (feat/apply-measured-compression).",
+  "raw_files": [
+    "raw.tdd-under-pressure.20260805T102012Z.jsonl",
+    "raw.tdd-under-pressure.20260805T114005Z.jsonl"
+  ]
+}

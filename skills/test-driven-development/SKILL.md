@@ -7,147 +7,44 @@ description: Use when implementing a feature or bugfix where tests are practical
 
 Write the test. Watch it fail. Write the least code that makes it pass.
 
-**The load-bearing step is watching it fail.** A test you never saw fail has not been shown to test anything. It may assert nothing, never execute, mirror the implementation back at itself, or cover behavior that already worked — and a green suite hides all four. The red run is the only evidence that the test can catch the bug you are about to fix.
-
-That step is checked here, not merely asked for — see [Enforcement](#enforcement).
+**The load-bearing step is watching it fail.** A test you never saw fail has not been shown to test anything — it may assert nothing, never execute, mirror the implementation back at itself, or cover behavior that already worked, and a green suite hides all four. This is also why "write the code first, tests after" fails even when it feels equivalent: an after-the-fact test passes on its first run, which proves nothing, and it is shaped by the code that already exists — so it covers the cases you remembered, not the ones a test-first pass would have forced you to discover. Under deadline pressure, "tests after achieve the same purpose" is precisely the rationalization to refuse; the pressure is the reason for the discipline, not the exception to it.
 
 ## The loop
 
-```
-Red           write one failing test
-  ↓
-Verify red    run it; confirm it fails, and fails for the reason you expect
-  ↓
-Green         write the least code that passes it
-  ↓
-Verify green  run it; confirm it passes and nothing else broke
-  ↓
-Refactor      clean up, staying green
-  ↓
-repeat
-```
+Red → verify red → green → verify green → refactor. One behavior per test — a name containing "and" is two tests — and name the behavior, not the function: `retries a failed call three times`, not `test retry`. Write against real code; reach for a mock only when the real dependency is slow or external, and read [writing-good-tests.md](./writing-good-tests.md) before adding one.
 
-## Red — write one failing test
+**Verify red** — the step that gets skipped. Run the test and confirm three things: it *failed* rather than errored (an import error or typo proves nothing about the behavior — fix and re-run until the failure is the assertion); the failure message is the one you predicted (if you can't say in advance what the failure will look like, you don't yet know what the test is for); and it failed because the behavior is missing, not because the test is wrong. If it *passed*, you're testing behavior that already exists — either the assertion is empty or this isn't the test you need. Passed or errored both mean fix the test, not the code.
 
-One behavior per test. A name containing "and" is two tests.
+**Green** — only enough code to pass the test you just watched fail. No options the test didn't ask for, no refactoring of neighbouring code, no improvements noticed along the way — separate cycles. But least code is not *narrowest* code: the test is one example of a rule, so write the rule, not a branch that recognises the example. `if n == 3: return True` passes and generalizes to nothing — a green line bought by moving the bug out of the test's line of sight. Same trap: special-casing the test's fixture path, returning the literal the assertion expects instead of computing it. Fewer options is the goal; fewer inputs handled correctly is not.
 
-Name the behavior, not the function: `retries a failed call three times`, not `test retry`.
+**Verify green** — run again: the test passes, every other test still passes, and the output is clean (no new warnings or stack traces that "don't matter"). If it still fails, fix the code — editing the assertion to match the code you wrote is how a suite stops meaning anything. If the test itself turns out wrong — it asserts something the spec doesn't ask for, or the task can't be done as written — say so and stop. A wrong test is a finding to report, not an obstacle to route around; every route around it (the edited assertion, the special case, the `skip`) leaves a suite that lies.
 
-Write it against real code. Reach for a mock only when the real dependency is slow or external — and read [writing-good-tests.md](./writing-good-tests.md) before adding one.
-
-## Verify red — the step that gets skipped
-
-Run it. Then confirm three things:
-
-1. **It failed rather than errored.** An import error or a typo is not a red phase. Fix it and re-run until the failure is the assertion.
-2. **The failure message is the one you predicted.** If you cannot say in advance what the failure will look like, you do not yet know what the test is for.
-3. **It failed because the behavior is missing**, not because the test is wrong.
-
-Two outcomes mean fix the test, not the code:
-
-- **It passed.** You are testing behavior that already exists. Either the assertion is empty, or the feature is already there and this is not the test you need.
-- **It errored.** An erroring test proves nothing about the behavior.
-
-## Green — the least code that passes
-
-Write only enough to pass the test you just watched fail.
-
-```python
-# enough
-def retry(fn, attempts=3):
-    for i in range(attempts):
-        try:
-            return fn()
-        except Exception:
-            if i == attempts - 1:
-                raise
-
-# too much — nothing asked for backoff, jitter, or a callback
-def retry(fn, attempts=3, backoff="exponential", jitter=True, on_retry=None):
-    ...
-```
-
-No options the test did not ask for, no refactoring of neighbouring code, no improvements you noticed on the way. Those are separate cycles.
-
-**Least code is not narrowest code.** The test is one example of a behavior; write the rule it is an example of, not a branch that recognises the example. `if n == 3: return True` passes and generalizes to nothing — a green line bought by moving the bug out of the test's line of sight.
-
-| Passes the test | Solves the problem |
-|---|---|
-| `if path == "tests/fixtures/a.json"` | handle any path |
-| returning the literal the assertion expects | compute it |
-| a branch keyed on the test's input value | the rule that input is an instance of |
-
-Fewer options is the goal. Fewer inputs handled correctly is not.
-
-## Verify green
-
-Run it again. Confirm:
-
-- The test passes.
-- Every other test still passes.
-- The output is clean — no new warnings, no stack traces that "don't matter".
-
-If it still fails, fix the code. Editing the assertion to match the code you wrote is how a suite stops meaning anything.
-
-If the test itself is wrong — it asserts something the spec does not ask for, or the task cannot be done as written — say so and stop. A wrong test is a finding to report, not an obstacle to route around, and every route around it (the edited assertion, the special case, the `skip`) leaves a suite that lies.
-
-## Refactor
-
-Only once green. Remove duplication, improve names, extract helpers. Add no behavior. Re-run after each step.
+**Refactor** only once green: duplication, names, helpers. No new behavior, re-run after each step.
 
 ## Bug fixes
 
-A bug is a missing test. Reproduce it as a failing test first, then fix it. The test is what stops the bug returning; the red run is what proves the test actually reproduces it.
+A bug is a missing test. Reproduce it as a failing test first, then fix; the test stops the bug returning, and the red run proves the test actually reproduces it. If the cause isn't obvious, invoke `systematic-debugging` first — find the cause, then write the test that captures it. A failing test you just wrote is the red phase, not a bug; don't send it back into debugging.
 
-If the cause is not obvious, invoke `systematic-debugging` first — find the cause, then write the test that captures it. A failing test you just wrote is the red phase, not a bug; do not send it back into debugging.
+## When testing is hard
 
-## When it is hard
-
-| Symptom | What it usually means |
-|---|---|
-| You cannot work out how to test it | Write the call you wish existed, then the assertion. If it still resists, the interface is unclear — a design finding, not a testing problem. |
-| The test needs enormous setup | The unit does too much, or its dependencies are not injectable. |
-| You must mock nearly everything | The code is tightly coupled; mocking around it tests the mocks. |
-| The test is more complex than the code | Simplify the interface, not the test. |
+Difficulty testing is design feedback, not a reason to skip. Can't see how to test it → write the call you wish existed, then the assertion; if it still resists, the interface is unclear — a design finding. Enormous setup → the unit does too much or its dependencies aren't injectable. Mocking nearly everything → the code is tightly coupled, and mocking around it tests the mocks. Test more complex than the code → simplify the interface, not the test.
 
 ## When to relax
 
-- Docs, config, and formatting changes have no behavior to test.
-- Throwaway exploration: fine — then delete it and start the real work with a test.
-- A test that legitimately passes first because the behavior already worked. That happens; say so rather than deleting the test.
-
-Relaxing is a decision to state out loud, not a default.
+Docs, config, and formatting have no behavior to test. Throwaway exploration is fine — then delete it and start the real work with a test. A test that legitimately passes first because the behavior already worked happens — say so rather than deleting it. Relaxing is a decision stated out loud, not a default; "too simple to test," applied silently, is the exception swallowing the rule.
 
 ## Enforcement
 
-The evidence-ledger hook records every test run the harness actually executed, with its exit code. Two things follow, and neither asks anything of you but honesty:
+The evidence-ledger hook records every test run the harness executed, with its exit code. A completion claim naming a test command that never ran green this turn is caught (`orch-verify-gate`), and a turn that changed a test file while the suite was only ever seen green gets flagged — that green-only history is the signature of a test written after the code. Both are notes, not blocks; the exceptions above are real. And the ledger sees exit codes, not reasons — a broken import also exits non-zero — so telling a real red from a broken one remains your job, at verify-red.
 
-- A completion claim naming a test command that never ran green this turn is caught (`orch-verify-gate`).
-- If this turn changed a test file and the suite was only ever seen green — never red — the gate says so. That is the signature of a test written after the code.
+## Output
 
-Both are notes, not blocks; the exceptions above are real. And the ledger sees exit codes, not reasons — a test that failed to import also exits non-zero, so it can tell you the suite was never red, but it cannot tell a real red from a broken one. That distinction is still yours to make, at step 1 above.
-
-## Output shape
+Report both runs — that pair is what makes the cycle legible:
 
 ```
-Changed:
-- src/retry.py:12 — retry() now stops after three attempts
-- tests/test_retry.py — new: stops after three attempts
-
 Verify:
-- `pytest tests/test_retry.py -q` → 1 failed (before the fix)
+- `pytest tests/test_retry.py -q` → 1 failed (before)
 - `pytest tests/test_retry.py -q` → 1 passed (after)
 ```
 
-Report both runs. Two lines, and the cycle is legible.
-
-If verification fails, this is not a `Changed:` reply. Report `Found:` with the failure and what you know about it.
-
-## What not to do
-
-- Writing the code first and the test after. Tests written after pass on the first run, which proves nothing, and they are shaped by the code that already exists — so they cover the cases you remembered rather than the ones you would have discovered.
-- Editing the assertion until it passes.
-- Special-casing the test's own input so the assertion goes green.
-- Asserting on a mock's behavior instead of the code's.
-- Skipping the red run because the test "obviously" fails.
-- Adding tests at the end for coverage. A test that exists to satisfy a number costs maintenance forever and catches nothing.
+If verification fails, the reply is `Found:` with the failure — not `Changed:`.
