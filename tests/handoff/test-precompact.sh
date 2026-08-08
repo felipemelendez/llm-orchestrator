@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Tests for the post-compaction recovery note — the REACTIVE half of Layer 9.
 #
-# Contract (2026-05-31, reactive-only):
-#   - There is no PreCompact hook and no context-pressure hook. When native
-#     compaction fires, session-start.sh runs with source=="compact" and injects
+# Contract (reactive-only; re-verified 2026-08-08):
+#   - Claude Code DOES ship PreCompact and PostCompact hooks (the 2026-05-31
+#     version of this note claimed it shipped neither — that was wrong, and it
+#     was load-bearing for keeping Layer 9 reactive). This suite stays scoped to
+#     the reactive half regardless: PreCompact carries no additionalContext in
+#     hookSpecificOutput, so it cannot inject the recovery note, and adopting it
+#     for anything else is an unmeasured behaviour bet — see docs/MEASUREMENTS.md.
+#   - When native compaction fires, session-start.sh runs with source=="compact" and injects
 #     ONLY a lean recovery note via hookSpecificOutput.additionalContext (no
 #     meta-skill body, to stay under the 10,000-char cap), deriving the newest
 #     handoff artifact path inline (by mtime).

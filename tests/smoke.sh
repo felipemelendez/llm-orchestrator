@@ -184,6 +184,8 @@ if should_run structural; then
             bash "${ROOT}/tests/test-hook-latency.sh"
   check_suite "verify-gate tests pass" "PASS: test-verify-gate" \
             bash "${ROOT}/tests/test-verify-gate.sh"
+  check_suite "claim extractor is locale-independent" "PASS: test-evidence-locale" \
+            bash "${ROOT}/tests/test-evidence-locale.sh"
   check_suite "retry-cap tests pass" "PASS: test-retry-cap" \
             bash "${ROOT}/tests/test-retry-cap.sh"
   check_out "protocol single-source drift tests pass" "PASS: test-protocol-drift" \
