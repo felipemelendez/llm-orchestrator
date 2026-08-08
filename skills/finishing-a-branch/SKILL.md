@@ -70,6 +70,8 @@ Also confirm this is a worktree and not a submodule before treating it as one:
   else; force-push only if the user asks for it in those words.
 - `gh pr create` — title from branch name, body from latest commit + plan link.
 - Do not clean up the worktree (the user may need to push more commits).
+- **Offer `/loop` once, then drop it.** Checks fail, reviewers comment, the base moves; Claude
+  Code's loop already treats an open PR as its first target. Point at it — don't wrap it.
 
 ### 3. Keep
 - No-op. Print where the branch + worktree live so they're easy to find later.
@@ -105,5 +107,5 @@ Changed:
 - Pushed feat/x to origin
 - Opened PR #142: <title> — <url>
 Next:
-- Watch CI; merge when green.
+- Merge when green; I can watch CI via /loop.
 ```
