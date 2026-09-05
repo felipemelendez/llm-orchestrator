@@ -3,7 +3,7 @@
 #
 # Flags constructs that work on Linux+GNU but break on macOS+bash 3.2:
 #   - mapfile / readarray (bash 4+ only)
-#   - associative arrays (declare -A; bash 4+ only)
+#   - associative arrays (declare -A / typeset -A; bash 4+ only)
 #   - <<< herestring with $'\n' (works but worth flagging)
 #   - sed -i without empty-string arg (GNU style; breaks on BSD)
 #   - grep -P (PCRE; GNU-only)
@@ -26,7 +26,10 @@ FAIL=0
 PASS=0
 
 # scan PATTERN DESCRIPTION — fail on a match anywhere a GNU-only construct can
-# break a run. This used to search only scripts/ and hooks/, so its 7 passing
+# break a run. skills/ is scanned too: skills now ship executable scripts of
+# their own (skills/*/scripts/*.sh), and a root that holds runnable code but is
+# not scanned is the same rule-on-one-path-not-its-sibling gap this file exists
+# for. This used to search only scripts/ and hooks/, so its 7 passing
 # checks said nothing about tests/, commands/ or agents/ — and its own
 # tests/-exclusion filters below were dead code (nothing under tests/ was ever
 # searched). The tests matter MOST here: a GNU-only construct in a test is
@@ -35,7 +38,8 @@ scan() {
   local pattern="$1" desc="$2"
   local hits
   hits=$(grep -rEn "$pattern" \
-          "$ROOT/scripts" "$ROOT/hooks" "$ROOT/tests" "$ROOT/commands" "$ROOT/agents" 2>/dev/null \
+          "$ROOT/scripts" "$ROOT/hooks" "$ROOT/tests" "$ROOT/commands" "$ROOT/agents" \
+          "$ROOT/skills" 2>/dev/null \
         | grep -v '\.git/' \
         | grep -v 'tests/test-portability.sh' \
         | grep -v '/README\.md:' \
@@ -55,7 +59,7 @@ scan() {
 warn() {
   local pattern="$1" desc="$2"
   local hits
-  hits=$(grep -rEn "$pattern" "$ROOT/scripts" "$ROOT/hooks" 2>/dev/null \
+  hits=$(grep -rEn "$pattern" "$ROOT/scripts" "$ROOT/hooks" "$ROOT/skills" 2>/dev/null \
         | grep -v '\.git/' \
         | grep -v 'tests/test-portability.sh' \
         || true)
@@ -68,7 +72,7 @@ warn() {
 printf '== Shell portability scan ==\n'
 
 scan 'mapfile|readarray' "No mapfile/readarray (bash 4+; macOS default is 3.2)"
-scan 'declare -A' "No associative arrays (bash 4+)"
+scan 'declare -A|typeset -A' "No associative arrays (declare -A or typeset -A; bash 4+)"
 scan 'grep[[:space:]]+-[A-Za-z]*P' "No grep -P (PCRE; GNU-only)"
 scan 'date[[:space:]]+-d[[:space:]]' "No 'date -d' (GNU-only; use ISO format)"
 scan 'readlink[[:space:]]+-f' "No 'readlink -f' (GNU-only; not portable to BSD/macOS)"
