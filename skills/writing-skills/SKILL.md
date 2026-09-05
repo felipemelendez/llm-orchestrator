@@ -36,7 +36,10 @@ description: Use when <trigger>. Not for <adjacent non-trigger>.
 Two keys. The description is triggers only — the situations and keywords an
 agent would match — never a workflow summary. Measured: a description saying
 "code review between tasks" made agents run one review when the body specified
-two; they followed the description and skipped the body.
+two; they followed the description and skipped the body. The recorded exception
+is the `cadence` skill's five keys: it ships scripts (`allowed-tools`
+pre-approves them) and loads in Codex (`license`, `compatibility` are the
+shared Agent Skills fields).
 
 ## Body budget
 

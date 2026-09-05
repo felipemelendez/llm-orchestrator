@@ -15,7 +15,7 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ```bash
 cd ~/LLM-Orchestrator
-./tests/validate-skills.sh        # → "OK: 18 skills, 14 commands, 7 agents"
+./tests/validate-skills.sh        # → "OK: 19 skills, 14 commands, 7 agents"
 ./tests/test-portability.sh       # → "7 portability checks passed."
 ./tests/test-lib-resolution.sh    # → "PASS: test-lib-resolution (5 checks)"
 ./tests/smoke.sh                  # → "81 checks passed, 1 skipped."
