@@ -63,6 +63,7 @@ The validator checks the `description:` field on every command. Body validation 
 |--------------------|--------------------------------------------------------------------------|
 | `/llm-orchestrator:onboard`         | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. Run this first on an existing project before any feature work. |
 | `/llm-orchestrator:init`            | Add LLM Orchestrator conventions to a project.                          |
+| `/llm-orchestrator:cadence-init`    | Turn the cadence on for a project: detect the toolchain, confirm a `cadence.json`, then write the laws, the marked block, the native deny rules and the git layer, and arm the lock over them. Never overwrites. |
 | `/llm-orchestrator:plan`            | Turn an approved spec into a checklist-shaped plan.                     |
 | `/llm-orchestrator:worktree`        | Create an isolated git worktree.                                        |
 | `/llm-orchestrator:dispatch`        | Run a focused subagent with a constructed context envelope.             |
