@@ -115,6 +115,12 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DETECT="$SELF_DIR/cadence-detect.sh"
 PY="${ORCH_CADENCE_PYTHON:-python3}"
 
+# Automatic background maintenance drops transient lock files into .git and can
+# rewrite objects mid-run — inside a target this gate promises to leave
+# byte-identical, and under a shasum proof that a gc would invalidate. Every
+# git the gate runs, in the target and in the copy, goes through here.
+git() { command git -c gc.auto=0 -c maintenance.auto=false "$@"; }
+
 T0=$(date +%s)
 elapsed() { echo "$(( $(date +%s) - T0 ))s"; }
 

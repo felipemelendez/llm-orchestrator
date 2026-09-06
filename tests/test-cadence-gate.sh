@@ -58,7 +58,11 @@ has()   { grep -qF -- "$2" "$1"; }
 hasre() { grep -qE -- "$2" "$1"; }
 
 snapshot() { # snapshot <dir> <outfile> — every file, content only
-  ( cd "$1" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do
+  # A *.lock under .git is transient by git's own contract: automatic
+  # background maintenance drops .git/objects/maintenance.lock into a
+  # repository mid-run, and counting it would read as a mutation the gate
+  # never made.
+  ( cd "$1" && find . -type f ! -path '*/.git/*.lock' | LC_ALL=C sort | while IFS= read -r f; do
       printf '%s  %s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$f"
     done ) > "$2"
 }
@@ -321,6 +325,44 @@ has "$TMP/gnu.log" 'GATE Started:' && ok "under GNU mktemp semantics the gate st
 [[ "$RC" == "0" ]] && ok "under GNU mktemp semantics the run exits 0, not a refusal" || fail "GNU mktemp exit" "rc=$RC$(printf '\n')$(head -4 "$TMP/gnu.log")"
 GNUSNAP1="$TMP/gnusnap1"; snapshot "$SS" "$GNUSNAP1"
 cmp -s "$GNUSNAP0" "$GNUSNAP1" && ok "the target is byte-identical after the GNU-mktemp run" || fail "gnu target mutated" "$(diff "$GNUSNAP0" "$GNUSNAP1" | head -6)"
+
+# ---------------------------------------------------------------------------
+# Transient git locks. git runs automatic background maintenance on its own and
+# drops .git/objects/maintenance.lock into a repository while the gate is
+# reading it. A lock is transient by git's own contract, so a byte-snapshot of
+# the target must not count one — otherwise the gate is accused of mutating a
+# tree it never wrote to. And the gate must not provoke maintenance at all: a gc
+# rewriting objects mid-run would invalidate its own shasum proof.
+# ---------------------------------------------------------------------------
+echo "== transient git locks in the target =="
+LKSNAP0="$TMP/lksnap0"; snapshot "$SS" "$LKSNAP0"
+mkdir -p "$SS/.git/objects"
+: > "$SS/.git/objects/maintenance.lock"
+: > "$SS/.git/x.lock"
+LKSNAP1="$TMP/lksnap1"; snapshot "$SS" "$LKSNAP1"
+cmp -s "$LKSNAP0" "$LKSNAP1" && ok "a transient .git lock appearing mid-run does not fail the snapshot compare" || fail "lock counted as a mutation" "$(diff "$LKSNAP0" "$LKSNAP1" | head -6)"
+rm -f "$SS/.git/objects/maintenance.lock" "$SS/.git/x.lock"
+
+# Every git the gate runs — against the target and inside the copy — must carry
+# the two switches that keep automatic maintenance from ever starting. A shim on
+# PATH records each invocation's argv.
+REAL_GIT="$(command -v git)"
+mkdir -p "$TMP/gitshim"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'printf "%s\n" "$*" >> "$GITARGV_LOG"'
+  printf '%s\n' "exec $REAL_GIT \"\$@\""
+} > "$TMP/gitshim/git"
+chmod +x "$TMP/gitshim/git"
+: > "$TMP/gitargv.log"
+GITARGV_LOG="$TMP/gitargv.log" TMPDIR="$TMP/mnttmp" PATH="$TMP/gitshim:$PATH" bash "$GATE" "$SS" "$SSBASE" --no-typecheck > "$TMP/mnt.log" 2>&1
+[ -s "$TMP/gitargv.log" ] && ok "the git shim recorded the gate's git invocations" || fail "no git recorded" "the shim log is empty; the rest of this block proves nothing"
+MNT_BAD="$(grep -v -e 'gc\.auto=0' "$TMP/gitargv.log" | head -3)"
+[ -z "$MNT_BAD" ] && ok "every git the gate runs carries -c gc.auto=0" || fail "gc.auto not pinned" "$MNT_BAD"
+MNT_BAD2="$(grep -v -e 'maintenance\.auto=false' "$TMP/gitargv.log" | head -3)"
+[ -z "$MNT_BAD2" ] && ok "every git the gate runs carries -c maintenance.auto=false" || fail "maintenance.auto not pinned" "$MNT_BAD2"
+MNTSNAP="$TMP/mntsnap"; snapshot "$SS" "$MNTSNAP"
+cmp -s "$GNUSNAP0" "$MNTSNAP" && ok "the target is byte-identical after the maintenance-pinned run" || fail "mnt target mutated" "$(diff "$GNUSNAP0" "$MNTSNAP" | head -6)"
 
 # ---------------------------------------------------------------------------
 # Fixture C: the target is a LINKED worktree, whose index lives in the main
