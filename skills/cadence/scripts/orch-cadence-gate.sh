@@ -256,7 +256,14 @@ git -C "$TARGET" merge-base --is-ancestor "$BASE" HEAD 2>/dev/null \
   || refuse "base $BASE is not an ancestor of HEAD in $TARGET (the gate grades a working-tree delta over an ancestor)"
 
 # ---------- config ------------------------------------------------------------
+# GNU mktemp -d refuses when TMPDIR names a directory that does not exist
+# ("failed to create directory via template"); BSD mktemp -d ignores it and
+# falls back to /var/folders. Create it so the gate behaves the same on both.
+if [ -n "${TMPDIR:-}" ] && [ ! -d "$TMPDIR" ]; then
+  mkdir -p "$TMPDIR" || refuse "cannot create TMPDIR $TMPDIR"
+fi
 EARLY="$(mktemp -d)"
+[ -n "$EARLY" ] && [ -d "$EARLY" ] || refuse "cannot create a temporary directory (TMPDIR=${TMPDIR:-<unset>})"
 CFG_SRC=""
 CONFIG_NOTE=""
 if [ -n "$CONFIG_OPT" ]; then

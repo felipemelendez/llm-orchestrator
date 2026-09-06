@@ -294,6 +294,35 @@ SSNAP1="$TMP/ssnap1"; snapshot "$SS" "$SSNAP1"
 cmp -s "$SSNAP0" "$SSNAP1" && ok "the shell-suites target is byte-identical after the run" || fail "ss target mutated" "$(diff "$SSNAP0" "$SSNAP1" | head -6)"
 
 # ---------------------------------------------------------------------------
+# TMPDIR that does not exist yet. Every gate run in this suite sets TMPDIR to a
+# directory nobody created. BSD mktemp -d ignores a missing TMPDIR and falls
+# back to /var/folders; GNU mktemp -d refuses:
+#   mktemp: failed to create directory via template '.../tmp.XXXXXXXXXX'
+# so the gate's first mktemp -d dies on a GNU box and every check that runs the
+# gate goes red there while the same suite is green on a Mac. The shim below
+# gives macOS the GNU rule, so the hole is visible on both.
+# ---------------------------------------------------------------------------
+echo "== a TMPDIR that does not exist yet (GNU mktemp semantics) =="
+REAL_MKTEMP="$(command -v mktemp)"
+mkdir -p "$TMP/gnushim"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'if [ -n "${TMPDIR:-}" ] && [ ! -d "$TMPDIR" ]; then'
+  printf '%s\n' "  echo \"mktemp: failed to create directory via template '\$TMPDIR/tmp.XXXXXXXXXX': No such file or directory\" >&2"
+  printf '%s\n' '  exit 1'
+  printf '%s\n' 'fi'
+  printf '%s\n' "exec $REAL_MKTEMP \"\$@\""
+} > "$TMP/gnushim/mktemp"
+chmod +x "$TMP/gnushim/mktemp"
+GNUSNAP0="$TMP/gnusnap0"; snapshot "$SS" "$GNUSNAP0"
+TMPDIR="$TMP/gnutmp" PATH="$TMP/gnushim:$PATH" bash "$GATE" "$SS" "$SSBASE" --no-typecheck > "$TMP/gnu.log" 2>&1; RC=$?
+[ -d "$TMP/gnutmp" ] && ok "the gate creates a missing TMPDIR before its first mktemp, as GNU mktemp requires" || fail "TMPDIR created" "$TMP/gnutmp still does not exist after the run"
+has "$TMP/gnu.log" 'GATE Started:' && ok "under GNU mktemp semantics the gate still starts" || fail "GNU mktemp start" "$(head -4 "$TMP/gnu.log")"
+[[ "$RC" == "0" ]] && ok "under GNU mktemp semantics the run exits 0, not a refusal" || fail "GNU mktemp exit" "rc=$RC$(printf '\n')$(head -4 "$TMP/gnu.log")"
+GNUSNAP1="$TMP/gnusnap1"; snapshot "$SS" "$GNUSNAP1"
+cmp -s "$GNUSNAP0" "$GNUSNAP1" && ok "the target is byte-identical after the GNU-mktemp run" || fail "gnu target mutated" "$(diff "$GNUSNAP0" "$GNUSNAP1" | head -6)"
+
+# ---------------------------------------------------------------------------
 # Fixture C: the target is a LINKED worktree, whose index lives in the main
 # repository. A copy of it still resolves its index there, so without isolation
 # the very first `git diff` writes the index of a tree the gate was told not to
