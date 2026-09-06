@@ -684,6 +684,37 @@ NSFAM=$(grep '^FAMILIES ' "$TMP/ns.log" | head -1)
   && ok "a red family run whose failing suite printed no summary is digested as 'no summary line'" \
   || fail "passing suite named beside EXIT=1" "$NSFAM"
 
+printf '\n%s== the gate'"'"'s own LC_ALL=C never reaches the suites it runs ==%s\n' "$DIM" "$RESET"
+# SCENE: the gate runs its own greps under LC_ALL=C. A suite it spawns must see
+# the CALLER's locale (here: unset), or a Unicode-aware assertion in that suite
+# goes silent under C and the family run prints a false red. Same class as the
+# GIT_INDEX_FILE leak: gate environment reaching the runner.
+LE="$TMP/localeenv"
+mkdir -p "$LE/scripts" "$LE/tests"
+printf '%s\n' '#!/usr/bin/env bash' 'for t in tests/test-*.sh; do bash "$t" || exit 1; done' > "$LE/tests/run-all.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'le_MARK=old' > "$LE/scripts/le.sh"
+LESEEN="$TMP/leseen.txt"; : > "$LESEEN"
+cat > "$LE/tests/test-le.sh" <<EOS
+#!/usr/bin/env bash
+ROOT="\$(cd "\$(dirname "\$0")/.." && pwd)"
+. "\$ROOT/scripts/le.sh"
+printf 'SUITE_SEES LC_ALL=[%s]\n' "\${LC_ALL-<unset>}" >> "$LESEEN"
+if [ "\${LC_ALL-}" = "C" ]; then echo "0 passed, 1 failed."; exit 1; fi
+echo "PASS: test-le (1 checks)"
+EOS
+( cd "$LE" && git init -q . && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm base ) >/dev/null 2>&1
+LEBASE=$(git -C "$LE" rev-parse HEAD)
+printf '%s\n' '#!/usr/bin/env bash' 'le_MARK=new' > "$LE/scripts/le.sh"
+env -u LC_ALL TMPDIR="$TMP/letmp" bash "$GATE" "$LE" "$LEBASE" --no-typecheck > "$TMP/le.log" 2>&1
+if [[ -s "$LESEEN" ]] && ! grep -qv 'LC_ALL=\[<unset>\]' "$LESEEN"; then
+  ok "a suite the gate runs sees the caller's locale (unset), not the gate's LC_ALL=C"
+else
+  fail "LC_ALL=C leaked into a suite" "$(sort -u "$LESEEN" | head -3)"
+fi
+hasre "$TMP/le.log" '^FAMILIES EXIT=0 ' \
+  && ok "no false family red from the gate's own locale" \
+  || fail "family red under the gate's locale" "$(grep '^FAMILIES' "$TMP/le.log")"
+
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-cadence-gate%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"; exit 0

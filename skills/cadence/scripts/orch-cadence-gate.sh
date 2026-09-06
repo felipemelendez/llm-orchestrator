@@ -78,8 +78,19 @@
 #   Bash 3.2 compatible: no associative arrays, no mapfile, dedup via sorted files.  # portable-ok
 
 set -uo pipefail
+# The gate's OWN greps and seds run under LC_ALL=C so bytes stay bytes. The
+# suites it spawns must see the CALLER's locale instead: a C locale exported
+# into a suite turned one Unicode-arrow assertion silent and printed a false
+# family red. Every spawn goes through spawn_env(), which restores the caller's
+# LC_ALL (or unsets it) and drops the gate's index isolation — the same class
+# of leak the GIT_INDEX_FILE export had, so both are handled in one place.
+_ORCH_CALLER_LC_ALL="${LC_ALL-}"; _ORCH_CALLER_LC_ALL_SET="${LC_ALL+1}"
 LC_ALL=C
 export LC_ALL
+spawn_env() {
+  if [ -n "${_ORCH_CALLER_LC_ALL_SET}" ]; then LC_ALL="${_ORCH_CALLER_LC_ALL}"; export LC_ALL; else unset LC_ALL; fi
+  unset GIT_INDEX_FILE
+}
 # A caller's GIT_INDEX_FILE (a git hook, a nested gate) is never the target's
 # index: inheriting it doubled the inventory and printed a false INDEX_ISOLATED
 # line. The gate reads the copy's own index; the only export of this variable
@@ -396,7 +407,7 @@ case "$IDXPATH" in
      [ -s "$RUNDIR/index.iso" ] || refuse "git could not read the copy: the target's index ($IDXPATH) is missing or empty"
      # The export is for the gate's OWN git calls and nothing else. Every
      # command the gate spawns — the suites, test_cmd, typecheck_cmd,
-     # unused_cmd, install_cmd — runs inside ( unset GIT_INDEX_FILE; … ), or a
+     # unused_cmd, install_cmd — runs inside ( spawn_env; … ), or a
      # suite's own `git init` fixtures would stage into this index and read
      # back the target's entries as their own.
      export GIT_INDEX_FILE="$RUNDIR/index.iso"
@@ -406,7 +417,7 @@ esac
 cd "$WORK" || { echo "cannot enter $WORK"; RC=9; exit 9; }
 
 if [ -n "$INSTALL_CMD" ]; then
-  ( unset GIT_INDEX_FILE; eval "$INSTALL_CMD" ) > "$RUNDIR/install.log" 2>&1
+  ( spawn_env; eval "$INSTALL_CMD" ) > "$RUNDIR/install.log" 2>&1
   echo "INSTALL EXIT=$? [$(elapsed)] log=$RUNDIR/install.log"
 fi
 
@@ -511,11 +522,11 @@ run_suites() { # <logfile> <suite...>  -> the runner's exit code
   if [ "$PROFILE" = "shell-suites" ] && [ -z "$TEST_CMD" ]; then
     for s in "$@"; do
       echo "--- $s" >> "$log"
-      ( unset GIT_INDEX_FILE; bash "$s" ) >> "$log" 2>&1 || rc=1
+      ( spawn_env; bash "$s" ) >> "$log" 2>&1 || rc=1
     done
     return $rc
   fi
-  ( unset GIT_INDEX_FILE; eval "$TEST_CMD \"\$@\"" ) >> "$log" 2>&1
+  ( spawn_env; eval "$TEST_CMD \"\$@\"" ) >> "$log" 2>&1
   return $?
 }
 
@@ -805,7 +816,7 @@ do_typecheck() { # <logfile>
   local log="$1" rc=0 f
   : > "$log"
   if [ -n "$TYPECHECK_CMD" ]; then
-    ( unset GIT_INDEX_FILE; eval "$TYPECHECK_CMD" ) >> "$log" 2>&1
+    ( spawn_env; eval "$TYPECHECK_CMD" ) >> "$log" 2>&1
     return $?
   fi
   if [ "$PROFILE" = "shell-suites" ]; then
@@ -855,7 +866,7 @@ else
   fi
   if [ -n "$UNUSED_CMD" ]; then
     wait_for_quiet
-    ( unset GIT_INDEX_FILE; eval "$UNUSED_CMD" ) > "$RUNDIR/unused.log" 2>&1
+    ( spawn_env; eval "$UNUSED_CMD" ) > "$RUNDIR/unused.log" 2>&1
     echo "UNUSED EXIT=$? [$(elapsed)] log=$RUNDIR/unused.log"
   fi
 fi

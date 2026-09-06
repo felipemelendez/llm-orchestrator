@@ -1,0 +1,24 @@
+name: ci-debug-gate
+on:
+  push:
+    branches: [ci-debug-gate-linux]
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ORCH_REQUIRE_DEPS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: tool versions
+        run: |
+          bash --version | head -1; git --version; python3 --version; sed --version | head -1; grep --version | head -1; awk --version 2>&1 | head -1; cp --version | head -1; mktemp --version | head -1
+      - name: gate suite, full output
+        run: bash tests/test-cadence-gate.sh 2>&1 | tail -400
+      - name: gate suite, first failing check traced
+        if: always()
+        run: |
+          bash -x tests/test-cadence-gate.sh 2>&1 | grep -n -B25 -m1 '✗' | tail -60 || true
+      - name: eval-runner-paths
+        if: always()
+        run: bash tests/test-eval-runner-paths.sh 2>&1 | tail -20 || true
