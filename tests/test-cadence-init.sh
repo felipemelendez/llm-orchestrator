@@ -496,6 +496,15 @@ S4=$(lineof "$OUT" '4. commit what was written')
 if [[ -n "$S1" && -n "$S2" && -n "$S3" && -n "$S4" ]]; then ok "the report carries all four arming steps"; else fail "recipe steps" "1=$S1 2=$S2 3=$S3 4=$S4 out=$(cat "$OUT")"; fi
 if [[ -n "$S1" && -n "$S2" && -n "$S3" && -n "$S4" ]] && (( S1 < S2 && S2 < S3 && S3 < S4 )); then ok "the four steps print in the order they must be run"; else fail "recipe order" "1=$S1 2=$S2 3=$S3 4=$S4"; fi
 has "$OUT" '--lock' && ok "step 2 names the re-lock the placeholder fill makes necessary" || fail "recipe relock" "$(cat "$OUT")"
+# The arming recipe ends where the alarm's last layer lives. The hook only fires
+# in a clone whose hooks are routed; --audit is what holds when the hook was
+# never installed or was stepped past, so the recipe names it as a step rather
+# than leaving it in the docs for a reader who has already stopped reading.
+S5=$(lineof "$OUT" '5. in CI, run .githooks/orch-cadence-check.sh --audit')
+if [[ -n "$S5" ]]; then ok "the recipe carries the CI audit step"; else fail "recipe ci" "$(cat "$OUT")"; fi
+if [[ -n "$S4" && -n "$S5" ]] && (( S4 < S5 )); then ok "and prints it after the commit it audits"; else fail "recipe ci order" "4=$S4 5=$S5"; fi
+has "$OUT" 'in CI, run .githooks/orch-cadence-check.sh --audit HEAD (see docs/install.md, "The lock'"'"'s two layers")' \
+  && ok "and the step names the command and the heading that explains it" || fail "recipe ci text" "$(cat "$OUT")"
 
 printf '\n%s== @AGENTS.md counts only as line 1, exactly ==%s\n' "$DIM" "$RESET"
 # SCENE: given a CLAUDE.md whose first line is @AGENTSXmd (the dot is a regex
@@ -629,6 +638,8 @@ has "$CMDF" 'is a no-op unless' && fail "cmd stale" "the pre-content-rule senten
   || ok "and the pre-content-rule sentence is gone"
 has "$CMDF" 'the script itself keeps every file' && ok "and names the script's own keeping as one reason" || fail "cmd keep" "$(sed -n '105,120p' "$CMDF")"
 has "$CMDF" 'the lock guard refuses edits to the config paths' && ok "and the lock guard as the other" || fail "cmd guard" "$(sed -n '105,120p' "$CMDF")"
+has "$CMDF" 'orch-cadence-check.sh --audit' \
+  && ok "and the command file names the CI audit step the script prints" || fail "cmd ci" "$(sed -n '95,120p' "$CMDF")"
 
 printf '\n%s== the report carries exactly one sandbox tip ==%s\n' "$DIM" "$RESET"
 # SCENE: given any run of init; when the report ends; expect one line telling
@@ -639,6 +650,16 @@ RC=$(run "$TP")
 N=$(grep -cF "sandbox is optional" "$OUT")
 [[ "$N" == "1" ]] && ok "the real run prints exactly one tip line" || fail "tip count" "count=$N out=$(cat "$OUT")"
 has "$OUT" 'deny rules above also bind every subprocess' && ok "the tip says what the sandbox changes" || fail "tip text" "$(grep -F 'tip:' "$OUT")"
+# The pin is the tip line's EXACT text. A tip that says the sandbox exists but
+# not how to reach it leaves the reader with a layer they cannot turn on, and a
+# settings key spelled from memory sends them to a knob Claude Code ignores —
+# so both spellings are pinned literally: the in-session command and the
+# settings.json key, verified against the Claude Code settings reference.
+TIP_EXACT='tip: Claude Code'"'"'s sandbox is optional; turn it on with /sandbox in a session or "sandbox": {"enabled": true} in .claude/settings.json, and the Edit(...) deny rules above also bind every subprocess (see docs/install.md, "The lock'"'"'s two layers")'
+has "$OUT" "$TIP_EXACT" && ok "the tip line reads exactly as pinned" || fail "tip exact" "$(grep -F 'tip:' "$OUT")"
+has "$OUT" '/sandbox in a session' && ok "and names the in-session command that turns it on" || fail "tip cmd" "$(grep -F 'tip:' "$OUT")"
+has "$OUT" '"sandbox": {"enabled": true} in .claude/settings.json' && ok "and the settings key, spelled as the reference spells it" || fail "tip key" "$(grep -F 'tip:' "$OUT")"
+has "$OUT" 'docs/install.md, "The lock'"'"'s two layers"' && ok "and points at the heading that explains both layers" || fail "tip heading" "$(grep -F 'tip:' "$OUT")"
 TP2="$TMP/tip2"; mkrepo "$TP2"
 RC=$(run "$TP2" --dry-run)
 [[ "$(grep -cF "sandbox is optional" "$OUT")" == "1" ]] && ok "--dry-run prints it too" || fail "tip dry" "$(cat "$OUT")"
@@ -1147,6 +1168,10 @@ has "$U1/.gitignore" 'AGENTS.md.bak*' && ok ".gitignore gains the section-backup
 has "$OUT" 'this run replaced an ORCH:LAWS section' && ok "the recipe says what this run did, not that the project is unarmed" || fail "u1 recipe head" "$(cat "$OUT")"
 has "$OUT" 'NUMBERED RULING' && ok "and demands a numbered ruling in the commit message" || fail "u1 recipe" "$(cat "$OUT")"
 has "$OUT" 'rewrote a section the manifest covers' && ok "and orders the re-lock under the unlock before it" || fail "u1 relock" "$(cat "$OUT")"
+# The already-armed recipe is a different branch with different numbering, and
+# a step added to one arm only is a step half the readers never see.
+has "$OUT" 'in CI, run .githooks/orch-cadence-check.sh --audit HEAD' \
+  && ok "and the replacement recipe carries the CI audit step too" || fail "u1 ci" "$(cat "$OUT")"
 
 # Idempotence: a second run finds the interior equal, so it keeps and makes no
 # second backup — without this the .bak.N scheme grows one file per run.

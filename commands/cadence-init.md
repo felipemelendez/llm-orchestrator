@@ -104,8 +104,11 @@ Next:
 The recipe the script prints is ordered, and the order is load-bearing: fill in
 the `<PLACEHOLDER>`s, re-lock under `ORCH_CADENCE_UNLOCK=1` (the fill changed
 the laws after this run's manifest), route the clone's hooks, then make the
-arming commit. Relay it as printed — a commit made before the re-lock meets the
-hook's refusal.
+arming commit. Its last step is the CI one: run
+`.githooks/orch-cadence-check.sh --audit HEAD` in the project's pipeline, which
+is the layer that still speaks when a clone's hooks were never routed. Relay
+the recipe as printed — a commit made before the re-lock meets the hook's
+refusal.
 
 ## Constraints
 

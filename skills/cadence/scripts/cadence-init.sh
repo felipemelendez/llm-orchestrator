@@ -193,9 +193,11 @@ emit() { # <verb> <path> [<suffix>]
 
 # One line, printed and never written into the project: the deny rules are a
 # permission layer over the agent's own tools, and whether they also reach a
-# command the agent spawns depends on a setting this script does not own.
+# command the agent spawns depends on a setting this script does not own. It
+# names both ways to turn that setting on, because a tip that says a second
+# layer exists without saying how to reach it costs the reader the layer.
 print_tip() {
-  echo "tip: Claude Code's sandbox is optional; when it is enabled, the Edit(...) deny rules above also bind every subprocess (see docs/install.md, \"The lock's three layers\")"
+  echo "tip: Claude Code's sandbox is optional; turn it on with /sandbox in a session or \"sandbox\": {\"enabled\": true} in .claude/settings.json, and the Edit(...) deny rules above also bind every subprocess (see docs/install.md, \"The lock's two layers\")"
 }
 
 # The block the cadence writes into AGENTS.md. It lives in templates/ in the
@@ -909,5 +911,9 @@ if [ "$IS_GIT" = "1" ]; then
   else
     echo "  $STEP. commit what was written — this first commit needs no numbered ruling: git add -A && git commit -m \"arm the cadence\""
   fi
+  # The last layer of the alarm, and the only one that still speaks in a clone
+  # whose hooks were never routed or whose commit stepped past them.
+  STEP=$((STEP+1))
+  echo "  $STEP. in CI, run .githooks/orch-cadence-check.sh --audit HEAD (see docs/install.md, \"The lock's two layers\")"
 fi
 exit 0
