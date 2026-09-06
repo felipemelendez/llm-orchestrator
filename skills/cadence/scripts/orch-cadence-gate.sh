@@ -78,8 +78,19 @@
 #   Bash 3.2 compatible: no associative arrays, no mapfile, dedup via sorted files.  # portable-ok
 
 set -uo pipefail
+# The gate's OWN greps and seds run under LC_ALL=C so bytes stay bytes. The
+# suites it spawns must see the CALLER's locale instead: a C locale exported
+# into a suite turned one Unicode-arrow assertion silent and printed a false
+# family red. Every spawn goes through spawn_env(), which restores the caller's
+# LC_ALL (or unsets it) and drops the gate's index isolation — the same class
+# of leak the GIT_INDEX_FILE export had, so both are handled in one place.
+_ORCH_CALLER_LC_ALL="${LC_ALL-}"; _ORCH_CALLER_LC_ALL_SET="${LC_ALL+1}"
 LC_ALL=C
 export LC_ALL
+spawn_env() {
+  if [ -n "${_ORCH_CALLER_LC_ALL_SET}" ]; then LC_ALL="${_ORCH_CALLER_LC_ALL}"; export LC_ALL; else unset LC_ALL; fi
+  unset GIT_INDEX_FILE
+}
 # A caller's GIT_INDEX_FILE (a git hook, a nested gate) is never the target's
 # index: inheriting it doubled the inventory and printed a false INDEX_ISOLATED
 # line. The gate reads the copy's own index; the only export of this variable
@@ -103,6 +114,12 @@ ALLFILES=""
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DETECT="$SELF_DIR/cadence-detect.sh"
 PY="${ORCH_CADENCE_PYTHON:-python3}"
+
+# Automatic background maintenance drops transient lock files into .git and can
+# rewrite objects mid-run — inside a target this gate promises to leave
+# byte-identical, and under a shasum proof that a gc would invalidate. Every
+# git the gate runs, in the target and in the copy, goes through here.
+git() { command git -c gc.auto=0 -c maintenance.auto=false "$@"; }
 
 T0=$(date +%s)
 elapsed() { echo "$(( $(date +%s) - T0 ))s"; }
@@ -245,7 +262,14 @@ git -C "$TARGET" merge-base --is-ancestor "$BASE" HEAD 2>/dev/null \
   || refuse "base $BASE is not an ancestor of HEAD in $TARGET (the gate grades a working-tree delta over an ancestor)"
 
 # ---------- config ------------------------------------------------------------
+# GNU mktemp -d refuses when TMPDIR names a directory that does not exist
+# ("failed to create directory via template"); BSD mktemp -d ignores it and
+# falls back to /var/folders. Create it so the gate behaves the same on both.
+if [ -n "${TMPDIR:-}" ] && [ ! -d "$TMPDIR" ]; then
+  mkdir -p "$TMPDIR" || refuse "cannot create TMPDIR $TMPDIR"
+fi
 EARLY="$(mktemp -d)"
+[ -n "$EARLY" ] && [ -d "$EARLY" ] || refuse "cannot create a temporary directory (TMPDIR=${TMPDIR:-<unset>})"
 CFG_SRC=""
 CONFIG_NOTE=""
 if [ -n "$CONFIG_OPT" ]; then
@@ -396,7 +420,7 @@ case "$IDXPATH" in
      [ -s "$RUNDIR/index.iso" ] || refuse "git could not read the copy: the target's index ($IDXPATH) is missing or empty"
      # The export is for the gate's OWN git calls and nothing else. Every
      # command the gate spawns — the suites, test_cmd, typecheck_cmd,
-     # unused_cmd, install_cmd — runs inside ( unset GIT_INDEX_FILE; … ), or a
+     # unused_cmd, install_cmd — runs inside ( spawn_env; … ), or a
      # suite's own `git init` fixtures would stage into this index and read
      # back the target's entries as their own.
      export GIT_INDEX_FILE="$RUNDIR/index.iso"
@@ -406,7 +430,7 @@ esac
 cd "$WORK" || { echo "cannot enter $WORK"; RC=9; exit 9; }
 
 if [ -n "$INSTALL_CMD" ]; then
-  ( unset GIT_INDEX_FILE; eval "$INSTALL_CMD" ) > "$RUNDIR/install.log" 2>&1
+  ( spawn_env; eval "$INSTALL_CMD" ) > "$RUNDIR/install.log" 2>&1
   echo "INSTALL EXIT=$? [$(elapsed)] log=$RUNDIR/install.log"
 fi
 
@@ -511,11 +535,11 @@ run_suites() { # <logfile> <suite...>  -> the runner's exit code
   if [ "$PROFILE" = "shell-suites" ] && [ -z "$TEST_CMD" ]; then
     for s in "$@"; do
       echo "--- $s" >> "$log"
-      ( unset GIT_INDEX_FILE; bash "$s" ) >> "$log" 2>&1 || rc=1
+      ( spawn_env; bash "$s" ) >> "$log" 2>&1 || rc=1
     done
     return $rc
   fi
-  ( unset GIT_INDEX_FILE; eval "$TEST_CMD \"\$@\"" ) >> "$log" 2>&1
+  ( spawn_env; eval "$TEST_CMD \"\$@\"" ) >> "$log" 2>&1
   return $?
 }
 
@@ -805,7 +829,7 @@ do_typecheck() { # <logfile>
   local log="$1" rc=0 f
   : > "$log"
   if [ -n "$TYPECHECK_CMD" ]; then
-    ( unset GIT_INDEX_FILE; eval "$TYPECHECK_CMD" ) >> "$log" 2>&1
+    ( spawn_env; eval "$TYPECHECK_CMD" ) >> "$log" 2>&1
     return $?
   fi
   if [ "$PROFILE" = "shell-suites" ]; then
@@ -855,7 +879,7 @@ else
   fi
   if [ -n "$UNUSED_CMD" ]; then
     wait_for_quiet
-    ( unset GIT_INDEX_FILE; eval "$UNUSED_CMD" ) > "$RUNDIR/unused.log" 2>&1
+    ( spawn_env; eval "$UNUSED_CMD" ) > "$RUNDIR/unused.log" 2>&1
     echo "UNUSED EXIT=$? [$(elapsed)] log=$RUNDIR/unused.log"
   fi
 fi

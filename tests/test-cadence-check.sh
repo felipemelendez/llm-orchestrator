@@ -541,6 +541,60 @@ run "$OE2" --lock >/dev/null
 printf 'preamble\nthe project law: never rewrite history\n<!-- ORCH:LAWS:END -->\ntail\n' > "$OE2/CLAUDE.md"
 RC=$(run "$OE2" --verdict)
 if [[ "$RC" == "0" ]] && has "$OUT" 'CLAUDE.md#ORCH:LAWS (orphan end marker)'; then ok "--verdict names an orphan END marker for what it is"; else fail "orphan END verdict" "rc=$RC out=$(cat "$OUT")"; fi
+
+printf '\n%s== the skips suffix on --verdict ==%s\n' "$DIM" "$RESET"
+SK="$TMP/skips"; mkproj "$SK"
+( cd "$SK" && git init -q . ) >/dev/null 2>&1
+run "$SK" --lock >/dev/null
+RC=$(run "$SK" --verdict)
+BEFORE=$(cat "$OUT")
+if [[ "$RC" == "0" ]] && ! has "$OUT" 'skips:'; then
+  ok "no CADENCE_STATE.md → the verdict line carries no skips suffix"
+else fail "skips suffix absent" "rc=$RC out=$(cat "$OUT")"; fi
+mkdir -p "$SK/docs/llm-orchestrator/notes"
+printf '# state\n\nskip: T1 review — the diff is one comment\nnote: not a skip\nskip: T2 refuter — under the threshold\n' \
+  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
+RC=$(run "$SK" --verdict)
+if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 2'; then
+  ok "a state file with two skip: lines → ' · skips: 2'"
+else fail "skips count" "rc=$RC out=$(cat "$OUT")"; fi
+if [[ "$(cat "$OUT")" == "${BEFORE} · skips: 2" ]]; then
+  ok "the suffix is appended and the rest of the line is unchanged byte for byte"
+else fail "skips suffix shape" "before=[$BEFORE] after=[$(cat "$OUT")]"; fi
+printf '# state\n\nnothing skipped yet\n' > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
+RC=$(run "$SK" --verdict)
+if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 0'; then
+  ok "a state file with no skip: lines → ' · skips: 0'"
+else fail "skips zero" "rc=$RC out=$(cat "$OUT")"; fi
+printf 'skip: only at the start of a line counts\n  skip: indented is not a skip\n' \
+  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
+RC=$(run "$SK" --verdict)
+if has "$OUT" ' · skips: 1'; then ok "only a line BEGINNING skip: is counted"; else fail "skips anchor" "out=$(cat "$OUT")"; fi
+# notes_dir comes from cadence.json, not from a hardcoded path.
+ND="$TMP/skipsnd"; mkproj "$ND"
+printf '%s\n' '{ "schema": 1, "enabled": true, "notes_dir": "evidence",' \
+  '  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:", "lock_extra": [] }' > "$ND/docs/llm-orchestrator/cadence.json"
+( cd "$ND" && git init -q . ) >/dev/null 2>&1
+run "$ND" --lock >/dev/null
+mkdir -p "$ND/evidence"
+# R4-16: a skip is live until a later re-armed:/expired: line names the SAME
+# stage and the SAME class.
+printf 'skip: gate seat · class CODE · rows T1\nskip: refuter · class PROSE · rows T2\nre-armed: gate seat · class CODE · by T3\nexpired: refuter · class PROSE\n' \
+  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
+RC=$(run "$SK" --verdict)
+if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 0'; then
+  ok "two skips, one re-armed and one expired -> skips: 0"
+else fail "cancelled skips are still counted" "rc=$RC out=$(cat "$OUT")"; fi
+printf 'skip: gate seat · class CODE · rows T1\nskip: refuter · class PROSE · rows T2\nre-armed: gate seat · class CODE · by T3\n' \
+  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
+RC=$(run "$SK" --verdict)
+if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 1'; then
+  ok "one live skip beside a re-armed one -> skips: 1"
+else fail "a live skip is not counted" "rc=$RC out=$(cat "$OUT")"; fi
+
+printf 'skip: one\nskip: two\nskip: three\n' > "$ND/evidence/CADENCE_STATE.md"
+RC=$(run "$ND" --verdict)
+if has "$OUT" ' · skips: 3'; then ok "the state file is read from the configured notes_dir"; else fail "skips notes_dir" "out=$(cat "$OUT")"; fi
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-cadence-check%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"; exit 0

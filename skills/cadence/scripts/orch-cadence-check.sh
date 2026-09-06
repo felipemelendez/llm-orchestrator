@@ -441,8 +441,38 @@ mode_verdict() {
     cmp -s "$TMPD/headcfg" "$CFG_FILE" || line="$line · config differs from HEAD"
   fi
   unlock_env && line="$line · UNLOCKED"
+  # The skips a session has applied, when the session has a state file to
+  # record them in. With no state file the verdict line is unchanged byte for
+  # byte — a fresh project must not be told "skips: 0" on its first turn.
+  local sdir sfile
+  sdir=$(cfg_scalar notes_dir); [ -n "$sdir" ] || sdir="docs/llm-orchestrator/notes"
+  sfile="$ROOT_DIR/$sdir/CADENCE_STATE.md"
+  if [ -f "$sfile" ]; then
+    line="$line · skips: $(live_skips "$sfile")"
+  fi
   printf '%s\n' "${line:0:300}"
   return 0
+}
+
+# A skip is live until a later `re-armed:` or `expired:` line names the SAME
+# stage and the SAME class. Counting every `skip:` line reported skips that had
+# already been cancelled, which is the opposite of what the number is for.
+live_skips() { # <state file>
+  awk '
+    function key(l,   stage, cls) {
+      sub(/^[a-z-]+:[[:space:]]*/, "", l)
+      stage = l; sub(/[[:space:]]*\xc2\xb7.*$/, "", stage)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", stage)
+      cls = ""
+      if (match(l, /class[[:space:]]+[A-Za-z0-9_-]+/)) {
+        cls = substr(l, RSTART, RLENGTH); sub(/^class[[:space:]]+/, "", cls)
+      }
+      return stage "\034" cls
+    }
+    /^skip:/            { k = key($0); n[k]++; next }
+    /^re-armed:|^expired:/ { k = key($0); n[k] = 0; next }
+    END { t = 0; for (k in n) t += n[k]; print t }
+  ' "$1" 2>/dev/null || printf '0'
 }
 
 mode_lock() {

@@ -58,7 +58,11 @@ has()   { grep -qF -- "$2" "$1"; }
 hasre() { grep -qE -- "$2" "$1"; }
 
 snapshot() { # snapshot <dir> <outfile> — every file, content only
-  ( cd "$1" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do
+  # A *.lock under .git is transient by git's own contract: automatic
+  # background maintenance drops .git/objects/maintenance.lock into a
+  # repository mid-run, and counting it would read as a mutation the gate
+  # never made.
+  ( cd "$1" && find . -type f ! -path '*/.git/*.lock' | LC_ALL=C sort | while IFS= read -r f; do
       printf '%s  %s\n' "$(shasum -a 256 "$f" | awk '{print $1}')" "$f"
     done ) > "$2"
 }
@@ -292,6 +296,73 @@ else fail "shell control marker" "$(grep -i -A1 control "$LOG")"; fi
 [[ "$RC" == "0" ]] && ok "the shell-suites run exits 0" || fail "shell-suites exit" "rc=$RC$(printf '\n')$(tail -12 "$LOG")"
 SSNAP1="$TMP/ssnap1"; snapshot "$SS" "$SSNAP1"
 cmp -s "$SSNAP0" "$SSNAP1" && ok "the shell-suites target is byte-identical after the run" || fail "ss target mutated" "$(diff "$SSNAP0" "$SSNAP1" | head -6)"
+
+# ---------------------------------------------------------------------------
+# TMPDIR that does not exist yet. Every gate run in this suite sets TMPDIR to a
+# directory nobody created. BSD mktemp -d ignores a missing TMPDIR and falls
+# back to /var/folders; GNU mktemp -d refuses:
+#   mktemp: failed to create directory via template '.../tmp.XXXXXXXXXX'
+# so the gate's first mktemp -d dies on a GNU box and every check that runs the
+# gate goes red there while the same suite is green on a Mac. The shim below
+# gives macOS the GNU rule, so the hole is visible on both.
+# ---------------------------------------------------------------------------
+echo "== a TMPDIR that does not exist yet (GNU mktemp semantics) =="
+REAL_MKTEMP="$(command -v mktemp)"
+mkdir -p "$TMP/gnushim"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'if [ -n "${TMPDIR:-}" ] && [ ! -d "$TMPDIR" ]; then'
+  printf '%s\n' "  echo \"mktemp: failed to create directory via template '\$TMPDIR/tmp.XXXXXXXXXX': No such file or directory\" >&2"
+  printf '%s\n' '  exit 1'
+  printf '%s\n' 'fi'
+  printf '%s\n' "exec $REAL_MKTEMP \"\$@\""
+} > "$TMP/gnushim/mktemp"
+chmod +x "$TMP/gnushim/mktemp"
+GNUSNAP0="$TMP/gnusnap0"; snapshot "$SS" "$GNUSNAP0"
+TMPDIR="$TMP/gnutmp" PATH="$TMP/gnushim:$PATH" bash "$GATE" "$SS" "$SSBASE" --no-typecheck > "$TMP/gnu.log" 2>&1; RC=$?
+[ -d "$TMP/gnutmp" ] && ok "the gate creates a missing TMPDIR before its first mktemp, as GNU mktemp requires" || fail "TMPDIR created" "$TMP/gnutmp still does not exist after the run"
+has "$TMP/gnu.log" 'GATE Started:' && ok "under GNU mktemp semantics the gate still starts" || fail "GNU mktemp start" "$(head -4 "$TMP/gnu.log")"
+[[ "$RC" == "0" ]] && ok "under GNU mktemp semantics the run exits 0, not a refusal" || fail "GNU mktemp exit" "rc=$RC$(printf '\n')$(head -4 "$TMP/gnu.log")"
+GNUSNAP1="$TMP/gnusnap1"; snapshot "$SS" "$GNUSNAP1"
+cmp -s "$GNUSNAP0" "$GNUSNAP1" && ok "the target is byte-identical after the GNU-mktemp run" || fail "gnu target mutated" "$(diff "$GNUSNAP0" "$GNUSNAP1" | head -6)"
+
+# ---------------------------------------------------------------------------
+# Transient git locks. git runs automatic background maintenance on its own and
+# drops .git/objects/maintenance.lock into a repository while the gate is
+# reading it. A lock is transient by git's own contract, so a byte-snapshot of
+# the target must not count one — otherwise the gate is accused of mutating a
+# tree it never wrote to. And the gate must not provoke maintenance at all: a gc
+# rewriting objects mid-run would invalidate its own shasum proof.
+# ---------------------------------------------------------------------------
+echo "== transient git locks in the target =="
+LKSNAP0="$TMP/lksnap0"; snapshot "$SS" "$LKSNAP0"
+mkdir -p "$SS/.git/objects"
+: > "$SS/.git/objects/maintenance.lock"
+: > "$SS/.git/x.lock"
+LKSNAP1="$TMP/lksnap1"; snapshot "$SS" "$LKSNAP1"
+cmp -s "$LKSNAP0" "$LKSNAP1" && ok "a transient .git lock appearing mid-run does not fail the snapshot compare" || fail "lock counted as a mutation" "$(diff "$LKSNAP0" "$LKSNAP1" | head -6)"
+rm -f "$SS/.git/objects/maintenance.lock" "$SS/.git/x.lock"
+
+# Every git the gate runs — against the target and inside the copy — must carry
+# the two switches that keep automatic maintenance from ever starting. A shim on
+# PATH records each invocation's argv.
+REAL_GIT="$(command -v git)"
+mkdir -p "$TMP/gitshim"
+{
+  printf '%s\n' '#!/usr/bin/env bash'
+  printf '%s\n' 'printf "%s\n" "$*" >> "$GITARGV_LOG"'
+  printf '%s\n' "exec $REAL_GIT \"\$@\""
+} > "$TMP/gitshim/git"
+chmod +x "$TMP/gitshim/git"
+: > "$TMP/gitargv.log"
+GITARGV_LOG="$TMP/gitargv.log" TMPDIR="$TMP/mnttmp" PATH="$TMP/gitshim:$PATH" bash "$GATE" "$SS" "$SSBASE" --no-typecheck > "$TMP/mnt.log" 2>&1
+[ -s "$TMP/gitargv.log" ] && ok "the git shim recorded the gate's git invocations" || fail "no git recorded" "the shim log is empty; the rest of this block proves nothing"
+MNT_BAD="$(grep -v -e 'gc\.auto=0' "$TMP/gitargv.log" | head -3)"
+[ -z "$MNT_BAD" ] && ok "every git the gate runs carries -c gc.auto=0" || fail "gc.auto not pinned" "$MNT_BAD"
+MNT_BAD2="$(grep -v -e 'maintenance\.auto=false' "$TMP/gitargv.log" | head -3)"
+[ -z "$MNT_BAD2" ] && ok "every git the gate runs carries -c maintenance.auto=false" || fail "maintenance.auto not pinned" "$MNT_BAD2"
+MNTSNAP="$TMP/mntsnap"; snapshot "$SS" "$MNTSNAP"
+cmp -s "$GNUSNAP0" "$MNTSNAP" && ok "the target is byte-identical after the maintenance-pinned run" || fail "mnt target mutated" "$(diff "$GNUSNAP0" "$MNTSNAP" | head -6)"
 
 # ---------------------------------------------------------------------------
 # Fixture C: the target is a LINKED worktree, whose index lives in the main
@@ -683,6 +754,37 @@ NSFAM=$(grep '^FAMILIES ' "$TMP/ns.log" | head -1)
 [[ "$NSFAM" == *"EXIT=1"* && "$NSFAM" == *"no summary line"* && "$NSFAM" != *"PASS: test-zzz"* ]] \
   && ok "a red family run whose failing suite printed no summary is digested as 'no summary line'" \
   || fail "passing suite named beside EXIT=1" "$NSFAM"
+
+printf '\n%s== the gate'"'"'s own LC_ALL=C never reaches the suites it runs ==%s\n' "$DIM" "$RESET"
+# SCENE: the gate runs its own greps under LC_ALL=C. A suite it spawns must see
+# the CALLER's locale (here: unset), or a Unicode-aware assertion in that suite
+# goes silent under C and the family run prints a false red. Same class as the
+# GIT_INDEX_FILE leak: gate environment reaching the runner.
+LE="$TMP/localeenv"
+mkdir -p "$LE/scripts" "$LE/tests"
+printf '%s\n' '#!/usr/bin/env bash' 'for t in tests/test-*.sh; do bash "$t" || exit 1; done' > "$LE/tests/run-all.sh"
+printf '%s\n' '#!/usr/bin/env bash' 'le_MARK=old' > "$LE/scripts/le.sh"
+LESEEN="$TMP/leseen.txt"; : > "$LESEEN"
+cat > "$LE/tests/test-le.sh" <<EOS
+#!/usr/bin/env bash
+ROOT="\$(cd "\$(dirname "\$0")/.." && pwd)"
+. "\$ROOT/scripts/le.sh"
+printf 'SUITE_SEES LC_ALL=[%s]\n' "\${LC_ALL-<unset>}" >> "$LESEEN"
+if [ "\${LC_ALL-}" = "C" ]; then echo "0 passed, 1 failed."; exit 1; fi
+echo "PASS: test-le (1 checks)"
+EOS
+( cd "$LE" && git init -q . && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm base ) >/dev/null 2>&1
+LEBASE=$(git -C "$LE" rev-parse HEAD)
+printf '%s\n' '#!/usr/bin/env bash' 'le_MARK=new' > "$LE/scripts/le.sh"
+env -u LC_ALL TMPDIR="$TMP/letmp" bash "$GATE" "$LE" "$LEBASE" --no-typecheck > "$TMP/le.log" 2>&1
+if [[ -s "$LESEEN" ]] && ! grep -qv 'LC_ALL=\[<unset>\]' "$LESEEN"; then
+  ok "a suite the gate runs sees the caller's locale (unset), not the gate's LC_ALL=C"
+else
+  fail "LC_ALL=C leaked into a suite" "$(sort -u "$LESEEN" | head -3)"
+fi
+hasre "$TMP/le.log" '^FAMILIES EXIT=0 ' \
+  && ok "no false family red from the gate's own locale" \
+  || fail "family red under the gate's locale" "$(grep '^FAMILIES' "$TMP/le.log")"
 
 printf '\n'
 if (( FAIL == 0 )); then

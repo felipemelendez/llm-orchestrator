@@ -285,7 +285,7 @@ unclosed section is how a locked one gets shadowed), plus anything the project
 lists in `lock_extra`. `LOCK.sha256` is not in its own manifest — a file cannot
 record its own hash; the deny rule and the guard hold it.
 
-**Three layers, in this order of trust.**
+**Two layers, in this order of trust.**
 
 **Layer 1 — the native `Edit(...)` deny rules** in `.claude/settings.json`. The
 primary: deny beats every hook and every allow rule at every scope. They cover the
@@ -295,26 +295,19 @@ session, what they cover on its machine; with Claude Code's sandbox enabled they
 bind every subprocess too, and the plugin never enables it for anyone. What they
 do not catch: a write from a subprocess where that sandbox is off.
 
-**Layer 2 — the shell guard**: a mention rule that knows no tool's grammar. A
-command naming a locked path is refused unless its command word is a known reader;
-a mover naming a lock directory or a folder above one is refused; a change of
-directory into a lock folder, with any non-reader in the command, is refused;
-links are followed before the decision; a command it cannot parse — variables,
-subshells, interpreters — is judged on its raw text. The word lists are short,
-closed, and kept in the guard's own header rather than here, and every refusal
-names the path and the way out. What it does not catch: a command that names no
-path at all.
+**Layer 2 — the alarm**, the guarantee that a change is seen: the end-of-turn
+verdict, the session-start line, the git `commit-msg` hook and `--audit` in CI.
+It stops nothing; it names a change after the fact — at the end of the turn, at
+the next session start, at the commit where the hook is installed and not
+skipped, and in CI through `--audit`, which is what holds when a hook was skipped
+or never installed. What it does not catch: it never prevents a write.
 
-**Layer 3 — the guarantee** that a change is seen: the end-of-turn verdict, the
-session-start line, the git `commit-msg` hook and `--audit` in CI. It stops
-nothing; it names a change after the fact — at the end of the turn, at the next
-session start, at the commit where the hook is installed and not skipped, and in
-CI through `--audit`, which is what holds when a hook was skipped or never
-installed. What it does not catch: it never prevents a write, only records one.
-**The boundary:** a careless write fails at once and loudly, but a determined
-agent that computes a path, extracts an archive or writes through a link outside
-the tree gets past layers 1 and 2 — a command that names nothing is a command
-neither can see — and layer 3 is what names it afterwards.
+**The boundary:** a careless write fails at once and loudly, but a write the deny
+rules do not stop — a computed path, an archive, an interpreter, a script that
+opens the file itself — happens, and layer 2 is what names it: at the end of that
+turn, at the next session start, and at the commit, which is refused. A shell
+guard that judged each command by its text was tried and removed; text matching
+cannot be made tight, and the alarm already named what it caught.
 
 An amendment is a commit that satisfies all three: its message carries
 `Ruling <N>`, greater than the highest ruling number in the laws; the staged
@@ -463,10 +456,9 @@ State this plainly wherever the cadence is described:
   framing, and it is right. A determined agent, a novel command spelling, or a
   harness that does not run hooks all defeat them.
 - A native deny rule beats every hook and every allow rule at every scope: layer
-  1, the deny rules, is the primary lock inside Claude Code; layer 2, the shell
-  guard, is the backstop; layer 3 — the verdict, the session line, the
-  `commit-msg` hook and `--audit` — is the record that names what both let
-  through, after the fact.
+  1, the deny rules, is the primary lock inside Claude Code; layer 2 — the
+  verdict, the session line, the `commit-msg` hook and `--audit` — is the record
+  that names what layer 1 let through, after the fact.
 - The git `commit-msg` layer is what holds **across tools and in CI** — but
   only after `git config core.hooksPath .githooks` is run in each clone, and
   git's own skip flag steps past it, as do `cherry-pick` and `rebase` picks.

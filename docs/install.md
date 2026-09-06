@@ -82,7 +82,9 @@ This uses the plugin schema directly; no settings.json edits needed.
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-destructive-git.sh" }
         ] },
       { "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" }] }
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" }] },
+      { "matcher": "Agent|Task",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-dispatch-model.sh" }] }
     ],
     "PostToolUse": [
       { "matcher": "Skill",
@@ -108,7 +110,8 @@ This uses the plugin schema directly; no settings.json edits needed.
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-stop.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-protocol-grader.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-verify-gate.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-retry-cap.sh" }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-retry-cap.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-cadence-stop.sh" }
         ] }
     ]
   }
@@ -169,7 +172,9 @@ Disable individual hooks without changing profile (comma-separated):
 export ORCH_DISABLED_HOOKS=orch-guard,orch-research-gate
 ```
 
-Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-stop`.
+Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-stop`, `orch-dispatch-model`, `orch-cadence-stop`.
+
+No cadence hook is exempt from this list. The three that run in cadence mode — the session-start line (`orch-session-start`), the end-of-turn verdict (`orch-cadence-stop`) and the dispatch-model guard (`orch-dispatch-model`) — are each nameable here, and each is inert in any project without a `docs/llm-orchestrator/cadence.json` that says `"enabled": true`, so there is nothing to disable until you opt in. `ORCH_CADENCE_UNLOCK=1` is not an off switch for them: it is the cadence's own unlock, described under "Escape hatches for the hard guards" below.
 
 ## Escape hatches for the hard guards
 
@@ -187,6 +192,29 @@ An inline `ORCH_ALLOW_DESTRUCTIVE_GIT=1 git …` prefix in the command being run
 export ORCH_ALLOW_CONFIG_EDIT=1
 ```
 
+`ORCH_CADENCE_UNLOCK=1` is not a hook hatch at all — it is the cadence's own unlock, and it belongs on this page because people look for it here. In a project that has opted in, the locked set is that project's laws, its `cadence.json`, its `LOCK.sha256`, its `.claude/settings.json`, anything under `.githooks/`, and the marked `ORCH:LAWS` section of `CLAUDE.md` and `AGENTS.md`; the `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json` hold that set, and an amendment has to be able to rewrite it on purpose. Two programs read the variable: `cadence-init`, which will otherwise keep a file it would have replaced, and `orch-cadence-check.sh --lock`, which will otherwise refuse to overwrite an existing manifest. The rest of `CLAUDE.md` and `AGENTS.md` stays writable either way, so `/llm-orchestrator:remember`, `/llm-orchestrator:onboard` and `/llm-orchestrator:forget` keep working.
+
+The unlock is one variable, and it is deliberately awkward to make permanent:
+
+```
+ORCH_CADENCE_UNLOCK=1 claude
+```
+
+Set it in the environment for the one session that needs it — **never in a settings file**. If `.claude/settings.json`, `.claude/settings.local.json` or `~/.claude/settings.json` contains the string `ORCH_CADENCE_UNLOCK`, the unlock is refused, the run names the file that refused it, and the lock stands: a persisted unlock is a disarmed lock in every future session, and it would be invisible from inside the sessions it disarmed. `cadence-init` and `orch-cadence-check.sh --lock` both refuse on those terms.
+
+The amendment path, rather than the unlock alone, is a numbered ruling: make the change under the unlock, re-run `--lock` to re-record the manifest, and commit with `Ruling <N>` in the message so the git layer can see the amendment.
+
+One accepted gap: these hooks resolve the project from `CLAUDE_PROJECT_DIR` (falling back to the working directory) *before* decoding anything, which is what keeps them free for everyone else. A cadence project edited from a session rooted somewhere else is therefore not covered by the hooks — the native deny rules and the git layer still cover it.
+
+### The lock's two layers
+
+**Layer 1 — the native deny rules** in `.claude/settings.json`. Deny beats every hook and every allow rule, in every permission mode including bypass. The `Edit(...)` rules `cadence-init` writes cover the Edit and Write tools, the shell's recognised file commands (`cat`, `head`, `tail`, `sed`) and every shell redirection target, so a careless write to a locked file fails at once and loudly. When a user turns Claude Code's sandbox on, those same rules are merged into an OS-level deny-write list enforced for **every subprocess**, which closes the "a script opens the file itself" gap outright — the plugin never turns the sandbox on for anyone, and enabling it is the user's decision.
+
+**Layer 2 — the alarm**, which names a change rather than preventing one: the end-of-turn verdict says the lock no longer matches the tree as soon as the turn ends, the session-start line says it again at the next session's first turn, the `.githooks/commit-msg` hook refuses the commit that carries the change without a numbered ruling, and `orch-cadence-check.sh --audit <rev>` says it in CI, which is what holds when the hook was never installed or was stepped past.
+
+The honest boundary is one sentence: a write the deny rules do not stop happens, is named at the end of that turn and at the next session start, and is refused at the commit.
+
+A shell guard — a hook that read each Bash command's text and refused the ones naming a locked path — was built and then removed. Deciding what a command does by reading it cannot be made tight (a computed path, an archive, an interpreter or an unlisted verb names nothing the text can see), and everything it did catch the alarm already names.
 
 ### Re-running the suite at Stop (stronger, and opt-in)
 

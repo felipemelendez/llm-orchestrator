@@ -454,6 +454,25 @@ else
 fi
 
 # ------------------------------------------------------------
+# P10 — the cadence check script reaches a --copy install.
+#
+# `${CLAUDE_PLUGIN_ROOT}` is rewritten only inside the plugin's hook manifest, so
+# anything that resolves the check script through that token is wrong in a --copy
+# layout. The commit-msg hook and `--audit` both call the script from wherever the
+# install put it, which is one of two places:
+#   plugin: <plugin>/skills/cadence/scripts/orch-cadence-check.sh
+#   --copy: <proj>/.claude/skills/cadence/scripts/orch-cadence-check.sh
+# ------------------------------------------------------------
+section "--copy ships the cadence check script (P10)"
+
+if [[ -f "$TMP/proj/.claude/skills/cadence/scripts/orch-cadence-check.sh" ]]; then
+  ok "the cadence check script reaches .claude/skills/cadence/scripts/"
+else
+  fail "the cadence check script reaches .claude/skills/cadence/scripts/" \
+       "missing $TMP/proj/.claude/skills/cadence/scripts/orch-cadence-check.sh"
+fi
+
+# ------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------
 printf '\n'
