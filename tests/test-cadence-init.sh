@@ -29,7 +29,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 INIT="${ROOT}/skills/cadence/scripts/cadence-init.sh"
 CHECK="${ROOT}/skills/cadence/scripts/orch-cadence-check.sh"
 REFS="${ROOT}/skills/cadence/references"
-BLOCK="${ROOT}/templates/cadence-global-block.md"
+# The block the init compares against: it prefers the skill's own copy under
+# references/ when the installers ship one, and falls back to the template —
+# the same order cadence-init.sh resolves, so the "compared against" pins name
+# the file the script actually read.
+BLOCK="${ROOT}/skills/cadence/references/global-block.md"
+[[ -f "$BLOCK" ]] || BLOCK="${ROOT}/templates/cadence-global-block.md"
 
 if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 else GREEN=""; RED=""; DIM=""; RESET=""; fi

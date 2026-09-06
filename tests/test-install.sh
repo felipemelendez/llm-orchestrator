@@ -262,6 +262,30 @@ mv "$TMP/src/agents/orch-implementer.md" "$TMP/keep.a"
 expect_check_fail "--check fails when agents/orch-implementer.md is deleted"
 mv "$TMP/keep.a" "$TMP/src/agents/orch-implementer.md"
 
+# The cadence files. None of them is derived from hooks.json — the Codex
+# adapter is registered in the OTHER harness's hooks file, which this checkout
+# never reads — so the manifest is the only thing that fails closed when one of
+# them is deleted, which is exactly the blind spot this section exists for.
+for cadence_entry in commands/cadence-init.md \
+                     scripts/hooks/codex-cadence-adapter.sh \
+                     templates/cadence-global-block.md \
+                     skills/cadence/SKILL.md \
+                     skills/cadence/CADENCE.md \
+                     skills/cadence/scripts/orch-cadence-gate.sh \
+                     skills/cadence/scripts/orch-cadence-check.sh \
+                     skills/cadence/scripts/cadence-detect.sh \
+                     skills/cadence/scripts/cadence-init.sh \
+                     skills/cadence/references/commit-msg \
+                     skills/cadence/references/cadence-state.md; do
+  if [[ -f "$TMP/src/$cadence_entry" ]]; then
+    mv "$TMP/src/$cadence_entry" "$TMP/keep.a"
+    expect_check_fail "--check fails when ${cadence_entry} is deleted"
+    mv "$TMP/keep.a" "$TMP/src/$cadence_entry"
+  else
+    fail "--check fails when ${cadence_entry} is deleted" "the file is not in the checkout"
+  fi
+done
+
 # ------------------------------------------------------------
 # P2 — docs/install.md Option B completeness
 # ------------------------------------------------------------
