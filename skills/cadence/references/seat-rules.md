@@ -24,7 +24,9 @@ check looks for the evidence.
 - **Stamps.** Your status block opens with `Started: <YYYY-MM-DD HH:MM:SS>` and
   closes with `Finished: <…>`, both from `date '+%Y-%m-%d %H:%M:%S'`. Write a
   one-line progress note into your report file at least every 15 minutes of
-  work. A seat silent for 20 minutes is stopped and replaced.
+  work. A seat silent for 20 minutes is stopped and replaced. If the harness
+  says a tool is unavailable, wait a minute and retry; an outage is waited out,
+  never treated as a stop.
 - **Floors.** Run the project's verification unpiped, into a log, and read the
   counts from the log: `<test command> > <SCRATCH>/<TICKET>_<seat>.log 2>&1;
   echo EXIT=$?`. A command piped to `tail` reports `tail`'s exit status. Any
@@ -43,6 +45,10 @@ check looks for the evidence.
   refutes. Doubt promotes.
 - **Neutral vocabulary.** State → wrong output. No threat prose, no adjectives
   standing in for evidence.
-- **One status block** at the end, `≤ 40 lines`, with the verdict your brief
-  names. Write the report to `<SCRATCH>` with your seat's prefix and print it as
-  your final message.
+- **The packet rule.** One briefing packet per ticket — the base sha, the file
+  map, the union, the previous stage's status blocks. Read the packet your
+  dispatch names, not the folder around it.
+- **One status block**, at most 20 lines, at the top of the report, carrying the
+  stamps, the verdict your brief names and the counts; everything else goes
+  below a `---` line, as long as it needs to be. Write the report to `<SCRATCH>`
+  with your seat's prefix and print it as your final message.

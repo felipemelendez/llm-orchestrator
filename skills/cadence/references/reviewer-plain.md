@@ -35,7 +35,8 @@ finding carries `SCENE: given <state>; when <action>; expect <observable>`.
 
 ## Report
 
-`<SCRATCH>/<TICKET>_REV2_report.md`, printed as your final message: `Started:`,
-the findings (`C-1…`, `S-1…`, `M-1…`), the shasums of anything you touched, a
-`Status:` block (≤ 15 lines) with counts per rank and the verdict `READY |
-READY-WITH-FIXES | NOT-READY`, then `Finished:`. Under about 120 lines.
+`<SCRATCH>/<TICKET>_REV2_report.md`, printed as your final message. It opens
+with a `Status:` block of at most 20 lines — `Started:` first, the verdict
+`READY | READY-WITH-FIXES | NOT-READY` and the counts per rank, `Finished:`
+last — then a `---` line and the evidence below it: the findings (`C-1…`,
+`S-1…`, `M-1…`) and the shasums of anything you touched. Under about 120 lines.

@@ -23,23 +23,33 @@ it fire, does it fire once, and what does the person on the other end see? Each
 scene gets a verdict — `SOUND`, `SILENT` (the brief does not say) or
 `CONTRADICTORY` (the brief says two things) — and the fix.
 
-**C. Tier.** `FULL` unless `LOCAL` is argued file by file in your report.
-`LOCAL` is available only when every file the brief will touch is a test, a doc,
-a fixture, a dev-only screen, a generated file, or a leaf that imports nothing
-from the hub list the laws name. Anything under a hub directory, or whose name
-carries one of the project's risk words, is `FULL`. The default is `FULL`.
+**C. Class.** `CODE` unless `PROSE` is argued file by file in your report.
+`PROSE` means nothing the ticket touches is executed, or read by any program to
+decide behaviour — no script, hook, config, rule file, JSON, workflow or template
+a program consumes, whatever runs it — only prose a person reads: skill bodies,
+references, docs, markdown templates. A git hook, a settings file and any JSON a
+program reads are `CODE`; one such file in the set makes the ticket `CODE`. Name
+every file and say which it is. The default is `CODE`; the burden is on the
+argument for `PROSE`.
 
 **D. Split.** Split into sequential tickets with disjoint file sets when the
-brief touches more than about fifteen production files, or two hub files, or two
-runtimes. Propose the cut; the controller writes the briefs.
+brief touches more than about fifteen production files, or two files the
+project's laws name as hubs, or two runtimes. Propose the cut; the controller
+writes the briefs.
+
+**E. Active skips.** Read `<notes_dir>/CADENCE_STATE.md` and report every skip
+that is live: the stage, the class it applies to, the three rows it cites, its
+expiry, and whether it still qualifies under the amendment mechanism. When no
+state file exists the answer is `active skips: none`.
 
 Rank every correction by the project's harm ranking. Mark anything you could not
 reach `UNVERIFIED`.
 
 ## Report
 
-`<SCRATCH>/<TICKET>_BRIEFREV_report.md`, printed as your final message. Open
-with `Started: <YYYY-MM-DD HH:MM:SS>`, close with `Finished: <…>`, and write a
-progress line every 15 minutes. Sections A–D, then a `Status:` block (≤ 40
-lines) ending in the verdict `BRIEF: READY | READY-WITH-CORRECTIONS | NOT-READY`.
-Keep it under about 250 lines; a longer report is not a better one.
+`<SCRATCH>/<TICKET>_BRIEFREV_report.md`, printed as your final message. It opens
+with a `Status:` block of at most 20 lines — `Started: <YYYY-MM-DD HH:MM:SS>`
+first, the verdict `BRIEF: READY | READY-WITH-CORRECTIONS | NOT-READY`, the
+class, the split, the skips, `Finished: <…>` last — then a `---` line with
+sections A–E below it. Write a progress line every 15 minutes. Keep it under
+about 250 lines; a longer report is not a better one.

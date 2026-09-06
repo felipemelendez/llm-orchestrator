@@ -10,8 +10,9 @@ Otherwise, before anything else:
 - Read `docs/llm-orchestrator/LAWS.md` first. It is the project's constitution,
   and it is never restated from memory.
 - Every change to production code or tests goes through the cadence in the
-  `cadence` skill — brief review, implementer, the blind pair, the refuter, the
-  union, the fixer, the gate, landing. Docs-only edits do not.
+  `cadence` skill — brief review, implementer, the blind pair, the refuter when
+  the findings warrant it, the union, the fixer, the gate script, the gate seat
+  on code, landing. Docs-only edits do not.
 - Every dispatch names the model it runs on.
 - Never verify your own work. The seat that wrote a change does not review or
   gate it.

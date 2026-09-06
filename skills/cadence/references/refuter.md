@@ -1,5 +1,11 @@
 # <TICKET> — REFUTER (step 2b; read-only; fresh seat; model: <MODEL>)
 
+You are dispatched only when the pair's two reports together exceed eight
+findings, or when any catastrophic or serious finding is reasoned rather than
+executed. Below that line the controller adjudicates the raw reports itself, the
+ledger row records the skip, and the controller's own adjudication is saved as
+`<SCRATCH>/<TICKET>_REFUTE_report.md` with a first line that says so.
+
 Rules: the seat rules in `<SCRATCH>/SEAT_RULES.md`. You work in a fresh copy
 `<COPY>` of `<WORKTREE>` at `<BASE_SHA>`: scratch probes only, deleted before
 you report; spawn ceiling 0; neutral vocabulary; `Started:` / `Finished:`
@@ -50,6 +56,7 @@ the schema cannot drift apart.
 
 ## Report
 
-`<SCRATCH>/<TICKET>_REFUTE_report.md`, printed as your final message: the union
-draft (≤ 40 lines), then a `Status:` block (≤ 15 lines) with counts
-`promoted / dropped / unresolved` per rank and the stamps.
+`<SCRATCH>/<TICKET>_REFUTE_report.md`, printed as your final message: a
+`Status:` block of at most 20 lines — the stamps and the counts
+`promoted / dropped / unresolved` per rank — then a `---` line with the union
+draft below it.

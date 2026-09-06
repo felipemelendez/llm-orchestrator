@@ -43,10 +43,15 @@ into the landing with a firsthand red witness.
 - **Rulings that govern the build:** <RULINGS — one line each, newest last, on
   this shape: `Ruling <N> (YYYY-MM-DD, <OWNER>): <one sentence>`. N starts at 1
   and only rises. The check script reads the highest `Ruling <N>` in this file,
-  and an amending commit's message must carry a higher one.>
+  and an amending commit's message must carry a higher one.> A stage skip is
+  never a ruling and never appears here: skips live in
+  `<notes_dir>/CADENCE_STATE.md`, under the cadence's amendment mechanism, and
+  expire on their own.
 - **Standing constraints:** <CONSTRAINTS — e.g. never commit without an explicit
   pathspec; never `git add -A`; what only the owner deploys; which trees are
   never deleted; which files another live session may be editing.>
+- **Hubs:** <HUBS — the files whose change touches everything: name them; a brief
+  touching two of them is split.>
 
 ## 3. Model seats
 

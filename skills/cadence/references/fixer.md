@@ -30,9 +30,10 @@ from the logs:
 
 ## Report
 
-`<SCRATCH>/<TICKET>_FIX_report.md`, printed as your final message: a `Status:`
-block (≤ 40 lines) with `Started:` and `Finished:`; per item, the pin's
-`file:line`, its red line, the fix's `file:line` and the green line; each
-floor's line read from its log; the `shasum -a 256` of every file you changed;
-and anything `UNVERIFIED`. Write a progress line into the report every 15
-minutes.
+`<SCRATCH>/<TICKET>_FIX_report.md`, printed as your final message. It opens with
+a `Status:` block of at most 20 lines — `Started:` first, the verdict and the
+counts of items fixed, folded and skipped, `Finished:` last — then a `---` line
+and the evidence below it: per item, the pin's `file:line`, its red line, the
+fix's `file:line` and the green line; each floor's line read from its log; the
+`shasum -a 256` of every file you changed; and anything `UNVERIFIED`. Write a
+progress line every 15 minutes.

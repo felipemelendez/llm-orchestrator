@@ -34,8 +34,9 @@ the counts from the log. Name each floor and paste the line it printed:
 
 ## Report
 
-`<SCRATCH>/<TICKET>_impl_report.md`, printed as your final message: a `Status:`
-block (≤ 40 lines) with `Started:` and `Finished:`, the verdict `DONE |
-PARTIAL | BLOCKED`, the file list with what changed in each, each floor's line
-read from its log, the `shasum -a 256` of every file you created or changed, and
-anything `UNVERIFIED`. Write a progress line into the report every 15 minutes.
+`<SCRATCH>/<TICKET>_impl_report.md`, printed as your final message. It opens
+with a `Status:` block of at most 20 lines — `Started:` first, the verdict
+`DONE | PARTIAL | BLOCKED` and the counts, `Finished:` last — then a `---` line
+and the evidence below it: the file list with what changed in each, each floor's
+line read from its log, the `shasum -a 256` of every file you created or
+changed, and anything `UNVERIFIED`. Write a progress line every 15 minutes.
