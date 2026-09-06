@@ -3,6 +3,82 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] - 2026-09-06
+
+### Added — the cadence: an opt-in review sequence for a project, and a lock over the file that states it
+
+Nothing in this section runs anywhere until a project runs `/llm-orchestrator:cadence-init`. Every
+piece below tests for an enabled `docs/llm-orchestrator/cadence.json` before it decodes anything, so
+a project that never opts in sees no new behaviour at all.
+
+- **The `cadence` skill** — `skills/cadence/SKILL.md` (the trigger, the steps, the file map) and
+  `skills/cadence/CADENCE.md` (the full text: the stages, the class rule, the severity rule, the
+  rounds and the stop rule, the lock, the amendment mechanism, the ledger row, the environment
+  rules, the honest boundary), plus `skills/cadence/references/*` — the seat briefs and the
+  templates the init renders into a project.
+- **Four scripts**, self-contained under `skills/cadence/scripts/` so they travel with a copied
+  skill: `orch-cadence-gate.sh` (makes its own throwaway copy, reverts each changed production file,
+  requires the suite to go red, and never mutates the tree it is pointed at),
+  `orch-cadence-check.sh` (`--verdict`, `--lock`, `--landing`, `--commit-msg`, `--audit`,
+  `--version`), `cadence-detect.sh` (proposes a `cadence.json`; writes nothing), and
+  `cadence-init.sh` (the opt-in writer behind the command).
+- **The dispatch-model guard** (`scripts/hooks/guard-dispatch-model.sh`): a dispatch that names no
+  model is refused, because no native rule can match a parameter the caller omitted. It fails open
+  on a payload it cannot read.
+- **The session-start verdict and the end-of-turn verdict**: in cadence mode `session-start.sh`
+  prepends one line saying whether the lock still matches the tree, and
+  `scripts/hooks/orch-cadence-stop.sh` says it again when the turn ends. Both report; neither blocks
+  by default, unless `ORCH_STRICT_CADENCE_LOCK=1` is set in the environment, which lets the
+  end-of-turn verdict block once per session for a path that changed after the session's snapshot.
+- **`/llm-orchestrator:cadence-init`** — the opt-in command: detect, propose, confirm, write the laws
+  and the marked `ORCH:LAWS` block, merge the native deny rules into `.claude/settings.json`, install
+  `.githooks/commit-msg` and a copy of the check script, then arm the lock. It never overwrites a
+  file it did not write; `--adopt` keeps the files a project already has and changes only the
+  wording it prints about them.
+- **`scripts/install.sh --global` and `--codex`** — the same pointer block into `~/.claude/CLAUDE.md`
+  and into `~/.codex/AGENTS.md`, the skill copied to `~/.agents/skills/cadence`, and the Codex hook
+  merged into `~/.codex/hooks.json`. Both are idempotent and back up before they write.
+- **The Codex adapter** (`scripts/hooks/codex-cadence-adapter.sh`) — Codex's deny rules for the
+  locked files and nothing else, in under a hundred lines with a 122-check suite. It guards no
+  directories, no links and no computed paths; the git layer and `--audit` carry the rest.
+- **The leakage floor** (`tests/test-no-product-detail.sh`) — the public tree is scanned for absolute
+  home paths, ticket ids, numbered rulings and session numbers, so a private project's detail cannot
+  ride into this repo inside an example.
+- **The docs drift test** (`tests/test-cadence-docs.sh`) — every mode name, every locked file name,
+  the state file and the lock's heading must be spelled the same way in the skill, the README, the
+  install guide and the check script's own `--help`, and the init's printed tip must name a heading
+  that exists.
+- **The evidence page** (`docs/cadence-evidence.md`) — every harness claim the design rests on, its
+  verdict, and the primary source it was read from, plus the items that remain unverified.
+
+### Changed
+
+- **"Nine layers" is now "Ten layers."** The rename is logged rather than made silently: the phrase
+  is a landmark people search for, and the tenth layer (the cadence and the lock) is a new section in
+  `ARCHITECTURE.md`, not a re-cut of an existing one. Sites: `ARCHITECTURE.md` twice plus the
+  layer-stack diagram, and `README.md`.
+- `tests/test-portability.sh` now scans `skills/` as well as `scripts/` and `hooks/`, because skills
+  ship executable scripts of their own, and adds `typeset -A` to the pattern it refuses.
+- The quoted catalogue counts move to 19 skills, 15 commands, 7 agents (`tests/README.md`,
+  `docs/manual-testing.md`, `.claude-plugin/marketplace.json`, `CONTRIBUTING.md`), and
+  `docs/manual-testing.md` quotes version `0.8.0`.
+- `templates/settings.json`'s safety note names a third environment hatch, `ORCH_CADENCE_UNLOCK=1` —
+  and says plainly that it is not a hook off switch but the cadence's own unlock, refused whenever a
+  settings file in scope persists the string.
+- `docs/install.md`'s cross-harness section no longer says there are no Codex mirrors; it describes
+  the layers that exist there now and names what is unverified.
+
+### Removed
+
+- **The shell guard.** A `PreToolUse` hook that read each Bash command's text and refused the ones
+  naming a locked path was built, reviewed five times, and removed before release: deciding what a
+  command does by reading it cannot be made tight — a computed path, an archive, an interpreter or an
+  unlisted verb names nothing the text can see — and everything it did catch is already named by the
+  deny rules in front of it or by the alarm behind it.
+
+The honest boundary, in one sentence: a write the deny rules do not stop happens, is named at the end
+of that turn and at the next session start, and is refused at the commit.
+
 ## [0.7.0] - 2026-08-04
 
 ### Fixed — CI ran 23 of the 31 suites that existed and reported green; a `--copy` install shipped its guards disarmed

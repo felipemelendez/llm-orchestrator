@@ -40,7 +40,10 @@ writes the briefs.
 **E. Active skips.** Read `<notes_dir>/CADENCE_STATE.md` and report every skip
 that is live: the stage, the class it applies to, the three rows it cites, its
 expiry, and whether it still qualifies under the amendment mechanism. When no
-state file exists the answer is `active skips: none`.
+state file exists the answer is `active skips: none`. Next to them, collect every
+`rule friction:` line the previous stages' status blocks carry — the rule named,
+the rows offered — and report them unedited. A rule that keeps costing what it
+does not repay is a proposed amendment, not a seat's complaint.
 
 Rank every correction by the project's harm ranking. Mark anything you could not
 reach `UNVERIFIED`.

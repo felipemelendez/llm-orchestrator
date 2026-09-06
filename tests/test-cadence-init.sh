@@ -629,8 +629,8 @@ printf '\n%s== the command file names the mechanism a re-run actually meets ==%s
 # SCENE: given the command file's constraint about re-running; when a reader
 # follows it; expect what a re-run actually meets — a no-op only while the
 # section still matches the block, a refusal once it has drifted — plus both
-# true reasons: the script keeps existing files, and the lock guard refuses the
-# config paths. "A no-op unless the unlock is set" was true before the content
+# true reasons: the script keeps existing files, and the native deny rules
+# refuse the config paths. "A no-op unless the unlock is set" was true before the content
 # rule and is not true now: a drifted section exits 1.
 CMDF="$ROOT/commands/cadence-init.md"
 has "$CMDF" 'is a no-op while its' \
@@ -642,7 +642,7 @@ has "$CMDF" 'and a refusal once that section has drifted;' \
 has "$CMDF" 'is a no-op unless' && fail "cmd stale" "the pre-content-rule sentence is still in the command file" \
   || ok "and the pre-content-rule sentence is gone"
 has "$CMDF" 'the script itself keeps every file' && ok "and names the script's own keeping as one reason" || fail "cmd keep" "$(sed -n '105,120p' "$CMDF")"
-has "$CMDF" 'the lock guard refuses edits to the config paths' && ok "and the lock guard as the other" || fail "cmd guard" "$(sed -n '105,120p' "$CMDF")"
+has "$CMDF" 'the native deny rules refuse edits to the config paths' && ok "and the deny rules as the other" || fail "cmd guard" "$(sed -n '105,120p' "$CMDF")"
 has "$CMDF" 'orch-cadence-check.sh --audit' \
   && ok "and the command file names the CI audit step the script prints" || fail "cmd ci" "$(sed -n '95,120p' "$CMDF")"
 

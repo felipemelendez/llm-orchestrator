@@ -214,7 +214,9 @@ Template: [references/gate-seat.md](references/gate-seat.md).
 
 ## Step 6 — landing
 
-The project's full floors, unpiped, every count read from a log. The firsthand red
+The project's full floors, unpiped, every count read from a log, and the branch's CI
+run on the shared runner green — every local floor here runs on one operating
+system, and a suite has passed on one and failed on the other. The firsthand red
 witness for any folded mild fix. Then the five evidence files (where no gate seat
 ran, the gate report is the gate script's complete output; where the refuter was
 skipped, the refuter report is the controller's own adjudication), in `notes_dir`
@@ -404,7 +406,11 @@ names; `Started:` and `Finished:` stamps on every status block; a progress note
 into the report at least every 15 minutes; every mutation reverted and proven by
 `shasum`; floors unpiped; anything unreached marked `UNVERIFIED` rather than
 silently omitted; one status block of at most twenty lines at the top of the
-report, the evidence below a horizontal rule, printed as the final message.
+report, the evidence below a horizontal rule, printed as the final message. A seat
+that believes a rule cost work it did not repay writes `rule friction: <rule> —
+<the rows>` in that block and files its findings anyway; the brief review collects
+those lines at Step 0, and no reviewer drops a finding because the wording is the
+ruling's own.
 
 **The packet rule.** One briefing packet per ticket — the base sha, the file map,
 the union, the previous stage's status blocks — and a seat reads the packet its
@@ -432,11 +438,13 @@ change.
 ## Environment
 
 An unattended run holds the machine awake. A seat with no file change for twenty
-minutes is stopped and re-dispatched with a resume note — the controller's own
-move, not a question for a person. Every seat writes a progress line every fifteen
-minutes, and a harness outage is waited out and retried, never treated as a stop.
-In practice, a sleeping machine has cost more than every extra review round
-combined.
+minutes is stopped and re-dispatched with a resume note — the controller's own move,
+not a question for a person. Every seat writes a progress line every fifteen minutes,
+and a harness outage is waited out and retried, never treated as a stop. In practice
+a sleeping machine has cost more than every extra review round combined. Every seat
+runs on a throwaway copy or a worktree: a copy is deleted the moment its seat's report
+carries `Finished:` and the stage's ledger row is written, a ticket's worktree goes
+when the ticket lands, and the controller lists what is still on disk in every handoff.
 
 ## Running seats on Codex
 

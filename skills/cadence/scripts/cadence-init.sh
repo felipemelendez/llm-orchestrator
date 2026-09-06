@@ -23,7 +23,7 @@
 #   can overwrite (the two git hooks and cadence.json) need ORCH_CADENCE_UNLOCK=1
 #   in the environment, the same hatch the rest of the cadence uses.
 #
-#   ORDER MATTERS. The lock guard refuses writes to LAWS.md, cadence.json,
+#   ORDER MATTERS. A cadence project's protection covers LAWS.md, cadence.json,
 #   LOCK.sha256, .claude/settings.json and .githooks/** from the moment
 #   docs/llm-orchestrator/cadence.json exists with "enabled": true. So
 #   cadence.json is written LAST, after every other file is in place, and the

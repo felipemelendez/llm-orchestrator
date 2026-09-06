@@ -17,7 +17,10 @@ file supersedes the previous handoff whole.**
 
 `HEAD` == `origin` == `<sha>`. The porcelain: <the exact expected list, or
 "clean">. The green floor at that head: <the project's floors and their counts,
-each read from a log>. Active skips: <one line per live skip from
+each read from a log>. The branch's CI run on the shared runner: <green at
+`<sha>`, or the failing suites>. A ticket is not landed until that run is green —
+every local floor here runs on one operating system, and a suite has passed on
+one and failed on the other. Active skips: <one line per live skip from
 `<notes_dir>/CADENCE_STATE.md` — stage, class, expiry — or "none">.
 
 ## 2. Live trees — one line each; the tree wins on a mismatch
@@ -42,8 +45,8 @@ each read from a log>. Active skips: <one line per live skip from
 
 ## 6. The numbers — one line per ticket this session
 
-| ticket | class | rounds | wall-clock (impl / pair / refuter / fixer / gate / landing) | raw / promoted / dropped | first found by stage | gate finding class | minutes lost to the environment | skips applied |
-|---|---|---|---|---|---|---|---|---|
+| ticket | class | rounds | wall-clock (impl / pair / refuter / fixer / gate / landing) | raw / promoted / dropped | first found by stage | gate finding class | minutes lost to the environment | skips applied | rule friction |
+|---|---|---|---|---|---|---|---|---|---|
 
 ## 7. Proposed amendments (never applied here; only the owner turns one into a ruling)
 

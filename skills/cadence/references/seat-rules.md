@@ -52,3 +52,7 @@ check looks for the evidence.
   stamps, the verdict your brief names and the counts; everything else goes
   below a `---` line, as long as it needs to be. Write the report to `<SCRATCH>`
   with your seat's prefix and print it as your final message.
+- **Rule friction.** A seat that believes a rule cost work it did not repay adds
+  one line to that status block — `rule friction: <rule> — <the rows>` — and
+  files its findings anyway. The brief review collects those lines at Step 0.
+  Never drop a finding because the wording is the ruling's own.

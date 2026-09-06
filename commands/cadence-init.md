@@ -119,9 +119,9 @@ refusal.
   environment (`ORCH_CADENCE_UNLOCK=1 claude`), for two separate reasons.
   First, the script itself keeps every file the project already has, and
   reports the lock as already armed.
-  Second, the lock guard refuses edits to the config paths (`LAWS.md`,
-  `cadence.json`, `LOCK.sha256`, `.claude/settings.json`, `.githooks/**`) from
-  the moment `cadence.json` exists.
+  Second, the native deny rules refuse edits to the config paths (`LAWS.md`,
+  `cadence.json`, `LOCK.sha256`, `.claude/settings.json`, `.githooks/**`) —
+  present from the moment those rules are merged into `.claude/settings.json`.
 - Never run `git config` for the user: routing a repo's hooks is their decision,
   so the one-liner is printed, not executed.
 - Never fill in `LAWS.md`'s placeholders yourself, and never edit a `LAWS.md`
