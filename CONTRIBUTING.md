@@ -5,8 +5,8 @@ How to add a skill, command, or subagent role: copy a template, run the tests, o
 This is intentionally a small, opinionated kit:
 
 - **Pure markdown + shell.** No build step. Add a skill by copying `templates/skill.md`. Hooks (automation scripts Claude Code runs at lifecycle events) live in `scripts/hooks/`.
-- **Small catalog (18 skills).** Your contribution actually gets noticed and used. Past ~40 skills the catalog gets unscannable — we cap there on purpose.
-- **Real test suite.** 33 suites, discovered rather than listed, run by `./tests/run-all.sh` in about three minutes and gating every commit. They catch regressions in JSON schemas, hook output formats, concurrency, portability (bash 3.2 / BSD / macOS), and shape-checking. Behavioural claims go further: `tests/evals/` A/B-tests the plugin against a bare model and against any earlier commit, with Fisher's exact test on the result.
+- **Small catalog (19 skills).** Your contribution actually gets noticed and used. Past ~40 skills the catalog gets unscannable — we cap there on purpose.
+- **Real test suite.** The suites are discovered, not listed — the runner prints the count. `./tests/run-all.sh` runs them in about three minutes and gating every commit. They catch regressions in JSON schemas, hook output formats, concurrency, portability (bash 3.2 / BSD / macOS), and shape-checking. Behavioural claims go further: `tests/evals/` A/B-tests the plugin against a bare model and against any earlier commit, with Fisher's exact test on the result.
 - **TDD-for-skills loop documented.** `writing-skills` walks through: write a skill, dispatch a test subagent with no other context, see if the subagent follows the skill, refine.
 - **Native Claude Code primitives.** Your contribution works for everyone who uses Claude Code — no parallel platform support needed.
 - **Honest about influences.** Borrows the single-file skill format from [Superpowers](https://github.com/obra/superpowers) and the memory model from [ECC](https://github.com/affaan-m/ECC).

@@ -23,6 +23,19 @@ Restart Claude Code. The slash menu now includes the orchestrator commands (`/ll
 
 On a new project, run `/llm-orchestrator:onboard` first. It studies the codebase once, proposes `## Decisions` and `## Conventions` for `./CLAUDE.md`, and writes them on your approval. Skip it on a brand-new project with no code yet — there is nothing to study.
 
+Optional, and off unless you ask for it: the cadence — a fixed review sequence for a project that wants one, plus a lock over the file that states it. One command turns it on, described under [The cadence](#the-cadence):
+
+```
+/llm-orchestrator:cadence-init          # in the project that wants it
+```
+
+Two optional extras widen where the pointer block is read. Both are scripts, so they run from the plugin's own checkout, not from your project — for a plugin install that checkout lives under the marketplace cache, the same place [Optional: statusline](./docs/install.md#optional-statusline) locates `statusline.sh`:
+
+```
+./scripts/install.sh --global           # the pointer block in ~/.claude/CLAUDE.md
+./scripts/install.sh --codex            # the same block, skill and hook for Codex
+```
+
 On a long task, the controller's context window fills up over time and its work quietly degrades. To prevent that, it hands off to a fresh session at a clean boundary between stages — no manual triage needed. You can trigger a handoff yourself at any point with `/llm-orchestrator:handoff`.
 
 To use the orchestrator on a real task, see [`AGENTS.md`](./AGENTS.md) for the command reference and [`docs/examples/sample-session.md`](./docs/examples/sample-session.md) for a walkthrough.
@@ -207,7 +220,7 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 
 ## How it works
 
-Nine layers, each solving a specific failure mode of single-agent AI tooling on real multi-step work:
+Ten layers, each solving a specific failure mode of single-agent AI tooling on real multi-step work:
 
 1. **Memory** — additive to Claude Code's native CLAUDE.md, not a replacement. `/llm-orchestrator:remember` auto-classifies facts into `## Conventions` / `## Decisions` / `## People` / `## Notes` of your project's `./CLAUDE.md`, creating sections as needed. `/llm-orchestrator:forget` soft-deletes matching lines to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable. Concurrent sessions serialize writes through a portable file lock. Alongside CLAUDE.md, the plugin maintains a TTL-pruned doc cache and a brief index under `~/.llm-orchestrator/research/` that surfaces prior researcher verdicts to future tasks on the same library.
 2. **Workflow scaffolding** — skills and commands produce durable artifacts (specs, plans, reviews) committed under `docs/llm-orchestrator/`.
@@ -218,8 +231,23 @@ Nine layers, each solving a specific failure mode of single-agent AI tooling on 
 7. **Evidence-based completion** — every `Changed:` block requires a `Verify:` line with the actual command and its output — checked against a hook-written evidence ledger scoped to the current turn. The model cites nothing; the gate reads the record. A `Verify:` naming a command the harness never ran this turn is caught, as is a run that failed, or one that exited 0 having executed no tests.
 8. **Pre-spec verification — the research gate** — described above. Returns `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`; `CONTRADICTED` halts the workflow until the spec is revised.
 9. **Context-aware handoff** — on a long task the controller's context window fills up, which quietly degrades its work. When usage crosses ~950K tokens (≈95% of a 1M window) the agent is reminded once to write a short handoff note (what's done, what's next, the verify command); after Claude Code auto-compacts the conversation, a reminder tells the next turn to re-read that note, trust the plan file's checkboxes, and re-run the tests before continuing. The plan file remains the durable recovery anchor.
+10. **The cadence and the lock** — opt-in per project, inert everywhere else. A fixed sequence (brief review → implementer → blind pair → refuter above a threshold → fixer → gate script and, on code, a gate seat → landing), a stop rule that returns a ticket to the brief review when a gate finding repeats the previous round's class, and a lock over the file that states all of it: native deny rules first, then an alarm that names any change they did not stop. Turned on by `/llm-orchestrator:cadence-init`; described in full under [The cadence](#the-cadence).
 
 Implementation reference with code links and the layer-stack diagram: [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
+---
+
+## The cadence
+
+**What it is.** A project that opts in runs every change to production code or tests through one fixed sequence, and the sequence is written down where both the people and the agents can read it. A brief review checks the ticket's claims against the tree and returns its class — `CODE`, or `PROSE` when nothing the ticket touches is executed or read by a program to decide behaviour. An implementer writes a failing test for each mechanism before the mechanism. A blind pair reviews the result — one seat on the spec, one adversarial and plain-language — each on its own copy, shown neither the other's report nor the implementer's. Above a threshold (more than about eight findings across the two reports, or any catastrophic or serious finding that was reasoned rather than executed) a refuter re-executes them: it originates nothing, the burden is on it to drop a finding with a citation, and doubt promotes. A fixer writes each pin from the finding's scene line before it opens the hunk. Then the gate: a script that reverts each changed production file and requires the suite to go red, and — on code, not on prose — a seat that judges what a script cannot, naming the *class* of each finding rather than the instance. A catastrophic or serious gate finding opens another round; when that round's finding repeats the previous round's class the ticket stops and goes back to the brief review. Landing is the full floors unpiped, the evidence files, a commit by explicit pathspec, one ledger row. The rules amend themselves in one bounded way: after three cited ledger rows the orchestrator may skip the gate seat or the refuter — those two stages only — and the skip expires, any catastrophic finding re-arms it, and the session's first line carries the count.
+
+**Why.** The stage yields were counted on one operator's work, and the counting says the cheap stages pay: a twelve-minute brief review returned four catastrophic corrections to a plan; of the two blind reviewers the plain-language seat found ten catastrophic items and the spec seat two, overlapping on none; the refuter originated nothing and dropped nine of seventy-six findings, each with a citation; the gate seat found catastrophic items on code that three earlier reading stages had missed, and nothing on prose. This is field-record evidence, not an experiment: one operator, no control arm, no randomization, and the outcomes were graded by the same process that produced them, so it shows what the stages cost and caught here — not that they would beat a different process elsewhere. The numbers, and what they cannot show, are in [`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md); the claims about the harness that the design rests on, with their sources, are in [`docs/cadence-evidence.md`](./docs/cadence-evidence.md).
+
+**How to turn it on.** `/llm-orchestrator:cadence-init` in the project that wants it: it proposes a `cadence.json` for you to confirm, writes the laws (`docs/llm-orchestrator/LAWS.md`) and the pointer block, adds the native deny rules to `.claude/settings.json`, and installs the git layer under `.githooks/`. Then it prints the steps it will not take for you, in order: fill in every placeholder in the laws file, re-lock under the unlock (the laws are a template until you do), route this clone's hooks with the line it prints — once per clone — and commit. The commit refusal is live only after that hooks-path step. The two optional installer runs happen from the plugin's own checkout, not from your project — for a plugin install that is the marketplace cache, located the way [Optional: statusline](./docs/install.md#optional-statusline) locates `statusline.sh`. `./scripts/install.sh --global` renders the same pointer block into `~/.claude/CLAUDE.md`, so a plain launch with no plugin loaded still sees it. `./scripts/install.sh --codex` copies the skill to `~/.agents/skills/cadence`, renders the block into `~/.codex/AGENTS.md`, and merges the Codex hook into `~/.codex/hooks.json`. Nothing changes for a project that never runs the init.
+
+**The lock, two layers.** Layer 1 is the native `Edit(...)` deny rules the init writes into `.claude/settings.json`. Deny beats every hook and every allow rule, in every permission mode. They were verified live against the shipped rules: the Edit tool, the Write tool, a shell redirection, `cp` and `sed -i` onto the laws file were all refused, and a control edit on an ordinary file went through — so the refusals were the rules, not a blanket denial. With Claude Code's sandbox enabled those same rules are enforced by the operating system for every subprocess; the plugin never enables it for anyone. Layer 2 is the alarm, which names a change rather than preventing one: the session-start line, the end-of-turn verdict, the git `commit-msg` hook that refuses a commit carrying a lock-set change without a numbered ruling, and `orch-cadence-check.sh --audit <rev>` in CI for the clone where the hook was never routed. Amending the rules on purpose is a separate path: launch the session with `ORCH_CADENCE_UNLOCK=1` (set by a person, in the environment — a settings file that persists the string refuses the unlock), make the change, re-run `--lock`, and commit with `Ruling <N>` in the message.
+
+**The boundary, stated plainly.** A write the deny rules do not stop happens: it is named at the end of that turn, again at the next session start, and refused at the commit. A shell guard — a hook that read each Bash command's text and refused the ones naming a locked path — was built, reviewed five times and removed, because deciding what a command does by reading its text cannot be made tight and everything it did catch the alarm already names. On Codex the hooks load only on a trusted project layer, the git layer and `--audit` are what hold everywhere, and whether a Codex hook fires inside a Codex subagent is unverified.
 
 ---
 

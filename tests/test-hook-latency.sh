@@ -58,6 +58,20 @@ TRANSCRIPT_EVENT="$TMP/te.json"; printf '{"transcript_path":"%s","source":"start
 SKILL_EVENT="$TMP/sk.json"; printf '{"tool_name":"Skill","tool_input":{"skill":"llm-orchestrator:brainstorming"}}' > "$SKILL_EVENT"
 BASH_EVENT="$TMP/bash.json"; printf '{"tool_name":"Bash","tool_input":{"command":"git status"}}' > "$BASH_EVENT"
 START_EVENT="$TMP/start.json"; printf '{"source":"startup"}' > "$START_EVENT"
+AGENT_EVENT="$TMP/agent.json"; printf '{"tool_name":"Agent","tool_input":{"description":"one seat","prompt":"do the thing","model":"opus"}}' > "$AGENT_EVENT"
+
+# The cadence hooks are measured twice: on the INERT path every other project
+# takes (stage 1 is a file test and a grep, so it must cost almost nothing), and
+# in cadence mode, where they read the project's cadence state — and where they
+# still have to clear the same 500 ms every call pays.
+CADENCE_OFF="$TMP/cadence-off"; mkdir -p "$CADENCE_OFF"
+CADENCE_ON="$TMP/cadence-on"
+mkdir -p "$CADENCE_ON/docs/llm-orchestrator" "$CADENCE_ON/.claude"
+printf '{ "schema": 1, "enabled": true }\n' > "$CADENCE_ON/docs/llm-orchestrator/cadence.json"
+printf '# Laws\n\nRuling 1 — the cadence.\n' > "$CADENCE_ON/docs/llm-orchestrator/LAWS.md"
+printf '{}\n' > "$CADENCE_ON/.claude/settings.json"
+printf '# P\n\n<!-- ORCH:LAWS:START -->\nlaws\n<!-- ORCH:LAWS:END -->\n\ntail\n' > "$CADENCE_ON/CLAUDE.md"
+cp "$CADENCE_ON/CLAUDE.md" "$CADENCE_ON/AGENTS.md"
 
 # time_hook <hook-file> <input-file> — prints elapsed ms (median of 5 runs, so a
 # one-off scheduler/GC hiccup neither trips the budget nor masks a real regression).
@@ -113,6 +127,14 @@ ORCH_RETRY_CAP=1 check_latency "orch-retry-cap.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-stop.sh"                "$TRANSCRIPT_EVENT"
 check_latency "orch-evidence-ledger.sh"     "$BASH_EVENT"
 check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
+
+CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
+CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "orch-cadence-stop.sh"    "$TRANSCRIPT_EVENT"
+CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
+
+printf '\n%s== In cadence mode (the same 500 ms budget) ==%s\n' "$DIM" "$RESET"
+CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
+CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n'
 if (( FAIL == 0 )); then

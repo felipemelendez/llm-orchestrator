@@ -12,6 +12,10 @@ docs/llm-orchestrator/specs/
 docs/llm-orchestrator/plans/
 docs/llm-orchestrator/handoffs/
 docs/llm-orchestrator/research/
+# The cadence's landing evidence (the default notes_dir). Local by design: the
+# commit-msg hook reads it at commit time, and --audit in CI says out loud that
+# it skipped the check because the directory is not in the tree.
+docs/llm-orchestrator/notes/
 
 # eval scratch (never commit; results/benchmark.json + raw.jsonl ARE committed)
 tests/evals/results/work/

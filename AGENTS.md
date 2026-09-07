@@ -33,6 +33,8 @@ Prompt templates live in `templates/`:
 
 The native subagent definitions live in `agents/orch-*.md`.
 
+**The refuter** is a role, not a shipped agent file: it exists only inside the cadence (`skills/cadence/`), dispatched by a controller on a general agent type with its model named, and its brief is `skills/cadence/references/refuter.md`. It is read-only and it originates nothing. Given the two reviewers' reports it re-executes their findings and returns each one PROMOTED, DROPPED or UNRESOLVED — the burden is on the refuter to drop, a drop must cite the `file:line` that refutes the finding, and anything it cannot settle promotes. That asymmetry is the point: a filter that errs toward silence turns a review into a rubber stamp, and the value here has been re-execution of other seats' claims rather than filtering. It runs only above a threshold — more than about eight findings across the two reports, or any catastrophic or serious finding that was reasoned rather than executed.
+
 When Claude Code's `Workflow` tool is available, these same subagents are dispatched from
 workflow scripts via the `agentType` option (composed with a structured `schema`) — no new roles.
 `workflows/review-diff.js` drives the two-stage review this way; see the `using-workflows` skill
@@ -58,6 +60,7 @@ Controllers route by Status, not by parsing prose.
 |---------|--------------|
 | `/llm-orchestrator:onboard` | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. |
 | `/llm-orchestrator:init` | Add LLM Orchestrator conventions to a project. |
+| `/llm-orchestrator:cadence-init` | Turn the cadence on for a project: detect the toolchain, confirm a `cadence.json`, then write the laws, the marked block, the native deny rules and the git layer, and arm the lock over them. Never overwrites. |
 | `/llm-orchestrator:plan` | Turn an approved spec into a checklist-shaped plan. |
 | `/llm-orchestrator:worktree` | Create an isolated git worktree. |
 | `/llm-orchestrator:dispatch` | Run a focused subagent with a constructed context envelope. |
@@ -73,4 +76,6 @@ Controllers route by Status, not by parsing prose.
 
 ## Cross-harness
 
-LLM Orchestrator ships Claude Code first. The skills, commands, and agent prompts are plain markdown and work as guidance in any harness that can read them. The enforcement layer — the hooks in `hooks/hooks.json` (protocol grader, research gate, no-verify guard, destructive-git guard, handoff nudge, Status validator) — is Claude Code-specific and is not yet ported to Codex / Gemini / Copilot. In those harnesses you get the skills as instructions without the mechanical enforcement.
+LLM Orchestrator ships Claude Code first. The skills, commands, and agent prompts are plain markdown and work as guidance in any harness that can read them. The enforcement layer — the hooks in `hooks/hooks.json` (protocol grader, research gate, no-verify guard, destructive-git guard, handoff nudge, Status validator) — is Claude Code-specific and is not ported to Gemini / Copilot. In those harnesses you get the skills as instructions without the mechanical enforcement.
+
+One exception, and only for the cadence: `scripts/install.sh --codex` installs the cadence skill, the pointer block and one Codex hook, and the cadence's git layer (a `commit-msg` hook plus `--audit` in CI) needs no hook events at all, so it holds in any harness. See `docs/install.md`, "Cross-harness", including the two Codex facts that remain unverified.
