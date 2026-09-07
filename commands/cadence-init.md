@@ -78,7 +78,9 @@ then stop and show them the plan.
 The script writes, in this order: `LAWS.md` and its three companions →
 `AGENTS.md` → `CLAUDE.md` → `.claude/settings.json` → `.githooks/` →
 `docs/llm-orchestrator/cadence.json` last → the lock. It never overwrites: every
-file the project already has comes back as `kept`.
+file the project already has comes back as `kept` — except the marked
+`ORCH:LAWS` section, which under the unlock is replaced whole after a `.bak`,
+and `.claude/settings.json`, which comes back `merged`.
 
 ### 5. Report
 
@@ -108,7 +110,9 @@ arming commit. Its last step is the CI one: run
 `.githooks/orch-cadence-check.sh --audit HEAD` in the project's pipeline, which
 is the layer that still speaks when a clone's hooks were never routed. Relay
 the recipe as printed — a commit made before the re-lock meets the hook's
-refusal.
+refusal. The recipe describes THIS run, not the project's state: after an
+interrupted first run it starts from what this run created, so check the
+placeholders and the re-lock yourself even when the recipe does not list them.
 
 ## Constraints
 

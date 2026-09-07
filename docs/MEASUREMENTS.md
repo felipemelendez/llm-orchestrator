@@ -100,7 +100,9 @@ Two rows carry more than their numbers. The plain-language seat found ten of the
 twenty-one catastrophic items **alone**, and where both seats found something the
 two never overlapped — which is the argument for a pair, and against a third
 seat. The refuter originated nothing, by design: its 9 drops out of 76 raw
-findings each carried a citation, so what it bought was re-execution of other
+findings — a count of this build's own findings, independent of, and only
+coincidentally equal to, the 76 the refuter kept in record one — each carried a
+citation, so what it bought was re-execution of other
 seats' claims rather than filtering. The gate script, at under a minute a run the
 cheapest stage in the sequence, found two defects in its own tooling that no
 reading seat had seen. The gate seat found catastrophic items on executable code

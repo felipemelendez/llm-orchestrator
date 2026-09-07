@@ -296,9 +296,9 @@ fi
 # Rules 1-2 are marker_rc's; rules 3-5 are section_is_block's and
 # replace_section's. No reader consults a list of markdown code forms, so no
 # such list can be missing one, and a sample beside a live block is still two
-# STARTs (rule 2). Three readers hold copies of this — see the follow-up
+# STARTs (rule 2). Two readers hold copies of this — see the follow-up
 # ticket: one section reader in a sourceable library shared by the check
-# script, the init and the guard.
+# script and the init.
 MARK_STARTS=0
 marker_rc() { # <file> -> 0 fine (starts in MARK_STARTS), 2 duplicate, 3 unterminated, 4 orphan end
   local f="$1" ns ne ls le
@@ -327,9 +327,12 @@ marker_rc() { # <file> -> 0 fine (starts in MARK_STARTS), 2 duplicate, 3 untermi
 # THE SECTION READER. `kept` is a verdict about CONTENT, not about where the
 # markers sit: a file is kept only when the text between its markers IS the
 # block this install resolved. There is no list of markdown code forms here any
-# more — a fenced, quoted, indented or <pre>-wrapped SAMPLE is not the block, so
-# it is refused by the same test that refuses an older version of the block, and
-# no form can be missing from a list that does not exist.
+# more, so no form can be missing from a list that does not exist: a quoted,
+# indented or <pre>-prefixed sample differs between the markers and is refused by
+# the same test that refuses an older version of the block. A fence around the
+# EXACT block is the stated residual of rule 4 — the fence lines fall outside the
+# marker pair, the text is present byte for byte and the lock hashes the same
+# span, so the loss is rendering, not governance.
 
 # The first free backup path for <file>: <file>.bak, then .bak.1, .bak.2 …
 # A replacement that overwrites an existing .bak destroys the very thing the

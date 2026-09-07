@@ -277,15 +277,15 @@ is the template's last section, filled in.
 ## The lock
 
 The locked set is `docs/llm-orchestrator/LAWS.md`,
-`docs/llm-orchestrator/cadence.json`, `.claude/settings.json` (it carries the deny
-rules), `.githooks/commit-msg`, `.githooks/orch-cadence-check.sh`, the FIRST
-`<!-- ORCH:LAWS:START -->` … `<!-- ORCH:LAWS:END -->` section of `CLAUDE.md` and
-of `AGENTS.md` (that pair only — the rest of both files stays writable, so memory
-and onboarding commands keep working; a file carrying a second `START` marker, or
-a `START` with no matching `END`, is refused for every edit, because a second or
-unclosed section is how a locked one gets shadowed), plus anything the project
-lists in `lock_extra`. `LOCK.sha256` is not in its own manifest — a file cannot
-record its own hash; the deny rule and the guard hold it.
+`docs/llm-orchestrator/cadence.json`, `.claude/settings.json`,
+`.githooks/commit-msg`, `.githooks/orch-cadence-check.sh`, the FIRST `<!--
+ORCH:LAWS:START -->` … `<!-- ORCH:LAWS:END -->` section of `CLAUDE.md` and
+`AGENTS.md` (that pair only — the rest stays writable, so memory and onboarding
+work; a second `START`, or one with no `END`, is named by the init and the lock
+and refused at the commit, nothing refusing the edit itself, that being how a
+locked one gets shadowed), plus `lock_extra`. The six FILES are held by the deny
+rules, the marked section by the alarm alone (a rule addresses a whole file only),
+and `LOCK.sha256`, which cannot record its own hash, by its deny rule.
 
 **Two layers, in this order of trust.**
 
@@ -297,33 +297,33 @@ session, what they cover on its machine; with Claude Code's sandbox enabled they
 bind every subprocess too, and the plugin never enables it for anyone. What they
 do not catch: a write from a subprocess where that sandbox is off.
 
-**Layer 2 — the alarm**, the guarantee that a change is seen: the end-of-turn
-verdict, the session-start line, the git `commit-msg` hook and `--audit` in CI.
-It stops nothing; it names a change after the fact — at the end of the turn, at
-the next session start, at the commit where the hook is installed and not
-skipped, and in CI through `--audit`, which is what holds when a hook was skipped
-or never installed. What it does not catch: it never prevents a write.
+**Layer 2 — the alarm**, the guarantee a change is seen: the end-of-turn verdict,
+the session-start line, the git `commit-msg` hook and `--audit` in CI. It stops
+nothing; it names a change after the fact — at the end of the turn, at the next
+session start, at the commit where the hook is installed and not skipped, and in
+CI through `--audit` when it was not. It never prevents a write.
 
 **The boundary:** a careless write fails at once and loudly, but a write the deny
 rules do not stop — a computed path, an archive, an interpreter, a script that
-opens the file itself — happens, and layer 2 is what names it: at the end of that
-turn, at the next session start, and at the commit, which is refused. A shell
-guard that judged each command by its text was tried and removed; text matching
-cannot be made tight, and the alarm already named what it caught.
+opens the file itself — happens, and layer 2 names it afterwards. A shell guard
+that judged each command by its text was tried and removed; text matching cannot
+be made tight, and the alarm already named what it caught.
 
 An amendment is a commit that satisfies all three: its message carries
 `Ruling <N>`, greater than the highest ruling number in the laws; the staged
 `LAWS.md` records that ruling; and `LOCK.sha256` was rewritten under
 `ORCH_CADENCE_UNLOCK=1`. Any one alone is text the agent wrote about itself.
 
-`ORCH_CADENCE_UNLOCK=1` is set by the person, in the environment, when they
-launch the session — never in a settings file, never by an agent, because the
-guard refuses the assignment. The re-lock and the ruling commit happen inside that
-session. Three things hold that shape: the unlock is honoured only when no
-settings file in scope names `ORCH_CADENCE_UNLOCK`; in cadence mode a command that
-assigns `ORCH_CADENCE_UNLOCK`, `ORCH_DISABLED_HOOKS`, `ORCH_HOOK_PROFILE` or any
-`ORCH_ALLOW_*` is refused, while naming one in prose passes; and a session holding
-the unlock says so, printing `UNLOCKED` in its verdict line.
+`ORCH_CADENCE_UNLOCK=1` is set by the person, in their own shell, at launch —
+never in a settings file, never inside a command an agent runs, because the unlock
+guard refuses any command naming it. The re-lock and the ruling commit happen
+inside that session. Three things hold that shape: the unlock is honoured only when
+no settings file in scope names it; in cadence mode a command whose text contains
+`ORCH_CADENCE_UNLOCK`, `ORCH_DISABLED_HOOKS`, `ORCH_HOOK_PROFILE` or `ORCH_ALLOW_`
+is refused whatever the verb — not to set one, not to read one, not to search for
+one, a cost the refusal states as it sends the work to the person's own shell; and
+a session holding the unlock prints `UNLOCKED` in its verdict line. That guard
+knows four names and no grammar: a name assembled at runtime is the residual.
 
 A seat that believes a law is wrong writes a proposed amendment into the handoff
 and keeps working under the law as written.

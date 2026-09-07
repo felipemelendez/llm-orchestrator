@@ -130,9 +130,11 @@ check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
 
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "orch-cadence-stop.sh"    "$TRANSCRIPT_EVENT"
+CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n%s== In cadence mode (the same 500 ms budget) ==%s\n' "$DIM" "$RESET"
 CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
+CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n'
 if (( FAIL == 0 )); then
