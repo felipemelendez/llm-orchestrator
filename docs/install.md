@@ -1,6 +1,109 @@
-# Install
+# Install and update
 
-Three ways to get LLM Orchestrator running.
+Choose the setup for the tool you use. You can use both in the same project.
+
+- **Claude Code:** install [the plugin](#option-1--claude-code-plugin).
+- **Codex:** use [the Codex installer](#codex-setup).
+- **Already installed:** follow [Updating to v0.8.0](#updating-to-v080).
+
+Cadence means the agreed sequence of implementation, independent reviews, fixes,
+and verification. It starts only in projects that enable it. Installing the
+framework does not turn it on in every repository.
+
+## Codex setup
+
+In your terminal, clone the framework into a folder you plan to keep:
+
+```sh
+git clone https://github.com/felipemelendez/llm-orchestrator.git
+cd llm-orchestrator
+./scripts/install.sh --codex
+```
+
+The installer adds the cadence instructions and hooks to your user setup. Hooks
+are small programs that run automatically at particular moments: before a tool
+edits a protected rule file, after a verification command finishes, or when the
+assistant is about to finish. They help check what actually happened.
+
+Open a fresh Codex CLI session and run `/hooks`. Review the definitions and trust
+them so Codex can run them. The installer cannot grant that trust for you.
+Keep the framework folder in place; installed hooks point to scripts inside it.
+
+Next, [enable cadence in your project](#enable-cadence-in-a-project). The installer
+preserves unrelated hooks, your model settings, and your Claude setup. Codex has
+its own cadence integration; the Claude plugin's slash commands stay in Claude.
+For the recorded test results and the limits of these checks, see
+[Codex verification](codex-evidence.md).
+
+## Enable cadence in a project
+
+With **Claude Code**, open the project and run:
+
+```text
+/llm-orchestrator:cadence-init
+```
+
+With **Codex**, ask your assistant:
+
+> Help me enable cadence in this project using the installed cadence scripts.
+> Propose the test commands and project rules for me to review before writing
+> them. Include the Codex verification settings and finish the Git hook setup.
+
+The scripts are in `~/.agents/skills/cadence/scripts/`. The setup procedure is
+[documented here](../commands/cadence-init.md): detect the project, review the
+proposed configuration, run the initializer, fill in the project's rules, and
+complete the printed Git hook steps. For Codex, also configure
+`codex_verification.mode` in `docs/llm-orchestrator/cadence.json`:
+`blocking` asks the assistant to address missing verification before finishing;
+`warn` reports the gap. See [the configuration example](codex-evidence.md#activation-contract).
+
+The framework's shared instructions belong in its own repository. A project's
+rules, test commands, review records, and app-specific verification steps belong
+in that project's repository. Existing project rules are kept when updating the
+framework; changes to those rules need a deliberate amendment.
+
+You can optionally use Claude for one of Codex's two independent reviews. It
+uses your existing Claude login and defaults to Opus at maximum effort. Follow
+[the Claude reviewer guide](codex-provider.md). Grok is not needed.
+
+## Updating to v0.8.0
+
+### Claude Code plugin
+
+For an installation from this repository's marketplace, run these in your terminal:
+
+```sh
+claude plugin marketplace update llm-orchestrator
+claude plugin update llm-orchestrator@llm-orchestrator
+```
+
+Restart Claude Code and check the installed version in `/plugin`. Updating the
+plugin makes the new version available; cadence still needs to be enabled in
+each project that should use it.
+
+### Codex installation
+
+In your framework checkout, on `main` with your local work saved, run:
+
+```sh
+git pull --ff-only
+./scripts/install.sh --codex
+```
+
+The cadence skill is a copy, so rerun the installer after updating the source.
+Open a fresh Codex CLI session and check `/hooks`; new or changed definitions
+need your trust. Review the project's verification settings if it used an older
+Codex setup. Installation alone does not prove that the hooks have run: ask the
+assistant to run an appropriate test through the documented verification runner
+and report whether the automatic check accepted the result.
+
+If your installation currently points to a temporary worktree, run the installer
+from a permanent, updated framework checkout before removing the temporary one.
+An installation can also stay pinned to a checked-out release tag; updating the
+Claude plugin and refreshing Codex are separate steps.
+
+The remaining sections cover alternative Claude installations and detailed
+settings.
 
 ## Option 1 — Claude Code plugin
 

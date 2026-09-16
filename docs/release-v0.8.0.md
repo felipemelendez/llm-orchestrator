@@ -1,50 +1,59 @@
-# v0.8.0 — cadence and Codex verification
+# v0.8.0 — independent reviews for Claude Code and Codex
 
-Publication status: prepared for the open cadence pull request. The latest
-published release remains v0.7.0 until this change is merged and released.
+This release brings the shared review process to **Claude Code and Codex**. It
+helps your assistant check its work, get an independent second opinion, and show
+what actually passed before calling a change finished.
 
-## Release notes
+## What changes for you
 
-This release adds a project-enabled review cadence and Codex verification support.
-Changes receive two independent reviews. When those reviewers agree, the refuter
-is skipped; disagreement and one-sided catastrophic or serious findings receive
-adjudication. Missing reviews never count as agreement.
+- **Two independent reviews.** One reviewer checks the work against your request;
+  the other looks for ways it could fail. They review separately, without seeing
+  each other's reports.
+- **A third agent only when needed.** When both reviewers agree on the findings,
+  their seriousness, and the next steps, the process moves on. When they disagree,
+  or only one raises a serious problem, a third agent examines those findings.
+  An unfinished review must be completed first.
+- **Codex checks actual test results.** Automatic checks record what ran and which
+  version of the code was tested. Missing, failed, or out-of-date results remain
+  unverified. The assistant's written claim alone does not count as a passing test.
+- **Your project keeps its rules.** Enable the process, called cadence, separately
+  in each project. Its rules and test commands stay with that project, and checks
+  flag unexpected changes to those rules.
+- **Claude can review work from Codex.** The optional Claude reviewer uses your
+  existing login and defaults to Opus at maximum effort. It fills one of the two
+  review slots. Grok is not required.
 
-Codex hooks record actual test execution through a dedicated runner, associate
-the result with the tested source and check that completion claims have current
-evidence. Native review events are recorded separately. Optional read-only Claude
-reviews use the existing login and default to Opus at maximum effort. Grok is not
-required. These provider and application-verification ideas were informed by
-pstack while keeping cadence as the controller.
+This release adopts useful ideas from pstack: recording which assistant
+actually performed a review and making app checks repeatable. LLM Orchestrator still coordinates
+the work. App-specific test journeys stay in the app's repository; installing the
+framework alone does not create or run them.
 
-The release also includes the cadence initializer, project rule locks, commit
-checks, independent gate procedures, installer improvements and regression tests
-described in CHANGELOG.md. Project-specific app/device journeys remain in each
-application repository.
+## Get started or update
 
-### Installation and limits
+**Claude Code:** install or update the Claude plugin, restart the session, and use
+`/llm-orchestrator:cadence-init` in projects where you want cadence.
 
-Install the updated shared framework, then enable cadence separately in each
-project. Existing projects retain their explicit rules; an update does not
-silently rewrite locked project policies. Codex users must review and trust new
-or changed hook definitions through `/hooks`.
+**Codex:** run `./scripts/install.sh --codex` from a permanent framework checkout.
+Then open a fresh Codex CLI session, review and trust the definitions in `/hooks`,
+and enable cadence and Codex verification in your project. Repeat the installer
+after updating the checkout; existing copies do not update automatically.
 
-The verification layer checks evidence, not complete application correctness.
-Unperformed device checks remain pending. A fresh live Codex CLI session verified
-the successful execution/reviewer/completion flow; live failure/refusal paths
-remain distinguished from automated fixture coverage.
+[The installation guide](https://github.com/felipemelendez/llm-orchestrator/blob/v0.8.0/docs/install.md)
+includes the commands, upgrade steps, and a plain-language explanation of hooks.
+Claude Code and Codex share the cadence rules, while some additional checks remain
+specific to Claude Code.
 
-## Publish after merge
+## What was checked
 
-1. Merge PR #13 into `main` after its checks pass.
-2. Verify the merged `main` commit passed CI and contains the intended changes.
-3. Confirm the plugin and marketplace versions are both `0.8.0`, and that no
-   published `v0.8.0` tag/release exists already.
-4. Create `v0.8.0` at that verified merged commit and publish a GitHub release
-   titled **v0.8.0 — cadence and Codex verification**, using the release notes
-   above. Mark it as the latest stable release.
-5. Preserve the v0.7.0 release history. Refresh local installations from a durable
-   checkout before deleting any worktree referenced by installed hooks.
+The changes were independently reviewed against the requirements and checked for
+ways they could fail. The issues found were fixed and checked again. Automated tests cover the
+installer, review provider, protected files, and verification records. A fresh
+Codex CLI session also confirmed that test results were accepted, review activity
+was recorded, and the final completion check passed.
 
-Do not publish or tag the unmerged feature branch as the stable release. This
-file prepares the release; committing it does not publish a GitHub release.
+These checks help catch mistakes; they do not prove every feature of your app
+works. Checks on a running app or connected device still need to be performed
+and reported separately.
+
+[Full changelog](https://github.com/felipemelendez/llm-orchestrator/blob/v0.8.0/CHANGELOG.md)
+· [Changes since v0.7.0](https://github.com/felipemelendez/llm-orchestrator/compare/v0.7.0...v0.8.0)

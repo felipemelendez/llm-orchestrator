@@ -3,7 +3,16 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
-## [0.8.0] - 2026-09-06
+## [0.8.0] - 2026-09-16
+
+This release adds the shared review process to Claude Code and Codex. Two agents
+review each change independently; a third helps only with findings that need a
+decision. Codex can check actual test results before reporting completion, and
+Claude can optionally take one of its review slots. Grok is not required.
+
+Start with the [release overview](docs/release-v0.8.0.md) or the
+[installation and upgrade guide](docs/install.md#updating-to-v080).
+The implementation details follow.
 
 ### Added — Codex execution evidence and optional external reviews
 
@@ -35,9 +44,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ### Added — the cadence: an opt-in review sequence for a project, and a lock over the file that states it
 
-Nothing in this section runs anywhere until a project runs `/llm-orchestrator:cadence-init`. Every
-piece below tests for an enabled `docs/llm-orchestrator/cadence.json` before it decodes anything, so
-a project that never opts in sees no new behaviour at all.
+Enable cadence per project using `/llm-orchestrator:cadence-init` in Claude Code
+or the installed cadence scripts in Codex. These checks activate through an
+enabled `docs/llm-orchestrator/cadence.json`; installing the framework alone does
+not turn them on in every project.
 
 - **The `cadence` skill** — `skills/cadence/SKILL.md` (the trigger, the steps, the file map) and
   `skills/cadence/CADENCE.md` (the full text: the stages, the class rule, the severity rule, the
@@ -66,8 +76,8 @@ a project that never opts in sees no new behaviour at all.
 - **`scripts/install.sh --global` and `--codex`** — the same pointer block into `~/.claude/CLAUDE.md`
   and into `~/.codex/AGENTS.md`, the skill copied to `~/.agents/skills/cadence`, and the Codex hook
   merged into `~/.codex/hooks.json`. Both are idempotent and back up before they write.
-- **The Codex adapter** (`scripts/hooks/codex-cadence-adapter.sh`) — Codex's deny rules for the
-  locked files and nothing else, in under a hundred lines with a 122-check suite. It guards no
+- **The Codex adapter** (`scripts/hooks/codex-cadence-adapter.sh`) — checks commands for named
+  locked files, with dedicated regression coverage. It guards no
   directories, no links and no computed paths; the git layer and `--audit` carry the rest.
 - **The leakage floor** (`tests/test-no-product-detail.sh`) — the public tree is scanned for absolute
   home paths, ticket ids, numbered rulings and session numbers, so a private project's detail cannot
