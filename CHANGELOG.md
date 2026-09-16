@@ -5,6 +5,34 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [0.8.0] - 2026-09-06
 
+### Added — Codex execution evidence and optional external reviews
+
+- Codex completion checks now use a verification runner that records actual
+  process results, working directory, source identity and complete-output hashes.
+  Automatic hooks bind those records to the observed invocation and refuse to
+  treat missing, stale, failed or unrelated results as passing evidence.
+- Native reviewer start/stop records and optional restricted Claude reviews.
+  Claude defaults to Opus at maximum effort, uses the existing login, and records
+  the reported response model. Grok is not required and no provider is silently
+  substituted.
+- Project opt-in, explicit pending outcomes and one corrective continuation keep
+  the completion check bounded. Ordinary read-only questions do not acquire a
+  testing obligation from another writer's edits.
+- Updated installer, focused regression coverage and operating guides. A fresh
+  Codex CLI session confirmed automatic evidence acceptance, reviewer event
+  recording and a final verified completion; this does not establish every live
+  refusal path or application behavior.
+
+### Changed — conditional refuter
+
+- The shared cadence keeps two independent reviewers and skips the refuter when
+  they agree, regardless of finding count. Disagreement or a catastrophic/serious
+  finding from one reviewer alone requires adjudication. An incomplete review
+  does not count as agreement. Explicit project amendments retain precedence.
+- Provider records and repeatable application verification were informed by
+  pstack. Cadence remains the controller; application-specific verification
+  skills stay with their projects.
+
 ### Added — the cadence: an opt-in review sequence for a project, and a lock over the file that states it
 
 Nothing in this section runs anywhere until a project runs `/llm-orchestrator:cadence-init`. Every

@@ -8,74 +8,73 @@ allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/orch-cadence-gate.sh *), Bash(${
 
 # The cadence
 
-A project whose `docs/llm-orchestrator/cadence.json` has `"enabled": true` runs
-every change to production code or tests through these steps. Absent or not
-enabled, nothing applies; docs-only edits are out of scope.
+Production code and test changes follow this cadence when
+`docs/llm-orchestrator/cadence.json` has `"enabled": true`.
+Absent or disabled configurations and docs-only edits are out of scope.
 
-Full text: [CADENCE.md](./CADENCE.md). Seat briefs:
-[references/](./references/).
+Full procedure: [CADENCE.md](./CADENCE.md). Seat briefs: [references/](./references/).
 
-## The steps
+Before dispatch, read project `LAWS.md`; its explicit review and refuter amendments
+override these defaults. On Codex, read project `CODEX.md` when present for
+native and external routing and verification evidence.
 
-- **Brief review** — a fresh read-only seat checks the brief's claims against the
-  tree and returns the class (`CODE`, or `PROSE` when nothing it touches is
-  executed or read by a program), the split verdict and the active skips.
-- **Implementer** — fresh, its own worktree, a failing test before every
-  mechanism.
-- **The blind pair** — a spec seat and a plain-language adversarial seat, each on
-  its own copy, shown neither the other's report nor the implementer's.
-- **The refuter** — read-only, only when the pair's findings exceed eight or a
-  catastrophic or serious one is reasoned, not executed. It promotes or drops by
-  citation; the burden is on it to drop; doubt promotes.
-- **The union** — the controller adjudicates: catastrophic or serious goes to
-  the fixer and the gate; mild-only folds into the landing behind a red
-  witness.
-- **The fixer** — writes each pin from the finding's `SCENE:` line before
-  opening the hunk.
-- **The gate** — the script always, then on code a seat: probe replay,
-  hunk-level revert-to-red, a degenerate-pin check, novel mutations as evidence.
-- **Landing** — the full floors, the evidence files under `notes_dir`, a commit
-  by explicit pathspec, one ledger row.
+## Steps
 
-A catastrophic or serious gate finding opens the next round; the ticket stops
-when that round's finding repeats the last one's class and returns to brief
-review. The orchestrator may skip the gate seat or the refuter — those two only
-— on three cited ledger rows; the skip expires, any catastrophic re-arms it, and
-the session line carries the count.
+- **Brief review** — fresh, read-only; checks claims against the tree, returns
+  class (`CODE`, or `PROSE` if nothing is executed or read by a program), split
+  verdict and active skips.
+- **Implementer** — fresh, its own worktree; a failing test before every mechanism.
+- **Blind pair** — always two independent reviews, spec and plain-language
+  adversarial, each on its own copy, seeing neither the other's nor implementer's
+  report. Obtain missing or incomplete reviews before adjudicating; neither counts
+  as agreement.
+- **Refuter** — read-only, only for disagreement on actionable findings, severity
+  or disposition, or a catastrophic or serious finding from one reviewer alone.
+  Agreement skips it regardless of count; matching PASS verdicts alone are
+  insufficient. Assess only those findings; originate none. Promote or drop by
+  citation; burden to drop, doubt promotes.
+- **Union** — controller adjudicates: catastrophic or serious goes to fixer and gate;
+  mild-only folds into landing behind a red witness.
+- **Fixer** — writes each pin from the finding's `SCENE:` before opening the hunk.
+- **Gate** — script always; then on code, a seat: probe replay, hunk-level
+  revert-to-red, degenerate-pin check, novel mutations as evidence.
+- **Landing** — full floors, evidence under `notes_dir`, commit by explicit
+  pathspec, one ledger row.
 
-## The files
+Catastrophic or serious gate findings open another round; repeating the previous
+round's finding class stops the ticket for brief review. Three cited ledger rows
+can qualify a gate-seat skip: it expires, any catastrophic re-arms it, and the
+session line counts skips. Historical refuter skips cannot bypass required
+adjudication; agreement needs no ledger rows. Details: `CADENCE.md`.
 
-| Path | What it is |
+## Files
+
+| Path | Purpose |
 |---|---|
-| `docs/llm-orchestrator/LAWS.md` | the constitution |
-| `docs/llm-orchestrator/cadence.json` | the switch and the runner |
-| `docs/llm-orchestrator/LOCK.sha256` | the manifest |
-| `docs/llm-orchestrator/HANDOFF_TEMPLATE.md` | state only |
-| `docs/llm-orchestrator/DESIGN_RULINGS.md` | append-only |
-| `docs/llm-orchestrator/TRAPS.md` | append-only |
-| `.githooks/commit-msg`, `.githooks/orch-cadence-check.sh` | the git layer |
-| `<notes_dir>/<TICKET>_*_report.md` | the evidence |
-| `<notes_dir>/CADENCE_STATE.md` | the skips |
+| `docs/llm-orchestrator/LAWS.md` | Constitution |
+| `docs/llm-orchestrator/cadence.json` | Switch, runner |
+| `docs/llm-orchestrator/LOCK.sha256` | Manifest |
+| `docs/llm-orchestrator/HANDOFF_TEMPLATE.md` | State only |
+| `docs/llm-orchestrator/DESIGN_RULINGS.md`, `docs/llm-orchestrator/TRAPS.md` | Append-only |
+| `.githooks/commit-msg`, `.githooks/orch-cadence-check.sh` | Git layer |
+| `<notes_dir>/<TICKET>_*_report.md` | Evidence |
+| `<notes_dir>/CADENCE_STATE.md` | Skips |
 
-## The scripts
+## Scripts
 
-`${CLAUDE_SKILL_DIR}/scripts/orch-cadence-gate.sh` runs a gate's deterministic
-half. `${CLAUDE_SKILL_DIR}/scripts/orch-cadence-check.sh` carries `--verdict`,
-`--lock`, `--landing <ticket>`, `--commit-msg <msgfile>`, `--audit <rev>` and
-`--version`. Unexpanded: `scripts/orch-cadence-gate.sh` and
-`scripts/orch-cadence-check.sh`.
+`${CLAUDE_SKILL_DIR}/scripts/orch-cadence-gate.sh`: deterministic gate.
+`${CLAUDE_SKILL_DIR}/scripts/orch-cadence-check.sh`: `--verdict`, `--lock`,
+`--landing <ticket>`, `--commit-msg <msgfile>`, `--audit <rev>`, `--version`.
+Unexpanded: `scripts/orch-cadence-gate.sh`, `scripts/orch-cadence-check.sh`.
 
-`templates/cadence-global-block.md` is the pointer block the installers render
-into a global instruction file. A session with no `cadence:` line says so first.
+Installers render `templates/cadence-global-block.md` into global instructions.
+A session lacking a `cadence:` line says so first.
 
 ## Discipline
 
-Every dispatch names its model; the plain-language adversarial seat may run on a
-different one from every other seat.
+Name every dispatch's model; the adversarial seat may use a different model.
+Never self-verify: writers cannot review or gate their changes. Never resume a
+seat whose model matters. Delete throwaway copies or worktrees after reports finish.
 
-Never verify your own work: the seat that wrote a change never reviews or gates
-it. Never resume a seat whose model matters. Seats run on throwaway copies or
-worktrees, deleted once the report is finished.
-
-Hooks and deny rules are guardrails, not guarantees; a native deny rule beats
-every hook, and the git `commit-msg` layer holds across tools and CI.
+Hooks and deny rules are guardrails, not guarantees. Native deny rules beat hooks;
+Git's `commit-msg` layer holds across tools and CI.

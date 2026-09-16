@@ -8,6 +8,9 @@ A controller (the session in the main context) dispatches seats. A seat is a
 fresh agent with one job, one brief and one report. The controller never reviews
 or gates work it wrote itself, and neither does any seat.
 
+Read the project's `LAWS.md` first. Explicit project review and refuter
+amendments take precedence over the shared default below.
+
 Contents: steps 0-6 · rounds and the stop rule · the whole-system audit · the
 project files · the lock · the amendment mechanism · evidence and the ledger row ·
 seat rules · environment · running seats on Codex · the honest boundary.
@@ -62,9 +65,11 @@ Template: [references/implementer.md](references/implementer.md).
 
 ## Step 2 — the blind pair
 
-Two review seats on their own copies of the implementer's tree, never shown each
-other's findings and never shown the implementer's report; each re-derives the
-change from the tree.
+Always obtain two independent review reports from seats on their own copies of
+the implementer's tree, never shown each other's findings and never shown the
+implementer's report; each re-derives the change from the tree. A missing or
+incomplete review is not agreement: obtain the missing independent review
+before deciding whether a refuter is needed.
 
 - **The spec seat** gets dense `file:symbol` pressure areas and the spec. It
   answers: does this implement what was specified, and where does the code
@@ -90,17 +95,27 @@ Templates: [references/reviewer-spec.md](references/reviewer-spec.md),
 
 ## Step 2b — the refuter
 
-It runs when the two reports together exceed eight findings, or when any
-catastrophic or serious finding is reasoned rather than executed. Otherwise the
-controller adjudicates the raw reports directly, the ledger row says so, and its
-own adjudication is saved as `<TICKET>_REFUTE_report.md`, opening `Status:`,
-`Started:`, then `refuter: skipped under the threshold (<n> findings, every
-catastrophic and serious one executed)`, the union lines, `Finished:` — so the
-fifth evidence file exists and says who wrote it.
+The controller compares the two complete blind reviews. Run the refuter only
+when they disagree on actionable findings, severity or disposition, or when one
+reviewer alone raises a catastrophic or serious finding. Agreement means the
+reports support the same actionable findings, severity and disposition, not
+merely that both verdicts say PASS. A missing or incomplete review must be
+completed independently; never treat its silence as agreement.
 
-A fresh read-only seat, the first to see both reports and never the implementer's.
-It returns the union draft, one line per finding in harm order, each carrying its
-origin and, where two findings converged, both origins:
+When both agree, skip the refuter regardless of finding count or whether the
+evidence was reasoned or executed. The controller still records the union and
+adjudicates every finding; agreement never discards a finding. Save that
+adjudication as `<TICKET>_REFUTE_report.md`, opening `Status:`, `Started:`, then
+`refuter: skipped — both independent reviews agree on findings, severity and
+disposition`, the cited reports and union lines, `Finished:`. The ledger records
+the reason, and the evidence file identifies the controller as its author.
+
+When needed, the refuter is a fresh read-only seat given both reports and never
+the implementer's. The controller names the disputed and one-sided catastrophic
+or serious findings to assess; agreed findings carry directly into the union.
+The refuter originates no findings and performs no third overlapping review. It
+returns one line per assigned finding in harm order, each carrying its origin
+and, where two findings describe the same defect, both origins:
 
 - `PROMOTED <rank> <origin> — <state → wrong output> — PROOF: <file:line, or the
   executed probe and its failing line>`, keeping the scene line verbatim.
@@ -111,11 +126,11 @@ origin and, where two findings converged, both origins:
 Its laws: the burden is on it to drop, and doubt promotes. Converged findings
 merge and keep the higher rank. It never resolves toward the longer or the more
 confident report — length and certainty are not evidence — and re-ranks downward
-only with a citation, never upward without one. The plugin's own
-`workflows/review-diff.js` carries the same verdict schema — `index`, `refuted`,
-`method` (`executed` or `reasoned`), `reason`; `refuted: false` is a promotion,
-`refuted: true` a drop, an unjudged finding unresolved. Keep those names so the
-seat's prose and the schema cannot drift.
+only with a citation, never upward without one.
+
+`workflows/review-diff.js` is a separate general review workflow with its own
+skeptic pass and JSON schema. It does not implement this cadence's blind pair
+or conditional-refuter dispatch; running it does not replace steps 2 and 2b.
 
 Template: [references/refuter.md](references/refuter.md).
 
@@ -330,16 +345,18 @@ and keeps working under the law as written.
 
 ## The amendment mechanism
 
-The orchestrator may skip a stage on its own — only downward, only per class, only
-citing three ledger rows — and exactly two stages are skippable. The gate seat, on
-`CODE` only, after three landed `CODE` rows with no catastrophic and no serious
-gate-seat finding. The refuter, after three landed rows of the ticket's class on
-which it dropped nothing and re-ranked nothing. Nothing else: the refuter below the
-finding threshold and the gate seat on a `PROSE` ticket are rules of steps 2b and
-5b, not skips, and need no rows, no line and no expiry. Every skip expires with the
-fifth landed ticket after the one that wrote it and must re-qualify on three fresh
-rows. Any catastrophic finding, by any seat, on any later ticket of any class
-re-arms every live skip permanently until the owner rules otherwise; the controller
+The orchestrator may skip the gate seat on its own — only downward, only on
+`CODE`, only citing three landed `CODE` rows with no catastrophic and no serious
+gate-seat finding. Nothing else: agreement skipping the refuter and the gate
+seat on a `PROSE` ticket are rules of steps 2b and 5b, not discretionary skips,
+and need no rows, no state line and no expiry. Historical refuter retirement
+entries do not qualify under this default: they cannot bypass step 2b when the
+pair disagrees or one reviewer alone raises a catastrophic or serious finding.
+At brief review, the controller marks such entries expired, preserving history;
+explicit project amendments still take precedence. Every gate-seat skip expires
+with the fifth landed ticket after the one that wrote it and must re-qualify on
+three fresh rows. Any catastrophic finding, by any seat, on any later ticket of
+any class re-arms every live skip permanently until the owner rules otherwise; the controller
 appends the `re-armed:` line at that ticket's union, before step 4.
 
 Skips live in `<notes_dir>/CADENCE_STATE.md` — append-only, dated, one entry per
@@ -350,7 +367,8 @@ naming the same stage and the same class; the orchestrator appends `expired:
 <stage> · class <CODE|PROSE> · <date>` when the fifth landed ticket after the
 skip's own passes. The brief-review seat reports which are active and whether each
 still qualifies. Everything else — the pair, never self-verify, the harm ranking,
-the stop rule, the lock's shape and every threshold in this text — changes only by
+the stop rule, the lock's shape, every threshold and the refuter trigger — changes
+only by
 a numbered ruling under the unlock.
 
 Template: [references/cadence-state.md](references/cadence-state.md).
@@ -361,8 +379,8 @@ Template: [references/cadence-state.md](references/cadence-state.md).
 `<TICKET>_BRIEFREV_report.md`, `<TICKET>_REV1_report.md`, `<TICKET>_REV2_report.md`,
 `<TICKET>_REFUTE_report.md`, `<TICKET>_GATE_report.md`. Each carries `Started:` and
 `Finished:` stamps later than the base commit's author date; the gate report's last
-line is `EXIT=0`. Where the refuter was skipped under the threshold the fourth file
-is the controller's own adjudication, and where no gate seat ran the fifth is the
+line is `EXIT=0`. Where the refuter was skipped because the pair agreed, the
+fourth file is the controller's adjudication; where no gate seat ran, the fifth is the
 gate script's complete output; each says so in its first line.
 
 `orch-cadence-check.sh` carries the modes `--verdict` (the session-start line),
@@ -392,8 +410,8 @@ gate finding class · minutes lost to the environment · skips applied. The
 wall-clock numbers come from the seats' stamps. *First found by stage* and *gate
 finding class* exist so the row says which stage paid: a stage no finding is ever
 first found by is one the amendment mechanism may retire — and only the gate seat
-and the refuter are retirable. Per-stage timing tables are not kept; the row is
-the record.
+is retirable under the shared default. Per-stage timing tables are not kept; the
+row is the record.
 
 Any finding class seen a second time across tickets is named at the landing and
 either pointed at the deterministic check that now catches it, or ticketed for one.

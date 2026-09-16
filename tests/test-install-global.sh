@@ -258,7 +258,7 @@ if command -v python3 >/dev/null 2>&1; then
 import json,sys
 d=json.load(open(sys.argv[1]))
 ms=[m.get("matcher") for m in d.get("hooks",{}).get("PreToolUse",[])]
-cmds=[h.get("command","") for m in d.get("hooks",{}).get("PreToolUse",[]) for h in m.get("hooks",[])]
+cmds=[h.get("command","") for m in d.get("hooks",{}).get("PreToolUse",[]) for h in m.get("hooks",[]) if "codex-cadence-adapter.sh" in h.get("command", "")]
 assert "Bash" in ms, ms
 assert "apply_patch" in ms, ms
 assert all(c.startswith("/") for c in cmds), cmds
@@ -274,7 +274,7 @@ assert all("codex-cadence-adapter.sh" in c for c in cmds), cmds
 import json,sys
 d=json.load(open(sys.argv[1]))
 cmds=[h.get("command","") for m in d.get("hooks",{}).get("PreToolUse",[]) for h in m.get("hooks",[])]
-ours=[c for c in cmds if "codex-cadence-adapter" in c or "llm-orchestrator" in c]
+ours=[c for c in cmds if "codex-cadence-adapter.sh" in c]
 assert len(ours)==2, ours
 ' "$H5/.codex/hooks.json" 2>"$TMP/hookerr2"; then
       ok "a second --codex replaces the entry instead of adding a second one"
@@ -313,6 +313,32 @@ else
   else
     printf '  skip --codex probes (python3 missing)\n'
   fi
+fi
+
+# ------------------------------------------------------------
+section "G11 — opt-in Codex evidence hooks coexist with unrelated hooks"
+if command -v python3 >/dev/null 2>&1; then
+  HE=$(new_home)
+  mkdir -p "$HE/.codex"
+  printf '%s\n' '{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/bin/true"},{"type":"command","command":42}]}],"Stop":[{"hooks":[{"type":"command","command":"/bin/false"}]}]}}' > "$HE/.codex/hooks.json"
+  run_install "$HE" --codex >/dev/null 2>&1
+  run_install "$HE" --codex >/dev/null 2>&1
+  if python3 - "$HE/.codex/hooks.json" <<'PY'
+import json, shlex, sys
+from pathlib import Path
+hooks = json.load(open(sys.argv[1]))['hooks']
+for event in ('UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'SubagentStart', 'SubagentStop'):
+    ours = [h for g in hooks.get(event, []) for h in g.get('hooks', [])
+            if isinstance(h.get('command'), str) and any(Path(p).name == 'codex-evidence.py' for p in shlex.split(h.get('command', '')))]
+    assert len(ours) == 1, (event, ours)
+    assert ours[0]['timeout'] >= 10, ours[0]
+    assert all(Path(p).is_file() for p in shlex.split(ours[0]['command'])), ours[0]
+assert any(h['command'] == '/bin/true' for g in hooks['PostToolUse'] for h in g['hooks'])
+assert any(h['command'] == 42 for g in hooks['PostToolUse'] for h in g['hooks'])
+assert any(h['command'] == '/bin/false' for g in hooks['Stop'] for h in g['hooks'])
+PY
+  then ok 'all six evidence events install once and preserve foreign hooks'
+  else fail 'all six evidence events install once and preserve foreign hooks' 'missing/duplicated or unresolved event'; fi
 fi
 
 # ------------------------------------------------------------

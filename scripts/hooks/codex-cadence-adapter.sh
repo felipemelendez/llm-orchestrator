@@ -50,6 +50,13 @@ else
   NOPY=1; TEXT=$(printf '%s' "$PAY" | tr -d '\n\r')
 fi
 [ -n "$TEXT" ] || exit 0; TEXTL=$(printf '%s' "$TEXT" | tr 'A-Z' 'a-z')
+# The framework's own checker and disposable-copy gate READ the locked config.
+# Recognize only direct, known-script invocations; never allow --lock or shell
+# composition. A missing helper keeps the original guard's behavior.
+if [ -z "$NOPY" ] && [ "$TOOL" = Bash ]; then
+  HELPER="$(cd "$(dirname "$0")/../lib" 2>/dev/null && pwd)/codex-cadence-read-command.py"
+  if [ -f "$HELPER" ] && python3 "$HELPER" "$TEXT"; then exit 0; fi
+fi
 while case "$TEXTL" in *[$'\n\r']) TEXTL=${TEXTL%?} ;; *) false ;; esac; do :; done
 # The lock set: six fixed files plus every lock_extra entry, relative and
 # absolute under the project root, matched case-folded as a plain substring so a

@@ -65,7 +65,8 @@ You are the orchestrator for <PROJECT> on branch `<branch>`. Your seat is
 Read first, in this order, and treat as binding: `docs/llm-orchestrator/LAWS.md`
 (the laws, the harm ranking, the rulings, the silence rule, the handoff law) →
 the `cadence` skill's `CADENCE.md` (the cadence: class and split at brief
-review, the blind pair, the refuter above the threshold, rounds on severity and
+review, the blind pair, the refuter only for disagreement or a one-sided
+catastrophic or serious finding, rounds on severity and
 the stop rule on repeated class, the fixer's pin from the scene, the gate script
 before the gate seat, the amendment mechanism, the stamps) →
 `TRAPS.md` → `DESIGN_RULINGS.md` → then this handoff (state only).

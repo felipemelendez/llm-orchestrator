@@ -380,10 +380,39 @@ bash_pin 0 "cat docs/llm-orchestrator/LAWS.md${CR}
 bash_pin 0 "cat docs/llm-orchestrator/LAWS.md${CR}" 'one plain read terminated by a bare CR'
 
 # ------------------------------------------------------------
+section "A16 — the framework's direct verification commands"
+CHECK="$ROOT/skills/cadence/scripts/orch-cadence-check.sh"
+GATE="$ROOT/skills/cadence/scripts/orch-cadence-gate.sh"
+bash_pin 0 "bash '$CHECK' --root '$CAD' --verdict" 'the installed checker can read its config'
+bash_pin 0 "'$CHECK' --version" 'direct checker invocation'
+bash_pin 0 "bash '$CHECK' --audit HEAD --root '$CAD'" 'read-only committed audit'
+bash_pin 0 "bash '$CHECK' --root '$CAD' --landing FTAPP-123" 'read-only landing check'
+bash_pin 0 "bash '$GATE' '/tmp/task tree' HEAD --config '$CAD/docs/llm-orchestrator/cadence.json'" 'the disposable gate can read its config'
+bash_pin 2 "bash '$CHECK' --root '$CAD' --lock" 'lock rewriting remains blocked'
+bash_pin 2 "bash '$CHECK' --verdict; rm '$CAD/docs/llm-orchestrator/LAWS.md'" 'verification cannot prefix a write'
+bash_pin 2 "bash '$CHECK' --verdict > '$CAD/docs/llm-orchestrator/LAWS.md'" 'verification cannot redirect into a locked file'
+bash_pin 2 "bash '$CHECK' --verdict | cat" 'composed commands still fall through to the guard'
+bash_pin 2 "bash /tmp/orch-cadence-check.sh --verdict" 'an unrecognized same-named script is refused'
+bash_pin 2 "bash '$CHECK' --verdict --lock" 'a read mode cannot authorize a write mode'
+bash_pin 2 "bash '$GATE' /tmp/tree HEAD --config '$CAD/docs/llm-orchestrator/cadence.json' --unknown" 'unknown gate options are refused'
+
+section "A17 — the trusted read-only Claude provider can read locked inputs"
+PROVIDER="$ROOT/scripts/providers/claude-review.py"
+REVIEW="python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$TMP/review.jsonl' --receipt '$TMP/receipt.json'"
+bash_pin 0 "$REVIEW" 'the documented provider config is a read input'
+bash_pin 0 "$REVIEW --context-file docs/llm-orchestrator/LAWS.md" 'locked review context remains read-only'
+bash_pin 2 "$REVIEW --claude-bin /tmp/untrusted" 'a substituted executable gets no read-only exemption'
+bash_pin 2 "$REVIEW --unknown" 'unknown provider options get no exemption'
+bash_pin 2 "$REVIEW; rm '$CAD/docs/llm-orchestrator/LAWS.md'" 'provider cannot prefix a locked-file write'
+bash_pin 2 "python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$CAD/docs/llm-orchestrator/LAWS.md' --receipt '$TMP/receipt.json'" 'provider output cannot target a locked input'
+bash_pin 2 "python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$TMP/review.jsonl' --receipt '$CAD/docs/llm-orchestrator/LOCK.sha256'" 'provider receipt cannot target the lock'
+bash_pin 2 "python3 /tmp/claude-review.py run --config '$CAD/docs/llm-orchestrator/cadence.json'" 'same-named arbitrary provider is refused'
+
+# ------------------------------------------------------------
 section "A9 — hygiene"
 lines=$(wc -l < "$ADAPTER" | tr -d ' ')
-if [[ "$lines" -le 95 ]]; then ok "the adapter is $lines lines (ceiling 95)"
-else fail "the adapter is $lines lines (ceiling 95)" "it grew back"; fi
+if [[ "$lines" -le 105 ]]; then ok "the adapter is $lines lines (ceiling 105)"
+else fail "the adapter is $lines lines (ceiling 105)" "it grew back"; fi
 if grep -q 'guard-cadence-lock' "$ADAPTER"; then
   fail "the adapter names no deleted guard" "it still references guard-cadence-lock"
 else ok "the adapter names no deleted guard"; fi

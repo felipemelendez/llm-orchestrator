@@ -9,7 +9,7 @@ This project uses LLM Orchestrator's subagent roles. When a coding agent dispatc
 | orch-code-reviewer | Stage 2 review: is the code correct, safe, idiomatic, minimal?          |
 | orch-explorer      | Read-only codebase scout. Returns `file:line` refs.                     |
 | orch-debugger      | Root-cause investigator. Diagnoses; does not fix.                       |
-| orch-refuter | Reads both blind reviews; promotes each finding with a citation or drops it with one. Never adjudicates toward the longer report. |
+| Cadence refuter (role, not a shipped agent type) | Assesses only disputed findings or a catastrophic/serious finding from one reviewer alone, after two complete blind reviews. Agreement skips it regardless of count; it originates no new findings. |
 
 Projects that opt into the cadence carry a marked laws block in this file — see the `cadence` skill.
 

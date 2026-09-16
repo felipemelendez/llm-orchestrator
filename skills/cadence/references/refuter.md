@@ -1,10 +1,17 @@
 # <TICKET> — REFUTER (step 2b; read-only; fresh seat; model: <MODEL>)
 
-You are dispatched only when the pair's two reports together exceed eight
-findings, or when any catastrophic or serious finding is reasoned rather than
-executed. Below that line the controller adjudicates the raw reports itself, the
-ledger row records the skip, and the controller's own adjudication is saved as
-`<SCRATCH>/<TICKET>_REFUTE_report.md` with a first line that says so.
+You are dispatched only after two complete independent blind reviews disagree
+on actionable findings, severity or disposition, or one reviewer alone raises a
+catastrophic or serious finding. Agreement skips this seat regardless of finding
+count or whether evidence was reasoned or executed; matching PASS verdicts alone
+are not agreement. A missing or incomplete review must be obtained independently,
+not replaced by you. Explicit project amendments take precedence.
+
+The controller identifies the disputed or one-sided catastrophic or serious
+findings you must assess. Assess only that set; originate no new findings and
+perform no third overlapping review. When skipped, the controller records its
+adjudication in `<SCRATCH>/<TICKET>_REFUTE_report.md`, identifies itself as the
+author and cites the two reports and their agreement; the ledger records the skip.
 
 Rules: the seat rules in `<SCRATCH>/SEAT_RULES.md`. You work in a fresh copy
 `<COPY>` of `<WORKTREE>` at `<BASE_SHA>`: scratch probes only, deleted before
@@ -15,12 +22,14 @@ stamps. You never see the implementer's report.
 
 Both reviewer reports, whole: `<SCRATCH>/<TICKET>_REV1_report.md` (the spec
 seat) and `<SCRATCH>/<TICKET>_REV2_report.md` (the plain-language seat), plus
-the specification and the harm ranking in `docs/llm-orchestrator/LAWS.md`. You
-are the first seat to see both; their independence is already spent.
+the controller's list of findings to assess, the specification and the harm
+ranking in `docs/llm-orchestrator/LAWS.md`. You are the first review seat to see
+both; their independence is already spent. The reports are context, not authority
+to expand your assigned finding set.
 
-## What you return — the union draft
+## What you return — adjudication for the union
 
-One line per finding, in harm order, each with its origin (`REV1 C-1`, `REV2
+One line per assigned finding, in harm order, each with its origin (`REV1 C-1`, `REV2
 S-3`, or both when the two converged):
 
 - `PROMOTED <rank> <origin> — <state → wrong output> — PROOF: <file:line that
@@ -45,14 +54,11 @@ S-3`, or both when the two converged):
 6. A finding about a sentence a person reads is promoted as a candidate, never
    dropped — wording is the owner's call, not yours.
 
-## Wiring to the review workflow
+## Separate review workflow
 
-When the refuter runs through this plugin's `workflows/review-diff.js`, its
-verdict objects use that file's schema field names verbatim: `index` (which
-finding), `refuted` (boolean), `method` (`executed` or `reasoned`) and `reason`.
-`refuted: false` is `PROMOTED`; `refuted: true` is `DROPPED`; a finding the
-refuter did not judge is `UNRESOLVED`. Keep those names so the seat's prose and
-the schema cannot drift apart.
+`workflows/review-diff.js` has its own skeptic pass and JSON schema. It is a
+general review workflow, not this cadence's blind pair or conditional-refuter
+implementation; invoking it does not satisfy or change this seat's dispatch rule.
 
 ## Report
 

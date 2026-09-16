@@ -25,3 +25,7 @@ tests/evals/results/benchmark.*.json
 
 # Agent worktrees created by the Agent tool. Real git worktrees, never content.
 .claude/worktrees/
+
+# Python verification and provider helpers
+__pycache__/
+*.py[cod]

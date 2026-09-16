@@ -230,7 +230,9 @@ case "${cmd}" in
              skills/cadence/scripts/orch-cadence-gate.sh skills/cadence/scripts/orch-cadence-check.sh \
              skills/cadence/scripts/cadence-detect.sh skills/cadence/scripts/cadence-init.sh \
              skills/cadence/references/commit-msg skills/cadence/references/cadence-state.md \
-             templates/cadence-global-block.md scripts/hooks/codex-cadence-adapter.sh; do
+             templates/cadence-global-block.md scripts/hooks/codex-cadence-adapter.sh \
+             scripts/hooks/codex-evidence.py scripts/lib/codex-cadence-read-command.py \
+             scripts/providers/claude-review.py scripts/verification/codex-verify.py; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -333,11 +335,18 @@ case "${cmd}" in
     skills_dest="${HOME}/.agents/skills/cadence"
     hooks_file="${HOME}/.codex/hooks.json"
     adapter="${ROOT}/scripts/hooks/codex-cadence-adapter.sh"
+    evidence="${ROOT}/scripts/hooks/codex-evidence.py"
 
     command -v python3 >/dev/null 2>&1 || codex_refuse \
       "--codex needs python3 to merge the Codex hooks file without destroying what is already in it. Install python3 and re-run; nothing was changed."
     [[ -f "${adapter}" ]] || codex_refuse \
       "${adapter} is missing — nothing was written to the Codex hooks file."
+    [[ -f "${evidence}" ]] || codex_refuse \
+      "${evidence} is missing — nothing was written to the Codex hooks file."
+    for dependency in scripts/verification/codex-verify.py scripts/providers/claude-review.py scripts/lib/codex-cadence-read-command.py; do
+      [[ -f "${ROOT}/${dependency}" ]] || codex_refuse \
+        "${ROOT}/${dependency} is missing — nothing was changed."
+    done
     if [[ -e "${skills_dest}" && ! -f "${skills_dest}/.orch-installed" ]]; then
       codex_refuse "${skills_dest} exists and this installer did not write it (no .orch-installed marker inside). Move it aside yourself if you want it replaced; nothing was changed."
     fi
@@ -351,6 +360,14 @@ case "${cmd}" in
       if ! python3 -c 'import json,sys; sys.exit(0 if isinstance(json.load(open(sys.argv[1])), dict) else 1)' \
            "${hooks_file}" >/dev/null 2>&1; then
         codex_refuse "${hooks_file} is not a JSON object; nothing was changed."
+      fi
+      if ! python3 - "${hooks_file}" <<'PY'
+import json, sys
+hooks = json.load(open(sys.argv[1])).get("hooks", {})
+events = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop")
+sys.exit(0 if isinstance(hooks, dict) and all(isinstance(hooks.get(e, []), list) for e in events) else 1)
+PY
+      then codex_refuse "${hooks_file} has invalid hook groups; nothing was changed."
       fi
     fi
     mkdir -p "${HOME}/.codex" "${HOME}/.agents" 2>/dev/null || true
@@ -398,10 +415,10 @@ case "${cmd}" in
     fi
     hooks_file="${hooks_res}"
     mkdir -p "$(dirname "${hooks_file}")"
-    python3 - "${hooks_file}" "${adapter}" <<'PY'
-import json, os, sys
+    python3 - "${hooks_file}" "${adapter}" "${evidence}" <<'PY'
+import json, os, shlex, sys
 
-path, cmd = sys.argv[1], sys.argv[2]
+path, cmd, evidence = sys.argv[1:]
 data = {}
 if os.path.exists(path):
     try:
@@ -457,6 +474,41 @@ for matcher in ("Bash", "apply_patch"):
                  "hooks": [{"type": "command", "command": cmd}]})
 
 hooks["PreToolUse"] = kept
+# Evidence hooks are separately opted in by each project's codex_verification
+# policy. Replacing only our own handler preserves unrelated hook groups.
+evidence_cmd = shlex.join([sys.executable, evidence])
+for event, matcher in (
+    ("UserPromptSubmit", None),
+    ("PreToolUse", "Bash|apply_patch"),
+    ("PostToolUse", "Bash|apply_patch|write_stdin"),
+    ("Stop", None),
+    ("SubagentStart", None),
+    ("SubagentStop", None),
+):
+    groups = hooks.get(event, [])
+    if not isinstance(groups, list):
+        sys.exit("refused: %s hooks must be an array" % event)
+    retained = []
+    for group in groups:
+        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+            retained.append(group)
+            continue
+        handlers = []
+        for handler in group["hooks"]:
+            command = handler.get("command", "") if isinstance(handler, dict) else ""
+            try:
+                owned = isinstance(command, str) and any(os.path.basename(p) == "codex-evidence.py" for p in shlex.split(command))
+            except (ValueError, TypeError):
+                owned = False
+            if not owned:
+                handlers.append(handler)
+        if handlers:
+            retained.append(dict(group, hooks=handlers))
+    group = {"hooks": [{"type": "command", "command": evidence_cmd, "timeout": 10}]}
+    if matcher is not None:
+        group["matcher"] = matcher
+    retained.append(group)
+    hooks[event] = retained
 data["hooks"] = hooks
 new = json.dumps(data, indent=2) + "\n"
 
@@ -486,10 +538,10 @@ tmp = path + ".orch-merge.tmp"
 with open(tmp, "w") as fh:
     fh.write(new)
 os.replace(tmp, path)
-print("merged the adapter hook into %s (matchers Bash and apply_patch)" % path)
+print("merged cadence file guards and opt-in evidence hooks into %s" % path)
 PY
-    echo "The adapter is Codex's substitute for the file-deny rules Claude Code has natively, and nothing more: a Bash command or an apply_patch header that names a locked FILE and is not one plain read is refused, with the way out printed. It does not guard directories, the marked laws section, links, or a path a command assembles at runtime — the alarm names those instead: the session-start line, the end-of-turn verdict, the commit-msg hook, and --audit in CI."
-    echo "The matchers are Bash and apply_patch, the two the Codex hooks documentation names; project-local hooks load only when the project's own Codex layer is trusted. Two things are UNVERIFIED against a live Codex and stay so: whether a PreToolUse hook fires inside a Codex subagent, and whether a matcher can be aimed at a patch's target path rather than the tool. The git layer is the enforcement that depends on neither."
+    echo "The PreToolUse adapter protects named cadence files. Additional hooks record verification and native-agent receipts only in projects with codex_verification.mode set to blocking or warn. See docs/codex-evidence.md for scope and limits."
+    echo "Open /hooks in a fresh Codex CLI session to review and trust the current definitions. Installation does not grant hook trust or prove live hook execution. config.toml and Claude hooks were not changed."
     echo
     layers_report
     ;;
