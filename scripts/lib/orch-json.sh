@@ -138,7 +138,17 @@ INTERP = {
     "xargs", "parallel", "find", "make", "just", "task", "entr",
     "screen", "tmux", "script", "nice", "ionice", "chroot", "unshare", "flock",
 }
-OPERATORS = {";", "|", "&", "&&", "||", ";;", "(", ")", "<", ">", ">>", "<<", "<<<"}
+# Every one of these is a shell OPERATOR, never data. shlex with
+# punctuation_chars=True emits `>|`, `&>`, `&>>` and `<>` as single tokens, and
+# each of their characters is in META below — so a set that did not list them
+# replaced the operator with the data placeholder, and the path that followed
+# read as an ordinary argument of the command word. `echo x >| LAWS.md` and
+# `echo x &> LAWS.md` overwrote the file with the caller's redirect rule never
+# firing. `>&` and `<&` stay OUT: they duplicate a descriptor, they take a
+# number rather than a path, and leaving them as placeholders is what keeps
+# `cmd >&2` and `cmd 2>&1` out of every write rule.
+OPERATORS = {";", "|", "&", "&&", "||", ";;", "(", ")",
+             "<", ">", ">>", "<<", "<<<", ">|", "&>", "&>>", "<>"}
 META = set(";|&<>()`$")
 
 def newlines_to_separators(s):

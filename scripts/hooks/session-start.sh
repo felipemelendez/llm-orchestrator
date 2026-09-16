@@ -109,6 +109,81 @@ truncate_at_line() {
   printf '%s\n\n[truncated — raise ORCH_SESSION_MAX_CHARS to see more]' "${head}"
 }
 
+# ---------------------------------------------------------------------------
+# The cadence verdict.
+#
+# Stage 1 is the same opt-in test the cadence guards use — a file test and a
+# grep on docs/llm-orchestrator/cadence.json, no JSON decode and no fork — so a
+# project that never opted in pays nothing and its output stays byte-identical
+# to what this hook printed before the cadence existed (pinned in
+# tests/test-cadence-session-start.sh against the commit before this change).
+#
+# The verdict is PREPENDED because truncation drops the TAIL: whatever else the
+# budget eats, the session opens knowing whether the lock still matches the tree.
+# It is a REPORT and never enforcement — this hook already exits early on
+# ORCH_DISABLED_HOOKS=orch-session-start, so nothing may depend on it.
+# ---------------------------------------------------------------------------
+CADENCE_PREFIX=""
+CADENCE_PROJ="${CLAUDE_PROJECT_DIR:-${PWD}}"
+CADENCE_PROJ="${CADENCE_PROJ%/}"
+CADENCE_CFG="${CADENCE_PROJ}/docs/llm-orchestrator/cadence.json"
+if [[ -f "${CADENCE_CFG}" ]] && grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "${CADENCE_CFG}"; then
+  _orch_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then openssl dgst -sha256 | awk '{print $NF}'
+    else printf 'nosha256'; fi
+  }
+  HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+  # Never ${CLAUDE_PLUGIN_ROOT} for this: install.sh --copy rewrites that token
+  # only inside hooks/hooks.json. Resolving from this script's own location
+  # works in the plugin layout and in a --copy install alike.
+  CHECK_WANT="${HOOK_DIR}/../../skills/cadence/scripts/orch-cadence-check.sh"
+  CHECK_DIR="$(cd "${HOOK_DIR}/../../skills/cadence/scripts" 2>/dev/null && pwd)"
+  CHECK_SH="${CHECK_DIR}/orch-cadence-check.sh"
+  if [[ -n "${CHECK_DIR}" && -f "${CHECK_SH}" ]]; then
+    VERDICT=$(bash "${CHECK_SH}" --root "${CADENCE_PROJ}" --verdict 2>/dev/null)
+    [[ -n "${VERDICT}" ]] || VERDICT="cadence: the check script returned no verdict"
+    # The project's own copy of the check, which the git layer runs, can drift
+    # from the plugin's when the plugin updates. Say so rather than let two
+    # different rules run in two different places.
+    if [[ -f "${CADENCE_PROJ}/.githooks/orch-cadence-check.sh" ]] \
+       && ! cmp -s "${CADENCE_PROJ}/.githooks/orch-cadence-check.sh" "${CHECK_SH}"; then
+      VERDICT="${VERDICT} · hook copy differs from the plugin's (re-run the cadence skill's init under the unlock)"
+    fi
+  else
+    VERDICT="cadence: check script missing at ${CHECK_WANT}"
+  fi
+  GUARDS="none"
+  if ls "${HOOK_DIR}"/guard-*.sh >/dev/null 2>&1; then
+    GUARDS=$(cat "${HOOK_DIR}"/guard-*.sh 2>/dev/null | _orch_sha256 | cut -c1-8)
+  fi
+  CADENCE_PREFIX="${VERDICT} · guards: ${GUARDS}
+
+"
+  # The snapshot the cadence Stop hook compares against, so it can tell a
+  # mutation made in THIS session from one the session inherited. Best effort:
+  # a session that cannot write it degrades to reporting, never to blocking.
+  if . "${HOOK_DIR}/../lib/orch-project.sh" 2>/dev/null \
+     && declare -f orch_project_hash >/dev/null 2>&1; then
+    _snap_dir="${ORCH_HOME:-${HOME}/.llm-orchestrator}/state"
+    if mkdir -p "${_snap_dir}" 2>/dev/null; then
+      _snap="${_snap_dir}/cadence-snapshot.$(orch_project_hash)"
+      case "${VERDICT}" in
+        *"lock CHANGED "*)
+          _changed="${VERDICT#*lock CHANGED }"
+          _changed="${_changed%% · *}"
+          printf '%s' "${_changed}" | tr ',' '\n' \
+            | sed -e 's/ *+[0-9].*$//' -e 's/^ *//' -e 's/ *$//' \
+            | grep -v '^$' > "${_snap}" 2>/dev/null || true
+          ;;
+        *"lock OK"*) printf 'OK\n' > "${_snap}" 2>/dev/null || true ;;
+        *)           printf 'UNARMED\n' > "${_snap}" 2>/dev/null || true ;;
+      esac
+    fi
+  fi
+fi
+
 META_BODY=""
 META_FILE="${ROOT}/skills/using-orchestrator/SKILL.md"
 if [[ -f "${META_FILE}" ]]; then
@@ -158,6 +233,8 @@ Before continuing or claiming any work done:
 
 ${PROTOCOL_CORE}"
 
+  NOTE="${CADENCE_PREFIX}${NOTE}"
+
   if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
     printf 'orch-dry-run[session-start]: would inject post-compaction recovery note (%s chars)\n' "${#NOTE}" >&2
     exit 0
@@ -173,6 +250,17 @@ fi
 # Load the using-orchestrator meta-skill as session context.
 # ---------------------------------------------------------------------------
 if [[ -z "${META_BODY}" ]]; then
+  # A missing or unmarked meta-skill used to end the hook here, silently. In
+  # cadence mode that is exactly the session that most needs the verdict — the
+  # plugin is half-installed — so the report goes out on its own.
+  if [[ -n "${CADENCE_PREFIX}" ]]; then
+    if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+      printf 'orch-dry-run[session-start]: would inject the cadence verdict (%s chars)\n' "${#CADENCE_PREFIX}" >&2
+      exit 0
+    fi
+    ESCAPED=$(printf '%s' "${CADENCE_PREFIX}" | json_escape)
+    printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"; exit 0
+  fi
   exit 0
 fi
 
@@ -194,7 +282,7 @@ PREAMBLE="You are running LLM Orchestrator. Below is the protocol core of your '
 POSTAMBLE="
 ---"
 
-BODY="${PREAMBLE}${META_BODY}${POSTAMBLE}"
+BODY="${CADENCE_PREFIX}${PREAMBLE}${META_BODY}${POSTAMBLE}"
 
 BODY=$(truncate_at_line "${BODY}" "${MAX_CHARS}")
 

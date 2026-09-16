@@ -28,6 +28,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # actions/checkout fetches only the pushed ref, so on every branch but
+      # main there is no local `main` and test-eval-runner-paths.sh — which
+      # resolves `refs/heads/main` for its slash-bearing arm — would fail the
+      # job under ORCH_REQUIRE_DEPS=1 rather than run. The `if` is because a
+      # push to main already HAS that branch checked out, and git refuses to
+      # fetch into the branch it is standing on.
+      - name: Fetch main (the ref-arm suite resolves refs/heads/main)
+        if: github.ref != 'refs/heads/main'
+        run: git fetch --no-tags origin main:refs/heads/main
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:

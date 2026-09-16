@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# .githooks/commit-msg — the cadence's git layer.
+#
+# Installed by the cadence init command, versioned in the project, and part of
+# the locked set. It is the layer that holds across editors, agent harnesses and
+# CI — but only after `git config core.hooksPath .githooks` is run in each
+# clone, and git's own skip flag and `cherry-pick` / `rebase` picks step past
+# it. `orch-cadence-check.sh --audit <rev>` in CI is the cross-tool backstop
+# that catches what the hook did not see.
+#
+# Turn it on once per clone:  git config core.hooksPath .githooks
+#
+# git passes the message file as $1, which is why this is a commit-msg hook and
+# not a pre-commit hook: pre-commit receives no arguments, so a rule that reads
+# the commit message cannot live there.
+set -uo pipefail
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+if [ ! -f .githooks/orch-cadence-check.sh ]; then
+  echo "cadence: .githooks/orch-cadence-check.sh missing — re-run the cadence init"
+  exit 1
+fi
+
+bash .githooks/orch-cadence-check.sh --commit-msg "$1"
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+  echo "cadence: commit refused — amend the laws with 'Ruling <N>' in the message, in a session the person launched with ORCH_CADENCE_UNLOCK=1, then re-run --lock"
+fi
+
+exit "$rc"

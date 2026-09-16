@@ -47,6 +47,7 @@ Verify:
 Next:
 - /llm-orchestrator:remember any project-specific conventions
 - Use the `brainstorming` skill or `/llm-orchestrator:plan` when you have a spec
+- /llm-orchestrator:cadence-init to turn on the cadence (laws, lock, git layer) for this project
 ```
 
 Constraints:

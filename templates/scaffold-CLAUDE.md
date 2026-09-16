@@ -21,6 +21,7 @@ When LLM Orchestrator is installed, these slash commands work in this project:
 - `/plan`, `/worktree`, `/dispatch`, `/review`, `/verify`, `/finish`
 - `/debug` for root-cause-first investigation
 - `/remember`, `/forget` for project memory (writes to this CLAUDE.md, classified by section)
+- `/cadence-init` to turn on the cadence
 
 ## Notes for the agent
 
