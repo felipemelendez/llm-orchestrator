@@ -2,11 +2,23 @@
 
 [![License](https://img.shields.io/github/license/felipemelendez/llm-orchestrator?color=blue)](./LICENSE) [![Last commit](https://img.shields.io/github/last-commit/felipemelendez/llm-orchestrator)](https://github.com/felipemelendez/llm-orchestrator/commits/main) ![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-blueviolet)
 
-LLM Orchestrator helps your coding assistant plan work, get independent reviews, and check the result before calling it finished. It works as a **Claude Code plugin**, with a separate **Codex installation** for the shared review process and automatic verification checks.
+**Brainstorm and plan in Claude Code. Build with Claude Code or Codex.**
 
-You describe the change. The assistant coordinates the work and shows what was checked, what passed, and what still needs attention.
+I prefer to brainstorm and plan with Claude Code, then build with both Claude Code and Codex. LLM Orchestrator is designed around that workflow: agree on what to make, save the plan in the project, then use either assistant to implement it, review the changes, and check the results.
 
-**New in v0.8.0:** two independent reviews, a third agent only to resolve disputed findings, and Codex checks backed by actual test results. [Read the release notes](./docs/release-v0.8.0.md).
+### Why the full plugin lives in Claude Code
+
+The Claude Code plugin covers the whole workflow, including brainstorming, research, and planning. The Codex setup focuses on the development work that follows: implementation, independent reviews, and verification. I kept planning in Claude Code because that is where I prefer to do it, and enabled the shared development process in both tools so I can choose either one for the work.
+
+### How to use them together
+
+1. **Plan in Claude Code.** Explore the idea, settle the requirements, and save the approved plan in your project.
+2. **Build with either tool.** Continue in Claude Code, or open the same project in Codex and point it to the saved plan. Ask it to follow the project's cadence—the agreed steps for implementation, review, and testing.
+3. **Check the result.** The assistant coordinates independent reviews, runs the relevant checks, and reports what passed and what still needs attention.
+
+For example: “Implement the approved plan in `docs/feature-plan.md`. Follow this project's cadence and report the reviews and test results.” Replace the example path with your actual plan.
+
+**New in v0.8.0:** the shared development process now works in both Claude Code and Codex, with two independent reviews and recorded verification results. [Read the release notes](./docs/release-v0.8.0.md).
 
 ## Quick Start
 
@@ -54,13 +66,12 @@ Installation makes cadence available across your projects; you choose which proj
 
 The process applies to code and test changes in enabled projects. Documentation-only edits and ordinary questions do not need the full review sequence. Existing project-specific rules still take priority.
 
-| You use | What this release provides |
+| Tool | Role in this workflow |
 |---|---|
-| Claude Code | The full Claude plugin, including planning, research, reviews, and the optional cadence process |
-| Codex | Cadence instructions, protection for named rule files, test-result records, and completion checks |
-| Codex with Claude available | An optional read-only Claude reviewer in one of the two review slots |
+| Claude Code plugin | Brainstorm, research, and plan; then implement, review, and verify |
+| Codex setup | Implement an approved plan, review the changes, and verify the results |
 
-Grok is not required. Codex's other model settings stay as you configured them; optional external Claude reviews default to Opus at maximum effort. Some automatic checks remain specific to Claude Code.
+Both use the same project cadence rules. Each has its own automatic checks, so the Codex installation includes the parts needed for its role in this workflow.
 
 **Requirements:** the coding tool you use, Bash, and Git. Codex integration and the optional Claude reviewer also need Python 3.9+. Claude's visual brainstorming feature needs Node.js, and its transcript checks need Python 3.
 

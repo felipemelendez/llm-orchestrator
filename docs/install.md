@@ -1,6 +1,15 @@
 # Install and update
 
-Choose the setup for the tool you use. You can use both in the same project.
+**Plan in Claude Code. Build with Claude Code or Codex.**
+
+I prefer to brainstorm and plan with Claude Code, then build with both tools.
+That is why the full plugin, including brainstorming and planning, lives in
+Claude Code. The Codex setup provides the shared implementation, review, and
+verification process for working from an approved plan.
+
+If you use both, install the Claude Code plugin and the Codex setup. Save your
+approved plan in the project, then point whichever assistant you use for the
+implementation to that file. Both follow the project's cadence rules.
 
 - **Claude Code:** install [the plugin](#option-1--claude-code-plugin).
 - **Codex:** use [the Codex installer](#codex-setup).
@@ -64,7 +73,7 @@ framework; changes to those rules need a deliberate amendment.
 
 You can optionally use Claude for one of Codex's two independent reviews. It
 uses your existing Claude login and defaults to Opus at maximum effort. Follow
-[the Claude reviewer guide](codex-provider.md). Grok is not needed.
+[the Claude reviewer guide](codex-provider.md).
 
 ## Updating to v0.8.0
 
@@ -430,7 +439,7 @@ One seam between the installer and the init is worth knowing before you hit it: 
 
 Claude Code is supported first-class. For Gemini and Copilot there are still no mirrors: copy `skills/`, `commands/`, `templates/` into the harness's config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`.
 
-For Codex, one command installs what exists:
+For Codex, install the shared implementation, review, and verification process:
 
 ```
 ./scripts/install.sh --codex
@@ -438,7 +447,7 @@ For Codex, one command installs what exists:
 
 It copies the cadence skill to `~/.agents/skills/cadence`, renders the shared pointer block into `~/.codex/AGENTS.md`, and merges file-protection and evidence hooks into `~/.codex/hooks.json`. Existing unrelated hooks survive; re-running does not duplicate these handlers. Model settings and Claude hooks are unchanged. Review and trust new definitions using `/hooks` in a fresh Codex CLI session before expecting them to execute.
 
-The evidence hooks activate only when the enabled project's `cadence.json` also sets `codex_verification.mode` to `blocking` or `warn`. They record actual command outcomes and source fingerprints, check completion after observed code changes, and write native-agent receipts. See [Codex evidence](codex-evidence.md) for the schema, honest pending outcomes, and coverage limits. Optional external Claude reviews use [the provider runner](codex-provider.md); Grok is not required. These additions do not port all Claude protocol hooks.
+The evidence hooks activate only when the enabled project's `cadence.json` also sets `codex_verification.mode` to `blocking` or `warn`. They record actual command outcomes and source fingerprints, check completion after observed code changes, and write native-agent receipts. See [Codex evidence](codex-evidence.md) for the schema, honest pending outcomes, and coverage limits. Optional Claude reviews use [the Claude reviewer guide](codex-provider.md). This setup supports implementation, review, and verification; brainstorming and planning remain in the Claude Code plugin.
 
 **What the Codex layer actually is.** The adapter (`scripts/hooks/codex-cadence-adapter.sh`) is Codex's deny rules for the locked files and nothing more: a Bash command or an `apply_patch` header that names a locked file and is not one plain read is refused with exit 2 and the way out printed. It guards no directories, no marked section, no symlinks and no path assembled at runtime — Codex has no native path-deny for an arbitrary file, so this hook is standing in for layer 1, not adding a layer. The git `commit-msg` hook and `orch-cadence-check.sh --audit` carry the rest, exactly as they do on Claude Code.
 

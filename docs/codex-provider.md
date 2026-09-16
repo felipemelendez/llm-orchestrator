@@ -2,8 +2,8 @@
 
 Native Codex agents remain the default. They inherit the parent session's model
 and reasoning effort. The optional Claude runner adds a separate provider when
-the controller explicitly chooses an external read-only review. Grok is neither
-required nor installed. An unavailable optional provider is a recorded dropout,
+the controller explicitly chooses an external read-only review. If Claude is
+unavailable, that is recorded as an incomplete review,
 never a successful review and never an automatic model substitution.
 
 Use the two independent reviews and the project's conditional-refuter rule.
@@ -42,8 +42,7 @@ selected with `--config`. This is the optional portion of the configuration:
 {
   "codex_providers": {
     "native": {"provider": "codex", "model": "inherit-parent", "effort": "inherit-parent"},
-    "claude": {"enabled": true, "model": "opus", "effort": "max"},
-    "grok": {"enabled": false}
+    "claude": {"enabled": true, "model": "opus", "effort": "max"}
   }
 }
 ```
