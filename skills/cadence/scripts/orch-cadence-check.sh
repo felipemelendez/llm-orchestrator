@@ -7,7 +7,7 @@
 #                             the lock still matches the tree. Always exit 0.
 #   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256. The
 #                             only writer of that file.
-#   --landing <ticket>        the evidence check for a ticket's five reports.
+#   --landing <ticket>        legacy report check, or proportional policy note.
 #     [--base <sha>]
 #   --commit-msg <msgfile>    the git-side gate (git hands the message file to
 #                             commit-msg, and to no other hook).
@@ -36,7 +36,8 @@
 #   --verdict and --commit-msg stay correct; ARRAY keys (lock_extra) are empty in
 #   that case and ONE note goes to stderr per invocation. Set
 #   ORCH_CADENCE_PYTHON to point at another interpreter (or at a path that does
-#   not exist, to exercise the python-free path).
+#   not exist, to exercise the python-free path). The proportional report
+#   waiver requires a working parser; an unvalidated config cannot waive checks.
 #   The git layer decides cadence on/off from GIT, never from the working tree:
 #   --commit-msg reads the config staged in the index and the one at HEAD (on if
 #   either is on), --audit reads it at the revision. A config that is present but
@@ -109,9 +110,13 @@ import json, sys
 try:
     d = json.load(open(sys.argv[1]))
 except Exception:
-    sys.exit(1)
+    sys.exit(2)
 if not isinstance(d, dict):
-    sys.exit(1)
+    sys.exit(2)
+# Emit the typed workflow separately: null, an empty string and an absent key
+# have different meanings. Only absence opts an existing project into legacy.
+w = d.get("workflow", "legacy")
+print("W\t%s" % (w if isinstance(w, str) and w in ("legacy", "proportional") else "INVALID"))
 def emit(k, v):
     if isinstance(v, list):
         for x in v:
@@ -128,8 +133,14 @@ def emit(k, v):
 for k, v in d.items():
     emit(k, v)
 PYEOF
-    if [ $? -eq 0 ]; then
+    local py_rc=$?
+    if [ "$py_rc" -eq 0 ]; then
       CFG_OK=1
+    elif [ "$py_rc" -eq 2 ]; then
+      # A working parser rejecting malformed JSON is not an unavailable
+      # interpreter. Never reinterpret that document with the sed fallback.
+      CFG_OK=0
+      : > "$CFG_DUMP"
     else
       # The interpreter ran and failed (a shim, a stub, a broken install). That
       # is not "no config": fall through to the same sed path python3's ABSENCE
@@ -194,6 +205,29 @@ cfg_array() { # <key> — one element per line
   return 0
 }
 
+cfg_workflow() { # [validated] assigns WORKFLOW; invalid policy is never a waiver
+  cfg_load
+  WORKFLOW="legacy"
+  if [ -n "$CFG_DUMP" ] && [ -s "$CFG_DUMP" ]; then
+    WORKFLOW=$(awk -F'\t' '$1=="W" {print $2; exit}' "$CFG_DUMP")
+  elif [ -f "$CFG_FILE" ] && grep -qE '"workflow"[[:space:]]*:' "$CFG_FILE"; then
+    WORKFLOW=$(cfg_scalar workflow)
+    # On the interpreter-free path only an exact quoted value is acceptable.
+    case "$WORKFLOW" in
+      legacy|proportional)
+        grep -qE "\"workflow\"[[:space:]]*:[[:space:]]*\"$WORKFLOW\"[[:space:]]*([,}]|$)" "$CFG_FILE" || WORKFLOW="INVALID" ;;
+    esac
+  fi
+  if [ "$WORKFLOW" = "proportional" ] && [ "${1:-}" = "validated" ] && [ ! -s "$CFG_DUMP" ]; then
+    echo "CADENCE: proportional report policy needs a working python3 to validate $CFG_REL; install/configure it before landing"
+    return 1
+  fi
+  case "$WORKFLOW" in
+    legacy|proportional) return 0 ;;
+    *) echo "CADENCE: invalid workflow in $CFG_REL — use \"legacy\" or \"proportional\" (omit only for legacy)"; return 1 ;;
+  esac
+}
+
 # ---------- root and mode -----------------------------------------------------
 OPT_ROOT=""
 ROOT_DIR=""
@@ -237,10 +271,13 @@ git_mode() { # <index-ref-prefix> <head-ref-prefix>
     present=1
     cfg_use "$blob"; cfg_load
     if [ "$CFG_OK" != "1" ]; then bad=1; continue; fi
-    if cfg_bool enabled; then on=1; [ -n "$chosen" ] || chosen="$blob"; fi
+    if cfg_bool enabled; then
+      cfg_workflow validated || { bad=1; continue; }
+      on=1; [ -n "$chosen" ] || chosen="$blob"
+    fi
   done
-  if [ "$on" = "1" ]; then cfg_use "$chosen"; return 0; fi
   [ "$bad" = "1" ] && return 2
+  if [ "$on" = "1" ]; then cfg_use "$chosen"; return 0; fi
   [ "$present" = "1" ] && return 1
   return 1
 }
@@ -366,6 +403,11 @@ highest_ruling_in() { # <file-or-empty-stdin-file> -> the number, or empty
 mode_verdict() {
   local line laws ruling lockf state changed hashed ehashed unhashed e h rec rc
   laws="$ROOT_DIR/$LAWS_REL"
+  cfg_load
+  if [ -f "$CFG_FILE" ] && [ "$CFG_OK" != "1" ]; then
+    echo "cadence: configuration ERROR — $CFG_REL does not decode"
+    return 0
+  fi
   if ! cadence_on; then
     if [ ! -f "$CFG_FILE" ] && [ -f "$laws" ]; then
       echo "cadence: LAWS.md present, cadence.json absent — run /llm-orchestrator:cadence-init"
@@ -374,6 +416,7 @@ mode_verdict() {
     fi
     return 0
   fi
+  cfg_workflow || return 0
   if [ -f "$laws" ]; then
     ruling=$(highest_ruling_in "$laws")
     [ -n "$ruling" ] || ruling="—"
@@ -477,10 +520,16 @@ live_skips() { # <state file>
 
 mode_lock() {
   local sf e h rc out
+  cfg_load
+  if [ -f "$CFG_FILE" ] && [ "$CFG_OK" != "1" ]; then
+    echo "REFUSED: $CFG_REL does not decode — repair the JSON configuration before --lock"
+    return 1
+  fi
   if ! cadence_on; then
     echo "cadence: off in $ROOT_DIR — --lock needs $CFG_REL with \"enabled\": true"
     return 1
   fi
+  cfg_workflow || return 1
   if sf=$(settings_carrying_unlock); then
     echo "REFUSED: $sf carries ORCH_CADENCE_UNLOCK — a persisted unlock is a disarmed lock; remove it, then re-run --lock"
     return 1
@@ -528,9 +577,19 @@ base_date() {
 # the working tree holds today.
 mode_landing() {
   local ticket="$1" base="$2" pref="${3:-}" nd bts defects f r ts fin
+  cfg_load
+  if [ -f "$CFG_FILE" ] && [ "$CFG_OK" != "1" ]; then
+    echo "LANDING $ticket: $CFG_REL does not decode — repair the JSON configuration"
+    return 1
+  fi
   if [ -z "$pref" ] && ! cadence_on; then
     echo "cadence: off in $ROOT_DIR — --landing needs $CFG_REL with \"enabled\": true"
     return 1
+  fi
+  cfg_workflow validated || return 1
+  if [ "$WORKFLOW" = "proportional" ]; then
+    echo "LANDING $ticket: proportional workflow requires no stored reports; this is not commit authorization or proof of verification/review"
+    return 0
   fi
   nd=$(cfg_scalar notes_dir); [ -n "$nd" ] || nd="docs/llm-orchestrator/notes"
   bts=$(base_date "$base")
@@ -693,10 +752,16 @@ git_gate() {
     fi
   fi
 
-  # 3 — a ticket subject drags its evidence in with it.
+  # 3 — only legacy workflow stores ticket evidence. Validate policy and rule
+  # protection first; a policy flip cannot waive its own amendment checks.
+  cfg_workflow || return 1
+  if [ "$WORKFLOW" = "proportional" ] && [ "$defects" -eq 0 ]; then
+    echo "$label: proportional Git policy OK; no stored reports required (verification and reviews are not attested by this check)"
+    return 0
+  fi
   subject=$(head -1 "$msgf" 2>/dev/null)
   tre=$(cfg_scalar ticket_re)
-  if [ -n "$tre" ] && [ -n "$subject" ]; then
+  if [ "$WORKFLOW" = "legacy" ] && [ -n "$tre" ] && [ -n "$subject" ]; then
     tid=$(printf '%s' "$subject" | grep -oE "$tre" | head -1)
     tid="${tid%:}"
     if [ -n "$tid" ]; then

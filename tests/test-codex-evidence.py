@@ -210,6 +210,15 @@ class EvidenceTests(unittest.TestCase):
         self.run_check(output="Ran 3 tests\nFAILED (failures=1)")
         self.assert_blocked()
 
+    def test_trailing_positive_text_never_erases_a_failure_or_empty_verdict(self):
+        # Output classification stays conservative: a failure or empty-selection
+        # phrase anywhere in a zero-exit run wins over a later positive count.
+        self.assertEqual(evidence.result({"exit_code": 0, "output": "Ran 3 tests\nFAILED (failures=1)\ncleanup says: 1 passed"}, "test")[0], "failed")
+        self.assertEqual(evidence.result({"exit_code": 0, "output": "Ran 0 tests\nOK\n1 passed"}, "test")[0], "empty")
+        self.assertEqual(evidence.result({"exit_code": 0, "output": "Test Suites: 1 failed, 2 total\nTests: 2 passed, 2 total"}, "test")[0], "failed")
+        self.assertEqual(evidence.result({"exit_code": 0, "output": "Ran 3 tests in 0.1s\nOK"}, "test")[0], "passed")
+        self.assertEqual(evidence.result({"exit_code": 0, "output": "some log\nnothing conclusive"}, "test")[0], "unconfirmed")
+
     def test_missing_summary_is_not_success(self):
         self.change()
         self.run_check(output="")
@@ -237,7 +246,17 @@ class EvidenceTests(unittest.TestCase):
         ran = subprocess.run(command, capture_output=True, text=True)
         self.assertNotEqual(ran.returncode, 0)
         self.assertEqual(output.read_text(), "existing evidence")
-        self.assertFalse(receipt.exists())
+        self.assert_setup_failure_receipt(receipt, ran.returncode)
+
+    def assert_setup_failure_receipt(self, receipt, exit_code):
+        saved = json.loads(receipt.read_text())
+        self.assertEqual(saved['state'], 'completed')
+        self.assertIs(saved['setup_failure'], True)
+        self.assertIs(saved['child_started'], False)
+        self.assertEqual(saved['exit_code'], exit_code)
+        self.assertNotEqual(saved['exit_code'], 0)
+        self.assertIsNone(saved['before_fingerprint'])
+        self.assertIsNone(saved['after_fingerprint'])
 
     def test_two_sessions_cannot_claim_same_new_receipt(self):
         fields, _command, receipt, _output = self.request()
@@ -330,7 +349,10 @@ class EvidenceTests(unittest.TestCase):
                 _fields, command, receipt, _output = self.request(argv=argv)
                 ran = subprocess.run(command, capture_output=True, text=True)
                 self.assertNotEqual(ran.returncode, 0)
-                self.assertFalse(receipt.exists())
+                if argv[0] == 'python3':  # Invalid shell composition is rejected before receipt reservation.
+                    self.assertFalse(receipt.exists())
+                else:
+                    self.assert_setup_failure_receipt(receipt, ran.returncode)
 
     def test_relative_cwd_refused(self):
         _fields, command, receipt, _output = self.request()
@@ -562,7 +584,7 @@ class EvidenceTests(unittest.TestCase):
         ran = subprocess.run(command, capture_output=True, text=True)
         self.assertNotEqual(ran.returncode, 0)
         self.assertFalse(marker.exists())
-        self.assertFalse(receipt.exists())
+        self.assert_setup_failure_receipt(receipt, ran.returncode)
 
 
 if __name__ == "__main__":

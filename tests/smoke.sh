@@ -210,7 +210,9 @@ if should_run hooks; then
 
   # SessionStart — loads the using-orchestrator skill body only. User-curated
   # project facts now live in CLAUDE.md (native), loaded by Claude Code itself.
-  CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/mem" \
+  # CLAUDE_PROJECT_DIR points at scratch: these fixtures assert the legacy
+  # reminder, independent of the launching checkout's own cadence policy.
+  CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$SMOKE_TMP/mem" \
     bash "${ROOT}/scripts/hooks/session-start.sh" > $SMOKE_TMP/out.json 2>&1
 
   check "SessionStart emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
@@ -222,7 +224,7 @@ if should_run hooks; then
     bash -c '[ "$(wc -c < $SMOKE_TMP/out.json)" -lt 3500 ]'
 
   # UserPromptSubmit — injects protocol reminder
-  printf '{"session_id":"smoke","prompt":"x"}' | ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
+  printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
   check "UserPromptSubmit emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "UserPromptSubmit reminder mentions the six shape headers" "Changed:" \
             cat $SMOKE_TMP/out.json

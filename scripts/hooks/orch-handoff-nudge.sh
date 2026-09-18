@@ -82,6 +82,13 @@ json_escape() {
 }
 
 MSG="Context has passed ~${FLOOR} tokens. At the next clean stopping point (a finished step with a green verify, nothing in flight), write or refresh the handoff note with /llm-orchestrator:handoff so it survives the upcoming automatic compaction. You will not be reminded again until after the next compaction."
+_PROTOCOL_LIB="${_HOOK_DIR}/../lib/orch-protocol.sh"
+if [[ -f "${_PROTOCOL_LIB}" ]]; then
+  source "${_PROTOCOL_LIB}"
+  if orch_protocol_is_proportional "$INPUT"; then
+    MSG="Context has passed ~${FLOOR} tokens. Use /llm-orchestrator:handoff to refresh a concise note in task-owned external scratch under a consumer lease. Report the exact task ID and recovery/note paths; retain them while work is pending. Record failures and pending checks honestly. Reuse matching trusted execution evidence on resume; compaction alone does not require rerunning checks. This nudge repeats only after the next compaction."
+  fi
+fi
 
 if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
   printf 'orch-dry-run[orch-handoff-nudge]: would inject handoff nudge (~%s token floor crossed)\n' "${FLOOR}" >&2

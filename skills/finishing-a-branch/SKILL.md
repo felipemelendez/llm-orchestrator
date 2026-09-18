@@ -5,7 +5,14 @@ description: Use when implementation is complete and tests pass. Decides between
 
 # Finishing a branch
 
-The branch is green. Now what?
+## Proportional cadence
+
+For enabled `workflow: proportional`, finish the cadence's selected path.
+Reuse valid checks; validate changed inputs. Follow authorized delivery without
+another menu. Commit/push/merge/discard need authorization. After consumers stop
+and work is preserved, finish resources through the task helper: clean disposable
+copies; retain unique/dirty/active work and report its path. Stop here; legacy
+preconditions below add no requirements to proportional work.
 
 ## Preconditions
 
@@ -31,9 +38,7 @@ git status --porcelain                    # clean tree?
 ```
 
 If HEAD is detached, drop options 1 and 4 — there is no branch to merge and none to delete.
-Options 2 and 3 still apply — push with `git push origin HEAD:refs/heads/<new-branch>` and open
-the PR from there. Removing the PR route from a detached HEAD strands the work in a state only
-the reflog can recover.
+Options 2 and 3 still apply; push with `git push origin HEAD:refs/heads/<new-branch>`.
 
 Also confirm this is a worktree and not a submodule before treating it as one:
 `git rev-parse --show-superproject-working-tree` returns a path inside a submodule, where
@@ -66,8 +71,7 @@ Also confirm this is a worktree and not a submodule before treating it as one:
 
 ### 2. PR
 - `git push -u origin <branch>` (detached HEAD: `git push origin HEAD:refs/heads/<new-branch>`)
-- A rejected push means the remote moved while you worked. Investigate before doing anything
-  else; force-push only if the user asks for it in those words.
+- Investigate rejected pushes; force-push only with explicit user authorization.
 - `gh pr create` — title from branch name, body from latest commit + plan link.
 - Do not clean up the worktree (the user may need to push more commits).
 

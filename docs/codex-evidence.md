@@ -3,13 +3,101 @@
 `scripts/hooks/codex-evidence.py` and `scripts/verification/codex-verify.py` add
 opt-in execution receipts to the existing cadence. The hook never reads the
 unstable transcript format or treats an agent's report as executed evidence.
-Claude hooks are separate and unchanged.
+Claude retains its separate private store. Proportional projects share scope
+and lifecycle logic through `scripts/lib/orch-proportional-evidence.py`.
+
+## Proportional projects
+
+`workflow: proportional` retains obligations across turns and binds checks to
+covered content rather than HEAD alone. Resolved tool writes create source
+obligations; an unrelated tree change does not attribute a write to this task.
+Unknown targets remain pending. Scoped inputs include production dependencies,
+tests, executable configuration and verification machinery. Optional named
+`verification_scopes` use `selectors`/`inputs` globs; otherwise use `prod_globs`,
+`test_globs` and `verification_config_globs` conservatively. Empty or unresolved
+scope cannot produce a reusable pass. Failures survive fingerprint errors.
+
+Discussion and truthful PENDING/BLOCKED replies do not rehash repository inputs
+or promote old evidence to a fresh pass. Explicit passing claims validate current
+inputs, sharing enumeration and content reads across overlapping checks within
+that one invocation. Failed or unbound records cannot become valid by rescanning.
+No file-content cache survives into a later hook or across check execution.
+Yielded checks retain their original receipt binding until completion; running
+writes retain their attribution until completion or remain explicitly uncertain.
+
+Use the trusted runner on the first check, not after an unbound direct run.
+Keep fresh private receipt/output paths. Both harnesses accept `Verification:`
+with PASS, PENDING, BLOCKED or NOT APPLICABLE and a concrete reason. NOT APPLICABLE
+is a low-risk applicability judgment with manual diff inspection, not an executed
+pass; it cannot waive failures, uncertain writes or required unavailable checks.
+Delegated prose/provider receipts remain insufficient for test reuse where the
+harness cannot supply parent-task, command, result and source provenance.
+
+Private consumed successful state expires after bounded retention; unfinished,
+unknown and failed work is retained. Managed scratch receipts/logs remain until
+their consumers finish. Legacy behavior described below remains available for
+missing/legacy workflow. Execution enforcement requires enabled, trusted hooks.
 
 Codex 0.154's unified-exec hooks omit the requested tool working directory and
 deliver raw, possibly truncated command output without an exit status. The
 session `cwd` is not proof of execution directory. Consequently, ordinary direct
 commands cannot earn trusted green receipts: run verifiers through the explicit
 wrapper below. Text resembling `Process exited with code 0` is just output.
+
+Use native patch/edit tools for ordinary source changes. Raw shell output also
+cannot establish that a potentially writing process has stopped: a yielded
+process may write after a later check passes. Such writes remain pending without
+trusted terminal or cancellation evidence; repeating tests does not resolve that
+missing observation. This is a harness capability limit, not a failed test.
+
+An authenticated runner setup-failure receipt proves only that its child never
+started. It allows that invocation to close and a matching successful retry to
+replace the failed attempt; it does not earn verification credit. Missing or
+reserved receipts alone cannot supply this proof. An unusable receipt destination
+can therefore leave execution explicitly unresolved.
+
+Content-bound checks survive a handoff for independent review. A PENDING reply
+does not by itself require repeating a successful check on unchanged inputs.
+Resolved external file operands do not become this repository's source changes;
+verification of another repository remains a separate obligation.
+
+## Known limits
+
+- A failed check is superseded only by a later passing run of the same
+  command in the same directory. If a failing suite is renamed or deleted, its
+  failure stays unresolved for that session; start a new session after the
+  refactor, and say so in the handoff.
+- A `PENDING`/`BLOCKED` reason that names a build, device, deployment,
+  service or credential requirement records validation only a person or an
+  external system can supply; later test runs cannot clear it. Use those words
+  only when that is what you mean.
+- Blocking mode refuses an unsupported `PASS` once and asks for a
+  correction; a second unsupported `PASS` in the same continuation is recorded
+  and reported as `UNVERIFIED` rather than refused again, because a Stop hook
+  that keeps blocking its own continuation loops forever. Honest `PENDING` and
+  `BLOCKED` replies always end the turn.
+- Completion scans are tested for repositories of a few thousand files and
+  tens of overlapping scopes. Very large monorepos with many distinct
+  `verification_scopes` may approach the hook's ten-second limit; prefer a few
+  broad scopes over many narrow ones there.
+- A `PASS` explanation that names a repository-local check path
+  (`tests/<name>.py` or `.sh`) must correspond to an observed passing run of
+  that path or of a directory containing it; other wording is not parsed and
+  never supplies evidence. Name only the checks you ran; describe anything you
+  skipped without its path.
+- Requirement words are matched approximately. If a `PENDING`/`BLOCKED`
+  reason was read as a build, device, deployment, service or credential
+  requirement by mistake, that session cannot reach `PASS`; finish it with an
+  honest `PENDING` and continue in a new session, whose ledger starts clean.
+- Files Git ignores and directories the fingerprint skips (`node_modules`,
+  `build`, `dist`, `coverage` and similar) are outside the observed set. An
+  explicit edit to such a file blocks `PASS` as unmeasurable, but a write made
+  to one by an opaque command (an inline script, for example) cannot be seen at
+  all, whether the command succeeds or fails. Keep generated and ignored files
+  out of the source the checks must cover.
+- A command the harness moves to the background is never observed finishing,
+  so a write it makes stays pending for the session. Run commands that may
+  write in the foreground, with a long enough tool timeout.
 
 ## Activation contract
 
@@ -41,7 +129,7 @@ python3 /absolute/framework/scripts/hooks/codex-evidence.py
 ```
 
 Register it for `UserPromptSubmit`, `PreToolUse` (`Bash|apply_patch`),
-`PostToolUse` (`Bash|apply_patch`), `Stop`, `SubagentStart`, and
+`PostToolUse`/`PostToolUseFailure` (`Bash|apply_patch|write_stdin`), `Stop`, `SubagentStart`, and
 `SubagentStop`. `SessionStart` is supported as an optional fallback baseline.
 Keep the hooks synchronous so a final answer does not race the ledger write.
 Codex's `/hooks` trust step still belongs to the user; installation does not

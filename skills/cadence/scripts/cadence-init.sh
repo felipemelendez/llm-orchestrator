@@ -564,6 +564,11 @@ CFG_NEW="$TMPD/cadence.json"
 if [ -n "$OPT_CONFIG" ]; then
   [ -f "$OPT_CONFIG" ] || refuse "" "--config names a file that does not exist: $OPT_CONFIG"
   CFG_SRC="$OPT_CONFIG"
+elif [ -f "$ROOT_DIR/$CFG_REL" ]; then
+  # Reinstalling instructions is not permission to migrate an existing policy.
+  # In particular a missing workflow must retain its legacy meaning, even in
+  # an unlocked session. A migration supplies --config deliberately.
+  CFG_SRC="$ROOT_DIR/$CFG_REL"
 else
   [ -f "$SCRIPT_DIR/cadence-detect.sh" ] \
     || refuse "" "cadence-detect.sh is not beside this script and no --config was given"
@@ -589,9 +594,18 @@ if not isinstance(d, dict):
 # cadence that is off while the report says a project was armed.
 d["schema"] = 1
 d["enabled"] = True
+if d.get("workflow", "legacy") not in ("legacy", "proportional"):
+    print('invalid workflow: use "legacy" or "proportional" (omit only for legacy)')
+    sys.exit(2)
 with open(dst, "w") as fh:
     json.dump(d, fh, indent=2)
     fh.write("\n")
+if d.get("workflow") == "proportional":
+    prod, tests, configs = (d.get(k) for k in
+        ("prod_globs", "test_globs", "verification_config_globs"))
+    if (not isinstance(prod, list) or not isinstance(tests, list)
+            or not prod + tests or not isinstance(configs, list)):
+        print("execution evidence scope is incomplete: configure prod_globs/test_globs covering actual source/tests, verification_config_globs, and supported direct check commands (codex_verification.commands / claude_verification.commands). Until configured and checked, verification remains PENDING; initialization does not certify source.")
 PYEOF
   [ $? -eq 0 ] || refuse "$CFG_REL" "$(head -1 "$TMPD/cfg.msg")"
 else
@@ -601,6 +615,10 @@ else
     || refuse "$CFG_REL" "without python3 the config is copied verbatim and must already carry \"schema\": 1"
   grep -qE '"enabled"[[:space:]]*:[[:space:]]*true([[:space:],}]|$)' "$CFG_SRC" \
     || refuse "$CFG_REL" "without python3 the config is copied verbatim and must already carry \"enabled\": true"
+  if grep -qE '"workflow"[[:space:]]*:' "$CFG_SRC"; then
+    grep -qE '"workflow"[[:space:]]*:[[:space:]]*"(legacy|proportional)"[[:space:]]*([,}]|$)' "$CFG_SRC" \
+      || refuse "$CFG_REL" "invalid workflow: use \"legacy\" or \"proportional\" (omit only for legacy)"
+  fi
   cp "$CFG_SRC" "$CFG_NEW" || refuse "$CFG_REL" "could not stage the config"
 fi
 
@@ -878,6 +896,11 @@ fi
 VERDICT=$(bash "$CHECK" --root "$ROOT_DIR" --verdict 2>/dev/null)
 [ -n "$GIT_LAYER_FOREIGN" ] && VERDICT="$VERDICT · git layer: not installed"
 printf '%s\n' "$VERDICT"
+echo "execution evidence: configuration alone does not activate enforcement; hooks must be installed, enabled, loaded and trusted in the current harness"
+echo "execution evidence activation: not verified by cadence-init; if hooks are inactive, verification remains an instruction, not an enforced result"
+if [ -s "$TMPD/cfg.msg" ]; then
+  cat "$TMPD/cfg.msg"
+fi
 print_tip
 
 # The recipe that takes the project from written to armed, in the order it has

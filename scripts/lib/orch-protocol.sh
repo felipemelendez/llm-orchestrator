@@ -22,6 +22,32 @@
 
 ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 
+# Resolve policy from the actual project, never from an agent's claimed path
+# selection. Hook cwd wins; CLI callers use their current project directory.
+orch_protocol_is_proportional() { # [hook-input-json]
+  python3 - "${1:-}" <<'PYEOF' 2>/dev/null
+import json, os, pathlib, subprocess, sys
+try:
+    event = json.loads(sys.argv[1]) if sys.argv[1] else {}
+    cwd = pathlib.Path(event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve(strict=True)
+    result = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+                            capture_output=True, text=True, timeout=2)
+    root = pathlib.Path(result.stdout.strip()) if result.returncode == 0 else cwd
+    config = json.loads((root / "docs/llm-orchestrator/cadence.json").read_text())
+    active = isinstance(config, dict) and config.get("enabled") is True and config.get("workflow") == "proportional"
+except (OSError, ValueError, AttributeError, TypeError, subprocess.SubprocessError):
+    active = False
+sys.exit(0 if active else 1)
+PYEOF
+}
+
+# This validates completion vocabulary only. In particular NOT APPLICABLE is
+# an applicability statement, not executed success; the evidence gate retains
+# responsibility for failed, unknown, stale and required checks.
+orch_protocol_has_verification() { # <reply>
+  orch_strip_fenced "$1" | grep -qE '^Verification:[[:space:]]*(PASS|PENDING|BLOCKED|NOT APPLICABLE)[[:space:]]*[-–—][[:space:]]*[^[:space:]]'
+}
+
 # orch_extract_last_assistant_text <transcript_path>
 #
 # Parses a JSONL transcript (one JSON object per line) using python3.
@@ -183,6 +209,14 @@ orch_grade_reply() {
   # A Verify: line that appears inside a fenced code block (between ``` lines)
   # does NOT satisfy the requirement — only an outside-fence Verify: counts.
   if [[ "$header" == "Changed" ]]; then
+    if orch_protocol_is_proportional "${2:-}"; then
+      if ! orch_protocol_has_verification "$input"; then
+        printf 'FAIL: Changed: requires Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation (outside code fences)\n'
+        return 1
+      fi
+      printf 'PASS: Changed: shape is valid; verification is not attested by this grader\n'
+      return 0
+    fi
     local has_cosmetic
     has_cosmetic=""
     case "$input" in
@@ -294,7 +328,7 @@ orch_has_section() {
         # was accepted as evidence and the gate went silent on a reply that had
         # verified nothing. Peers end the section; the residual cost is that an
         # unusual `Verify:` / `Summary: <output>` reads as empty.
-        if (line ~ "^[[:space:]]*(Changed|Found|Blocked|Issues|Plan|Status|Recommendation|Verify|Why|Next|Notes|Risks|Summary|Concerns|Need|Ask|Progress|Remaining):") { insec = 0; next }
+        if (line ~ "^[[:space:]]*(Changed|Found|Blocked|Issues|Plan|Status|Recommendation|Verify|Verification|Why|Next|Notes|Risks|Summary|Concerns|Need|Ask|Progress|Remaining):") { insec = 0; next }
         # A bare fence delimiter is formatting, not content: `Verify:` followed
         # by an empty ``` block is not evidence.
         if (line ~ /^[[:space:]]*(```|~~~)[[:space:]]*[A-Za-z0-9_-]*[[:space:]]*$/) next
@@ -347,6 +381,15 @@ orch_grade_status_block() {
       return 1
       ;;
   esac
+
+  if [[ "$enum" == "DONE" || "$enum" == "DONE_WITH_CONCERNS" ]] \
+     && orch_protocol_is_proportional "${2:-}"; then
+    required_headers="${required_headers% Verify:}"
+    if ! orch_protocol_has_verification "$input"; then
+      printf 'FAIL: Status: %s requires Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation (outside code fences)\n' "$enum"
+      return 1
+    fi
+  fi
 
   # Every required sub-block must be present AND carry content — on its own
   # line or the line below (orch_has_section). A bare "Verify:" with nothing

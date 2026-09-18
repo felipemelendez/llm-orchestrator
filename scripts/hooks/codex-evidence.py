@@ -9,6 +9,7 @@ import contextlib
 import fcntl
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -32,6 +33,16 @@ SCRIPT_PASS = re.compile(r"^PASS:\s+[^\n]+\([1-9][0-9]* checks\)\s*$", re.M)
 EMPTY = re.compile(r"\b(?:no tests (?:found|ran|collected)|collected\s+0\b|Ran\s+0\s+tests?|0\s+tests?\b|0\s+passing\b)|(?:Tests:|# tests)\s*0\b", re.I)
 FAILURE = re.compile(r"^\s*(?:FAIL(?:ED)?\b|ERROR(?:S)?\b)|\b[1-9][0-9]*\s+(?:failed|failures|errors)\b|#\s*fail\s+[1-9][0-9]*\b", re.I | re.M)
 CLAIM = re.compile(r"\b(?:tests pass|all (?:tests|checks) (?:passed|pass|are green)|fully verified|verification (?:passed|complete)|verified successfully)\b", re.I)
+
+
+PROP_SPEC = importlib.util.spec_from_file_location("orch_proportional_evidence", Path(__file__).resolve().parents[1] / "lib/orch-proportional-evidence.py")
+proportional = importlib.util.module_from_spec(PROP_SPEC)
+PROP_SPEC.loader.exec_module(proportional)
+
+
+def _module_api():
+    from types import SimpleNamespace
+    return SimpleNamespace(**globals())
 
 
 def digest(value):
@@ -98,7 +109,9 @@ def matches(path, patterns):
                for pattern in patterns if isinstance(pattern, str))
 
 
-def snapshot(root, config, policy):
+def snapshot(root, config, policy, command=None, cwd=None):
+    if config.get("workflow") == "proportional":
+        return proportional.snapshot(root, config, policy, sys.modules[__name__] if __name__ in sys.modules else _module_api(), command, cwd)
     includes = policy.get("include_globs", [])
     includes = includes + config.get("prod_globs", []) + config.get("test_globs", [])
     runner = config.get("runner", {})
@@ -221,12 +234,27 @@ def source_routes_inside_tree(arguments, cwd):
         return False
 
 
+def read_command_can_write(args):
+    """Known read-tool options that execute helpers or write output files."""
+    if not args:
+        return False
+    exe = Path(args[0]).name
+    options = {a.split("=", 1)[0] for a in args[1:]}
+    if exe == "git":
+        return bool(options & {"--output", "--ext-diff", "--textconv", "--open-files-in-pager", "-O"})
+    if exe == "rg":
+        return any(a.startswith("--pre") for a in args[1:])
+    if exe == "file":
+        return "--compile" in options or any(re.fullmatch(r"-[A-Za-z]*C[A-Za-z]*", a) for a in args[1:])
+    return False
+
+
 def potentially_mutating(payload, command):
     if payload.get("tool_name") == "apply_patch":
         return True
     if payload.get("tool_name") != "Bash":
         return False
-    if not isinstance(command, str) or any(c in command for c in "\n\r;|&<>`$(){}"):
+    if not isinstance(command, str):
         return True
     try:
         args = shlex.split(command)
@@ -235,10 +263,16 @@ def potentially_mutating(payload, command):
     if not args:
         return False
     exe = Path(args[0]).name
+    if exe == 'sed' and proportional.literal_shell(command) and proportional.sed_targets(args) == []:
+        return False
+    if any(c in command for c in "\n\r;|&<>`$(){}"):
+        return True
+    if read_command_can_write(args):
+        return True
     if exe in ("rg", "grep", "cat", "head", "tail", "ls", "pwd", "wc", "stat", "file", "which"):
         return False
-    if exe == "sed" and not any(a == "--in-place" or a.startswith("-i") for a in args[1:]):
-        return False
+    if exe == "sed":
+        return proportional.sed_targets(args) != []
     if exe == "git" and len(args) > 1 and args[1] in ("status", "diff", "log", "show", "rev-parse", "ls-files", "ls-tree", "grep", "check-ignore"):
         return False
     return True
@@ -267,6 +301,12 @@ def result(response, kind):
     if code != 0:
         return "failed", code, output, process
     if kind == "test":
+        # Deliberately conservative: a failure or empty-selection phrase anywhere
+        # in a zero-exit run keeps it from counting as passed, even when a later
+        # line carries a positive count. Narrowing this to a "summary window" was
+        # tried and reverted: a trailing positive line then hid a real failure.
+        # The cost is a false rejection for suites whose fixture labels or
+        # diagnostics use those words; keep suite output concise instead.
         if FAILURE.search(output):
             return "failed", code, output, process
         if EMPTY.search(output):
@@ -276,36 +316,56 @@ def result(response, kind):
     return "passed", code, output, process
 
 
-def wrapper_result(pending, snap):
+def wrapper_observation(pending):
     """Validate only the exclusive artifact introduced by this exact tool call."""
     expected = pending["wrapper"]
     try:
         path = Path(expected["receipt"])
         log = Path(expected["output"])
-        for artifact in (path, log):
+        for artifact in (path,):
             info = artifact.lstat()
             if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
                 raise ValueError("not a private regular artifact")
         receipt = json.loads(path.read_text())
-        if receipt.get("schema") != 1 or receipt.get("state") != "completed":
+        if receipt.get("schema") != 1 or receipt.get("state") not in ("running", "finishing", "completed"):
             raise ValueError("incomplete")
         for key in ("cwd", "output", "receipt", "command_sha256", "invocation_sha256", "runner_sha256", "hook_nonce"):
             if receipt.get(key) != expected[key]:
                 raise ValueError("request mismatch")
-        if not (pending["started_at"] <= receipt["started_at"] <= receipt["finished_at"] <= time.time()):
+        if not pending["started_at"] <= receipt["started_at"] <= time.time():
             raise ValueError("stale time")
-        if receipt["before_fingerprint"] != pending["before"]["fingerprint"] or receipt["after_fingerprint"] != snap["fingerprint"]:
-            raise ValueError("source changed")
+        if receipt['state'] == 'running':
+            return 'running', None, '', receipt
+        if not receipt['started_at'] <= receipt['finished_at'] <= time.time():
+            raise ValueError('stale finish time')
+        if receipt.get('setup_failure') is True:
+            if (receipt['state'] != 'completed' or receipt.get('child_started') is not False or
+                    type(receipt.get('exit_code')) is not int or receipt['exit_code'] == 0):
+                raise ValueError('invalid setup failure')
+            return 'failed', receipt['exit_code'], '', receipt
+        info = log.lstat()
+        if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) & 0o077:
+            raise ValueError('not a private regular output artifact')
         raw = log.read_bytes()
         if digest(raw) != receipt.get("output_sha256"):
             raise ValueError("output changed")
         code = receipt.get("exit_code")
         if not isinstance(code, int) or isinstance(code, bool):
             raise ValueError("missing exit status")
-        status, code, output, _ = result({"exit_code": code, "output": raw.decode("utf-8", "replace")}, pending["kind"])
-        return status, code, output
+        status, code, output, _ = result({"exit_code": code, "output": raw.decode("utf-8", "replace"),
+                                         "interrupted": receipt.get("interrupted", False)}, pending["kind"])
+        return status, code, output, receipt
     except (OSError, ValueError, TypeError, KeyError):
-        return "invalid_receipt", None, ""
+        return "invalid_receipt", None, "", None
+
+
+def wrapper_result(pending, snap):
+    status, code, output, receipt = wrapper_observation(pending)
+    if not receipt or receipt['state'] != 'completed':
+        return 'invalid_receipt', None, ''
+    if not pending.get('proportional') and not receipt.get('setup_failure') and (receipt['before_fingerprint'] != pending['before']['fingerprint'] or receipt['after_fingerprint'] != snap['fingerprint']):
+        return 'invalid_receipt', None, ''
+    return status, code, output
 
 
 def clean_message(message):
@@ -325,7 +385,11 @@ def begin(state, snap, turn):
                  mutation_observed=False)
 
 
-def handle(state, payload, root, config, policy, cwd):
+def handle(state, payload, root, config, policy, cwd, checkpoint=lambda: None, observed_at=None):
+    if config.get("workflow") == "proportional":
+        return proportional.handle(state, payload, root, config, policy, cwd, _module_api(), checkpoint, observed_at=observed_at)
+    if config.get("workflow", "legacy") != "legacy":
+        return {"decision": "block", "reason": "Cadence workflow must be legacy or proportional."}
     event = payload.get("hook_event_name", "")
     turn = payload.get("turn_id") or state.get("active_turn", "unknown")
     now = time.time()
@@ -444,7 +508,7 @@ def handle(state, payload, root, config, policy, cwd):
     if fresh and not failed:
         state.update(outcome="verified", continuation_pending=False)
         return {}
-    handoff = re.search(r"(?im)^Verification: (PENDING|BLOCKED)\s*(?:—|–|-)\s*(\S[^\n]*)$", message)
+    handoff = re.search(r"(?im)^Verification:[ \t]*(PENDING|BLOCKED)\s*(?:—|–|-)\s*(\S[^\n]*)$", message)
     if handoff and not claims:
         state.update(outcome=handoff.group(1).lower(), continuation_pending=False)
         return {"systemMessage": "Cadence: verification remains " + handoff.group(1) + "; no passing outcome was recorded."}
@@ -463,25 +527,57 @@ def handle(state, payload, root, config, policy, cwd):
     return {"systemMessage": "UNVERIFIED: " + reason + " The single continuation limit has been reached or this project is warn-only."}
 
 
+class DeferredObservation(Exception):
+    def __init__(self, result):
+        self.result = result
+
+
 @contextlib.contextmanager
-def locked_state(directory):
+def locked_state(directory, on_busy=None):
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (directory / "lock").open("a+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        deadline = time.monotonic() + 0.75
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() < deadline:
+                    time.sleep(0.01)
+                    continue
+                if on_busy is not None:
+                    raise DeferredObservation(on_busy())
+                # Bound contention while allowing ordinary short events to
+                # serialize. The marker preserves any missed observation.
+                marker_fd, _ = tempfile.mkstemp(prefix='missed-event-', dir=directory)
+                os.close(marker_fd)
+                raise
         path = directory / "state.json"
         state = json.loads(path.read_text()) if path.exists() else {}
+        markers = list(directory.glob('missed-event-*'))
+        if markers:
+            state.setdefault('uncertain', {})['concurrent-hook'] = 'concurrent hook observation unavailable'
+            state['baseline_missing'] = True
+            save_state(directory, state)
+            for marker in markers:
+                marker.unlink()
         yield state
-        fd, temp = tempfile.mkstemp(prefix=".state-", dir=directory)
-        try:
-            with os.fdopen(fd, "w") as stream:
-                json.dump(state, stream, sort_keys=True)
-                stream.write("\n")
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temp, path)
-        finally:
-            if os.path.exists(temp):
-                os.unlink(temp)
+        save_state(directory, state)
+
+
+def save_state(directory, state):
+    fd, temp = tempfile.mkstemp(prefix=".state-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(state, stream, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, directory / "state.json")
+    finally:
+        if os.path.exists(temp):
+            os.unlink(temp)
+
 
 
 def main():
@@ -490,15 +586,24 @@ def main():
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return {}
+        captured_at, captured_order = time.time(), time.monotonic_ns()
         found = project(payload)
         if not found or not isinstance(payload.get("session_id"), str) or not payload["session_id"]:
             return {}
         root, config, policy, cwd = found
         base = Path(os.environ.get("ORCH_CODEX_STATE_DIR", str(Path.home() / ".llm-orchestrator/codex")))
         directory = base / digest(str(root)) / digest(payload["session_id"])
-        with locked_state(directory) as state:
+        if config.get("workflow") == "proportional":
+            proportional.prune_completed(directory.parent, directory)
+        on_busy = (lambda: proportional.defer_event(directory, payload, root, config, policy, cwd,
+                   _module_api(), 'codex', captured_at, captured_order)) if config.get('workflow') == 'proportional' else None
+        with locked_state(directory, on_busy=on_busy) as state:
+            if config.get('workflow') == 'proportional':
+                proportional.drain_deferred(directory, state, root, _module_api(), lambda: save_state(directory, state))
             state.update(schema=1, worktree=str(root), session_id=payload["session_id"])
-            return handle(state, payload, root, config, policy, cwd)
+            return handle(state, payload, root, config, policy, cwd, checkpoint=lambda: save_state(directory, state), observed_at=captured_at)
+    except DeferredObservation as exc:
+        return exc.result
     except (OSError, ValueError, TypeError, KeyError, re.error, subprocess.SubprocessError):
         # No payload/output/exception repr here: hooks can contain private text.
         warning = "Cadence evidence unavailable: source verification cannot be claimed from this hook. Report the limitation and inspect the local hook configuration."

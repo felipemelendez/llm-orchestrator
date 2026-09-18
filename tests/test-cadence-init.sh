@@ -993,7 +993,13 @@ bat "1 no markers" "$D" 0 'appended AGENTS.md (the ORCH:LAWS block)' 0 '' none a
 # The block source every kept fixture is built from, and the older version of
 # it that shape 21 and the unlock scenes use — one re-worded bullet, the delta
 # measured between two installs of this plugin.
-older_block() { sed 's/^- Every dispatch names the model it runs on\.$/- Every dispatch states which model it runs on./' "$BLOCK"; }
+older_block() { sed 's/^- Read `docs\/llm-orchestrator\/LAWS\.md` first, never from memory\.$/- Read `docs\/llm-orchestrator\/LAWS.md` first, never from recollection./' "$BLOCK"; }
+# A fixture that no longer differs from the block would turn every "drifted
+# section" scene into a silent pass for "kept". Refuse to run on that fixture.
+if older_block | cmp -s - "$BLOCK"; then
+  printf 'FAIL: older_block() no longer alters the block — its anchor line left templates/cadence-global-block.md; update the anchor\n'
+  exit 1
+fi
 
 D=$( { printf '# Agents\n\n'; cat "$BLOCK"; } | mkbat s2)
 bat "2 one live pair carrying the block" "$D" 0 'kept AGENTS.md' 0 '' AGENTS.md agree

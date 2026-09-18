@@ -154,6 +154,28 @@ After compaction, `session-start.sh` injects a short recovery note pointing to t
 
 ### Layer 10 — The cadence and the lock
 
+**Proportional workflow.** New projects select `workflow: proportional`; missing
+or legacy workflow retains the legacy sequence described below. The skill routes
+Simple direct work, Standard one-reviewer work and Full specification/two-reviewer
+work by risk. Writers can execute checks without supplying independent review.
+The Git gate validates the enabled staged policy (falling back to enabled HEAD)
+and protected amendments before waiving legacy report requirements. It proves
+policy integrity, not that tests or reviewers ran.
+
+`scripts/lib/orch-proportional-evidence.py` supplies shared scope/lifecycle logic
+to Codex and Claude adapters while retaining separate private stores. It records
+observed command outcomes before expensive fingerprint work, retains unresolved
+failures across turns and reuses checks only while covered inputs are unchanged.
+The legacy turn-only behavior below applies to legacy projects. The common
+`Verification:` vocabulary does not make prose into execution evidence.
+
+`scripts/lib/orch-task-resources.py` owns external task scratch, copies/worktrees
+and consumer leases. A per-task lifecycle lock serializes allocation/acquisition
+with explicit finish. Stop hooks only retry already closed tasks; paused, dirty,
+locked, ignored-content or unique work survives. Completed private metadata has
+bounded retention; incomplete work never expires by age. The skill wrapper and
+both installer layouts resolve this same helper.
+
 **The failure mode.** A review process that lives in prose drifts: the stage that costs the most gets skipped first, a reviewer that finds nothing is read as a clean bill, and the sentence that says a stage is mandatory is one edit away from saying it is optional. Nothing in the harness notices either the skip or the edit.
 
 **The mechanism.** A project opts in by running `/llm-orchestrator:cadence-init`, which writes `docs/llm-orchestrator/cadence.json` (the switch and the project's runner grammar), the laws, a marked `ORCH:LAWS` pointer block into `AGENTS.md` and `CLAUDE.md`, the native deny rules, the git layer, and then arms the lock. From then on: every change to production code or tests runs the fixed sequence — brief review (which returns the ticket's class, `CODE` or `PROSE`), implementer, two independent blind reviewers, a refuter only for disagreement or a one-sided catastrophic or serious finding, a fixer, the gate script plus a gate seat on code, landing — and each stage's report is a file the landing check can see. Agreement on actionable findings, severity and disposition skips the refuter regardless of count; matching PASS verdicts alone do not suffice, and a missing or incomplete review must be obtained independently. The refuter assesses only disputed or one-sided top-severity findings and originates none. Explicit project amendments take precedence. The general `workflows/review-diff.js` workflow remains separate from this cadence. The gate script (`skills/cadence/scripts/orch-cadence-gate.sh`) makes its own throwaway copy of the tree, reverts each changed production file and requires the suite to go red; it never mutates the directory it is pointed at. The stop rule is by finding class, not by count: the gate seat names the class of each finding, the controller compares class strings across rounds, and a repeat sends the ticket back to the brief review. The lock over all of it is two layers and no more — see the Hooks entry in the Component contract, which states them once; `docs/install.md`'s "The lock's two layers" is the user-facing version. Everything here is inert in a project without an enabled `cadence.json`: each hook's first statement is that file test, before any decode.
@@ -341,7 +363,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 
 ## Why this shape
 
-- **No runtime** keeps the kit simple, but be precise about what is portable: the **skills, commands, and agent prompts are plain markdown** and work as guidance in any harness that can read them. The **enforcement layer is Claude Code-specific** — the hooks (`hooks/hooks.json`: protocol grader, research gate, no-verify guard, destructive-git guard, handoff nudge, Status validator) depend on Claude Code's hook events and `additionalContext` injection. In another harness you get the skills as instructions, not the mechanical enforcement. Making the enforcement cross-harness would mean porting the hook scripts to each harness's hook system (which LLM Orchestrator does not ship today). **Layer 10 is the one place that split is no longer clean**, and only for the cadence: its enforcement has a cross-tool floor that needs no hook events at all — the `commit-msg` hook the init installs under `.githooks/`, and `orch-cadence-check.sh --audit <rev>` for CI — plus a small Codex adapter (`scripts/hooks/codex-cadence-adapter.sh`) that is Codex's deny rules for the locked files and nothing more. The hook layer itself stays Claude-Code-specific: the session-start line, the end-of-turn verdict and the dispatch-model guard are Claude Code hook events, the Codex adapter loads only when that project's `.codex/` layer is trusted, and whether a Codex hook fires inside a Codex subagent is unverified. So: git and CI everywhere, hooks where the harness provides them.
+- **Harness boundaries.** Skills and prompts are portable instructions. Claude hooks provide its session, protocol and dispatch controls. Codex has installed file guards and opt-in execution/provenance hooks. Enabled proportional projects share content-scoped verification and resource-cleanup contracts through adapters for each harness. Hook registration is not live trust; unsupported delegated provenance remains pending. Git lock/ruling checks and CI revision audits provide a separate cross-harness policy layer, not proof that tests or reviews ran.
 - **One file per skill** keeps discovery cheap. `ls skills/` is the catalog.
 - **Plain-markdown memory** is grep-able, readable, editable, and trivially backed up.
 - **Single hooks.json** with calls to `scripts/hooks/*.sh` keeps logic out of inline `node -e` strings.

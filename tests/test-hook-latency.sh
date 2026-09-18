@@ -39,6 +39,9 @@ fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# Measure fixture policies, independently of the checkout launching this suite.
+cd "$TMP" || exit 1
+export CLAUDE_PROJECT_DIR="$TMP"
 export ORCH_HOME="$TMP/home"
 mkdir -p "$ORCH_HOME"
 
@@ -138,7 +141,7 @@ CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-cadence-unlock.sh" "$BASH_
 
 printf '\n'
 if (( FAIL == 0 )); then
-  printf '%sPASS: test-hook-latency%s (%d hooks under budget)\n' "$GREEN" "$RESET" "$PASS"
+  printf '%sPASS: test-hook-latency%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"
   exit 0
 else
   printf '%sFAIL: test-hook-latency — %d under budget, %d over.%s\n' "$RED" "$PASS" "$FAIL" "$RESET"

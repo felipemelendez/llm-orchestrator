@@ -38,6 +38,8 @@ fi
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# Legacy payloads omit cwd; keep hook discovery inside this disposable fixture.
+cd "$TMP" || exit 1
 
 # A clean committed git repo to act as CLAUDE_PROJECT_DIR (so the WIP escape
 # does not fire on the warn cases).

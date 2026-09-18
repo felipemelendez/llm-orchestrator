@@ -122,6 +122,29 @@ for _i in 1 2 3; do
 done
 (( NAG <= 1 )) && ok "non-writable marker dir → fired ${NAG} times across 3 turns (≤1, no nag loop)" || fail "nag loop on non-writable marker" "fired ${NAG}/3"
 
+printf '\n%s== proportional handoffs preserve pending work outside the repository ==%s\n' "$DIM" "$RESET"
+PROP_PROJ="$TMPHOME/proportional"
+mkdir -p "$PROP_PROJ/docs/llm-orchestrator"
+printf '{"enabled":true,"workflow":"proportional"}\n' > "$PROP_PROJ/docs/llm-orchestrator/cadence.json"
+prop_nudge() {
+  printf '{"cwd":"%s","session_id":"%s","transcript_path":"%s"}' "$PROP_PROJ" "$1" "$FIXTURES/high.jsonl" \
+    | ORCH_CONTEXT_HANDOFF_TOKENS=800000 bash "$HOOK"
+}
+OUT=$(prop_nudge proportional-1)
+if printf '%s' "$OUT" | grep -q 'task-owned external scratch' && printf '%s' "$OUT" | grep -q 'retain them while work is pending'; then
+  ok "enabled proportional config routes handoff to owned external scratch and retains pending work"
+else fail "proportional handoff storage" "$OUT"; fi
+if printf '%s' "$OUT" | grep -q 'Reuse matching trusted execution evidence' && ! printf '%s' "$OUT" | grep -q 'green verify'; then
+  ok "proportional nudge preserves valid checks and accepts honest pending handoffs"
+else fail "proportional handoff evidence" "$OUT"; fi
+OUT=$(prop_nudge proportional-1)
+[[ -z "$OUT" ]] && ok "proportional nudge still fires once per fill cycle" || fail "proportional repeated nudge" "$OUT"
+printf '{"enabled":false,"workflow":"proportional"}\n' > "$PROP_PROJ/docs/llm-orchestrator/cadence.json"
+OUT=$(prop_nudge proportional-disabled)
+if printf '%s' "$OUT" | grep -q 'green verify' && ! printf '%s' "$OUT" | grep -q 'task-owned external scratch'; then
+  ok "disabled proportional setting keeps the legacy handoff nudge"
+else fail "disabled handoff routing" "$OUT"; fi
+
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-token-floor%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"

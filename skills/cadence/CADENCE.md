@@ -1,5 +1,82 @@
 # The cadence — the full text
 
+## Workflow selection
+
+This skill is active only for an enabled project. Read its laws and `workflow`.
+`proportional` uses this section and the short paths in `SKILL.md`; missing or
+`legacy` uses the legacy procedure below. Invalid values must be corrected.
+Project amendments and current user instructions take precedence.
+
+Simple means a clear, reversible, local low-risk change: implement, inspect the
+diff, run relevant existing checks, deliver. Standard adds acceptance criteria
+and one independent reviewer. Neither needs the legacy role pipeline, permanent
+reports, worktrees, broad floors or mutation probes. Select by consequences and
+uncertainty, not file/line counts. Writers may run tests and inspect their diff;
+they cannot supply a required independent review or gate.
+
+### Proportional Full path
+
+1. Write or update the maintained specification when the change needs one.
+   Independently review the contract and resolve material gaps before coding.
+2. Implement with meaningful regression checks. Use isolation only where it
+   protects concurrent work or is needed for probes; keep scopes bounded.
+3. Obtain two fresh independent reviews with different briefs, neither seeing
+   the other review or the implementer's conclusions. Honour requested providers.
+   A provider dropout is not a completed review or permission to substitute.
+4. Compare findings and record their disposition in the conversation/PR or
+   temporary task evidence. Use a refuter only for substantive disagreement or
+   a one-sided serious/catastrophic finding. Missing reviews are not agreement.
+   Agreed findings still require resolution; do not create a third general review.
+5. Fix material issues, verify affected fixes and independently assess the final
+   change. Use the deterministic gate and targeted probes where they test the
+   affected contracts; inspect individual outcomes, not merely its final exit.
+   Unsupported checks remain explicit. Do not repeat valid checks for ceremony.
+6. Deliver within the user's commit/push/merge scope. Retain useful spec/research/
+   design/runbook updates. Finish task-owned temporary resources after consumers
+   stop and deliverables are preserved; explain concrete preservation reasons.
+
+Read relevant role briefs for review lenses, not their legacy report/floor
+requirements. Their template filenames, timestamps, ledger rows, fixed mutation
+counts and file-count split thresholds are not proportional requirements.
+If repeated findings show the design is wrong, revisit the contract rather than
+repeating the same review indefinitely.
+
+### Evidence and temporary resources
+
+Use the execution route and completion vocabulary in `SKILL.md`. The affected
+task retains verification obligations across turns; content-preserving commits
+do not stale a check. Supported evidence binds actual commands/exits to a
+canonical worktree and configured input scope. Missing/empty/invalid scope,
+unresolved mutation targets or interrupted execution cannot produce a pass.
+Keep failures visible. Record scope/fingerprint errors without losing the
+observed command result. Required unavailable validation stays pending/blocked.
+
+`verification_scopes` optionally maps names to `selectors` and complete `inputs`
+globs. Resolved command paths select their scopes; unmatched/no paths use
+`prod_globs`, `test_globs` and `verification_config_globs` conservatively, plus
+shared runner/config/lock inputs. Empty source/test scope remains pending.
+Test-file arguments alone do not establish production dependency coverage.
+
+Use the task resource helper only when scratch or isolated trees are needed.
+Resources and consumer leases belong to one task. Finish closes admission and
+serializes with new consumers/resources. Stop hooks retry explicitly finished
+tasks only. Preserve active/dirty/ignored-content/locked/unique work and unmerged
+branches; never use force removal. A clean tree is removable only when its
+commits remain reachable from a destination/ref retained by the whole cleanup.
+Keep task state for recovery when cleanup cannot safely finish.
+
+Proportional landing/audit checks protect rules and their numbered amendments;
+they do not require BRIEFREV/REV1/REV2/REFUTE/GATE files or attest that reviewers
+ran. The lock section below remains binding for both workflows. Evidence hook
+enforcement also requires the harness's actual enablement and trust.
+
+## Legacy procedure
+
+Everything from here through the legacy role/environment sections describes
+`workflow: legacy` or a configuration without `workflow`. It does not override
+the proportional paths above. The lock and authorization constraints apply to
+both modes; preserve existing legacy behavior until deliberate migration.
+
 This is the procedure the `cadence` skill points at. It applies to a project that
 has `docs/llm-orchestrator/cadence.json` with `"enabled": true`, and it governs
 every change to production code or tests; docs-only edits are out of scope.

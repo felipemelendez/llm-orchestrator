@@ -1,5 +1,22 @@
 # Seat rules (pasted by reference into every dispatch)
 
+## Proportional projects
+
+When `workflow` is `proportional`, follow this section and the dispatched role's
+purpose; the legacy requirements below do not apply. Work only in the named
+scope, preserve concurrent edits, and do not delegate unless authorized. State
+the actual model, source reviewed, concrete findings, commands/exits and limits.
+Writers may inspect/test their changes; independent reviewers and gates must
+not review their own work. Blind reviewers do not read each other's findings.
+Run appropriate checks through the harness's supported evidence route and reuse
+valid results. Reports may be returned directly; any needed files go in leased,
+task-owned external scratch. No required timestamps, ledger, permanent stage
+reports, file-count splits, or per-file mutation quotas. Respect project build
+restrictions and Git authorization. Release the lease after consumers finish;
+the controller explicitly finishes safe task cleanup.
+
+## Legacy projects
+
 <!--
 Copy this into `<SCRATCH>` as `SEAT_RULES.md`, fill the placeholders once per
 session, and name it in every seat's brief. The placeholders: `<SCRATCH>` the

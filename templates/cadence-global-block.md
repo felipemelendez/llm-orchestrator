@@ -1,24 +1,26 @@
 <!-- ORCH:LAWS:START -->
 ## The cadence
 
-If `docs/llm-orchestrator/cadence.json` is absent, or does not have
-`"enabled": true`, this project has not opted in: nothing here applies. Work
-normally.
+Absent/disabled `docs/llm-orchestrator/cadence.json` is inert; work normally.
 
 Otherwise, before anything else:
 
-- Read `docs/llm-orchestrator/LAWS.md` first. It is the project's constitution,
-  and it is never restated from memory.
-- Every change to production code or tests goes through the cadence in the
-  `cadence` skill — brief review, implementer, two independent blind reviews,
-  the refuter only for disagreement or a one-sided catastrophic or serious
-  finding, the union, the fixer, the gate script, the gate seat on code, landing.
-  Agreement on findings, severity and disposition skips the refuter regardless
-  of count; missing or incomplete reviews are never agreement. Explicit project
-  amendments govern. Docs-only edits do not.
-- Every dispatch names the model it runs on.
-- Never verify your own work. The seat that wrote a change does not review or
-  gate it.
+- Read `docs/llm-orchestrator/LAWS.md` first, never from memory.
+- Read `workflow` in the configuration. For `proportional`, use the `cadence`
+  skill's smallest sufficient path: Simple edits/checks/delivery; Standard adds
+  one independent review; Full adds a reviewed spec, two independent blind
+  reviews, findings resolution and independent verification. Choose by risk,
+  uncertainty and reversibility. User directions and project amendments govern.
+  Ordinary questions/docs need no pipeline.
+- Missing or `legacy` workflow retains the legacy brief/implementer/blind-pair/
+  adjudication/fixer/gate/landing sequence and its reports. Unknown workflow is
+  an error. Installing this block does not migrate a project.
+- Full/legacy uses a refuter only for disagreement or a one-sided serious/
+  catastrophic finding. Missing reviews are never agreement. Name dispatch models.
+- Writers may run checks and inspect their diff in proportional mode; they
+  cannot supply a required independent review/gate. Legacy independence stays.
+- Keep useful specs/research/design/runbooks. Proportional reports/copies live
+  outside Git; finish cleanup after consumers stop and work is preserved.
 - `LAWS.md`, `cadence.json`, `LOCK.sha256`, the deny rules in
   `.claude/settings.json`, the git hook in `.githooks/`, and the marked section
   of `CLAUDE.md` and `AGENTS.md` change only by a numbered ruling, in a commit
@@ -27,8 +29,6 @@ Otherwise, before anything else:
   launching the session, never in a settings file and never by an agent.
   Propose an amendment in the handoff instead.
 
-Claude Code normally prints a `cadence:` verdict at startup. On Codex, use the
-project's `CODEX.md` to check hook trust, evidence policy and the rule verdict;
-absence of a startup line alone does not establish whether hooks loaded.
-Instructions, executed checks and mechanically enforced gates are distinct.
+On Codex read project `CODEX.md` for evidence and hook trust. Installed hooks,
+executed checks and instructions are distinct; Git checks do not prove reviews.
 <!-- ORCH:LAWS:END -->

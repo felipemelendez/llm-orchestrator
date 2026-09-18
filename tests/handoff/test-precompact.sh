@@ -138,6 +138,26 @@ else
 fi
 assert_valid_json "disabled compact" "$DIS_OUT"
 
+printf '\n%s== proportional recovery uses owned resources and matching evidence ==%s\n' "$DIM" "$RESET"
+printf '{"enabled":true,"workflow":"proportional"}\n' > "$PROJ1/docs/llm-orchestrator/cadence.json"
+PROP_OUT=$(printf '{"source":"compact","cwd":"%s"}' "$PROJ1" | CLAUDE_PROJECT_DIR="$PROJ1" ORCH_HOME="$TMPHOME/orch" bash "$SESSION_HOOK")
+if printf '%s' "$PROP_OUT" | grep -q 'exact resource-helper ID/state and external handoff path' \
+   && ! printf '%s' "$PROP_OUT" | grep -q '2026-05-31-demo.md'; then
+  ok "proportional recovery requests the exact owned pointer instead of a repository note chosen by age"
+else fail "proportional recovery ownership" "$PROP_OUT"; fi
+if printf '%s' "$PROP_OUT" | grep -q 'Reuse matching trusted execution evidence' \
+   && printf '%s' "$PROP_OUT" | grep -q 'failed, missing or required checks remain pending' \
+   && ! printf '%s' "$PROP_OUT" | grep -q 'Re-run the verification baseline'; then
+  ok "proportional recovery reuses valid checks without clearing pending validation"
+else fail "proportional recovery evidence" "$PROP_OUT"; fi
+printf '%s' "$PROP_OUT" | grep -q 'Retain unfinished handoff resources' \
+  && ok "compaction retains unfinished resources" || fail "proportional pending retention" "$PROP_OUT"
+printf '{"enabled":false,"workflow":"proportional"}\n' > "$PROJ1/docs/llm-orchestrator/cadence.json"
+PROP_DISABLED=$(printf '{"source":"compact","cwd":"%s"}' "$PROJ1" | CLAUDE_PROJECT_DIR="$PROJ1" ORCH_HOME="$TMPHOME/orch" bash "$SESSION_HOOK")
+if printf '%s' "$PROP_DISABLED" | grep -q '2026-05-31-demo.md' && printf '%s' "$PROP_DISABLED" | grep -q 'Re-run the verification baseline'; then
+  ok "disabled cadence retains legacy handoff recovery"
+else fail "disabled recovery routing" "$PROP_DISABLED"; fi
+
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-precompact%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"

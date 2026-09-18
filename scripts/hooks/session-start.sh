@@ -204,10 +204,16 @@ fi
 # across compaction does not depend on the per-turn hook being enabled.
 # The newest-handoff path is derived live (a pointer, never the artifact body).
 if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
+  PROTOCOL_MARKER="orch-turn-reminder"
+  PROTOCOL_LIB="${ROOT}/scripts/lib/orch-protocol.sh"
+  if [[ -f "$PROTOCOL_LIB" ]]; then
+    source "$PROTOCOL_LIB"
+    orch_protocol_is_proportional "$INPUT" && PROTOCOL_MARKER="orch-proportional-reminder"
+  fi
   PROJ="${CLAUDE_PROJECT_DIR:-${PWD}}"
   HANDOFF_DIR="${PROJ}/docs/llm-orchestrator/handoffs"
   NEWEST="none"
-  if [[ -d "${HANDOFF_DIR}" ]]; then
+  if [[ "$PROTOCOL_MARKER" == "orch-turn-reminder" && -d "${HANDOFF_DIR}" ]]; then
     # Newest by modification time (robust to regeneration in place). The note
     # also tells the next turn the plan file is authoritative over the artifact,
     # so a wrong pick self-corrects, but mtime is the right primary signal.
@@ -218,9 +224,21 @@ if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
   # Canonical protocol reminder (single source: concise-agent-protocol.md).
   CANON_FILE="${ROOT}/concise-agent-protocol.md"
   PROTOCOL_CORE=""
-  [[ -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk '/<!-- orch-turn-reminder-start -->/{f=1;next} /<!-- orch-turn-reminder-end -->/{f=0} f' "${CANON_FILE}" 2>/dev/null)
+  [[ -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk -v s="<!-- $PROTOCOL_MARKER-start -->" -v e="<!-- $PROTOCOL_MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON_FILE}" 2>/dev/null)
 
-  NOTE="
+  if [[ "$PROTOCOL_MARKER" == "orch-proportional-reminder" ]]; then
+    NOTE="
+
+---
+**Post-compaction recovery.** This session resumed immediately after native context compaction. Reconcile the summary against current source and unfinished task requirements.
+
+- Recover the active task's exact resource-helper ID/state and external handoff path from the conversation. Check helper status and acquire a consumer lease before reading. Never choose another task's note by filename or age; if the pointer is unavailable, reconstruct pending work from the conversation and source without inventing evidence.
+- Reuse matching trusted execution evidence while covered inputs remain unchanged. A turn boundary alone does not require rerunning checks; affected stale, failed, missing or required checks remain pending.
+- Retain unfinished handoff resources. Finish cleanup only after consumers stop, the note is consumed and deliverables are preserved. Stop/compaction is not task completion.
+
+${PROTOCOL_CORE}"
+  else
+    NOTE="
 
 ---
 **Post-compaction recovery.** This session resumed immediately after native context compaction. The narrative above the boundary is a lossy summary — treat in-flight details (file:line refs, test counts, what was just edited) as unverified.
@@ -231,6 +249,7 @@ Before continuing or claiming any work done:
 - If all plan tasks are checked, stop and report — do not invent work.
 
 ${PROTOCOL_CORE}"
+  fi
 
   NOTE="${CADENCE_PREFIX}${NOTE}"
 

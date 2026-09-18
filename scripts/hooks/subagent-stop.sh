@@ -98,6 +98,12 @@ ASSISTANT_TEXT="${LAM_RAW:1}"
 
 AGENT_TYPE=$(printf '%s' "${INPUT}" | grep -oE '"agent_type"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
+VERIFY_LABEL='Verify:'
+VERIFY_GUIDANCE='Verify: needs a real command and its real output, not an assertion.'
+if orch_protocol_is_proportional "$INPUT"; then
+  VERIFY_LABEL='Verification:'
+  VERIFY_GUIDANCE='Verification: uses PASS, PENDING, BLOCKED or NOT APPLICABLE, followed by an em dash and explanation. The evidence gate validates truth; NOT APPLICABLE is not an executed pass and cannot clear failed, unknown or required validation.'
+fi
 
 # Fallback for harnesses that predate last_assistant_message: the transcript.
 # Only when the field was ABSENT — when it exists but is empty, reading the
@@ -144,7 +150,7 @@ if [[ -z "${_STRIPPED}" ]]; then
   case "${AGENT_TYPE}" in
     *orch-implementer|*orch-explorer|*orch-debugger|*orch-researcher|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
       if [[ "${HAS_LAM}" == "1" || ( -n "${TRANSCRIPT:-}" && -f "${TRANSCRIPT:-/nonexistent}" ) ]]; then
-        emit "orch-subagent-stop: subagent '${AGENT_TYPE:-unknown}' finished with NO final message — premature termination. Do not treat this as success: return an explicit Status block (DONE with Verify:, PARTIAL with Progress:/Remaining:, or BLOCKED with Need:) describing where the work stands."
+        emit "orch-subagent-stop: subagent '${AGENT_TYPE:-unknown}' finished with NO final message — premature termination. Do not treat this as success: return an explicit Status block (DONE with $VERIFY_LABEL, PARTIAL with Progress:/Remaining:, or BLOCKED with Need:) describing where the work stands."
       fi ;;
   esac
   exit 0
@@ -153,9 +159,9 @@ fi
 # --- Check 2: shape, scoped by agent type -----------------------------------
 case "${AGENT_TYPE}" in
   *orch-implementer)
-    GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_status_block 2>&1)
+    GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_status_block "" "$INPUT" 2>&1)
     if [[ $? -ne 0 ]]; then
-      emit "orch-subagent-stop: implementer finished without a valid Status block (${GRADE_OUTPUT}). Expected DONE (Summary: + Verify:) | DONE_WITH_CONCERNS (Concerns: + Verify:) | BLOCKED (Need:) | NEEDS_CONTEXT (Ask:) | PARTIAL (Progress: + Remaining:) at the start of a line. A completion claim carries the verification burden: Verify: needs a real command and its real output, not an assertion."
+      emit "orch-subagent-stop: implementer finished without a valid Status block (${GRADE_OUTPUT}). Expected DONE (Summary: + $VERIFY_LABEL) | DONE_WITH_CONCERNS (Concerns: + $VERIFY_LABEL) | BLOCKED (Need:) | NEEDS_CONTEXT (Ask:) | PARTIAL (Progress: + Remaining:) at the start of a line. A completion claim carries the verification burden: $VERIFY_GUIDANCE"
     fi
     # --- Check 3: evidence cross-check on completion claims (warn-only) -----
     if printf '%s' "${ASSISTANT_TEXT}" | grep -qE '^Status:[[:space:]]*(DONE|DONE_WITH_CONCERNS)\b' \
@@ -164,7 +170,7 @@ case "${AGENT_TYPE}" in
       EV_REASON=$(orch_evidence_check "${ASSISTANT_TEXT}" "${LEDGER}")
       EV_RC=$?
       if [[ ${EV_RC} -eq 1 ]]; then
-        printf 'orch-subagent-stop: implementer DONE claim fails evidence check — %s Controller: do NOT trust this DONE; re-verify before marking the task complete.\n' "${EV_REASON}" >&2
+        printf 'orch-subagent-stop: implementer DONE claim fails evidence check — %s Controller: do NOT trust this DONE; resolve the evidence mismatch before marking the task complete.\n' "${EV_REASON}" >&2
       fi
       # A return that cites no stamp is silent by construction: citation is
       # opt-in (ORCH_EVIDENCE_MARKER=1) and the ledger is read directly by the
@@ -175,7 +181,7 @@ case "${AGENT_TYPE}" in
     : # orch-researcher-validator.sh owns the researcher's contract.
     ;;
   *orch-explorer|*orch-debugger|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
-    GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_reply 2>&1)
+    GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_reply "" "$INPUT" 2>&1)
     if [[ $? -ne 0 ]]; then
       emit "orch-subagent-stop: ${AGENT_TYPE} finished without a protocol shape (${GRADE_OUTPUT}). Open the reply with the block your contract names (Found:/Issues:/Status:)."
     fi

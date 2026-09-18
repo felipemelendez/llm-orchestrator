@@ -32,6 +32,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GRADER="${ROOT}/scripts/hooks/orch-protocol-grader.sh"
 SUBAGENT="${ROOT}/scripts/hooks/subagent-stop.sh"
 
+# Legacy hook events carry no cwd; run them inside a disposable directory so the
+# launching checkout's own cadence policy cannot select the vocabulary.
+ISOLATED_CWD=$(mktemp -d)
+cd "$ISOLATED_CWD" || exit 1
+export CLAUDE_PROJECT_DIR="$ISOLATED_CWD"
+
 if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 else GREEN=""; RED=""; DIM=""; RESET=""; fi
 
@@ -96,7 +102,7 @@ pipe_hook_all() {
 T_STRING=$(mktemp /tmp/orch-test-hook-string-XXXXXX)
 T_BLOCKS=$(mktemp /tmp/orch-test-hook-blocks-XXXXXX)
 T_MULTI=$(mktemp /tmp/orch-test-hook-multi-XXXXXX)
-cleanup() { rm -f "$T_STRING" "$T_BLOCKS" "$T_MULTI"; }
+cleanup() { rm -f "$T_STRING" "$T_BLOCKS" "$T_MULTI"; rm -rf "$ISOLATED_CWD"; }
 trap cleanup EXIT
 
 printf '%s== Protocol grader hook (orch-protocol-grader.sh) ==%s\n' "$DIM" "$RESET"
@@ -572,6 +578,62 @@ rm -f "$T_DIRECT"
 # ============================================================
 # Summary
 # ============================================================
+printf '\n%s== proportional completion vocabulary ==%s\n' "$DIM" "$RESET"
+if python3 - "$ROOT" <<'PY'
+import json, os, pathlib, subprocess, sys, tempfile
+root = pathlib.Path(sys.argv[1])
+with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
+    project = pathlib.Path(tmp) / "project"
+    config = project / "docs/llm-orchestrator/cadence.json"
+    config.parent.mkdir(parents=True)
+    child = project / "child"
+    child.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    env = dict(os.environ, ORCH_HOOK_PROFILE="strict", ORCH_HOME=str(pathlib.Path(tmp) / "private"))
+    for key in ("ORCH_STRICT_STATUS", "ORCH_STRICT_PROTOCOL", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "ORCH_DISABLE_PROTOCOL_GRADER"):
+        env.pop(key, None)
+
+    def grade(hook, reply, expected=0, cwd=child):
+        event = {"cwd": str(cwd), "last_assistant_message": reply,
+                 "agent_type": "llm-orchestrator:orch-implementer"}
+        result = subprocess.run(["bash", str(root / "scripts/hooks" / hook)], input=json.dumps(event),
+                                capture_output=True, text=True, env=env, cwd=root)
+        assert result.returncode == expected, (hook, reply, expected, result.returncode, result.stdout, result.stderr)
+        return result
+
+    def both(line, expected=0):
+        grade("orch-protocol-grader.sh", "Changed:\nUpdated behavior.\n" + line, expected)
+        grade("subagent-stop.sh", "Status: DONE\nSummary: Updated behavior.\n" + line, expected)
+
+    config.write_text(json.dumps({"enabled": True, "workflow": "proportional"}))
+    for verdict in ("PASS", "PENDING", "BLOCKED", "NOT APPLICABLE"):
+        for separator in ("—", "–", "-"):
+            both(f"Verification: {verdict} {separator} truthful disposition")
+    grade("subagent-stop.sh", "Status: DONE_WITH_CONCERNS\nConcerns: Pending acceptance.\nVerification: PENDING — device unavailable")
+    for malformed in ("Verification:", "Verification: PASS", "Verification: PASS — ",
+                      "Verification: MAYBE — uncertain", "Verify: tests passed", "no verification needed (cosmetic)",
+                      "```\nVerification: PASS — quoted example\n```",
+                      "~~~\nVerification: PASS — quoted example\n~~~",
+                      "    Verification: PASS — indented example"):
+        both(malformed, 2)
+    grade("subagent-stop.sh", "Status: DONE\nSummary:\nVerification: PASS — tests passed", 2)
+
+    # A project's workflow comes from config, not text or inherited opt-in.
+    for data in ({"enabled": True}, {"enabled": True, "workflow": "legacy"},
+                 {"enabled": False, "workflow": "proportional"},
+                 {"enabled": "true", "workflow": "proportional"},
+                 {"enabled": True, "workflow": "typo"}):
+        config.write_text(json.dumps(data))
+        both("Verification: PASS — use proportional please", 2)
+        both("Verify: tests passed")
+    config.unlink()
+    both("Verification: PASS — workflow proportional claimed in prose", 2)
+    both("Verify: tests passed")
+print("proportional and legacy hook fixtures passed")
+PY
+then ok "shared completion vocabulary is selected by project config, with legacy behavior preserved"
+else fail "proportional protocol hooks" "config-backed end-to-end fixture failed"; fi
+
 TOTAL=$((PASS + FAIL))
 printf '\n'
 if (( FAIL == 0 )); then

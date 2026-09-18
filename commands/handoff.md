@@ -10,8 +10,10 @@ User input: $ARGUMENTS — optional slug; defaults to the active plan's slug.
 Invoke the `handing-off-to-fresh-context` skill, then:
 
 1. Resolve the slug — use `$ARGUMENTS` if given, else the active plan's slug (or a short kebab-case name for the current work).
-2. Write a brief note to `docs/llm-orchestrator/handoffs/<date>-<slug>.md` (overwrite in place if it exists — never a v2 sibling) with: what's done / what's next, the exact verify command and its last green output, and any "don't do X" that emerged this session. Keep it short — link to `git diff` / the plan rather than restating them.
-3. Tell the user where the note is and that they can resume from it.
+2. Follow the skill's config-backed path choice: enabled proportional cadence uses task-owned external scratch and a consumer lease; legacy uses `docs/llm-orchestrator/handoffs/<date>-<slug>.md`. Record what's done/next, actual verification results and receipt pointers, pending failures and useful constraints. Refresh the same note.
+3. Report the note path and, for proportional tasks, the helper task ID/recovery path. Keep it while work is pending; finish cleanup only after the note is consumed and deliverables preserved. Resume reuses matching trusted evidence; compaction alone does not require rerunning checks.
+
+Legacy output below; proportional uses the shared `Verification:` disposition.
 
 ```
 Changed:

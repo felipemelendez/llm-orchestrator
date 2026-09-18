@@ -90,6 +90,23 @@ EV_LIB="${HOOK_DIR}/../lib/orch-evidence.sh"
 # `cat` blocks forever. A hook that can hang is worse than one that learns less.
 INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
+[[ -n "${INPUT}" ]] || exit 0
+# Proportional projects use content-bound, task-persistent evidence. Exit 3
+# selects the unchanged legacy implementation below.
+PROP_RESULT=$(printf '%s' "${INPUT}" | python3 "${HOOK_DIR}/../lib/orch-proportional-evidence.py")
+PROP_RC=$?
+if [[ ${PROP_RC} -eq 0 && -n "${PROP_RESULT}" ]]; then
+  printf '%s\n' "${PROP_RESULT}"
+  exit 0
+elif [[ ${PROP_RC} -ne 3 ]]; then
+  printf '%s\n' 'Cadence execution evidence unavailable: the proportional dispatcher failed. Verification: PENDING — restore the installed evidence helper before claiming verification.' >&2
+  exit 2
+fi
+# SubagentStop is registered only for proportional child evidence. Legacy
+# completion remains owned by its existing subagent protocol grader.
+if printf '%s' "${INPUT}" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("hook_event_name") == "SubagentStop" else 1)'; then
+  exit 0
+fi
 TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 
 # The reply comes from the stdin payload's last_assistant_message — the

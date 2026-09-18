@@ -47,6 +47,8 @@ export HOME="$TMP/home"; mkdir -p "$HOME/.claude"
 # GIT_CONFIG_NOSYSTEM plus an isolated HOME keeps a system or user git config
 # (signing, hooksPath, templates) from deciding what these fixtures do.
 export GIT_CONFIG_NOSYSTEM=1
+# Fixtures exercise the locked state regardless of the launching session.
+unset ORCH_CADENCE_UNLOCK
 GIT_ID=(-c user.email=cadence@test -c user.name=cadence)
 OUT="$TMP/out.txt"; ERR="$TMP/err.txt"
 

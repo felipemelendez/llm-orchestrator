@@ -123,7 +123,7 @@ has "$README" "docs/cadence-evidence.md" && ok "the README links the evidence pa
 
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
-  printf '%d cadence doc checks passed.\n' "$PASS"; exit 0
+  printf '%d checks passed (cadence docs).\n' "$PASS"; exit 0
 else
   printf '%d passed, %d failed.\n' "$PASS" "$FAIL"; exit 1
 fi

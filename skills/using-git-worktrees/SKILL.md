@@ -5,9 +5,17 @@ description: Use when work needs isolation from the current branch — long-runn
 
 # Using git worktrees
 
-Isolation by directory, not by stash. Use for work that must not touch the current branch —
-uncommitted work you can't lose, side-by-side approaches, a subagent editing while you keep
-working. Skip for tiny edits on a clean tree — just commit.
+Use directory isolation for concurrent or risky work. Skip tiny edits when the
+checkout is safe. Commit only within authorized scope.
+
+## Proportional cadence
+
+For enabled `workflow: proportional`, use the cadence resource helper only when
+isolation is needed. Acquire a lease, create a copy/worktree, release after all
+consumers stop, then explicitly finish after preserving deliverables. The helper
+checks ownership, leases, locks, ignored/dirty files and retained commits before
+non-forcing removal. Report retained paths. Never adopt old resources. No
+automatic dependencies or broad baseline suites. Stop here; legacy steps follow.
 
 ## Delegation
 
@@ -110,16 +118,13 @@ git worktree remove .worktrees/<slug>
 git worktree prune
 ```
 
-Run removal from the repo root as its own command, never mid-chain: `git worktree remove`
-deletes the directory the shell may be standing in, and every `&&`-chained command after it
-then fails with "unable to read current working directory" — a failure that recurred three
-times in one live session before the pattern was named.
+Run removal from the repo root as its own command: deleting the shell's working
+directory makes subsequent commands fail with "unable to read current working directory".
 
-Refuse cleanup if `.orch-worktree` is missing — that worktree wasn't ours. If `--release` reports
-either "release denied" (the session id changed mid-batch, e.g. after a `/clear`) or "refusing to
-release in-progress claim" (a kill-in-window orphan), ignore it and continue with `git worktree
-remove`: once the worktree directory is gone, the Stop hook's `--prune` reclaims the stale claim
-within the TTL. A denied release is never a permanent leak.
+Refuse cleanup if `.orch-worktree` is missing — that worktree wasn't ours. If
+`--release` reports "release denied" or "refusing to release in-progress claim",
+retain the worktree and resolve ownership before removing it. A denied release
+is not permission to delete another consumer's workspace.
 
 ## Output shape
 

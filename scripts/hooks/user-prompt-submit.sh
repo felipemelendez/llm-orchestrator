@@ -70,11 +70,21 @@ fi
 # with a short reminder near the end of the prompt".
 CANON="${HOOK_DIR}/../../concise-agent-protocol.md"
 REMINDER=""
+MARKER="orch-turn-nudge"
+PROTOCOL_LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
+if [[ -f "$PROTOCOL_LIB" ]]; then
+  source "$PROTOCOL_LIB"
+  orch_protocol_is_proportional "$INPUT" && MARKER="orch-proportional-nudge"
+fi
 if [[ -f "${CANON}" ]]; then
-  REMINDER=$(awk '/<!-- orch-turn-nudge-start -->/{f=1;next} /<!-- orch-turn-nudge-end -->/{f=0} f' "${CANON}" 2>/dev/null)
+  REMINDER=$(awk -v s="<!-- $MARKER-start -->" -v e="<!-- $MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON}" 2>/dev/null)
 fi
 if [[ -z "${REMINDER}" ]]; then
-  REMINDER='LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.'
+  if [[ "$MARKER" == "orch-proportional-nudge" ]]; then
+    REMINDER='LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS; applicability never clears failed or required checks.'
+  else
+    REMINDER='LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.'
+  fi
 fi
 
 # Native shell JSON escape — no python3 dependency.

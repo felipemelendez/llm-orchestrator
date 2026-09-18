@@ -53,7 +53,7 @@ BLOCK=$(awk '/<!-- orch-turn-reminder-start -->/{f=1;next} /<!-- orch-turn-remin
 for h in $HEADERS; do printf '%s' "$BLOCK" | grep -q "\"$h\"" || { fail "recovery core headers" "recovery block missing \"$h\""; break; }; done
 printf '%s' "$BLOCK" | grep -q 'REQUIRE a "Verify:"' && ok "recovery core states the Verify: hard rule" || fail "recovery Verify rule" "missing"
 # session-start.sh's compact path is the only consumer; it must read this marker.
-grep -q 'orch-turn-reminder-start' "${ROOT}/scripts/hooks/session-start.sh" \
+grep -q 'PROTOCOL_MARKER="orch-turn-reminder"' "${ROOT}/scripts/hooks/session-start.sh" \
   && ok "session-start.sh compact path reads the recovery core" \
   || fail "compact path wiring" "session-start.sh no longer extracts orch-turn-reminder"
 
@@ -85,6 +85,10 @@ printf '%s' "$NUDGE" | grep -q 'systematic-debugging' \
 # must be identical — the embedded fallback may not drift from the source.
 extract_ctx() { python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+# The legacy nudge is the fixture here; select it from a disposable directory,
+# not from whatever cadence policy the launching checkout carries.
+cd "$TMP" || exit 1
+export CLAUDE_PROJECT_DIR="$TMP"
 LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 mkdir -p "$TMP/x/hooks"
 cp "${ROOT}/scripts/hooks/user-prompt-submit.sh" "$TMP/x/hooks/"
@@ -95,6 +99,26 @@ else
   fail "fallback drift" "the hook's embedded fallback differs from concise-agent-protocol.md's marked block — update the fallback"
 fi
 [[ "$LIVE" == "$NUDGE" ]] && ok "hook injects the canonical nudge verbatim" || fail "hook nudge" "hook output is not the marked nudge block"
+
+printf '\n%s== proportional reminders use actual project policy ==%s\n' "$DIM" "$RESET"
+PNUDGE=$(awk '/<!-- orch-proportional-nudge-start -->/{f=1;next} /<!-- orch-proportional-nudge-end -->/{f=0} f' "$CANON")
+PBYTES=$(printf '%s' "$PNUDGE" | wc -c | tr -d ' ')
+[[ -n "$PNUDGE" && "$PBYTES" -le "$NUDGE_MAX" ]] && ok "proportional nudge stays within 300 bytes" || fail "proportional nudge budget" "$PBYTES bytes"
+mkdir -p "$TMP/project/docs/llm-orchestrator" "$TMP/x/lib"
+printf '{"enabled":true,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
+cp "${ROOT}/scripts/lib/orch-protocol.sh" "$TMP/x/lib/"
+PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$TMP/project")
+PLIVE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
+PFALLBACK=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
+[[ "$PLIVE" == "$PNUDGE" && "$PFALLBACK" == "$PNUDGE" ]] && ok "proportional live and installed fallback reminders match canonical" || fail "proportional reminder drift" "$PLIVE / $PFALLBACK"
+PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":"compact"}))' "$TMP/project")
+PCOMPACT=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')
+if printf '%s' "$PCOMPACT" | grep -q 'Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE' && ! printf '%s' "$PCOMPACT" | grep -q 'REQUIRE a "Verify:"'; then
+  ok "proportional compaction chooses the shared completion vocabulary"
+else fail "proportional compaction vocabulary" "$PCOMPACT"; fi
+printf '{"enabled":false,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
+DISABLED_NUDGE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
+[[ "$DISABLED_NUDGE" == "$NUDGE" ]] && ok "disabled cadence retains legacy reminder" || fail "disabled reminder" "$DISABLED_NUDGE"
 
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")

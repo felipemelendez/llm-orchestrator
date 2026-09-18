@@ -61,6 +61,18 @@ source "${SIG_LIB}"
 INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 [[ -n "${INPUT}" ]] || exit 0
+# Proportional projects use content-bound, task-persistent evidence. Exit 3
+# selects the unchanged legacy implementation below.
+PROP_RESULT=$(printf '%s' "${INPUT}" | python3 "${HOOK_DIR}/../lib/orch-proportional-evidence.py")
+PROP_RC=$?
+if [[ ${PROP_RC} -eq 0 && -n "${PROP_RESULT}" ]]; then
+  printf '%s\n' "${PROP_RESULT}"
+  exit 0
+elif [[ ${PROP_RC} -ne 3 ]]; then
+  printf '%s\n' 'Cadence execution evidence unavailable: the proportional dispatcher failed. Verification: PENDING — restore the installed evidence helper before claiming verification.' >&2
+  exit 2
+fi
+[[ -n "${INPUT}" ]] || exit 0
 
 HOME_DIR="${ORCH_HOME:-${HOME}/.llm-orchestrator}"
 HASH="default"
@@ -113,6 +125,8 @@ if not state_dir:
 # `have_stdout` tracks whether we hold the command's REAL output as a string.
 # Every downstream decision that could discard output is gated on it.
 event = data.get("hook_event_name") or "PostToolUse"
+if event not in ("PostToolUse", "PostToolUseFailure"):
+    sys.exit(0)
 resp = data.get("tool_response")
 stdout = stderr = ""
 have_stdout = False

@@ -46,6 +46,8 @@ command -v python3 >/dev/null 2>&1 || skip_suite test-evidence-ledger 'python3 u
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# Legacy payloads omit cwd; keep hook discovery inside this disposable fixture.
+cd "$TMP" || exit 1
 export ORCH_HOME="$TMP/home"
 
 # event <command> [stdout] [agent_id] — a REAL-shape PostToolUse event on stdout

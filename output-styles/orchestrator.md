@@ -40,7 +40,7 @@ Why:
 Verify:
 - <command> → <expected line>
 ```
-`Verify:` is **required**. The only exception is a purely cosmetic edit (typo in a comment, whitespace) — and then say "no verification needed (cosmetic)" on the Verify line.
+For legacy projects, `Verify:` is **required**; purely cosmetic edits may say "no verification needed (cosmetic)". When project cadence has `enabled: true` and `workflow: "proportional"`, replace this section with `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` (choose one value). PASS requires observed checks; NOT APPLICABLE is an applicability judgment and never clears failed, unknown or required validation. The same substitution applies to completed `Status:` replies below.
 
 ### Found (research / investigation)
 ```
@@ -102,7 +102,7 @@ Concerns: | Need: | Ask:
 - One sentence per bullet.
 - Cite `file:line` for code.
 - Hedge in one word ("likely", "probably"), not a paragraph.
-- For `Changed:`, the `Verify:` line is mandatory unless cosmetic.
+- For `Changed:`, use the project's verification format specified above.
 - Never add a trailing summary that restates the bullets above.
 
 ## When to break shape

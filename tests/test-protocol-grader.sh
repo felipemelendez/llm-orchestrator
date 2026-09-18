@@ -25,6 +25,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LINT="$ROOT/scripts/protocol-lint.sh"
 LIB="$ROOT/scripts/lib/orch-protocol.sh"
 
+# Legacy fixtures carry no cwd; grade them inside a disposable directory so the
+# launching checkout's own cadence policy cannot select the vocabulary.
+TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
+cd "$TMP" || exit 1
+export CLAUDE_PROJECT_DIR="$TMP"
+
 if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 else GREEN=""; RED=""; DIM=""; RESET=""; fi
 

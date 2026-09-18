@@ -4,6 +4,14 @@ Reference for the subagent roles (specialized agents that run orchestrator comma
 
 ## House style
 
+Enabled projects with `workflow: proportional` select Simple, Standard or Full
+through the cadence skill before dispatch. Simple has no mandatory extra agent;
+Standard has one independent reviewer; Full has its reviewed spec, two blind
+reviews and independent verification. Generic command/role templates do not add
+unrequested roles. Missing/legacy workflow preserves the old pipeline. Writers
+may run checks, but cannot supply a required independent review. Temporary
+reports/copies use owned external scratch and explicit safe task cleanup.
+
 Every subagent in this project follows the Concise Agent Protocol. See [`concise-agent-protocol.md`](./concise-agent-protocol.md) for response shapes. The controller (the main agent you talk to, which routes work to subagents) reads Status blocks to decide what to do next.
 
 Subagents:
@@ -33,7 +41,7 @@ Prompt templates live in `templates/`:
 
 The native subagent definitions live in `agents/orch-*.md`.
 
-**The refuter** is a role, not a shipped agent file: it exists only inside the cadence (`skills/cadence/`), dispatched by a controller on a general agent type with its model named, and its brief is `skills/cadence/references/refuter.md`. It is read-only and it originates nothing. Given both completed independent reviews, it assesses only disputed findings and catastrophic or serious findings raised by one reviewer alone, returning each assigned finding PROMOTED, DROPPED or UNRESOLVED — the burden is on the refuter to drop, a drop must cite the `file:line` that refutes the finding, and anything it cannot settle promotes. That asymmetry is the point: a filter that errs toward silence turns a review into a rubber stamp, and the value here has been re-execution of other seats' claims rather than filtering. It runs only when the reviewers disagree on actionable findings, severity or disposition, or one alone raises a catastrophic or serious finding. When they agree, skip it regardless of finding count or whether the evidence was reasoned or executed. Two PASS verdicts alone do not establish agreement; a missing or incomplete review requires a fresh independent review, never an assumed agreement. The two blind reviews always run; the refuter is no third overlapping review.
+**The refuter** is a role, not a shipped agent file: it exists only inside the cadence (`skills/cadence/`), dispatched by a controller on a general agent type with its model named, and its brief is `skills/cadence/references/refuter.md`. It is read-only and it originates nothing. Given both completed independent reviews, it assesses only disputed findings and catastrophic or serious findings raised by one reviewer alone, returning each assigned finding PROMOTED, DROPPED or UNRESOLVED — the burden is on the refuter to drop, a drop must cite the `file:line` that refutes the finding, and anything it cannot settle promotes. That asymmetry is the point: a filter that errs toward silence turns a review into a rubber stamp, and the value here has been re-execution of other seats' claims rather than filtering. It runs only when the reviewers disagree on actionable findings, severity or disposition, or one alone raises a catastrophic or serious finding. When they agree, skip it regardless of finding count or whether the evidence was reasoned or executed. Two PASS verdicts alone do not establish agreement; a missing or incomplete review requires a fresh independent review, never an assumed agreement. Full and legacy work require the two blind reviews; the refuter is no third overlapping review.
 
 When Claude Code's `Workflow` tool is available, these same subagents are dispatched from
 workflow scripts via the `agentType` option (composed with a structured `schema`) — no new roles.
@@ -43,6 +51,8 @@ for when a workflow is preferred over the inline markdown path.
 ## Status enum
 
 The **implementer** returns exactly one Status block. The read-only agents do not: the explorer and debugger return `Found:`, the three reviewers return `Issues:` + `Verdict:`, and the researcher returns its own four-outcome Status (`VERIFIED` / `COULDN'T_VERIFY` / `CONTRADICTED` / `NOT_APPLICABLE`). Each agent's own file is the contract; this page used to claim all seven returned the enum below, which left a controller waiting on a `Status:` that five of them never emit.
+
+Enabled proportional projects use `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` in place of the legacy `Verify:` section below. This is a completion contract, not proof of execution.
 
 The implementer's enum:
 

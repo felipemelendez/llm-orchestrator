@@ -90,6 +90,12 @@ If the brief was COULDN'T_VERIFY, **do not emit `// docs:` comments grounded in 
 
 ## Required output
 
+The examples below show the legacy `Verify:` format. For a project with cadence
+`enabled: true` and `workflow: "proportional"`, use
+`Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` instead, choosing
+one value. PASS needs observed checks; NOT APPLICABLE cannot clear failed,
+unknown or required validation. Report unfinished work as PARTIAL/BLOCKED.
+
 Reply with exactly one of these blocks. Nothing outside the block.
 
 ### Success

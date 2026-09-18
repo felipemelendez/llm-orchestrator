@@ -232,7 +232,9 @@ case "${cmd}" in
              skills/cadence/references/commit-msg skills/cadence/references/cadence-state.md \
              templates/cadence-global-block.md scripts/hooks/codex-cadence-adapter.sh \
              scripts/hooks/codex-evidence.py scripts/lib/codex-cadence-read-command.py \
-             scripts/providers/claude-review.py scripts/verification/codex-verify.py; do
+             scripts/providers/claude-review.py scripts/verification/codex-verify.py \
+             scripts/lib/orch-proportional-evidence.py scripts/lib/orch-task-resources.py \
+             skills/cadence/scripts/orch-task-resources.py; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -343,7 +345,7 @@ case "${cmd}" in
       "${adapter} is missing — nothing was written to the Codex hooks file."
     [[ -f "${evidence}" ]] || codex_refuse \
       "${evidence} is missing — nothing was written to the Codex hooks file."
-    for dependency in scripts/verification/codex-verify.py scripts/providers/claude-review.py scripts/lib/codex-cadence-read-command.py; do
+    for dependency in scripts/verification/codex-verify.py scripts/providers/claude-review.py scripts/lib/codex-cadence-read-command.py scripts/lib/orch-proportional-evidence.py scripts/lib/orch-task-resources.py scripts/hooks/orch-task-cleanup.sh; do
       [[ -f "${ROOT}/${dependency}" ]] || codex_refuse \
         "${ROOT}/${dependency} is missing — nothing was changed."
     done
@@ -364,7 +366,7 @@ case "${cmd}" in
       if ! python3 - "${hooks_file}" <<'PY'
 import json, sys
 hooks = json.load(open(sys.argv[1])).get("hooks", {})
-events = ("PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop")
+events = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop")
 sys.exit(0 if isinstance(hooks, dict) and all(isinstance(hooks.get(e, []), list) for e in events) else 1)
 PY
       then codex_refuse "${hooks_file} has invalid hook groups; nothing was changed."
@@ -385,8 +387,12 @@ PY
     fi
     mkdir -p "$(dirname "${skills_dest}")"
     cp -R "${ROOT}/skills/cadence" "${skills_dest}"
+    mkdir -p "${skills_dest}/scripts/lib"
+    cp "${ROOT}/scripts/lib/orch-task-resources.py" "${skills_dest}/scripts/lib/"
     printf 'written by llm-orchestrator install.sh --codex — safe to delete\n' \
       > "${skills_dest}/.orch-installed"
+    printf 'verification_runner=%s\n' "${ROOT}/scripts/verification/codex-verify.py" \
+      >> "${skills_dest}/.orch-installed"
     echo "copied the cadence skill into ${skills_dest} — it is a copy, not a link: re-run --codex after updating the plugin."
 
     render_block "${HOME}/.codex/AGENTS.md"
@@ -415,10 +421,10 @@ PY
     fi
     hooks_file="${hooks_res}"
     mkdir -p "$(dirname "${hooks_file}")"
-    python3 - "${hooks_file}" "${adapter}" "${evidence}" <<'PY'
+    python3 - "${hooks_file}" "${adapter}" "${evidence}" "${ROOT}/scripts/hooks/orch-task-cleanup.sh" <<'PY'
 import json, os, shlex, sys
 
-path, cmd, evidence = sys.argv[1:]
+path, cmd, evidence, cleanup = sys.argv[1:]
 data = {}
 if os.path.exists(path):
     try:
@@ -481,6 +487,7 @@ for event, matcher in (
     ("UserPromptSubmit", None),
     ("PreToolUse", "Bash|apply_patch"),
     ("PostToolUse", "Bash|apply_patch|write_stdin"),
+    ("PostToolUseFailure", "Bash|apply_patch|write_stdin"),
     ("Stop", None),
     ("SubagentStart", None),
     ("SubagentStop", None),
@@ -509,6 +516,26 @@ for event, matcher in (
         group["matcher"] = matcher
     retained.append(group)
     hooks[event] = retained
+# Task cleanup has its own ownership boundary. Stop only retries an explicit
+# finish; it never infers completion from this event or releases a consumer.
+retained = []
+for group in hooks.get("Stop", []):
+    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+        retained.append(group)
+        continue
+    handlers = []
+    for handler in group["hooks"]:
+        command = handler.get("command", "") if isinstance(handler, dict) else ""
+        try:
+            owned = any(os.path.basename(p) == "orch-task-cleanup.sh" for p in shlex.split(command))
+        except (ValueError, TypeError):
+            owned = False
+        if not owned:
+            handlers.append(handler)
+    if handlers:
+        retained.append(dict(group, hooks=handlers))
+retained.append({"hooks": [{"type": "command", "command": shlex.join(["bash", cleanup]), "timeout": 10}]})
+hooks["Stop"] = retained
 data["hooks"] = hooks
 new = json.dumps(data, indent=2) + "\n"
 
@@ -568,7 +595,7 @@ PY
     # absolute, which is only true when the prefix itself is — a relative dest
     # would bake relative hook paths into hooks.json.
     dest="$(cd "${dest}" && pwd)"
-    mkdir -p "${dest}/.claude" "${dest}/.claude/scripts/hooks" "${dest}/.claude/scripts/lib" "${dest}/.claude/docs"
+    mkdir -p "${dest}/.claude" "${dest}/.claude/scripts/hooks" "${dest}/.claude/scripts/lib" "${dest}/.claude/scripts/verification" "${dest}/.claude/docs"
     cp -R "${ROOT}/skills" "${dest}/.claude/"
     cp -R "${ROOT}/commands" "${dest}/.claude/"
     cp -R "${ROOT}/templates" "${dest}/.claude/"
@@ -580,9 +607,10 @@ PY
     # that does not exist.
     cp -R "${ROOT}/workflows" "${dest}/.claude/"
     # Copy hook scripts and statusline.
-    for f in "${ROOT}/scripts/hooks/"*.sh; do
+    for f in "${ROOT}/scripts/hooks/"*.sh "${ROOT}/scripts/hooks/"*.py; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"
     done
+    cp "${ROOT}/scripts/verification/codex-verify.py" "${dest}/.claude/scripts/verification/"
     [[ -f "${ROOT}/scripts/statusline.sh" ]] && cp "${ROOT}/scripts/statusline.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/protocol-lint.sh" ]] && cp "${ROOT}/scripts/protocol-lint.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/orch-worktree-materialize.sh" ]] && cp "${ROOT}/scripts/orch-worktree-materialize.sh" "${dest}/.claude/scripts/"

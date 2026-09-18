@@ -1,80 +1,78 @@
 ---
 name: cadence
-description: Use when a change is about to be built, reviewed or landed in a project that has docs/llm-orchestrator/cadence.json. Not for docs-only edits or projects without it.
+description: Use when changing production code or tests in projects with enabled docs/llm-orchestrator/cadence.json. Not for ordinary documentation or questions.
 license: MIT
-compatibility: Claude Code or Codex; bash 3.2+; git; python3 for the gate script and for init's settings merge (the check script's verdict runs without it)
+compatibility: Claude Code or Codex; bash 3.2+, git and python3
 allowed-tools: Bash(${CLAUDE_SKILL_DIR}/scripts/orch-cadence-gate.sh *), Bash(${CLAUDE_SKILL_DIR}/scripts/orch-cadence-check.sh *), Bash(${CLAUDE_SKILL_DIR}/scripts/cadence-detect.sh *)
 ---
 
 # The cadence
 
-Production code and test changes follow this cadence when
-`docs/llm-orchestrator/cadence.json` has `"enabled": true`.
-Absent or disabled configurations and docs-only edits are out of scope.
+Read the project's `docs/llm-orchestrator/LAWS.md` and configuration first.
+On Codex also read its `CODEX.md` for installed tools, evidence and trust.
+Absent/disabled cadence and ordinary documentation/questions are out of scope.
+User instructions and project amendments govern.
 
-Full procedure: [CADENCE.md](./CADENCE.md). Seat briefs: [references/](./references/).
+Check `workflow`: `proportional` uses the paths below. Missing or `legacy`
+uses the [legacy procedure](CADENCE.md#legacy-procedure). Unknown values are a
+configuration error; do not silently choose the lighter process.
 
-Before dispatch, read project `LAWS.md`; its explicit review and refuter amendments
-override these defaults. On Codex, read project `CODEX.md` when present for
-native and external routing and verification evidence.
+## Proportional paths
 
-## Steps
+Choose by impact, uncertainty, contracts and reversibility, not line count.
+Reassess if scope grows. Honour requested reviewers and models.
 
-- **Brief review** — fresh, read-only; checks claims against the tree, returns
-  class (`CODE`, or `PROSE` if nothing is executed or read by a program), split
-  verdict and active skips.
-- **Implementer** — fresh, its own worktree; a failing test before every mechanism.
-- **Blind pair** — always two independent reviews, spec and plain-language
-  adversarial, each on its own copy, seeing neither the other's nor implementer's
-  report. Obtain missing or incomplete reviews before adjudicating; neither counts
-  as agreement.
-- **Refuter** — read-only, only for disagreement on actionable findings, severity
-  or disposition, or a catastrophic or serious finding from one reviewer alone.
-  Agreement skips it regardless of count; matching PASS verdicts alone are
-  insufficient. Assess only those findings; originate none. Promote or drop by
-  citation; burden to drop, doubt promotes.
-- **Union** — controller adjudicates: catastrophic or serious goes to fixer and gate;
-  mild-only folds into landing behind a red witness.
-- **Fixer** — writes each pin from the finding's `SCENE:` before opening the hunk.
-- **Gate** — script always; then on code, a seat: probe replay, hunk-level
-  revert-to-red, degenerate-pin check, novel mutations as evidence.
-- **Landing** — full floors, evidence under `notes_dir`, commit by explicit
-  pathspec, one ledger row.
+| Path | Use when | Required work |
+|---|---|---|
+| Simple | Clear, local, reversible and low risk | Edit, inspect the full diff, run applicable existing checks, deliver. |
+| Standard | Bounded behavior with meaningful edge cases | State acceptance criteria, implement, check, get one independent review, resolve findings. |
+| Full | Interacting architecture, difficult recovery, substantial uncertainty or consequential contracts | Review the spec, implement, obtain two independent blind reviews, resolve findings, independently verify. |
 
-Catastrophic or serious gate findings open another round; repeating the previous
-round's finding class stops the ticket for brief review. Three cited ledger rows
-can qualify a gate-seat skip: it expires, any catastrophic re-arms it, and the
-session line counts skips. Historical refuter skips cannot bypass required
-adjudication; agreement needs no ledger rows. Details: `CADENCE.md`.
+Simple needs no extra agent, spec, worktree, report or invented test; Standard
+adds only one independent review and fixes for its findings.
+Writers can inspect diffs and run checks, but cannot provide independent
+review or gates.
 
-## Files
+Read the [Full path](CADENCE.md#proportional-full-path) and role briefs only
+when required. Simple and Standard need only this page.
 
-| Path | Purpose |
-|---|---|
-| `docs/llm-orchestrator/LAWS.md` | Constitution |
-| `docs/llm-orchestrator/cadence.json` | Switch, runner |
-| `docs/llm-orchestrator/LOCK.sha256` | Manifest |
-| `docs/llm-orchestrator/HANDOFF_TEMPLATE.md` | State only |
-| `docs/llm-orchestrator/DESIGN_RULINGS.md`, `docs/llm-orchestrator/TRAPS.md` | Append-only |
-| `.githooks/commit-msg`, `.githooks/orch-cadence-check.sh` | Git layer |
-| `<notes_dir>/<TICKET>_*_report.md` | Evidence |
-| `<notes_dir>/CADENCE_STATE.md` | Skips |
+## Check once, with evidence
 
-## Scripts
+Use relevant checks and meaningful regression tests. Honour build/dependency
+restrictions. No default broad suites or mutation batteries for Simple/Standard.
 
-`${CLAUDE_SKILL_DIR}/scripts/orch-cadence-gate.sh`: deterministic gate.
-`${CLAUDE_SKILL_DIR}/scripts/orch-cadence-check.sh`: `--verdict`, `--lock`,
-`--landing <ticket>`, `--commit-msg <msgfile>`, `--audit <rev>`, `--version`.
-Unexpanded: `scripts/orch-cadence-gate.sh`, `scripts/orch-cadence-check.sh`.
+In evidence-enabled Codex projects, use the installed `codex-verify.py` runner
+on the first invocation with fresh output/receipt paths; `CODEX.md` or this
+skill's `.orch-installed` names it. Direct stdout is not a trusted receipt.
+Claude records observed commands through its evidence hooks; a check needs a
+tool timeout longer than its run and concise output to be confirmed. Reuse
+supported delegated evidence only with actual task, command, result and source
+provenance.
 
-Installers render `templates/cadence-global-block.md` into global instructions.
-A session lacking a `cadence:` line says so first.
+Reuse checks across turns/commits preserving covered inputs. Rerun for changes,
+failures or unresolved concerns. Unrelated green cannot erase failure.
+Use the shared completion line: `Verification: PASS — checks and scope`,
+`Verification: PENDING — remaining validation`, or
+`Verification: BLOCKED — unavailable prerequisite`.
+For low-risk work with no meaningful automated check, use
+`Verification: NOT APPLICABLE — reason; manual diff inspection performed`.
+This cannot waive failures, uncertain writes or stale/unavailable required checks.
 
-## Discipline
+## Finish and clean up
 
-Name every dispatch's model; the adversarial seat may use a different model.
-Never self-verify: writers cannot review or gate their changes. Never resume a
-seat whose model matters. Delete throwaway copies or worktrees after reports finish.
+Keep maintained specifications, research conclusions, design decisions and
+runbooks. Reviews, temporary plans/logs and disposable copies belong outside Git.
+No proportional path requires the five stage reports or a ledger commit.
 
-Hooks and deny rules are guardrails, not guarantees. Native deny rules beat hooks;
-Git's `commit-msg` layer holds across tools and CI.
+Use this skill's `scripts/orch-task-resources.py --help` for task resources.
+Acquire consumer leases before use; finish after consumers stop and
+deliverables are preserved. Stop is not completion. Never force removal, adopt
+old paths or discard another session's work.
+
+## Protected policy
+
+The [lock and numbered-ruling mechanism](CADENCE.md#the-lock) applies to both
+workflows. The person supplies the unlock at session launch; agents never set
+it. Honour commit/push/merge authorization separately from implementation.
+Name dispatched models. Hooks require installation, enablement and trust;
+Git policy checks do not prove execution or review quality.

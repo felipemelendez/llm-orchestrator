@@ -69,19 +69,6 @@ def main():
         "--receipt", args.receipt, "--output", args.output, "--", *argv]))
     if not request:
         parser.error("use absolute cwd/receipt/output paths and one direct verifier after --")
-    found = evidence.project({"cwd": request["cwd"]})
-    if not found:
-        parser.error("cwd must belong to a project with Codex verification enabled")
-    root, config, policy, cwd = found
-    kind = evidence.classification(shlex.join(argv), policy, cwd)
-    if not kind:
-        parser.error("command is not an allowed direct non-build verifier")
-    if Path(argv[0]).name == "npx" and "--no-install" not in argv[1:]:
-        parser.error("npx requires --no-install; dependency installation is not verification")
-    configured_timeout = policy.get("timeout_seconds")
-    timeout = float(configured_timeout) if configured_timeout is not None else None
-    if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
-        parser.error("timeout_seconds must be a positive finite number when set")
     receipt_path, output_path = Path(request["receipt"]), Path(request["output"])
     claim_path = Path(request["receipt"] + ".request.json")
     if os.path.lexists(claim_path):
@@ -94,18 +81,47 @@ def main():
         request["hook_nonce"] = claim["hook_nonce"]
     else:
         request["hook_nonce"] = None
-    if any(os.path.lexists(p) for p in (receipt_path, output_path)):
-        parser.error("receipt and output paths must both be new; use a fresh run ID")
+    # Once an exclusive receipt is available, setup failures can truthfully
+    # close this invocation even if its output destination is unusable.
     receipt_fd = exclusive(receipt_path)
-    with os.fdopen(receipt_fd, "w") as stream:
-        json.dump({"schema": 1, "state": "reserved"}, stream)
-    output_fd = exclusive(output_path)
     started = time.time()
-    before = evidence.snapshot(root, config, policy)
-    receipt = dict(request, schema=1, state="running", kind=kind,
-                   started_at=started, before_fingerprint=before["fingerprint"],
-                   worktree=str(root), head_before=before["head"])
-    atomic_receipt(receipt_path, receipt)
+    receipt = dict(request, schema=1, state="reserved", started_at=started,
+                   child_started=False, before_fingerprint=None, after_fingerprint=None,
+                   fingerprint_error="before fingerprint pending")
+    with os.fdopen(receipt_fd, "w") as stream:
+        json.dump(receipt, stream)
+    output_fd = None
+    try:
+        found = evidence.project({"cwd": request["cwd"]})
+        if not found:
+            raise ValueError("cwd must belong to a project with Codex verification enabled")
+        root, config, policy, cwd = found
+        kind = evidence.classification(shlex.join(argv), policy, cwd)
+        if not kind:
+            raise ValueError("command is not an allowed direct non-build verifier")
+        if Path(argv[0]).name == "npx" and "--no-install" not in argv[1:]:
+            raise ValueError("npx requires --no-install; dependency installation is not verification")
+        configured_timeout = policy.get("timeout_seconds")
+        timeout = float(configured_timeout) if configured_timeout is not None else None
+        if timeout is not None and (not math.isfinite(timeout) or timeout <= 0):
+            raise ValueError("timeout_seconds must be a positive finite number when set")
+        output_fd = exclusive(output_path)
+        receipt.update(state="running", kind=kind, worktree=str(root))
+        atomic_receipt(receipt_path, receipt)
+        before = evidence.snapshot(root, config, policy, shlex.join(argv), cwd)
+        receipt.update(before_fingerprint=before["fingerprint"], head_before=before["head"],
+                       fingerprint_error=before.get("error"))
+        atomic_receipt(receipt_path, receipt)
+    except (OSError, ValueError, TypeError):
+        if output_fd is not None:
+            os.close(output_fd)
+        receipt.update(state="completed", setup_failure=True, child_started=False,
+                       finished_at=time.time(), exit_code=2, interrupted=False,
+                       output_sha256=evidence.digest(b""), output_bytes=0,
+                       fingerprint_error="verifier setup failed before child execution")
+        atomic_receipt(receipt_path, receipt)
+        print("Cadence verifier setup failed before child execution; this invocation did not verify source.", file=sys.stderr)
+        return 2
     code, interrupted = 127, False
     with os.fdopen(output_fd, "wb") as output:
         proc = None
@@ -115,6 +131,8 @@ def main():
         try:
             proc = subprocess.Popen(argv, cwd=cwd, stdout=output,
                                     stderr=subprocess.STDOUT, start_new_session=True)
+            receipt["child_started"] = True
+            atomic_receipt(receipt_path, receipt)
             try:
                 code = proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -132,11 +150,19 @@ def main():
                 stop_group(proc)
             signal.signal(signal.SIGTERM, previous_term)
     raw = output_path.read_bytes()
-    after = evidence.snapshot(root, config, policy)
-    receipt.update(state="completed", finished_at=time.time(), exit_code=code,
-                   interrupted=interrupted, after_fingerprint=after["fingerprint"],
-                   head_after=after["head"], output_sha256=evidence.digest(raw),
-                   output_bytes=len(raw))
+    # Store the actual exit before fingerprint work can fail or be interrupted.
+    receipt.update(state="finishing", finished_at=time.time(), exit_code=code,
+                   interrupted=interrupted, after_fingerprint=None,
+                   output_sha256=evidence.digest(raw), output_bytes=len(raw),
+                   fingerprint_error="after fingerprint pending")
+    atomic_receipt(receipt_path, receipt)
+    status, _, _, _ = evidence.result({'exit_code': code, 'output': raw.decode('utf-8', 'replace'),
+                                      'interrupted': interrupted}, kind)
+    after = (evidence.snapshot(root, config, policy, shlex.join(argv), cwd)
+             if config.get('workflow') != 'proportional' or (status == 'passed' and before['fingerprint'])
+             else {'fingerprint': None, 'head': before['head'], 'error': 'execution or initial source binding is unresolved'})
+    receipt.update(state='completed', after_fingerprint=after["fingerprint"], head_after=after["head"],
+                   fingerprint_error=after.get("error") or before.get("error"))
     atomic_receipt(receipt_path, receipt)
     sys.stdout.buffer.write(raw)
     return code if code >= 0 else 128 - code

@@ -32,7 +32,7 @@ You are the only agent that writes. Your envelope declares exactly one isolation
 
 ## Verification before claiming DONE
 
-You must run the verify command from the envelope and paste the actual output line in your `Verify:` block. "Should pass" is not evidence; "1 passed" is.
+Run applicable verification from the envelope and report its actual output. Legacy projects use the `Verify:` blocks below. In an enabled `workflow: proportional` project, replace them with `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` (choose one). PASS requires observed checks; NOT APPLICABLE states the absence of a meaningful automated check and manual diff inspection, and cannot clear failed, unknown or required validation. Unfinished work returns PARTIAL/BLOCKED. "Should pass" is not evidence.
 
 You do not need to cite anything for this to be checked. A hook records every verify command the harness actually ran, and the gate reads that record directly — so run the command and paste what it printed. If the run was red, or ran zero tests, say so; the record already knows.
 

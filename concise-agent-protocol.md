@@ -14,6 +14,21 @@ Benefits:
 
 ## Shapes
 
+For projects whose `docs/llm-orchestrator/cadence.json` has both `enabled: true`
+and `workflow: "proportional"`, replace the `Verify:` section in `Changed:` and
+completed `Status:` replies below with one explicit completion line:
+
+`Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation`
+
+Choose one value. PASS names the observed checks and scope; PENDING names
+remaining validation; BLOCKED names the unavailable prerequisite. NOT APPLICABLE
+states why no meaningful automated check applies and confirms manual diff
+inspection. It is never an executed pass and cannot clear failed, unknown,
+stale or required validation. Use PARTIAL/BLOCKED when the task remains unfinished.
+The shape grader validates this vocabulary; execution evidence is validated by
+the separate evidence gate. Missing/legacy workflow and disabled/absent cadence
+retain the original `Verify:` contract below.
+
 ### 1. Changed — default response for code edits
 
 ```
@@ -184,3 +199,20 @@ Budget: 300 bytes. `tests/test-protocol-drift.sh` enforces the ceiling.
 <!-- orch-turn-nudge-start -->
 LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.
 <!-- orch-turn-nudge-end -->
+
+### Proportional recovery and turn reminders
+
+The hooks select these blocks only from an enabled proportional project config.
+The turn nudge retains the same 300-byte budget. Shape acceptance does not attest
+that verification ran.
+
+<!-- orch-proportional-reminder-start -->
+LLM Orchestrator — the protocol still applies after this compaction boundary:
+- Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:".
+- Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". PASS requires observed checks; NOT APPLICABLE never clears failed, unknown or required validation.
+- Preserve the task's pending verification and reuse still-valid evidence. Choose the cadence path required by the work's risk.
+<!-- orch-proportional-reminder-end -->
+
+<!-- orch-proportional-nudge-start -->
+LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS; applicability never clears failed or required checks.
+<!-- orch-proportional-nudge-end -->

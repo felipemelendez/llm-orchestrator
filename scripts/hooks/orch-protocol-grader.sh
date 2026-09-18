@@ -65,7 +65,7 @@ fi
 
 # Grade the clean extracted text. Capture output and exit code separately —
 # never use || true on the same line as the grader call.
-GRADE_OUT=$(printf '%s\n' "${REPLY}" | orch_grade_reply 2>&1)
+GRADE_OUT=$(printf '%s\n' "${REPLY}" | orch_grade_reply "" "$INPUT" 2>&1)
 GRADE_RC=$?
 
 if [[ ${GRADE_RC} -ne 0 ]]; then
