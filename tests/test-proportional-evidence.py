@@ -1326,6 +1326,22 @@ class ProportionalTests(fixture.EvidenceTests):
         self.event('PostToolUse', **fields)
         self.assertEqual(self.stop('Here is what the setting does.').get('decision'), 'block')
 
+    def test_prop_harmless_unknown_command_does_not_make_the_turn_touched(self):
+        # An earlier turn left an open obligation. A later turn that only runs
+        # a command the recognizer cannot classify, and that changes nothing,
+        # is still a turn that changed nothing: no block.
+        self.change()
+        self.stop('Verification: PENDING — check still to run')
+        self.event('UserPromptSubmit', turn_id='look-around')
+        fields = dict(tool_name='Bash', tool_use_id='harmless-unknown',
+                      tool_input={'command': 'gh run list --limit 4 2>&1 | head -5', 'workdir': str(self.root)})
+        self.event('PreToolUse', **fields)
+        self.event('PostToolUse', tool_response={'stdout': 'runs', 'stderr': '', 'exit_code': 0}, **fields)
+        self.assertEqual(self.stop('Still running; nothing changed.'), {})
+        self.assertFalse(self.records()['uncertain'])
+        self.event('UserPromptSubmit', turn_id='claim')
+        self.assert_blocked()
+
     def test_prop_failed_check_reported_honestly_is_not_blocked(self):
         self.change()
         self.run_check(1)

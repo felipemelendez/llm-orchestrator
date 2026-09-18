@@ -700,7 +700,7 @@ def settle_writes(state, root, config, api, call=None, policy=None, observation=
             if mutation.get('unknown'):
                 state.setdefault('uncertain', {})[key] = mutation['unknown']
             continue
-        state['last_settled_at'] = time.time()  # a command that may have written finished in this turn
+        writes_before = {rel: dict(w) for rel, w in state.get('writes', {}).items()}
         if mutation.get('unknown') and mutation.get('observed_before') is not None:
             after_files = mutation_snapshot(root, config, policy or {}, api)
             if after_files is not None:
@@ -722,6 +722,11 @@ def settle_writes(state, root, config, api, call=None, policy=None, observation=
                 continue
             if before != after and is_source(rel, config, api):
                 record_write(state, rel, mutation['at'], after, measured=mutation.get('measured', {}).get(rel))
+        if state.get('writes', {}) != writes_before or mutation.get('unknown') or state.get('uncertain', {}).get(key):
+            # Only a completion that changed source, or left its effect
+            # unknown, makes this turn one that touched files. A command that
+            # finished with the tree unchanged is as harmless as a plain read.
+            state['last_settled_at'] = time.time()
         if not mutation.get('unknown'):
             state['mutations'].pop(key, None)
             if state.setdefault('uncertain', {}).get(key) == 'source completion contents unavailable during contention':
