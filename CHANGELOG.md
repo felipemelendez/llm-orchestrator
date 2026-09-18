@@ -3,20 +3,17 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
-## [0.8.0] - 2026-09-16
+## [0.9.0] - 2026-09-18
 
-This release supports the way I work: brainstorm and plan with Claude Code,
-then build with Claude Code or Codex. The full plugin keeps brainstorming and
-planning in Claude Code; Codex gains the shared implementation, review, and
-verification process. Reviews are independent and sized to the change (see the
-2026-09-18 update below), and both tools record actual test results before
-reporting verified completion.
+The process now matches the size of the change. Small fixes stay simple,
+risky changes get independent review, tests are remembered while the files
+they covered are unchanged, and a completion claim is checked against what
+actually ran. Onboarding was rewritten for a first-time reader.
 
-Start with the [release overview](docs/release-v0.8.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v080).
-The implementation details follow.
+Start with the [release overview](docs/release-v0.9.0.md) or the
+[installation and upgrade guide](docs/install.md#updating-to-v090).
 
-### Changed — the process now matches the size of the change (2026-09-18)
+### Changed
 
 - New projects get `workflow: proportional`. Before touching code the assistant
   picks one of three paths by risk: **Simple** (edit, read the diff, run the
@@ -30,8 +27,9 @@ The implementation details follow.
   Codex, from the same code.
 - A completion claim is checked against what actually ran. `Verification:
   PASS` is accepted only when recorded checks ran on the final code and cover
-  every file the assistant changed, including files the fingerprint could not
-  see. `PENDING`, `BLOCKED` and `NOT APPLICABLE` name what is still open.
+  every file the assistant changed. `PENDING`, `BLOCKED` and `NOT APPLICABLE`
+  name what is still open. A reply that changed nothing is never blocked; the
+  hook's messages are one short line.
 - Temporary review copies, logs and receipts live outside the repository and
   are removed when the task finishes. Unfinished or unique work, other
   sessions' worktrees and dirty trees are never deleted.
@@ -40,12 +38,30 @@ The implementation details follow.
 - Onboarding was rewritten for a first-time reader: a step-by-step "Enable
   cadence in a project" guide, a plain-language rulebook template, a filled-in
   example rulebook, and an initializer that confirms the settings that matter.
-- Fixed: test suites that inherited the launching checkout's policy, an init
-  test fixture that had stopped testing anything, and several evidence-hook
-  edge cases found in review (excluded or ignored files kept a passing check
-  fresh; a PASS could name a check that never ran; an ordinary word made a
-  pending reason permanent). Verified by the full suite and by the framework's
-  own live hooks in a new session.
+- The plugin runs its own cadence in its own repository.
+
+### Fixed
+
+- Test suites that inherited the launching checkout's policy, and an init test
+  fixture that had stopped testing anything.
+- Evidence-hook edge cases found in independent review: excluded or ignored
+  files kept a passing check fresh; a PASS could name a check that never ran;
+  an ordinary word made a pending reason permanent; a read-only command that
+  exited non-zero left a turn permanently unfinished; several shell spellings
+  that can write files were classified as read-only.
+
+## [0.8.0] - 2026-09-16
+
+This release supports the way I work: brainstorm and plan with Claude Code,
+then build with Claude Code or Codex. The full plugin keeps brainstorming and
+planning in Claude Code; Codex gains the shared implementation, review, and
+verification process. Two reviewers check each code change independently, and
+Codex records actual test results before reporting verified completion.
+(0.9.0 sizes the reviews to the change.)
+
+Start with the [release overview](docs/release-v0.8.0.md) or the
+[installation and upgrade guide](docs/install.md#updating-to-v090).
+The implementation details follow.
 
 ### Added — Codex execution evidence and optional external reviews
 

@@ -18,7 +18,7 @@ The Claude Code plugin covers the whole workflow, including brainstorming, resea
 
 For example: “Implement the approved plan in `docs/feature-plan.md`. Follow this project's cadence and report the reviews and test results.” Replace the example path with your actual plan.
 
-**New in v0.8.0:** the shared development process now works in both Claude Code and Codex, with reviews sized to the change and recorded verification results. [Read the release notes](./docs/release-v0.8.0.md).
+**New in v0.9.0:** the process now matches the size of the change. Small fixes stay simple, risky changes get independent review, and every completion claim is checked against the tests that actually ran, in both Claude Code and Codex. [Read the release notes](./docs/release-v0.9.0.md).
 
 ## Quick Start
 
@@ -76,7 +76,7 @@ Both use the same project cadence rules. Each has its own automatic checks, so t
 
 **Requirements:** the coding tool you use, Bash, and Git. Codex integration and the optional Claude reviewer also need Python 3.9+. Claude's visual brainstorming feature needs Node.js, and its transcript checks need Python 3.
 
-Already installed? Follow [Updating to v0.8.0](./docs/install.md#updating-to-v080). Publishing a release does not update installed copies automatically.
+Already installed? Follow [Updating to v0.9.0](./docs/install.md#updating-to-v090). Publishing a release does not update installed copies automatically.
 
 For a task walkthrough, see [the sample session](./docs/examples/sample-session.md). The rest of this page describes the broader Claude Code plugin; the shared cadence and Codex setup are called out separately.
 

@@ -1091,10 +1091,11 @@ class ProportionalTests(fixture.EvidenceTests):
 
     def test_prop_sed_tracks_every_modified_operand(self):
         self.write('native/module.py', 'value = 1\n')
+        # `-i.bak` (attached suffix) is the one in-place spelling GNU and BSD sed share.
         fields = dict(tool_name='Bash', tool_use_id='sed-write', tool_input={
-            'command': "sed -i '' 's/1/2/g' native/module.py src/main.py", 'workdir': str(self.root)})
+            'command': "sed -i.bak 's/1/2/g' native/module.py src/main.py", 'workdir': str(self.root)})
         self.event('PreToolUse', **fields)
-        ran = subprocess.run(['sed', '-i', '', 's/1/2/g', 'native/module.py', 'src/main.py'], cwd=self.root, capture_output=True, text=True)
+        ran = subprocess.run(['sed', '-i.bak', 's/1/2/g', 'native/module.py', 'src/main.py'], cwd=self.root, capture_output=True, text=True)
         self.assertEqual(ran.returncode, 0, ran.stderr)
         self.event('PostToolUse', tool_response={'stdout': ran.stdout, 'exit_code': 0}, **fields)
         self.run_check()

@@ -13,7 +13,7 @@ implementation to that file. Both follow the project's cadence rules.
 
 - **Claude Code:** install [the plugin](#option-1--claude-code-plugin).
 - **Codex:** use [the Codex installer](#codex-setup).
-- **Already installed:** follow [Updating to v0.8.0](#updating-to-v080).
+- **Already installed:** follow [Updating to v0.9.0](#updating-to-v090).
 
 Cadence means the agreed sequence of implementation, independent reviews, fixes,
 and verification. It starts only in projects that enable it. Installing the
@@ -110,7 +110,7 @@ project and survive plugin updates; changing them later is a numbered ruling.
 through your existing Claude login (default: Opus at maximum effort); see
 [the Claude reviewer guide](codex-provider.md).
 
-## Updating to v0.8.0
+## Updating to v0.9.0
 
 ### Claude Code plugin
 
