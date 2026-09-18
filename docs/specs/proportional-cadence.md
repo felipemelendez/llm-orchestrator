@@ -131,6 +131,11 @@ including 23 results already known to be unbound. A read-only replay exceeded
   terminal proof; retain actual running/finishing processes and their binding.
 - Recognize common read-only sed address/range forms structurally while keeping
   write/execute commands and flags, script files and unsupported forms guarded.
+  Judge shell syntax by quoting: a `$`, backtick or brace inside single quotes
+  (or escaped) is literal program text and stays read-only, while the unquoted
+  or double-quoted expanding forms, redirections and subshells stay uncertain.
+  An unquoted newline separates commands like `;`; a multi-line batch of reads
+  is read-only only when every line is.
   A resolved external operand is outside the current repository's coverage;
   cleanup ownership does not determine verification attribution. Preserve all
   inside-tree operands of mixed operations and canonicalize symlinks first.

@@ -391,11 +391,83 @@ def owned_disposable_target(path, root):
         return False
 
 
+def shell_form(command):
+    """Return the command with unquoted newlines as `;`, or None if it uses
+    shell syntax the recognizer cannot follow.
+
+    Only the shell's own expansions are rejected: an unquoted (or double-quoted)
+    `$` or backtick, and unquoted braces, parentheses and redirections. The
+    same characters inside single quotes, or `$`/backtick escaped with a
+    backslash, reach the program as literal text — a regex ending in `$` or a
+    `--glob '*.{ts,tsx}'` is an ordinary read. Unquoted braces stay rejected:
+    the shell expands `--{output=x,oneline}` before any program sees it, so a
+    token check cannot judge the expanded form. An unquoted newline separates
+    commands exactly as `;` does. A backslash followed by a newline is removed,
+    joining the two halves into one word as the shell does (a line ending in
+    `-` plus a continuation line `Orm` is the single option `-Orm`); an escaped
+    semicolon is a literal character, never a separator.
+    """
+    if not isinstance(command, str) or '\r' in command:
+        return None
+    out, quote, separated, i = [], None, True, 0
+
+    def emit(text):
+        nonlocal separated
+        if text.strip():
+            separated = False
+        elif separated:
+            return  # whitespace before a segment starts (a blank line) is nothing
+        out.append(text)
+
+    while i < len(command):
+        char = command[i]
+        if quote:
+            if quote == '"' and char == '\\' and i + 1 < len(command):
+                emit('' if command[i + 1] == '\n' else command[i:i + 2])
+                i += 2
+                continue
+            if char == quote:
+                quote = None
+            elif quote == '"' and char in '$`':
+                return None
+            emit(char)
+        elif char == '\\' and i + 1 < len(command):
+            emit('' if command[i + 1] == '\n' else command[i:i + 2])
+            i += 2
+            continue
+        elif char in '\'"':
+            quote = char
+            emit(char)
+        elif char == '#' and (separated or next((t for t in reversed(out) if t), ' ') in (' ', '\t', ';')):
+            # A word-start `#` comments out the rest of the line, and the shell
+            # does not honor a backslash-newline inside a comment: the next
+            # line is a new command, so the newline must still separate. The
+            # piece before it must be a bare space, tab or `;`: an escaped
+            # space (`x\ #`) is still inside the word, so no comment starts.
+            end = command.find('\n', i)
+            i = len(command) if end < 0 else end
+            continue
+        elif char in '`$<>{}()':
+            return None
+        elif char in ';\n':
+            # Separation is tracked by state, not by inspecting the text: an
+            # escaped `\;` at the end of a line must not swallow the newline.
+            if not separated:
+                out.append(';')
+                separated = True
+        else:
+            emit(char)
+        i += 1
+    if quote:
+        return None
+    text = ''.join(out).rstrip()
+    return text[:-1] if separated and text.endswith(';') else text
+
+
 def readonly_shell(command, api):
     """Recognize simple read pipelines without labeling arbitrary scripts safe."""
-    # Braces are rejected too: the shell expands `--{output=x,oneline}` before
-    # any program sees it, so a token check cannot judge the expanded form.
-    if not isinstance(command, str) or any(c in command for c in '`$\n\r<>{}'):
+    command = shell_form(command)
+    if command is None:
         return False
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars='|&;')

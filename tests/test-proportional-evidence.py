@@ -1315,6 +1315,59 @@ class ProportionalTests(fixture.EvidenceTests):
         self.assertEqual(module.sed_targets(['sed', '-n', '-e', 's/a/b/p', '-e', 's/c/d/w out.txt', 'data']), ['out.txt'])
         self.assertEqual(module.sed_targets(['sed', '-e', 's/a/b/p', '-e', 's/c/d/e', 'data']), None)
 
+    def test_prop_quoted_shell_syntax_and_newlines_stay_readonly(self):
+        # Codex batches reads as multi-line commands and quotes regexes and
+        # globs. A `$` or braces inside single quotes are literal text, not
+        # shell expansion, and an unquoted newline is just another `;`.
+        module = fixture.evidence.proportional
+        api = fixture.evidence
+        for command in ("rg --files | rg -i 'rive|\\.riv$|firstRun|onboarding'",
+                        "rg -n 'skia|mapbox' package.json front --glob '*.{ts,tsx,json}'",
+                        'cat package.json jest.config.js\nrg --files app front/screens',
+                        "sed -n '1,190p' a.tsx\nsed -n '380,670p' a.tsx\n\nsed -n '700,880p' a.tsx",
+                        'rg -n \\\n  value src\n', 'grep x src;\ngrep y src', "rg 'a{2,3}' src", "rg '(foo|bar)' src",
+                        'rg \\$HOME src', "rg \\(x\\) src", 'grep "\\$" src', 'grep \'"$" is literal\' src',
+                        'rg x#y src', 'rg x src # only the tests\nrg y src', '# header\nrg y src'):
+            self.assertTrue(module.readonly_shell(command, api), command)
+        for command in ('rg $HOME src', 'rg "$HOME" src', 'rg "$(id)" src', 'rg "`id`" src', 'rg `id` src',
+                        'rg x --{pre=touch,files}', 'rg x src > out.txt', 'rg x src\nrm src/main.py',
+                        'rg x src\ntouch probe.py', 'rg x \\\n  --pre touch src', "rg 'unterminated src",
+                        'rg x src\r\nrm src/main.py', '(cd src && rm main.py)', 'rg x src\ncat a <b',
+                        # A backslash-newline joins words: the shell runs `git grep -Orm`
+                        # (pager rm) and `rg --pre=rm`. An escaped `\;` is a literal
+                        # character, so the newline after it still separates commands.
+                        'git grep -\\\nOrm x', 'rg --pr\\\ne=rm x', 'rg x\\;\nrm y', 'rg x \\\\\nrm y',
+                        'grep -r x src\\;\nrm -rf src',
+                        # The shell does not continue a line inside a `#` comment.
+                        'rg x # \\\nrm y', 'rg x #\\\nrm y', 'rg x;# \\\nrm y',
+                        # An escaped space before `#` keeps it inside the word: no comment.
+                        'cat x\\ # ; rm y\ncat z', 'cat x\\\t# | rm y\ncat z'):
+            self.assertFalse(module.readonly_shell(command, api), command)
+        self.assertEqual(module.shell_form('rg x # \\\nrm y'), 'rg x ;rm y')
+        self.assertEqual(module.shell_form('cat a\n\n  \nrg b\n'), 'cat a;rg b')
+        self.assertEqual(module.shell_form("rg 'a\nb' src"), "rg 'a\nb' src")
+        self.assertEqual(module.shell_form('rg --pr\\\ne=rm x'), 'rg --pre=rm x')
+        self.assertEqual(module.shell_form('rg x\\;\nrm y'), 'rg x\\;;rm y')
+        self.assertEqual(module.shell_form('grep x;\ngrep y'), 'grep x;grep y')
+
+    def test_prop_quoted_read_commands_do_not_make_a_question_turn_touched(self):
+        # The FTApp session: an earlier turn left an open obligation, then a
+        # question turn ran two quoted rg searches. Those reads must create no
+        # uncertainty, so the reply that changed nothing is not blocked.
+        self.change()
+        self.stop('Verification: PENDING — device check still to run')
+        self.event('UserPromptSubmit', turn_id='question')
+        for call, command in (('files', "rg --files | rg -i 'rive|\\.riv$|firstRun|onboarding'"),
+                              ('libs', "rg -n 'rive|skia|mapbox' package.json src --glob '*.{ts,tsx,json}'")):
+            fields = dict(tool_name='Bash', tool_use_id=call, tool_input={'command': command})
+            self.event('PreToolUse', **fields)
+            self.event('PostToolUse', tool_response='', **fields)
+        self.assertEqual(self.stop('We would use the existing map layer.'), {})
+        self.assertFalse(self.records()['uncertain'])
+        self.assertFalse(self.records()['mutations'])
+        self.event('UserPromptSubmit', turn_id='claim')
+        self.assert_blocked()
+
     def test_prop_write_completing_this_turn_counts_as_touching_it(self):
         # Pre in one turn, completion in the next: the turn that saw the write
         # finish is the one that must declare it.

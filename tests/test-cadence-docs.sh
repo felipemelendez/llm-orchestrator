@@ -75,14 +75,16 @@ has "$INSTALL" "### $LOCK_HEADING" && ok "docs/install.md carries the heading \"
 has "$README" "two layers" && ok "the README names the lock's two layers" \
   || fail "the README's two layers" "the cadence section does not say two layers"
 SHIPPED="$ROOT/scripts $ROOT/hooks $ROOT/skills $ROOT/commands $ROOT/templates $ROOT/docs"
+# docs/llm-orchestrator/scratch/ is git-ignored task scratch, never shipped.
+SCRATCH="^$ROOT/docs/llm-orchestrator/scratch/"
 # shellcheck disable=SC2086
 THREE=$(grep -rlF "lock's three layers" $SHIPPED "$ROOT/README.md" "$ROOT/ARCHITECTURE.md" \
-        "$ROOT/CHANGELOG.md" "$ROOT/AGENTS.md" 2>/dev/null)
+        "$ROOT/CHANGELOG.md" "$ROOT/AGENTS.md" 2>/dev/null | grep -v "$SCRATCH")
 [ -z "$THREE" ] && ok "nothing shipped still says three layers" \
   || fail "three layers" "still written in: $THREE"
 # shellcheck disable=SC2086
 GONE=$(grep -rlF "guard-cadence-lock" $SHIPPED "$ROOT/README.md" "$ROOT/ARCHITECTURE.md" \
-       "$ROOT/CHANGELOG.md" "$ROOT/AGENTS.md" 2>/dev/null)
+       "$ROOT/CHANGELOG.md" "$ROOT/AGENTS.md" 2>/dev/null | grep -v "$SCRATCH")
 [ -z "$GONE" ] && ok "no shipped file names the deleted shell guard" \
   || fail "the deleted shell guard" "still named in: $GONE"
 
