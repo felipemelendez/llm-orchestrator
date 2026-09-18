@@ -168,17 +168,57 @@ def sed_targets(args):
         prefix = re.match(r'\s*(?:' + address + r'(?:\s*,\s*' + address + r')?)?\s*!?\s*', expression)
         program = expression[prefix.end():]
         output = re.fullmatch(r'w\s+([^\s;{}]+)', program)
-        substitution = re.fullmatch(r's([^\w\s\\]).*?\1.*?\1[gIp0-9]*(?:w\s+([^\s;{}]+))?', program)
         if any(c in program for c in '\n\r;{}'):
             return None
         if output:
             targets.append(output.group(1))
-        elif substitution:
-            if substitution.group(2):
-                targets.append(substitution.group(2))
+            continue
+        substitution = parse_substitution(program)
+        if substitution is not None:
+            flags, wfile = substitution
+            if wfile:
+                targets.append(wfile)
         elif not re.fullmatch(r'[pPqdDnNhHgGxl=]', program):
             return None
     return targets
+
+
+def parse_substitution(program):
+    """Parse `s<d>pattern<d>replacement<d>flags` left to right, or return None.
+
+    A tokenizer, not a regex: backslash pairs are consumed as they are read, so
+    an escaped backslash can never be re-read as an escaped delimiter and hide
+    the real closing delimiter (and an `e` execute flag) behind it. Only the
+    read-only flags g, I, p and digits are accepted, optionally followed by
+    `w <file>`, which is returned as the write target.
+    """
+    if len(program) < 2 or program[0] != 's':
+        return None
+    delimiter = program[1]
+    if delimiter.isalnum() or delimiter.isspace() or delimiter == '\\':
+        return None
+    parts, current, i = [], [], 2
+    while i < len(program) and len(parts) < 2:
+        char = program[i]
+        if char == '\\':
+            if i + 1 >= len(program):
+                return None
+            current.append(program[i:i + 2])
+            i += 2
+            continue
+        if char == delimiter:
+            parts.append(''.join(current))
+            current = []
+        else:
+            current.append(char)
+        i += 1
+    if len(parts) < 2:
+        return None
+    flags = program[i:]
+    match = re.fullmatch(r'([gIp0-9]*)(?:w\s+([^\s;{}]+))?', flags)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
 
 
 def literal_shell(command):
@@ -353,7 +393,9 @@ def owned_disposable_target(path, root):
 
 def readonly_shell(command, api):
     """Recognize simple read pipelines without labeling arbitrary scripts safe."""
-    if not isinstance(command, str) or any(c in command for c in '`$\n\r<>'):
+    # Braces are rejected too: the shell expands `--{output=x,oneline}` before
+    # any program sees it, so a token check cannot judge the expanded form.
+    if not isinstance(command, str) or any(c in command for c in '`$\n\r<>{}'):
         return False
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars='|&;')
@@ -376,21 +418,61 @@ def readonly_shell(command, api):
         for args in segments:
             if api.read_command_can_write(args):
                 return False
-            exe = Path(args[0]).name
-            if exe in ('rg', 'grep', 'cat', 'head', 'tail', 'ls', 'pwd', 'wc', 'stat', 'file', 'which'):
-                if exe == 'rg' and any(a.startswith('--pre') for a in args[1:]):
-                    return False
-                continue
-            if exe == 'git' and len(args) > 1 and args[1] in ('status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'grep', 'check-ignore'):
-                continue
-            if exe == 'gh' and len(args) > 2 and args[1] in ('pr', 'issue') and args[2] in ('view', 'list', 'diff', 'status'):
-                continue
-            if exe == 'cd' and len(args) == 2:
-                continue
-            return False
+            if not readonly_segment(args):
+                return False
         return True
     except ValueError:
         return False
+
+
+# Only programs that cannot write a file however they are invoked, given that
+# redirections, backticks and $ were already rejected. Anything with an output
+# option (sort -o, uniq's second operand, tree -o), a program language (awk) or
+# a command runner (find -exec, xargs) stays out: an independent review showed
+# each of those can write while looking like a read.
+READ_ONLY_COMMANDS = {
+    'rg', 'grep', 'egrep', 'fgrep', 'cat', 'head', 'tail', 'ls', 'pwd', 'wc', 'stat', 'file', 'which',
+    'cut', 'tr', 'jq', 'diff', 'cmp', 'comm', 'column', 'nl', 'tac', 'rev', 'fold', 'echo', 'printf',
+    'true', 'false', 'basename', 'dirname', 'realpath', 'uname', 'id', 'whoami', 'hostname', 'du',
+    'df', 'shasum', 'sha256sum', 'md5', 'md5sum', 'test', '[', 'seq', 'expr', 'type',
+}  # not less/more: `less -O file` logs its input to a file
+GIT_READ_SUBCOMMANDS = {'status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'grep',
+                        'check-ignore', 'blame', 'describe', 'shortlog', 'name-rev', 'count-objects'}
+# Exact argument sets, never "no arguments": bare `git stash` pushes.
+GIT_LISTING_FORMS = {
+    ('branch',): {(), ('-a',), ('-r',), ('-v',), ('-vv',), ('--list',), ('--all',), ('--remotes',), ('--show-current',)},
+    ('tag',): {(), ('-l',), ('--list',)},
+    ('remote',): {(), ('-v',), ('--verbose',)},
+    ('stash', 'list'): {()}, ('worktree', 'list'): {()}, ('reflog', 'show'): {()},
+}
+
+
+def readonly_segment(args):
+    """One pipeline stage that only reads. Redirections were rejected earlier."""
+    exe = Path(args[0]).name
+    if exe in READ_ONLY_COMMANDS:
+        if exe == 'rg' and any(a.startswith('--pre') for a in args[1:]):
+            return False
+        return True
+    if exe == 'sed':
+        return sed_targets(args) == []
+    if exe == 'git' and len(args) > 1:
+        sub = args[1]
+        if sub in GIT_READ_SUBCOMMANDS:
+            return True
+        for head, forms in GIT_LISTING_FORMS.items():
+            if tuple(args[1:1 + len(head)]) == head:
+                return tuple(args[1 + len(head):]) in forms
+        if sub == 'config' and len(args) in (3, 4) and args[2] in ('-l', '--list', '--get', '--get-all', '--get-regexp'):
+            return not any(a.startswith('-') for a in args[3:])
+        if sub == 'cat-file' and len(args) == 4 and args[2] in ('-p', '-e', '-t', '-s'):
+            return not args[3].startswith('-')
+        return False
+    if exe == 'gh' and len(args) > 2 and args[1] in ('pr', 'issue', 'run', 'release') and args[2] in ('view', 'list', 'diff', 'status', 'checks'):
+        return not any(a.startswith('--web') or a in ('-w',) for a in args[3:]) and args[1:3] != ['release', 'download']
+    if exe == 'cd' and len(args) == 2:
+        return True
+    return False
 
 
 def mutation_snapshot(root, config, policy, api):
@@ -571,7 +653,10 @@ def completed_mutation(payload, mutation, root, api, harness):
 
 def record_write(state, rel, at, content, measured=None):
     previous = state.setdefault('writes', {}).get(rel, {})
-    write = {'at': at, 'content': content}
+    # `at` keeps the invocation's start for coverage ordering; `settled_at` is
+    # when the write was actually observed complete, which decides which turn
+    # touched the file.
+    write = {'at': at, 'content': content, 'settled_at': time.time()}
     if measured is None:
         measured = previous.get('measured')
     if measured is not None:
@@ -615,6 +700,7 @@ def settle_writes(state, root, config, api, call=None, policy=None, observation=
             if mutation.get('unknown'):
                 state.setdefault('uncertain', {})[key] = mutation['unknown']
             continue
+        state['last_settled_at'] = time.time()  # a command that may have written finished in this turn
         if mutation.get('unknown') and mutation.get('observed_before') is not None:
             after_files = mutation_snapshot(root, config, policy or {}, api)
             if after_files is not None:
@@ -979,13 +1065,14 @@ def settle_deferred_mutation(state, call, mutation, fact, api, poll=False):
     for rel in mutation['before']:
         previous = state['writes'].get(rel, {})
         terminal_at = max(fact['captured_at'], previous.get('requires_check_after', 0))
-        write = {'at': terminal_at, 'requires_check_after': terminal_at,
+        write = {'at': terminal_at, 'requires_check_after': terminal_at, 'settled_at': fact['captured_at'],
                  'obligation': 'deferred_known_target', 'content': 'unobserved:' + api.digest([fact['id'], call, rel])}
         measured = mutation.get('measured', {}).get(rel, previous.get('measured'))
         if measured is not None:
             write['measured'] = measured  # keeps deletion provenance through a contended completion
         state['writes'][rel] = write
         state.get('applicability', {}).pop(rel, None)
+    state['last_settled_at'] = fact['captured_at']
     state['mutations'].pop(call)
     state['uncertain'].pop(call, None)
     if call in state['observations']:
@@ -999,6 +1086,9 @@ def apply_deferred(state, fact, root, api, checkpoint):
     event, call, family = fact['event'], fact['call'], fact['family']
     if event in ('SessionStart', 'UserPromptSubmit'):
         state['active_turn'] = fact.get('turn_id')
+        if not state.get('continuation_pending'):
+            state['turn_started_at'] = fact['captured_at']
+            state['turn_uncertain_keys'] = sorted(state.get('uncertain', {}))
         return
     if event in ('SubagentStart', 'SubagentStop') and fact.get('agent_id'):
         state['agents'][fact['agent_id']] = {'provider': fact['harness'] + '-native', 'status': event,
@@ -1051,6 +1141,10 @@ def apply_deferred(state, fact, root, api, checkpoint):
     if fact['tool'] == 'write_stdin':
         matched = False
         for mutation_call, mutation in list(state['mutations'].items()):
+            if mutation.get('process_id') is not None and fact.get('poll_session_id') == mutation['process_id']:
+                # A poll of a tracked writer happened in this turn, whether or
+                # not its targets can be recovered: the turn is not untouched.
+                state['last_settled_at'] = fact['captured_at']
             if settle_deferred_mutation(state, mutation_call, mutation, fact, api, poll=True):
                 matched = True
         if matched:
@@ -1082,6 +1176,7 @@ def apply_deferred(state, fact, root, api, checkpoint):
             mutation['process_id'] = response['session_id']
         if response.get('session_id') is None and response.get('status') not in ('running', 'pending'):
             state['uncertain'][call] = 'source completion contents unavailable during contention'
+            state['last_settled_at'] = fact['captured_at']
         # A delayed ordinary Stop never hashes source to reconstruct this event.
     elif family == 'read_only':
         if observed is not None:
@@ -1146,7 +1241,10 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
         state['active_turn'] = payload.get('turn_id')
         if not state.get('continuation_pending'):
             state['block_count'] = 0
-        return api.context(event, 'Proportional cadence evidence is active. Use the trusted verification route on the first invocation. Valid scoped checks survive turns and content-preserving commits; unresolved edits/checks remain pending. Finish with Verification: PASS, PENDING, BLOCKED, or NOT APPLICABLE — an accurate reason.')
+            # What this turn touches is judged against these marks at Stop.
+            state['turn_started_at'] = now
+            state['turn_uncertain_keys'] = sorted(state['uncertain'])
+        return api.context(event, 'Proportional cadence evidence is active. Use the trusted verification route on the first invocation. Valid scoped checks survive turns and content-preserving commits; unresolved edits/checks remain pending. After changing code, finish with Verification: PASS, PENDING, BLOCKED, or NOT APPLICABLE — an accurate reason. A question or read-only reply needs no Verification line.')
     if event == 'PreToolUse':
         if not call:
             state['uncertain']['missing-tool-id'] = 'tool identity unavailable'
@@ -1372,8 +1470,9 @@ def finish(state, payload, root, config, policy, api):
         try:
             scope_definition(root, config, [])
         except (ValueError, TypeError) as exc:
-            issues.append('the project config needs prod_globs, test_globs and verification_config_globs: ' + str(exc))
-            issues.append('no supported direct test runner is configured; Codex checks must go through codex-verify.py')
+            # Configuration problems lead: nothing else can be fixed before them.
+            issues.insert(0, 'no supported direct test runner is configured; Codex checks must go through codex-verify.py')
+            issues.insert(0, 'the project config needs prod_globs, test_globs and verification_config_globs: ' + str(exc))
     requirement = state.get('required_validation')
     if requirement:
         external = requirement['external']
@@ -1394,6 +1493,18 @@ def finish(state, payload, root, config, policy, api):
                            unresolved + list(state['pending'].values()))
         # The reply already says PENDING or BLOCKED; repeating it under the
         # answer is clutter for the person. The obligations are retained silently.
+        return {}
+    turn_start = state.get('turn_started_at', float('-inf'))
+    earlier_uncertain = set(state.get('turn_uncertain_keys') or [])
+    touched_this_turn = (state.get('last_settled_at', 0) >= turn_start
+                         or any(max(w.get('at', 0), w.get('settled_at', 0)) >= turn_start for w in state['writes'].values())
+                         or any(m.get('at', 0) >= turn_start for m in state['mutations'].values())
+                         or any(key not in earlier_uncertain for key in state['uncertain']))
+    if not claims and label != 'NOT APPLICABLE' and not touched_this_turn and issues:
+        # A reply that changed nothing this turn is never blocked. Open items
+        # from earlier turns stay recorded, the outcome stays pending, and they
+        # are judged when a PASS (or a NOT APPLICABLE waiver) is claimed.
+        state.update(outcome='pending', continuation_pending=False)
         return {}
     if (label == 'NOT APPLICABLE' and not state['uncertain'] and not state['pending'] and not state['mutations'] and not unresolved
             and not any(write.get('obligation') == 'deferred_known_target' for write in state['writes'].values())):
@@ -1421,12 +1532,11 @@ def finish(state, payload, root, config, policy, api):
     if not issues:
         issues.append('a PASS needs a recorded passing check on the final files')
     if state.get('harness') == 'claude':
-        remedy = ('Fix: run each check as one foreground command with a long enough tool timeout, '
-                  'edit files with the Edit/Write tools, or end with "Verification: PENDING — reason".')
+        remedy = 'Run checks as single foreground commands, edit with Edit/Write, or end with "Verification: PENDING — reason".'
     else:
-        remedy = ('Fix: edit files with apply_patch or the file tools (shell writes cannot be attributed in Codex), '
-                  'run checks through codex-verify.py, or end with "Verification: PENDING — reason".')
-    reason = 'Cadence could not confirm this turn: ' + '; '.join(issues) + '. ' + remedy
+        remedy = 'Edit with apply_patch, run checks through codex-verify.py, or end with "Verification: PENDING — reason".'
+    shown = '; '.join(issues[:2]) + (' (+%d more)' % (len(issues) - 2) if len(issues) > 2 else '')
+    reason = 'Cadence: not confirmed — ' + shown + '. ' + remedy
     if policy.get('mode') == 'blocking' and not state.get('block_count') and not payload.get('stop_hook_active'):
         state.update(outcome='needs_verification', block_count=1, continuation_pending=True)
         return {'decision': 'block', 'reason': reason}

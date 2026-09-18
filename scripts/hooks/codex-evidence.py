@@ -240,12 +240,23 @@ def read_command_can_write(args):
         return False
     exe = Path(args[0]).name
     options = {a.split("=", 1)[0] for a in args[1:]}
+    def abbreviates(token, dangerous):
+        # getopt-style parsers accept any unique prefix of a long option, so a
+        # token is dangerous when it is a prefix of a dangerous option name.
+        name = token[2:].split("=", 1)[0]
+        return bool(name) and any(d.startswith(name) for d in dangerous)
     if exe == "git":
-        return bool(options & {"--output", "--ext-diff", "--textconv", "--open-files-in-pager", "-O"})
+        # Git groups short options (-nO<pager>) and abbreviates long ones (--open=).
+        dangerous = ("open-files-in-pager", "output", "ext-diff", "textconv")
+        return any((a.startswith("--") and abbreviates(a, dangerous)) or re.match(r"-[A-Za-z0-9]*O", a)
+                   for a in args[1:] if a.startswith("-"))
     if exe == "rg":
-        return any(a.startswith("--pre") for a in args[1:])
+        # --pre runs a preprocessor; the *-bin flags name helper executables.
+        return any(a.startswith("--pre") or (a.startswith("--") and a.split("=", 1)[0].endswith("-bin")) for a in args[1:])
     if exe == "file":
-        return "--compile" in options or any(re.fullmatch(r"-[A-Za-z]*C[A-Za-z]*", a) for a in args[1:])
+        # --compile (any prefix, such as --co) and -C in any short-option group write a .mgc file.
+        return any((a.startswith("--") and abbreviates(a, ("compile",))) or re.match(r"-[A-Za-z0-9]*C", a)
+                   for a in args[1:] if a.startswith("-"))
     return False
 
 

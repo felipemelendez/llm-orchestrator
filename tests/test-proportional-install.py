@@ -134,13 +134,11 @@ class InstalledTests(unittest.TestCase):
                              last_assistant_message="Verification: PENDING — fixture check remains")
         self.assertNotIn("decision", pending, pending)
         self.event(hooks, harness, "UserPromptSubmit", turn_id="discussion-before-check")
+        # A discussion turn that changes nothing is never blocked; the edit's
+        # obligation survives it and is judged at the next PASS claim.
         unresolved = self.event(hooks, harness, "Stop", turn_id="discussion-before-check",
                                 last_assistant_message="The setting controls the toast.")
-        self.assertEqual(unresolved.get("decision"), "block", unresolved)
-        # End that interrupted turn truthfully, then resume verification. This
-        # avoids confusing the gate's one-block-per-continuation loop guard
-        # with the separate stale-source assertion below.
-        self.event(hooks, harness, "Stop", last_assistant_message="Verification: PENDING — fixture check remains")
+        self.assertNotIn("decision", unresolved, unresolved)
         self.event(hooks, harness, "UserPromptSubmit", turn_id="check-now")
         self.check(hooks, harness, runner)
         # Another observed source edit makes the successful command stale.

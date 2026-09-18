@@ -1261,10 +1261,77 @@ class ProportionalTests(fixture.EvidenceTests):
         self.assertEqual(self.stop('Task resources checked.'), {})
 
     def test_prop_own_unverified_edit_survives_pending_then_discussion(self):
+        # A discussion turn that changes nothing is never blocked, but the edit's
+        # obligation survives it and still refuses a later unsupported PASS.
         self.change()
         self.stop('Verification: PENDING — unavailable check')
         self.event('UserPromptSubmit', turn_id='discussion')
-        self.assertEqual(self.stop('The option controls toast visibility.').get('decision'), 'block')
+        self.assertEqual(self.stop('The option controls toast visibility.'), {})
+        self.assertIn('src/main.py', self.records()['writes'])
+        self.event('UserPromptSubmit', turn_id='claim')
+        self.assert_blocked()
+
+    def test_prop_readonly_pipelines_with_filters_and_safe_git_stay_readonly(self):
+        module = fixture.evidence.proportional
+        api = fixture.evidence
+        for command in ('grep -rn TODO src | cut -d: -f1 | wc -l',
+                        'git branch -a && git tag -l && git remote -v && git stash list',
+                        'git config --get core.hooksPath; git cat-file -p HEAD:src/main.py | wc -l',
+                        'cat package.json | jq .name; diff a.txt b.txt; shasum src/main.py',
+                        'eas build:list --limit 3 | jq .'):
+            expected = not command.startswith('eas')
+            self.assertEqual(module.readonly_shell(command, api), expected, command)
+        # Programs with an output option, a program language or a command runner
+        # are not read-only however they are spelled.
+        for command in ('find . -name "*.pyc" -delete', 'find . -name "*.py"', 'git branch -D old', 'git stash',
+                        'grep TODO src | tee notes.txt', 'git config core.hooksPath .githooks',
+                        'git config --file src/settings.conf -- demo.value --get',
+                        'sort -o sorted.txt names.txt', 'sort -ro src/main.py names.txt', 'grep x | sort',
+                        'uniq names.txt src/main.py', "awk '{print}' data", "awk 'BEGIN {system (\"touch x\")}'",
+                        'tree -o out.txt', 'date -s tomorrow', 'xargs rm', 'printf x | less -O native/module.py',
+                        "git grep -O'cp src/main.py' value -- native/module.py", 'git log --output=notes.txt',
+                        "git grep -nO'cp src/main.py' value", "git grep --open-files-in-pag='cp a b' value",
+                        'rg --hostname-bin ./scripts/update-source.sh value src/main.py',
+                        'file --comp -m magic', 'file -0C -m magic', 'file --co -m magic',
+                        "git grep --open='cp src/main.py' value -- native/module.py", 'git log --o=notes.txt',
+                        'git log --{output=notes.txt,oneline}', 'file -{C,b} -m magic',
+                        "printf x | sed 's@x@touch probe.py@e #@'", "sed 's/a/b/e' data", "sed -n 's/a/b/w out.txt' data",
+                        "printf x | sed 's@x@touch probe.py #\\\\@e #@'", "sed 's/a/b\\\\/e' data", "sed 's/a/b/;e touch x' data"):
+            self.assertFalse(module.readonly_shell(command, api), command)
+        self.assertTrue(module.readonly_shell("sed -n 's/a/b/p' data | sed -n '2,4p'", api))
+        self.assertTrue(module.readonly_shell("sed -n 's@x@y@gp' data", api))
+        self.assertTrue(module.readonly_shell("sed -n 's/a\\/b/c\\\\d/p' data", api))
+        self.assertEqual(module.parse_substitution('s@x@touch probe.py #\\\\@e #@'), None)
+        self.assertEqual(module.parse_substitution('s/a\\/b/c/gp'), ('gp', None))
+        self.assertEqual(module.parse_substitution('s/a/b/w out.txt'), ('', 'out.txt'))
+        self.assertEqual(module.parse_substitution('s/a/b\\/c/g'), ('g', None))       # escaped delimiter in the replacement
+        self.assertEqual(module.parse_substitution('s|a|b|'), ('', None))              # metacharacter delimiter
+        self.assertEqual(module.parse_substitution('s.a.b.'), ('', None))
+        self.assertEqual(module.parse_substitution('s///'), ('', None))                # empty fields
+        self.assertEqual(module.parse_substitution('s/a/b'), None)                     # missing closing delimiter
+        self.assertEqual(module.parse_substitution('s/a/b/ '), None)                   # trailing whitespace is not a flag
+        self.assertEqual(module.parse_substitution('s/a/b/gx'), None)                  # unknown flag
+        self.assertEqual(module.sed_targets(['sed', '-n', '-e', 's/a/b/p', '-e', 's/c/d/w out.txt', 'data']), ['out.txt'])
+        self.assertEqual(module.sed_targets(['sed', '-e', 's/a/b/p', '-e', 's/c/d/e', 'data']), None)
+
+    def test_prop_write_completing_this_turn_counts_as_touching_it(self):
+        # Pre in one turn, completion in the next: the turn that saw the write
+        # finish is the one that must declare it.
+        fields = dict(tool_name='apply_patch', tool_use_id='slow-edit',
+                      tool_input={'command': '*** Update File: src/main.py'})
+        self.event('PreToolUse', **fields)
+        self.event('UserPromptSubmit', turn_id='next')
+        self.write('src/main.py', 'value = 7\n')
+        self.event('PostToolUse', **fields)
+        self.assertEqual(self.stop('Here is what the setting does.').get('decision'), 'block')
+
+    def test_prop_failed_check_reported_honestly_is_not_blocked(self):
+        self.change()
+        self.run_check(1)
+        self.assertEqual(self.stop('Verification: PENDING — the app check fails on the new branch'), {})
+        self.event('UserPromptSubmit', turn_id='ask')
+        self.assertEqual(self.stop('The failure comes from the toast timer.'), {})
+        self.assert_blocked()
 
     def test_prop_docs_cleanup_after_foreign_commit_is_read_only(self):
         self.write('native/module.py', 'x = 8\n')

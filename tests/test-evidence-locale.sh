@@ -59,14 +59,18 @@ mk_transcript() {
 run() { # run <transcript> [env assignments...]: prints "rc|stderr"
   local tr="$1"; shift
   local err rc
+  # Run from the clean fixture: the payload carries no cwd, and the launching
+  # checkout's own cadence policy must not select the vocabulary under test.
   err=$(printf '{"transcript_path":"%s","session_id":"loc-test"}' "$tr" \
-        | env "$@" ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$CLEAN" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+        | (cd "$CLEAN" && env "$@" ORCH_HOME="$TMP/orch-home" CLAUDE_PROJECT_DIR="$CLEAN" bash "$HOOK" 2>&1 1>/dev/null)); rc=$?
   printf '%s|%s' "$rc" "$err"
 }
 
 # Ledger at the exact path the gate computes, plus a turn-start in the past so
 # the whole ledger is inside the current turn's window.
-LEDGER=$(ORCH_HOME="$TMP/orch-home" bash -c '
+# Computed from inside the fixture, like the hook runs above: the ledger path
+# hashes the project the shell stands in.
+LEDGER=$(cd "$CLEAN" && ORCH_HOME="$TMP/orch-home" bash -c '
   source "'"$ROOT"'/scripts/lib/orch-project.sh"
   source "'"$ROOT"'/scripts/lib/orch-evidence.sh"
   orch_evidence_ledger_path loc-test')
