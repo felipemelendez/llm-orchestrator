@@ -3,88 +3,99 @@
 <!--
 Template for `docs/llm-orchestrator/LAWS.md`. Fill every `<PLACEHOLDER>`, delete
 this comment, and delete any section the project genuinely has no content for —
-but not the harm ranking, which the cadence's severity rule reads.
+but not the harm ranking, which reviewers use to grade findings.
+A short filled-in example is `laws-example.md` beside this template. An
+assistant may draft the text for each placeholder in conversation; the owner
+decides what goes in and pastes it here. Projects initialized before the
+proportional workflow keep the rulebook they already have.
 -->
 
-This file is the constitution of the build. It never carries state. State lives
-in the session handoff (on `HANDOFF_TEMPLATE.md`, beside this file); history in
-the ledger; per-ticket design rulings in `DESIGN_RULINGS.md` (append-only); the
-traps and procedures learned in `TRAPS.md` (append-only). An agent that believes
-a law is wrong writes a proposal in the handoff's amendments section and keeps
-working under the law as written. Only the owner turns a proposal into a ruling;
-nobody else edits this file.
+This file is the project's rulebook. It holds rules, not status: what we are
+building, what we promise, what counts as harm, and the decisions already made.
+Current work and open questions belong in the conversation or a handoff, never
+here. An assistant that believes a rule is wrong says so in its handoff and
+keeps working under the rule as written. Only the owner changes this file.
 
-This file is what the cadence lock protects. It is changed only by a numbered
+This file is what the cadence lock protects. It changes only by a numbered
 ruling from the owner, in a commit whose message carries `Ruling <N>`, with
-`LOCK.sha256` rewritten under `ORCH_CADENCE_UNLOCK=1` — a variable the person
-sets in the environment when launching the session, never in a settings file and
-never by an agent, since the guard refuses the assignment. The re-lock and the
-ruling commit happen inside that session.
+`LOCK.sha256` re-recorded under `ORCH_CADENCE_UNLOCK=1`, a switch the owner
+sets in their own shell when starting that session, never in a settings file and
+never by an assistant.
 
 ## 1. What we are building, and why
 
-<MISSION>
+<MISSION — two or three sentences: what the project is, who uses it, what it
+must never get wrong.>
 
 **The promises — judge every line of work by them.**
 
-<PROMISES>
+<PROMISES — three to five short lines.>
 
-**Harm ranking.** The cadence's severity rule reads these three classes: a
-catastrophic or serious finding opens a fixer-and-gate round; mild-only folds
-into the landing with a firsthand red witness.
+**Harm ranking.** Reviewers grade every finding into one of these three classes.
+A catastrophic or serious finding must be fixed before the work is called done;
+mild findings are fixed when convenient.
 
-<HARM_RANKING>
+- Catastrophic: <the worst things this project can do to a user, plus: a claim
+  that checks passed when they did not.>
+- Serious: <wrong behavior that blocks or misleads a user, crashes, a test that
+  passes without testing anything.>
+- Mild: <wording, style, documentation and maintainability issues with no user
+  consequence.>
 
 ## 2. The laws and rulings — never re-ask
 
-- **Standing orders, verbatim and binding:** <STANDING_ORDERS — the owner's own
-  instructions, quoted word for word, that bind every session whatever the
-  ticket is.>
-- **Rulings that govern the build:** <RULINGS — one line each, newest last, on
-  this shape: `Ruling <N> (YYYY-MM-DD, <OWNER>): <one sentence>`. N starts at 1
-  and only rises. The check script reads the highest `Ruling <N>` in this file,
-  and an amending commit's message must carry a higher one.> A stage skip is
-  never a ruling and never appears here: skips live in
-  `<notes_dir>/CADENCE_STATE.md`, under the cadence's amendment mechanism, and
-  expire on their own.
-- **Standing constraints:** <CONSTRAINTS — e.g. never commit without an explicit
-  pathspec; never `git add -A`; what only the owner deploys; which trees are
-  never deleted; which files another live session may be editing.>
-- **Hubs:** <HUBS — the files whose change touches everything: name them; a brief
-  touching two of them is split.>
+- **Standing orders:** <the owner's own instructions, quoted word for word, that
+  bind every session whatever the task is — for example never commit or push
+  unless asked, never deploy, which files only the owner edits.>
+- **Rulings that govern the build:** one line each, newest last, in this shape:
+  `Ruling <N> (YYYY-MM-DD, <OWNER>): <one sentence>`. Numbering starts at one
+  and only rises. The first ruling is the setup itself: record it here. The
+  setup commit needs no ruling number in its message, because there is no
+  earlier rule it amends. For every later policy change: pick the next number,
+  add its line here, re-record the lock, and put `Ruling <N>` with that number
+  in the commit message. The check script reads the highest number in this file
+  and refuses a commit whose ruling is not higher than the last committed one.
+- **Standing constraints:** <what must never happen without the owner — for
+  example never `git add -A`, which trees are never deleted, which files
+  another session may be editing.>
+- **Hubs:** <the few files whose change touches everything. A change touching
+  two of them is split into two changes.>
 
-## 3. Model seats
+## 3. Reviewer models
 
-Every dispatch names its model. <MODEL_POLICY — which model every seat runs on,
-and which single seat deliberately runs on a different one.> Independence comes
-from the brief as much as from the model: the spec seat gets dense
-`file:symbol` pressure areas; the plain-language adversarial seat gets the scene
-and the harm ranking and no `file:line` pointers, and follows whatever looks
-weakest. Never a resume for a seat whose model matters. Seats run on an uncapped
-general agent type with the model named — a capped agent definition can kill a
-long read mid-way.
+Every time the assistant starts another agent, it names the model. Full work
+has two independent reviewers with different instructions: one checks the change
+against the spec, the other reads the user scenario and this harm ranking and
+looks for the weakest point. Neither sees the other's findings first.
+<OPTIONAL MODEL REQUIREMENTS — for example a required reviewer model or
+provider; delete this line if the project has none. Different models for the
+two reviewers are optional unless stated here.>
 
 ## 4. The standard of work
 
-- **The cadence is the `cadence` skill's `CADENCE.md`** (binding, step by step).
-  Every seat's brief carries the seat rules by reference.
-- **Machine budget:** <BUDGET — how many workers a reviewer runs, which stage
-  runs the only full test suite, how many writers may run in parallel.>
-- **The silence rule:** a seat whose tree and scratch show no file change for 20
-  minutes is stopped and replaced by a fresh seat told exactly what the tree
-  holds; its tree is left at its last shasums. The controller reads mtimes when
-  it checks on seats and never waits on a silent one. Seats write a one-line
-  progress note to their report file at least every 15 minutes, so silence is
-  distinguishable from thought.
-- **Talking to the owner:** <VOICE — lead with the outcome; one shape header per
-  reply; plain language; present decisions as decided.>
+- **Workflow:** `workflow: proportional`. The assistant chooses Simple, Standard
+  or Full by risk, uncertainty and how hard the change is to undo, following the
+  `cadence` skill. Simple: make the change, read the whole diff, run the
+  relevant existing checks, deliver. Standard: state what "done" means, then one
+  independent review. Full: a reviewed design, two independent reviews, fixes,
+  and verification by someone other than the writer. The person who wrote a
+  change never supplies its required review.
+- **Checks:** <the test, lint and type-check commands for this project, and
+  when the full suite is required — for example only for hub changes.>
+- **Completion:** every reply ends with `Verification: PASS | PENDING | BLOCKED
+  | NOT APPLICABLE — reason`. PASS only when the recorded checks ran on the
+  final code. <STRICTER RULE if any — for example "every code change needs a
+  passing automated test"; otherwise NOT APPLICABLE is allowed for low-risk
+  work with no meaningful automated check.>
+- **Cleanup:** temporary reviews, logs and copies live outside the repository
+  and are removed when the task finishes. Specs, research conclusions, design
+  decisions and runbooks are kept.
+- **Talking to the owner:** <VOICE — for example lead with the result, plain
+  words, say clearly what is finished and what is not.>
 
-## 5. The handoff law
+## 5. The handoff
 
-The handoff is state only, on `HANDOFF_TEMPLATE.md`: where the world is, one
-line per live tree, one line per landing, what is left in order, what only the
-owner decides, the per-ticket numbers, and proposed amendments. It never
-restates these laws (it points here) and never carries the history of what every
-seat did — that is the ledger row the handoff line cites. It does not inherit
-from the previous handoff; it supersedes it whole. The kickoff prompt is the
-template's last section, filled in.
+A handoff says where things stand, what was verified and by which checks, what
+is left in order, what only the owner decides, and any proposed amendment to
+these laws. It points at this file instead of repeating it, and it lives outside
+Git unless the owner asks for a maintained document.

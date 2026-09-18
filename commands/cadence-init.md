@@ -42,16 +42,21 @@ bash "$CAD/cadence-detect.sh" --root "$ROOT"
 
 Show the user the whole proposal, not a summary — it is the contract the gate,
 the check and the git layer all read. Then say in one line what it detected and
-ask them to confirm or correct, calling out by name anything the detector could
-only guess:
+ask them to confirm or correct. Before writing the configuration, confirm:
 
-- `runner.profile` and `runner.test_cmd` — a `profile` of `unknown` means no test
-  command was found and the gate will skip its revert step loudly. Ask for the
-  real command rather than inventing one.
-- `src_roots`, `prod_globs`, `test_globs` — where this project's production code
-  and its tests actually live.
-- `typecheck_cmd` — empty is a valid answer.
-- `notes_dir` — where landing evidence goes.
+- `workflow` is `proportional` for a new project. Only a legacy project keeps
+  it absent, and only then do the legacy report settings (`notes_dir`,
+  `ticket_re`) matter.
+- `runner.test_cmd`, `prod_globs` and `test_globs` match where this project's
+  tests, production code and test files actually live. A `profile` of `unknown`
+  means no test command was found: ask for the real command now rather than
+  inventing one. If the user chooses to continue without one, say plainly that
+  verification will stay pending until it is added, and that adding it later is
+  a change to a protected file and so needs a numbered ruling.
+- `typecheck_cmd` is right, or intentionally empty.
+- For Codex, `codex_verification.mode` is `blocking` (the assistant must
+  address missing checks before finishing) or `warn` (it only reports the gap);
+  say which behavior the user is choosing.
 
 ### 3. Write the confirmed JSON to a temp file
 
@@ -84,29 +89,34 @@ and `.claude/settings.json`, which comes back `merged`.
 
 ### 5. Report
 
-Print the script's report verbatim — it names `created` / `kept` / `merged` /
-`refused` per path, then the lock line and the verdict. Then give the user the
-one line the script deliberately does not run for them:
+Open with `Changed:` and print the script's report once, verbatim — it names
+`created` / `kept` / `merged` / `refused` per path, then the lock line and the
+verdict. Under `Next:` relay the script's own numbered recipe in the order it
+printed it, including the one line the script deliberately does not run for the
+user:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Close with the `Changed:` shape:
-
-```
-Changed:
-- <the script's report, one line per path>
-Verify:
-- bash "$CAD/orch-cadence-check.sh" --root "$ROOT" --verdict
-Next:
-- <the script's own numbered recipe, in the order it printed it>
-```
+Report the lock line separately, then end with an honest completion line: the
+rulebook, the re-lock and the hook routing are still the user's to do, so a
+proportional project ends with `Verification: PENDING — rulebook completion,
+re-locking and hook activation remain`, and a legacy one with a `Verify:` line
+naming the verdict command and its output. A Git policy verdict is not test
+execution, so never write PASS here.
 
 The recipe the script prints is ordered, and the order is load-bearing: fill in
 the `<PLACEHOLDER>`s, re-lock under `ORCH_CADENCE_UNLOCK=1` (the fill changed
 the laws after this run's manifest), route the clone's hooks, then make the
-arming commit. Its last step is the CI one: run
+arming commit.
+
+Then help the user write the laws. Point them at the filled-in example beside
+the template, `skills/cadence/references/laws-example.md`, and offer to draft
+wording for each placeholder in the conversation: the project's purpose, its
+promises, the harm ranking, standing orders and hub files. Ask what is true for
+this project rather than inventing it. The user pastes what they approve into
+`LAWS.md`; you never write to that file yourself. Its last step is the CI one: run
 `.githooks/orch-cadence-check.sh --audit HEAD` in the project's pipeline, which
 is the layer that still speaks when a clone's hooks were never routed. Relay
 the recipe as printed — a commit made before the re-lock meets the hook's
@@ -130,7 +140,8 @@ placeholders and the re-lock yourself even when the recipe does not list them.
   so the one-liner is printed, not executed.
 - Never fill in `LAWS.md`'s placeholders yourself, and never edit a `LAWS.md`
   the project already had — the laws are the user's, and `--adopt` exists so you
-  do not have to touch them.
+  do not have to touch them. Drafting wording in the conversation for the user
+  to paste is fine; writing the file is not.
 - If the script refuses (an unclosed code fence in `AGENTS.md`, no python3 with
   a settings file to merge, a config that does not parse), relay the refusal and
   stop. It is a preflight: nothing was written.

@@ -14,6 +14,37 @@ Start with the [release overview](docs/release-v0.8.0.md) or the
 [installation and upgrade guide](docs/install.md#updating-to-v080).
 The implementation details follow.
 
+### Changed — the process now matches the size of the change (2026-09-18)
+
+- New projects get `workflow: proportional`. Before touching code the assistant
+  picks one of three paths by risk: **Simple** (edit, read the diff, run the
+  relevant tests), **Standard** (plus one independent review) or **Full** (a
+  reviewed design, two independent reviews, fixes, independent verification).
+  A one-line fix no longer starts several agents or writes report files.
+  Projects set up earlier keep the previous fixed sequence until they migrate.
+- A passing test is remembered while the files it covered are unchanged, so
+  the same test is not rerun for show. Changing a covered file, test or
+  configuration makes it stale again. This works the same in Claude Code and
+  Codex, from the same code.
+- A completion claim is checked against what actually ran. `Verification:
+  PASS` is accepted only when recorded checks ran on the final code and cover
+  every file the assistant changed, including files the fingerprint could not
+  see. `PENDING`, `BLOCKED` and `NOT APPLICABLE` name what is still open.
+- Temporary review copies, logs and receipts live outside the repository and
+  are removed when the task finishes. Unfinished or unique work, other
+  sessions' worktrees and dirty trees are never deleted.
+- Git policy checks for proportional projects no longer need five report files
+  or a ledger row; the lock and numbered rulings still apply.
+- Onboarding was rewritten for a first-time reader: a step-by-step "Enable
+  cadence in a project" guide, a plain-language rulebook template, a filled-in
+  example rulebook, and an initializer that confirms the settings that matter.
+- Fixed: test suites that inherited the launching checkout's policy, an init
+  test fixture that had stopped testing anything, and several evidence-hook
+  edge cases found in review (excluded or ignored files kept a passing check
+  fresh; a PASS could name a check that never ran; an ordinary word made a
+  pending reason permanent). Verified by the full suite and by the framework's
+  own live hooks in a new session.
+
 ### Added — Codex execution evidence and optional external reviews
 
 - Codex completion checks now use a verification runner that records actual

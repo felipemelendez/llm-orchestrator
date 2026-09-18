@@ -37,7 +37,11 @@ For the recorded test results and the limits of these checks, see
 
 ## Enable cadence in a project
 
-With **Claude Code**, open the project and run:
+Enabling cadence in a project takes about fifteen minutes and produces three
+things: a config file that says how to run your tests, a rulebook for the
+project, and a lock that keeps both from changing quietly.
+
+**Step 1 — run the initializer.** With **Claude Code**, open the project and run:
 
 ```text
 /llm-orchestrator:cadence-init
@@ -45,26 +49,57 @@ With **Claude Code**, open the project and run:
 
 With **Codex**, ask your assistant:
 
-> Help me enable cadence in this project using the installed cadence scripts.
-> Propose the test commands and project rules for me to review before writing
-> them. Include the Codex verification settings and finish the Git hook setup.
+> Help me enable cadence in this project using the scripts in
+> `~/.agents/skills/cadence/scripts/`. Propose the configuration, including the
+> Codex verification settings, for my approval. Draft rulebook text for me to
+> paste into `LAWS.md`. Then show me the remaining terminal commands in order;
+> I will record the lock, enable the Git hooks and commit myself.
 
-The scripts are in `~/.agents/skills/cadence/scripts/`. The setup procedure is
-[documented here](../commands/cadence-init.md): detect the project, review the
-proposed configuration, run the initializer, fill in the project's rules, and
-complete the printed Git hook steps. For Codex, also configure
-`codex_verification.mode` in `docs/llm-orchestrator/cadence.json`:
-`blocking` asks the assistant to address missing verification before finishing;
-`warn` reports the gap. See [the configuration example](codex-evidence.md#activation-contract).
+(The procedure is the same one [the Claude command follows](../commands/cadence-init.md).)
 
-The framework's shared instructions belong in its own repository. A project's
-rules, test commands, review records, and app-specific verification steps belong
-in that project's repository. Existing project rules are kept when updating the
-framework; changes to those rules need a deliberate amendment.
+**Step 2 — confirm the config.** The assistant shows you a proposed
+`docs/llm-orchestrator/cadence.json`. Check three things: the test command is
+the one you actually use, the folders listed as production code and tests are
+right, and for Codex `codex_verification.mode` is `blocking` (the assistant
+must address missing checks before finishing) or `warn` (it only reports the
+gap). New projects get `workflow: proportional`; older projects keep their
+existing workflow until you migrate them on purpose. If the initializer could
+not recognize your stack, it says so and leaves the test command for you to
+fill in; until it is filled in, the assistant reports verification as pending
+rather than passed.
 
-You can optionally use Claude for one of Codex's two independent reviews. It
-uses your existing Claude login and defaults to Opus at maximum effort. Follow
-[the Claude reviewer guide](codex-provider.md). Grok is not needed.
+**Step 3 — write the rulebook.** The initializer creates
+`docs/llm-orchestrator/LAWS.md` from a template with `<PLACEHOLDER>` slots:
+what the project is, what you promise users, what counts as catastrophic,
+serious or mild, your standing orders, and the rulings you have made. A short
+filled-in example ships with the skill as
+[`laws-example.md`](../skills/cadence/references/laws-example.md). The assistant
+may draft wording for you in the conversation; you decide what goes in. The
+rulebook is yours, and assistants never edit it on their own.
+
+**Step 4 — finish setup, in this order.** The initializer prints these same
+steps for the run it just made:
+
+1. Complete `LAWS.md` with your approved wording. Record the setup itself as
+   the first ruling, number one, in the rulings list.
+2. Start a session with `ORCH_CADENCE_UNLOCK=1` set in your own shell, then run
+   the `--lock` command the initializer printed. This records the finished
+   rulebook and configuration in the lock.
+3. Run `git config core.hooksPath .githooks` yourself, once per clone. The
+   commit check works only after this.
+4. Commit the setup files with the commit command the initializer printed.
+   This first commit needs no ruling number in its message, because there is
+   no earlier rule it amends; every later change to a protected file does.
+5. If the project has CI, add `.githooks/orch-cadence-check.sh --audit HEAD`
+   to its pipeline; it covers clones where the hooks were never enabled.
+
+**What lives where.** The framework's shared instructions stay in the plugin.
+Your project's rulebook, test commands and verification steps stay in your
+project and survive plugin updates; changing them later is a numbered ruling.
+
+**Optional.** For one of Codex's two independent reviews you can use Claude
+through your existing Claude login (default: Opus at maximum effort); see
+[the Claude reviewer guide](codex-provider.md).
 
 ## Updating to v0.8.0
 
@@ -162,7 +197,7 @@ Two options:
 ```
 This uses the plugin schema directly; no settings.json edits needed.
 
-**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` **completely** — all nineteen hook scripts across seven events. (An earlier version of this section wired 7 of 15 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
+**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` — every command hook across seven events. (An earlier version of this section wired 7 of 15 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
 ```jsonc
 {
   "env": { "ORCH_HOOK_PROFILE": "standard" },
@@ -175,7 +210,8 @@ This uses the plugin schema directly; no settings.json edits needed.
       { "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/user-prompt-submit.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-research-gate.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-handoff-nudge.sh" }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-handoff-nudge.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-evidence-ledger.sh" }
         ] }
     ],
     "PreToolUse": [
@@ -183,26 +219,30 @@ This uses the plugin schema directly; no settings.json edits needed.
         "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-no-verify.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-destructive-git.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-cadence-unlock.sh" }
         ] },
       { "matcher": "Edit|Write|MultiEdit",
         "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" }] },
       { "matcher": "Agent|Task",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-dispatch-model.sh" }] }
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-dispatch-model.sh" }] },
+      { "matcher": "Bash|Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-evidence-ledger.sh" }] }
     ],
     "PostToolUse": [
       { "matcher": "Skill",
         "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/skill-telemetry.sh" }] },
-      { "matcher": "Bash",
+      { "matcher": "Bash|Edit|Write|MultiEdit",
         "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-evidence-ledger.sh" }] }
     ],
     "PostToolUseFailure": [
-      { "matcher": "Bash",
+      { "matcher": "Bash|Edit|Write|MultiEdit",
         "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-evidence-ledger.sh" }] }
     ],
     "SubagentStop": [
       { "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/subagent-stop.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-verify-gate.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-researcher-validator.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-retry-cap.sh" }
         ] },
@@ -215,7 +255,8 @@ This uses the plugin schema directly; no settings.json edits needed.
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-protocol-grader.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-verify-gate.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-retry-cap.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-cadence-stop.sh" }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-cadence-stop.sh" },
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/orch-task-cleanup.sh" }
         ] }
     ]
   }
@@ -223,7 +264,7 @@ This uses the plugin schema directly; no settings.json edits needed.
 ```
 Replace `/full/path/to/.claude/` with the absolute path to the copied directory. Easier still: the copied `.claude/hooks/hooks.json` already has every path rewritten to absolute, so you can transcribe the entries from there.
 
-One shipped hook is not a script and is not shown above: the `type: "prompt"` termination-contract hook on `SubagentStop` (matcher `(^|:)orch-implementer$`), which judges whether an implementer's `Verify:` section contains real pasted output. If you want it in a manual wiring, copy its entry verbatim from `.claude/hooks/hooks.json`.
+One shipped hook is not a script and is not shown above: the `type: "prompt"` termination-contract hook on `SubagentStop` (matcher `(^|:)orch-implementer$`), which checks whether claimed verification has observed evidence (including the proportional `Verification:` vocabulary). If you want it in a manual wiring, copy its entry verbatim from `.claude/hooks/hooks.json`.
 
 ## Memory location
 
@@ -276,7 +317,7 @@ Disable individual hooks without changing profile (comma-separated):
 export ORCH_DISABLED_HOOKS=orch-guard,orch-research-gate
 ```
 
-Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-stop`, `orch-dispatch-model`, `orch-cadence-stop`.
+Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-evidence-ledger`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-protocol-grader`, `orch-verify-gate`, `orch-task-cleanup`, `orch-stop`, `orch-dispatch-model`, `orch-cadence-stop`.
 
 No cadence hook is exempt from this list. The three that run in cadence mode — the session-start line (`orch-session-start`), the end-of-turn verdict (`orch-cadence-stop`) and the dispatch-model guard (`orch-dispatch-model`) — are each nameable here, and each is inert in any project without a `docs/llm-orchestrator/cadence.json` that says `"enabled": true`, so there is nothing to disable until you opt in. `ORCH_CADENCE_UNLOCK=1` is not an off switch for them: it is the cadence's own unlock, described under "Escape hatches for the hard guards" below.
 
@@ -318,7 +359,7 @@ One accepted gap: these hooks resolve the project from `CLAUDE_PROJECT_DIR` (fal
 
 **Layer 1 — the native deny rules** in `.claude/settings.json`. Deny beats every hook and every allow rule, in every permission mode including bypass. The `Edit(...)` rules `cadence-init` writes cover the Edit and Write tools, the shell's recognised file commands (`cat`, `head`, `tail`, `sed`) and every shell redirection target, so a careless write to a locked file fails at once and loudly.
 
-That was checked live rather than only read (2026-09-06, Claude Code 2.1.263, six headless sessions against a throwaway project carrying exactly these rules): the Edit tool, the Write tool, `echo … > <locked file>`, `cp notes.md <locked file>` and `sed -i … <locked file>` were all refused and the file's hash never moved, while a control edit on an ordinary file went through — so the refusals are the deny rules, not a blanket denial. `cp` is more than the documentation promises. The full method and table: [`cadence-evidence.md`](./cadence-evidence.md).
+This was checked live, not only read; the method, date and results are in [`cadence-evidence.md`](./cadence-evidence.md).
 
 **The sandbox, and what it buys.** With Claude Code's sandbox enabled, those same `Edit` rules merge into an OS-level deny-write list enforced for **every subprocess** — which closes the one gap the rules otherwise state plainly: a script that opens the file itself, without naming it where the permission system can see it. That is the difference between "the agent's own tools are refused" and "nothing running under this session can write that file". Turn it on with `/sandbox` in a session, or with `"sandbox": {"enabled": true}` in `.claude/settings.json`, and re-run the check the way [`cadence-evidence.md`](./cadence-evidence.md) sets it out under its method — the same headless sessions against a throwaway project — to see it on your machine. The plugin never enables it for anyone: a sandbox changes how every command in the session behaves, and that is the user's decision, not an installer's.
 
@@ -336,8 +377,6 @@ None of the four blocks a turn by default; set `ORCH_STRICT_CADENCE_LOCK=1` in t
 Two of the four are live only after a step the init prints rather than takes. The `commit-msg` refusal starts working once this clone's hooks are routed with the line the init prints, and the manifest everything here compares against is only true once the laws' placeholders are filled in and re-locked. The init's order is: fill the placeholders, re-lock under the unlock, route this clone's hooks (once per clone), commit.
 
 The honest boundary is one sentence: a write the deny rules do not stop happens, is named at the end of that turn and at the next session start, and is refused at the commit.
-
-A shell guard — a hook that read each Bash command's text and refused the ones naming a locked path — was built and then removed. Deciding what a command does by reading it cannot be made tight (a computed path, an archive, an interpreter or an unlisted verb names nothing the text can see), and everything it did catch the alarm already names.
 
 ### The CI step
 
