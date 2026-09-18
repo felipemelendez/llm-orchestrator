@@ -34,8 +34,9 @@ MAX_CHARS="${ORCH_SESSION_MAX_CHARS:-8000}"
 # Read the hook event JSON from stdin to detect the session source. SessionStart
 # fires with source in {startup, clear, compact, resume}. When source==compact,
 # this is the first turn AFTER native compaction — the moment to advise the
-# controller that the in-flight narrative is lossy. PreCompact cannot inject
-# context (it only supports decision:block), so this is where that advisory lives.
+# controller that the in-flight narrative is lossy. A PreCompact hook exists,
+# but carries no additionalContext in hookSpecificOutput — it can block
+# compaction, not add to it — so this is where that advisory lives.
 INPUT=$(cat || true)
 # Extract the source, matching only the documented enum values. Claude Code's
 # SessionStart payload is flat (source is a top-level field), so the first match

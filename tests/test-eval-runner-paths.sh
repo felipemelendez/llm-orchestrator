@@ -5,9 +5,19 @@
 # subdirectory and aborted the 2026-08-05 compression A/B after its first arm
 # had already been paid for. This suite drives the WORKING-TREE runner
 # end-to-end in ORCH_EVAL_DRY_RUN mode (no model call, no cost) with a
-# slash-bearing ref arm — "ref:refs/heads/main", a spelling every clone can
-# resolve — and requires: exit 0, a graded row, the ORIGINAL arm string as the
-# row label, and a sanitized on-disk scratch name.
+# slash-bearing ref arm and requires: exit 0, a graded row, the ORIGINAL arm
+# string as the row label, and a sanitized on-disk scratch name.
+#
+# The arm ref is CREATED here (refs/orch-test/eval-arm -> HEAD) and deleted on
+# exit. It used to be "ref:refs/heads/main", called "a spelling every clone can
+# resolve" — which is false, and the falseness only showed up in CI. GitHub's
+# checkout creates a local branch for the ref being built and nothing else, so
+# on any branch that is not main, refs/heads/main does not exist; combined with
+# ORCH_REQUIRE_DEPS=1 (CI turns a skip into a failure, deliberately) this suite
+# hard-failed on every feature branch while passing on main and on any
+# developer clone. A red that appears on every branch teaches you to ignore the
+# red. Minting the ref makes the suite depend on nothing but HEAD, which exists
+# in every clone, worktree, and detached checkout.
 #
 # It also pins the dry-run mode's own hygiene:
 #   - a dry run must not touch the stable-name result copies (raw.<case>.jsonl
@@ -28,7 +38,13 @@ skip_suite() {
 }
 command -v python3 >/dev/null 2>&1 || skip_suite 'python3 not found'
 command -v git >/dev/null 2>&1 || skip_suite 'git not found'
-git -C "$ROOT" rev-parse refs/heads/main >/dev/null 2>&1 || skip_suite 'no local main branch'
+git -C "$ROOT" rev-parse --verify HEAD >/dev/null 2>&1 || skip_suite 'no commits in this checkout'
+
+# The slash-bearing arm ref, minted below once the cleanup trap is armed. Two
+# path segments, like the refs/heads/<branch> spelling it replaces, so the
+# sanitizer is exercised on the same shape.
+ARM_REF="refs/orch-test/eval-arm"
+ARM="ref:${ARM_REF}"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -57,14 +73,21 @@ restore() {
   done
   rm -f "$OUT/raw.shape-header.${RUN_ID}.jsonl" "$OUT/benchmark.shape-header.${RUN_ID}.json"
   rm -f "$OUT/raw.shape-header.${RUN_ID2}.jsonl" "$OUT/benchmark.shape-header.${RUN_ID2}.json"
+  git -C "$ROOT" update-ref -d "$ARM_REF" 2>/dev/null || true
   rm -rf "$TMP"
 }
 trap 'restore' EXIT
 
+# Mint the arm ref only after the trap above owns its deletion, so an
+# interrupt here cannot leave it behind. It is namespaced outside refs/heads/,
+# so it is not a branch and never shows up in `git branch`.
+git -C "$ROOT" update-ref "$ARM_REF" HEAD 2>/dev/null \
+  || skip_suite 'cannot create a ref in this checkout (read-only?)'
+
 set +e
 TMPDIR="$TMP/scratch/" ORCH_EVAL_DRY_RUN=1 ORCH_EVAL_RUN_ID="$RUN_ID" \
   bash "$ROOT/tests/evals/run-evals.sh" \
-  --case shape-header --arm "ref:refs/heads/main" --n 1 --model opus \
+  --case shape-header --arm "$ARM" --n 1 --model opus \
   >"$TMP/run.log" 2>&1
 rc=$?
 set -e
@@ -76,16 +99,17 @@ RAW="$OUT/raw.shape-header.${RUN_ID}.jsonl"
 if [[ -s "$RAW" ]]; then ok "raw row written"
 else fail "raw row written ($RAW missing/empty)"; fi
 
-if [[ -s "$RAW" ]] && python3 - "$RAW" <<'PY'
+if [[ -s "$RAW" ]] && python3 - "$RAW" "$ARM" <<'PY'
 import json, sys
 r = json.loads(open(sys.argv[1]).readline())
-assert r["arm"] == "ref:refs/heads/main", r["arm"]
+assert r["arm"] == sys.argv[2], r["arm"]
 assert r.get("error") is False, "dry-run row must not be an error row"
 PY
 then ok "row keeps the ORIGINAL arm label and is not an error row"
 else fail "row keeps the ORIGINAL arm label and is not an error row"; fi
 
-if ls "$TMP/scratch/llm-orch-evals"/shape-header-ref_refs_heads_main-1 >/dev/null 2>&1; then
+ARM_SAFE="$(printf '%s' "$ARM" | tr '/:' '__')"
+if ls "$TMP/scratch/llm-orch-evals/shape-header-${ARM_SAFE}-1" >/dev/null 2>&1; then
   ok "scratch dir name is sanitized (no path separators from the arm)"
 else
   fail "scratch dir name is sanitized (found: $(ls "$TMP/scratch/llm-orch-evals" 2>/dev/null | head -3 | tr '\n' ' '))"
@@ -137,7 +161,7 @@ else
   set +e
   TMPDIR="$TMP/scratch2/" PATH="$NOCLAUDE_PATH" ORCH_EVAL_DRY_RUN=1 ORCH_EVAL_RUN_ID="$RUN_ID2" \
     bash "$ROOT/tests/evals/run-evals.sh" \
-    --case shape-header --arm "ref:refs/heads/main" --n 1 --model opus \
+    --case shape-header --arm "$ARM" --n 1 --model opus \
     >"$TMP/run2.log" 2>&1
   rc2=$?
   set -e

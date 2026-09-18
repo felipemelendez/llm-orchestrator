@@ -5,10 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [0.8.0] - 2026-09-16
 
-This release adds the shared review process to Claude Code and Codex. Two agents
-review each change independently; a third helps only with findings that need a
-decision. Codex can check actual test results before reporting completion, and
-Claude can optionally take one of its review slots. Grok is not required.
+This release supports the way I work: brainstorm and plan with Claude Code,
+then build with Claude Code or Codex. The full plugin keeps brainstorming and
+planning in Claude Code; Codex gains the shared implementation, review, and
+verification process. Reviews are independent and sized to the change (see the
+2026-09-18 update below), and both tools record actual test results before
+reporting verified completion.
 
 Start with the [release overview](docs/release-v0.8.0.md) or the
 [installation and upgrade guide](docs/install.md#updating-to-v080).
@@ -53,8 +55,8 @@ The implementation details follow.
   treat missing, stale, failed or unrelated results as passing evidence.
 - Native reviewer start/stop records and optional restricted Claude reviews.
   Claude defaults to Opus at maximum effort, uses the existing login, and records
-  the reported response model. Grok is not required and no provider is silently
-  substituted.
+  the reported response model. The selected reviewer is never silently
+  replaced by a different model.
 - Project opt-in, explicit pending outcomes and one corrective continuation keep
   the completion check bounded. Ordinary read-only questions do not acquire a
   testing obligation from another writer's edits.

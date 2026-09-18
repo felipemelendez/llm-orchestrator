@@ -1,8 +1,9 @@
-# v0.8.0 — independent reviews for Claude Code and Codex
+# v0.8.0 — plan in Claude Code, build with Claude Code or Codex
 
-This release brings the shared review process to **Claude Code and Codex**. It
-helps your assistant check its work, get an independent second opinion, and show
-what actually passed before calling a change finished.
+**I prefer to brainstorm and plan with Claude Code, then build with both Claude
+Code and Codex.** This release brings that workflow to LLM Orchestrator: save an
+agreed plan, then use either assistant to implement it, review the changes, and
+check the results.
 
 ## Update, 2026-09-18: the process now matches the size of the change
 
@@ -34,56 +35,57 @@ Onboarding was rewritten for a first-time reader: a step-by-step guide,
 plain-language rulebook template, and a filled-in example rulebook.
 Existing projects keep the earlier fixed sequence until you migrate them.
 
-## What changes for you
+## Why the full plugin stays in Claude Code
 
-- **Two independent reviews.** One reviewer checks the work against your request;
-  the other looks for ways it could fail. They review separately, without seeing
+The Claude Code plugin includes brainstorming, research, and planning because
+that is where I prefer to do that work. The Codex setup focuses on what comes
+next: implementing the approved plan, getting independent reviews, and verifying
+the result. The shared development process is available in both tools, so you
+can choose which one to use for the implementation.
+
+## How to use the workflow
+
+1. **Plan in Claude Code.** Explore the idea and save the approved plan in your
+   project.
+2. **Build with either tool.** Continue in Claude Code, or open the project in
+   Codex and point it to the saved plan.
+3. **Review and verify.** Both follow the project's cadence: the agreed steps for
+   implementation, independent reviews, fixes, and testing.
+
+## What is new
+
+- **Two independent reviews.** One checks the changes against your request; the
+  other looks for ways they could fail. They work separately, without seeing
   each other's reports.
-- **A third agent only when needed.** When both reviewers agree on the findings,
-  their seriousness, and the next steps, the process moves on. When they disagree,
-  or only one raises a serious problem, a third agent examines those findings.
-  An unfinished review must be completed first.
-- **Codex checks actual test results.** Automatic checks record what ran and which
-  version of the code was tested. Missing, failed, or out-of-date results remain
-  unverified. The assistant's written claim alone does not count as a passing test.
-- **Your project keeps its rules.** Enable the process, called cadence, separately
-  in each project. Its rules and test commands stay with that project, and checks
-  flag unexpected changes to those rules.
-- **Claude can review work from Codex.** The optional Claude reviewer uses your
-  existing login and defaults to Opus at maximum effort. It fills one of the two
-  review slots. Grok is not required.
+- **Extra review only where needed.** If both agree on the findings, their
+  seriousness, and the next steps, the process moves on. A third agent examines disagreements or a serious
+  problem raised by only one reviewer. An unfinished review must be completed.
+- **Recorded test results in Codex.** Automatic checks record what actually ran
+  and which version of the code was tested. Missing, failed, or out-of-date
+  results stay unverified.
+- **Project rules stay with the project.** Enable cadence where you want it.
+  Your rules, test commands, and review records stay in that repository.
 
-This release adopts useful ideas from pstack: recording which assistant
-actually performed a review and making app checks repeatable. LLM Orchestrator still coordinates
-the work. App-specific test journeys stay in the app's repository; installing the
-framework alone does not create or run them.
+## Install or update
 
-## Get started or update
+**Claude Code:** install or update the plugin and restart the session. Run
+`/llm-orchestrator:cadence-init` to set up a project that has not enabled cadence.
 
-**Claude Code:** install or update the Claude plugin, restart the session, and use
-`/llm-orchestrator:cadence-init` in projects where you want cadence.
+**Codex:** run `./scripts/install.sh --codex` from your framework checkout. Open a
+fresh Codex CLI session, review and trust the automatic checks through `/hooks`,
+and enable cadence and Codex verification in the project. Rerun the installer
+after updating the framework.
 
-**Codex:** run `./scripts/install.sh --codex` from a permanent framework checkout.
-Then open a fresh Codex CLI session, review and trust the definitions in `/hooks`,
-and enable cadence and Codex verification in your project. Repeat the installer
-after updating the checkout; existing copies do not update automatically.
-
-[The installation guide](https://github.com/felipemelendez/llm-orchestrator/blob/v0.8.0/docs/install.md)
-includes the commands, upgrade steps, and a plain-language explanation of hooks.
-Claude Code and Codex share the cadence rules, while some additional checks remain
-specific to Claude Code.
+[Follow the installation and update guide](https://github.com/felipemelendez/llm-orchestrator/blob/main/docs/install.md)
+for the commands and an explanation of what each step does.
 
 ## What was checked
 
-The changes were independently reviewed against the requirements and checked for
-ways they could fail. The issues found were fixed and checked again. Automated tests cover the
-installer, review provider, protected files, and verification records. A fresh
-Codex CLI session also confirmed that test results were accepted, review activity
-was recorded, and the final completion check passed.
+The implementation received independent reviews, the issues found were fixed,
+and the merged version passed the automated tests. A fresh Codex CLI session also
+confirmed that test results and review activity were recorded and that the final
+completion check passed. Checks on a running app or device still need their own
+verification.
 
-These checks help catch mistakes; they do not prove every feature of your app
-works. Checks on a running app or connected device still need to be performed
-and reported separately.
-
-[Full changelog](https://github.com/felipemelendez/llm-orchestrator/blob/v0.8.0/CHANGELOG.md)
+[Full changelog](https://github.com/felipemelendez/llm-orchestrator/blob/main/CHANGELOG.md)
 · [Changes since v0.7.0](https://github.com/felipemelendez/llm-orchestrator/compare/v0.7.0...v0.8.0)

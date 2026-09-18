@@ -302,13 +302,22 @@ orch_evidence_unbacked_claim() {
   # `$ ` or `> ` prompt, a bullet, an arrow, a checkmark. `$ pytest -q` is the
   # single most common form and extracted nothing.
   #
+  # The bullet list is an ALTERNATION, never a bracket expression. A bracket
+  # expression matches bytes under a C locale, so `[-*+•]` also matched the
+  # E2 lead byte shared by `•` `→` `✓` `✔` — truncating those mid-character,
+  # defeating the arrow-strip below, and leaving the anchored command regex
+  # with nothing. An unextractable claim is an UNCHECKED claim: the gate went
+  # silent on fabricated evidence wherever the harness spawned hooks without a
+  # UTF-8 locale. Unlike the guards (which pin LC_ALL=C so bytes stay bytes),
+  # this extractor must read characters. Covered by tests/test-evidence-locale.sh.
+  #
   # Lines that DISCLAIM a run are dropped. Scanning them punished honesty: a
   # reply saying "`npm test` not run — no node toolchain here" was blocked, and
   # the model's cheapest fix would have been to delete the honest sentence.
   named=$(printf '%s\n' "${section}" \
     | grep -viE '\b(not run|never run|did ?n.?t run|was ?n.?t run|not executed|not needed|skipped|unaffected|n/a|instead of|rather than|no longer)\b' \
     | tr '`' '\n' \
-    | sed -E 's/^[[:space:]]*([-*+•]|[0-9]+[.)])[[:space:]]*//; s/^[[:space:]]*[$>][[:space:]]+//; s/^[[:space:]]*(→|->|=>|✓|✔|»)[[:space:]]*//; s/^[[:space:]]*(i[[:space:]]+)?(re-?)?(ran|run|executed|running)[[:space:]]+(the[[:space:]]+)?//' \
+    | sed -E 's/^[[:space:]]*(-|\*|\+|•|[0-9]+[.)])[[:space:]]*//; s/^[[:space:]]*[$>][[:space:]]+//; s/^[[:space:]]*(→|->|=>|✓|✔|»)[[:space:]]*//; s/^[[:space:]]*(i[[:space:]]+)?(re-?)?(ran|run|executed|running)[[:space:]]+(the[[:space:]]+)?//' \
     | grep -oE "${vre}.*" 2>/dev/null \
     | sed -E 's/[[:space:]]*(→|->|=>|—|\|\||#).*$//; s/[[:space:]]{2,}.*$//; s/^[[:space:]]*[;&|]?[[:space:]]*//; s/[[:space:]]+$//' \
     | grep -vE '^[[:space:]]*$' | sort -u)
