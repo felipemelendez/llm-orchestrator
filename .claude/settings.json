@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(docs/llm-orchestrator/LAWS.md)",
+      "Edit(docs/llm-orchestrator/cadence.json)",
+      "Edit(docs/llm-orchestrator/LOCK.sha256)",
+      "Edit(.claude/settings.json)",
+      "Edit(.githooks/**)"
+    ]
+  }
+}

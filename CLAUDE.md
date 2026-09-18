@@ -1,3 +1,4 @@
+@AGENTS.md
 # CLAUDE.md
 
 LLM Orchestrator project. Short on purpose.

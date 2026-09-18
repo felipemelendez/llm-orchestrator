@@ -29,3 +29,7 @@ tests/evals/results/benchmark.*.json
 # Python verification and provider helpers
 __pycache__/
 *.py[cod]
+.claude/settings.json.bak
+.claude/settings.json.bak.*
+AGENTS.md.bak*
+CLAUDE.md.bak*
