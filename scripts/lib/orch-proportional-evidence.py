@@ -507,9 +507,19 @@ READ_ONLY_COMMANDS = {
     'cut', 'tr', 'jq', 'diff', 'cmp', 'comm', 'column', 'nl', 'tac', 'rev', 'fold', 'echo', 'printf',
     'true', 'false', 'basename', 'dirname', 'realpath', 'uname', 'id', 'whoami', 'hostname', 'du',
     'df', 'shasum', 'sha256sum', 'md5', 'md5sum', 'test', '[', 'seq', 'expr', 'type',
+    'readlink', 'od', 'hexdump', 'strings', 'ps', 'sleep',
 }  # not less/more: `less -O file` logs its input to a file
 GIT_READ_SUBCOMMANDS = {'status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'grep',
-                        'check-ignore', 'blame', 'describe', 'shortlog', 'name-rev', 'count-objects'}
+                        'check-ignore', 'blame', 'describe', 'shortlog', 'name-rev', 'count-objects',
+                        'rev-list', 'merge-base', 'for-each-ref', 'show-ref', 'show-branch', 'diff-tree',
+                        'diff-index', 'cherry'}  # not ls-remote: --upload-pack runs a program
+# Leading git options that only change paging or the folder. Anything else
+# (-c sets config such as core.fsmonitor, --exec-path runs other programs) stays out.
+GIT_HARMLESS_PREFIX = ('--no-pager', '-P')
+# The wording the person reads when a shell command could not be classified.
+# Also compared by the settle path, so it lives in one place.
+UNCLEAR_SHELL = 'the hook could not tell which files this shell command may have changed'
+CONTENTION_COMPLETION = 'the contents after a delayed edit were not captured'
 # Exact argument sets, never "no arguments": bare `git stash` pushes.
 GIT_LISTING_FORMS = {
     ('branch',): {(), ('-a',), ('-r',), ('-v',), ('-vv',), ('--list',), ('--all',), ('--remotes',), ('--show-current',)},
@@ -529,9 +539,17 @@ def readonly_segment(args):
     if exe == 'sed':
         return sed_targets(args) == []
     if exe == 'git' and len(args) > 1:
+        rest = args[1:]
+        while rest and (rest[0] in GIT_HARMLESS_PREFIX or (rest[0] == '-C' and len(rest) > 2 and not rest[1].startswith('-'))):
+            rest = rest[2:] if rest[0] == '-C' else rest[1:]
+        if not rest:
+            return False
+        args = [args[0]] + rest
         sub = args[1]
         if sub in GIT_READ_SUBCOMMANDS:
             return True
+        if tuple(args[1:3]) == ('stash', 'show'):
+            return True  # diff --output/-O forms were rejected by read_command_can_write
         for head, forms in GIT_LISTING_FORMS.items():
             if tuple(args[1:1 + len(head)]) == head:
                 return tuple(args[1 + len(head):]) in forms
@@ -579,7 +597,7 @@ def write_targets(payload, root, api, harness):
     """Return canonical supported write operands, plus unresolved-target reason."""
     inp = payload.get('tool_input') or {}
     if not isinstance(inp, dict):
-        return [], 'missing tool input'
+        return [], 'the tool call had no input recorded'
     tool = payload.get('tool_name', '')
     cwd_value = inp.get('workdir') or inp.get('cwd') or payload.get('cwd')
     cwd = Path(cwd_value).resolve() if isinstance(cwd_value, str) and Path(cwd_value).is_absolute() else None
@@ -596,7 +614,7 @@ def write_targets(payload, root, api, harness):
         try:
             args = shlex.split(command or '')
         except ValueError:
-            return [], 'unresolved shell write target'
+            return [], UNCLEAR_SHELL
         if not args:
             return [], None
         # An explicit initial cd establishes the shell location. Arbitrary
@@ -605,7 +623,7 @@ def write_targets(payload, root, api, harness):
             cwd = (cwd / args[1]).resolve()
             args = args[3:]
         if any(c in ' '.join(args) for c in '\n\r;|&`$(){}'):
-            return [], 'unresolved shell write target'
+            return [], UNCLEAR_SHELL
         if task_resource_command(args, api):
             return [], None
         exe = Path(args[0]).name
@@ -614,12 +632,12 @@ def write_targets(payload, root, api, harness):
             targets = operands
         elif exe in ('cp', 'mv') and len(operands) == 2:
             if cwd is None or (cwd / operands[-1]).is_dir() or (cwd / operands[0]).is_dir():
-                return [], 'directory copy/move target set unavailable'
+                return [], 'this copy or move touched a folder, so the changed files could not be listed'
             targets = operands if exe == 'mv' else operands[1:]
         elif exe == 'sed':
             targets = sed_targets(args)
             if targets is None:
-                return [], 'unsupported sed syntax; complete target set unavailable'
+                return [], 'this sed command could not be read, so the changed files could not be listed'
             if not targets:
                 return [], None
         elif exe in ('echo', 'printf', 'cat') and any(a in ('>', '>>') for a in args):
@@ -627,19 +645,19 @@ def write_targets(payload, root, api, harness):
         elif exe == 'git' and len(args) > 1 and args[1] in ('add', 'commit'):
             return [], None  # Index/HEAD updates do not mutate checked contents.
         else:
-            return [], 'unresolved shell write target'
+            return [], UNCLEAR_SHELL
         if harness == 'codex' and not (inp.get('workdir') or inp.get('cwd')) and not (command or '').startswith('cd '):
             if any(not Path(p).is_absolute() for p in targets):
-                return [], 'shell working directory unavailable; use explicit absolute write operands'
+                return [], 'the shell folder was unknown, so relative paths could not be resolved; use absolute paths'
     else:
         return [], None
     if not targets or any(not isinstance(p, str) or not p for p in targets):
-        return [], 'missing write target'
+        return [], 'the edit named no file'
     resolved = []
     for target in targets:
         path = Path(target)
         if not path.is_absolute() and cwd is None:
-            return [], 'write working directory unavailable'
+            return [], 'the folder of this edit was unknown'
         full = (cwd / path if cwd else path).resolve()
         try:
             rel = full.relative_to(root).as_posix()
@@ -655,6 +673,18 @@ def write_targets(payload, root, api, harness):
         else:
             resolved.append(rel)
     return sorted(set(resolved)), None
+
+
+def command_summary(payload):
+    """The shell command as the person and the agent both saw it: one line, short."""
+    inp = payload.get('tool_input')
+    if payload.get('tool_name') != 'Bash' or not isinstance(inp, dict):
+        return None
+    command = inp.get('command', inp.get('cmd'))
+    if not isinstance(command, str) or not command.strip():
+        return None
+    text = ' '.join(command.split())
+    return text if len(text) <= 80 else text[:77] + '...'
 
 
 def mutation_invocation(payload, root, api, harness):
@@ -772,6 +802,9 @@ def settle_writes(state, root, config, api, call=None, policy=None, observation=
             if mutation.get('unknown'):
                 state.setdefault('uncertain', {})[key] = mutation['unknown']
             continue
+        # The command did finish. An entry that stays because its effect is
+        # unknown must never be reported as "never finished".
+        mutation['finished'] = True
         writes_before = {rel: dict(w) for rel, w in state.get('writes', {}).items()}
         if mutation.get('unknown') and mutation.get('observed_before') is not None:
             after_files = mutation_snapshot(root, config, policy or {}, api)
@@ -790,7 +823,7 @@ def settle_writes(state, root, config, api, call=None, policy=None, observation=
             try:
                 after = file_digest(root / rel, api)
             except (OSError, ValueError):
-                state.setdefault('uncertain', {})[key] = 'write content unavailable'
+                state.setdefault('uncertain', {})[key] = 'a changed file could not be read'
                 continue
             if before != after and is_source(rel, config, api):
                 record_write(state, rel, mutation['at'], after, measured=mutation.get('measured', {}).get(rel))
@@ -801,7 +834,7 @@ def settle_writes(state, root, config, api, call=None, policy=None, observation=
             state['last_settled_at'] = time.time()
         if not mutation.get('unknown'):
             state['mutations'].pop(key, None)
-            if state.setdefault('uncertain', {}).get(key) == 'source completion contents unavailable during contention':
+            if state.setdefault('uncertain', {}).get(key) == CONTENTION_COMPLETION:
                 state['uncertain'].pop(key)
             if key in state.get('observations', {}):
                 state['observations'][key]['completed'] = True
@@ -873,7 +906,7 @@ def invocation_identity(payload, cwd, api):
 def conflicting_observation(state, call, detail):
     # Separate from recoverable missing-start/unknown-write entries: a later
     # good command cannot erase conflicting reuse of a harness invocation ID.
-    state['uncertain']['conflict:' + call] = 'conflicting invocation observation: ' + detail
+    state['uncertain']['conflict:' + call] = 'two different records were seen for one tool call: ' + detail
 
 
 def replayed_post(state, payload, cwd, api):
@@ -1062,7 +1095,7 @@ def deferred_fact(payload, root, config, policy, cwd, api, harness, captured_at,
                          'command_runner': Path(argv[0]).name, 'cwd': str(cwd),
                          'started_at': captured_at, 'tool_use_id': call, 'proportional': True,
                          'session_id': payload.get('session_id'),
-                         'before': {'fingerprint': None, 'error': 'source baseline unavailable during contention'}}
+                         'before': {'fingerprint': None, 'error': 'the file state before a delayed command was not captured'}}
         if request:
             expected = {key: value for key, value in request.items() if key != 'argv'}
             if event == 'PreToolUse':
@@ -1116,7 +1149,7 @@ def defer_event(directory, payload, root, config, policy, cwd, api, harness, cap
         os.unlink(temporary)
     if fact['event'] == 'PreToolUse' and fact['family'] == 'read_only':
         return {}
-    message = 'Cadence observation deferred during bounded lock contention; verification remains PENDING until recorded facts are consumed.'
+    message = 'Cadence was busy recording another event, so this one was saved for later. The work stays pending until it is read.'
     if fact['event'] == 'Stop' and not payload.get('stop_hook_active'):
         text = api.clean_message(payload.get('last_assistant_message'))
         completion = COMPLETION.search(text)
@@ -1186,7 +1219,7 @@ def apply_deferred(state, fact, root, api, checkpoint):
         return
     if not call:
         if family != 'read_only':
-            state['uncertain']['missing-tool-id'] = 'deferred source/check identity unavailable'
+            state['uncertain']['missing-tool-id'] = 'a delayed record could not be matched to its tool call'
         return
     observed = state['observations'].get(call)
     if event == 'PreToolUse':
@@ -1194,7 +1227,7 @@ def apply_deferred(state, fact, root, api, checkpoint):
             if observed['request_sha256'] != fact['request_sha256']:
                 conflicting_observation(state, call, 'deferred start identity changed')
             elif family in ('check', 'mutation') and fact['captured_at'] < observed.get('observed_at', float('-inf')):
-                state['uncertain']['deferred:' + call] = 'earlier source baseline unavailable during contention'
+                state['uncertain']['deferred:' + call] = 'the file state before a delayed edit was not captured'
             return
         if call in state['pending'] or call in state['mutations']:
             conflicting_observation(state, call, 'original request unavailable for deferred start')
@@ -1208,7 +1241,7 @@ def apply_deferred(state, fact, root, api, checkpoint):
             if 'wrapper' in pending:
                 observed['wrapper_pending'] = {key: pending[key] for key in ('wrapper', 'kind', 'started_at')}
         elif family == 'mutation':
-            reason = 'source baseline unavailable during contention'
+            reason = 'the file state before a delayed command was not captured'
             state['uncertain'][call] = reason
             state['mutations'][call] = {'at': fact['captured_at'], 'unknown': reason, 'before': {},
                 'tool': fact['tool'], 'input_sha256': fact['input_sha256'], 'invocation': fact['invocation']}
@@ -1252,14 +1285,15 @@ def apply_deferred(state, fact, root, api, checkpoint):
         if response.get('session_id') is not None:
             mutation['process_id'] = response['session_id']
         if response.get('session_id') is None and response.get('status') not in ('running', 'pending'):
-            state['uncertain'][call] = 'source completion contents unavailable during contention'
+            state['uncertain'][call] = CONTENTION_COMPLETION
+            mutation['finished'] = True  # it did finish; only its effect is unknown
             state['last_settled_at'] = fact['captured_at']
         # A delayed ordinary Stop never hashes source to reconstruct this event.
     elif family == 'read_only':
         if observed is not None:
             observed['completed'] = True
     elif family in ('check', 'mutation'):
-        state['uncertain'][call] = 'source/check start event unavailable during contention'
+        state['uncertain'][call] = 'the start of a delayed tool call was not recorded'
         if family == 'check':
             check, result = fact['check'], fact.get('result', {})
             state.setdefault('uncertain_checks', {})[call] = {'command_sha256': check['command_sha256'],
@@ -1287,11 +1321,11 @@ def drain_deferred(directory, state, root, api, checkpoint):
             break
         name = re.fullmatch(r'deferred-(\d{20})-([a-f0-9]{64})\.json', path.name)
         if not name:
-            state.setdefault('uncertain', {})['deferred-order'] = 'deferred observation order unavailable; retained for recovery'
+            state.setdefault('uncertain', {})['deferred-order'] = 'the order of a delayed record is unknown; it is kept for later'
             break
         fact = json.loads(path.read_text())
         if fact.get('schema') != 1 or fact.get('id') != name[2] or fact.get('order') != int(name[1]):
-            state.setdefault('uncertain', {})['deferred-order'] = 'deferred observation identity/order conflict; retained for recovery'
+            state.setdefault('uncertain', {})['deferred-order'] = 'a delayed record clashes with an earlier one; it is kept for later'
             break
         if fact['id'] not in consumed:
             apply_deferred(state, fact, root, api, lambda: None)
@@ -1324,7 +1358,7 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
         return api.context(event, 'Proportional cadence evidence is active. Use the trusted verification route on the first invocation. Valid scoped checks survive turns and content-preserving commits; unresolved edits/checks remain pending. After changing code, finish with Verification: PASS, PENDING, BLOCKED, or NOT APPLICABLE — an accurate reason. A question or read-only reply needs no Verification line.')
     if event == 'PreToolUse':
         if not call:
-            state['uncertain']['missing-tool-id'] = 'tool identity unavailable'
+            state['uncertain']['missing-tool-id'] = 'the tool call had no id'
             return {}
         identity = invocation_identity(payload, cwd, api)
         observed = state['observations'].get(call)
@@ -1365,14 +1399,14 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
         targets = [rel for rel in targets if is_source(rel, config, api)]
         if targets or unknown:
             mutation = {'at': now, 'unknown': unknown, 'before': {}, 'tool': payload.get('tool_name'),
-                        'input_sha256': api.digest(inp),
+                        'input_sha256': api.digest(inp), 'command': command_summary(payload),
                         'invocation': mutation_invocation(payload, root, api, harness)}
             state['mutations'][call] = mutation
             state['observations'][call] = {'request_sha256': identity, 'posts': [], 'completed': False, 'observed_at': now}
             if unknown:
                 state['uncertain'][call] = unknown
             checkpoint()
-            if unknown == 'unresolved shell write target' and mutation['invocation']:
+            if unknown == UNCLEAR_SHELL and mutation['invocation']:
                 mutation['observed_before'] = mutation_snapshot(root, config, policy, api)
             for rel in targets:
                 try:
@@ -1380,7 +1414,7 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
                     mutation.setdefault('measured', {})[rel] = (
                         measurable_now(root, rel, api) if mutation['before'][rel] != 'deleted' else None)
                 except (OSError, ValueError):
-                    mutation['unknown'] = 'write target content unavailable'
+                    mutation['unknown'] = 'a changed file could not be read before the edit'
         return {}
     if event in ('PostToolUse', 'PostToolUseFailure'):
         if replayed_post(state, payload, cwd, api):
@@ -1414,7 +1448,7 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
             return {}
         if kind:
             identity = call or 'missing-verifier-pre'
-            state['uncertain'][identity] = 'verification start event missing; checked contents unavailable'
+            state['uncertain'][identity] = 'a check finished whose start was never recorded'
             state.setdefault('uncertain_checks', {})[identity] = {'command_sha256': api.digest(shlex.join(shlex.split(verify_command)).encode()), 'cwd': str(cwd), 'at': now}
             state['evidence'].append({'tool_use_id': call, 'started_at': now, 'finished_at': now, 'cwd': str(cwd),
                 'command_sha256': api.digest(shlex.join(shlex.split(verify_command)).encode()), 'status': 'missing_start', 'exit_code': None,
@@ -1424,7 +1458,7 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
         else:
             targets, unknown = write_targets(payload, root, api, harness)
             if unknown or any(is_source(p, config, api) for p in targets):
-                state['uncertain'][call or 'missing-write-pre'] = 'write start event missing'
+                state['uncertain'][call or 'missing-write-pre'] = 'an edit finished whose start was never recorded'
         return {}
     if event == 'Stop':
         if harness == 'codex':
@@ -1436,6 +1470,30 @@ def handle(state, payload, root, config, policy, cwd, api, checkpoint=lambda: No
             'status': event, 'worktree': str(root), 'session_id': payload.get('session_id'),
             'execution_import': 'unsupported: no trusted parent-task/delegated execution binding'}
     return {}
+
+
+def unclear_commands_text(state):
+    """Name the command both readers saw, never an internal label. Latest first."""
+    mutations = state.get('mutations', {})
+    items = []
+    for key, reason in sorted(state['uncertain'].items(), key=lambda kv: -mutations.get(kv[0], {}).get('at', float('-inf'))):
+        command = mutations.get(key, {}).get('command')
+        if command and reason == UNCLEAR_SHELL:
+            items.append('the command `' + command + '` may have changed files, and the hook could not tell which')
+        elif command:
+            items.append('the command `' + command + '`: ' + reason)
+        else:
+            items.append('the hook lost track of one step: ' + reason)
+    return items[0] + (' (+%d more)' % (len(items) - 1) if len(items) > 1 else '')
+
+
+def check_disposition(status, claims):
+    if status == 'passed':
+        return ('a check passed on an older version of the files' if claims
+                else 'a check passed earlier but has not been confirmed on the current files')
+    if status == 'failed':
+        return 'a check failed'
+    return 'a check ended without a clear result (' + str(status) + ')'
 
 
 def finish(state, payload, root, config, policy, api):
@@ -1519,37 +1577,53 @@ def finish(state, payload, root, config, policy, api):
         unfenced = re.sub(r"(?ms)^\s*(```|~~~).*?^\s*\1[^\n]*", "", raw).replace('`', '')
         raw_completion = COMPLETION.search(unfenced)
         unrecorded = unrecorded_named_checks((raw_completion or completion).group(2), fresh)
-    issues = []
+    # Each issue carries the next step that clears it. Both are written for
+    # the person first: the block reason is printed to them as a "Stop hook
+    # error", and the agent reads the same line as its instruction.
+    claude = state.get('harness') == 'claude'
+    plain_check = 'runs the check as one plain foreground command' if claude else 'runs the check through codex-verify.py'
+    plain_edit = ('edits files with Edit/Write, runs one plain command per step' if claude
+                  else 'edits with apply_patch, runs checks through codex-verify.py')
+    or_pending = ', or ends with "Verification: PENDING — <why>"'
+    issues, hints = [], []
+
+    def note(text, hint, first=False):
+        issues.insert(0 if first else len(issues), text)
+        hints.insert(0 if first else len(hints), hint)
     if unmeasured and unenumerated:
-        issues.append('could not list the repository files to match these changed paths: ' + ', '.join(sorted(unmeasured)))
+        note('the hook could not list the project files to match these changed paths: ' + ', '.join(sorted(unmeasured)),
+             'the agent ends with "Verification: PENDING — <why>" until the files can be listed')
     elif unmeasured:
-        issues.append('changed files the checks can never see (ignored, or in a skipped folder): ' + ', '.join(sorted(unmeasured)))
+        note('these changed files are outside what the checks cover: ' + ', '.join(sorted(unmeasured)),
+             "the agent adds them to a check's inputs" + or_pending)
     if unrecorded:
-        issues.append('the PASS names checks that were not seen running: ' + ', '.join(unrecorded))
+        note('the reply says these checks passed, but the hook never saw them run: ' + ', '.join(unrecorded),
+             'the agent ' + plain_check + ' and names only checks that ran')
     if state.get('deferred_pending'):
-        issues.append('some tool events are still waiting to be recorded')
+        note('some tool results are still being recorded', 'the agent ends with "Verification: PENDING — recording in progress"')
     if state['uncertain']:
-        issues.append('commands whose effect on files could not be determined (' + '; '.join(sorted(set(state['uncertain'].values()))) + ')')
+        note(unclear_commands_text(state), 'the agent ' + plain_edit + or_pending)
     if state['pending']:
-        issues.append('a check is still running or never reported its result')
-    if state['mutations']:
-        issues.append('a command that may have written files never reported finishing')
+        note('a check is still running, or its result never came back', 'the agent ' + plain_check)
+    if any(not m.get('finished') for m in state['mutations'].values()):
+        note('a command that may have changed files never reported finishing', 'the agent ' + plain_check)
     if unresolved:
-        dispositions = {('passed earlier but not yet confirmed on the current files' if not claims else 'passed on an older version of the files')
-                        if r['status'] == 'passed' else r['status'] for r in unresolved}
-        issues.append('checks that did not count: ' + ', '.join(sorted(dispositions)))
+        note('; '.join(sorted({check_disposition(r['status'], claims) for r in unresolved})),
+             'the agent ' + plain_check + ' after the last edit')
         errors = sorted({r['fingerprint_error'] for r in unresolved if r.get('fingerprint_error')})
         if errors:
-            issues.append('; '.join(errors))
+            note('the check could not be tied to the files it ran on (' + '; '.join(errors) + ')', 'the agent ' + plain_check)
     if uncovered:
-        issues.append('changed files have no passing check that covers them')
+        note('the changed files have no passing check that covers them', 'the agent ' + plain_check + or_pending)
     if state['writes'] or state['uncertain']:
         try:
             scope_definition(root, config, [])
         except (ValueError, TypeError) as exc:
             # Configuration problems lead: nothing else can be fixed before them.
-            issues.insert(0, 'no supported direct test runner is configured; Codex checks must go through codex-verify.py')
-            issues.insert(0, 'the project config needs prod_globs, test_globs and verification_config_globs: ' + str(exc))
+            note('no direct test runner is set up, so Codex checks must go through codex-verify.py',
+                 'the person fixes cadence.json', first=True)
+            note('cadence.json needs prod_globs, test_globs and verification_config_globs: ' + str(exc),
+                 'the person fixes cadence.json', first=True)
     requirement = state.get('required_validation')
     if requirement:
         external = requirement['external']
@@ -1564,7 +1638,8 @@ def finish(state, payload, root, config, policy, api):
         if not external and covered and not issues:
             state.pop('required_validation', None)
         else:
-            issues.append('an earlier PENDING/BLOCKED declaration is still open')
+            note('an earlier reply said checking was still pending, and it still is',
+                 'the agent ' + plain_check + ', or keeps saying "Verification: PENDING — <why>"')
     if label in ('PENDING', 'BLOCKED') and not claims:
         retain_declaration(state, pending_declaration(message, api), time.time(), completion.group(2),
                            unresolved + list(state['pending'].values()))
@@ -1607,21 +1682,15 @@ def finish(state, payload, root, config, policy, api):
         state.update(outcome='read_only' if not state['writes'] else 'not_applicable', continuation_pending=False)
         return {}
     if not issues:
-        issues.append('a PASS needs a recorded passing check on the final files')
-    if state.get('harness') == 'claude':
-        remedy = 'Run checks as single foreground commands, edit with Edit/Write, or end with "Verification: PENDING — reason".'
-    else:
-        remedy = 'Edit with apply_patch, run checks through codex-verify.py, or end with "Verification: PENDING — reason".'
-    shown = '; '.join(issues[:2]) + (' (+%d more)' % (len(issues) - 2) if len(issues) > 2 else '')
-    reason = 'Cadence: not confirmed — ' + shown + '. ' + remedy
+        note('the reply says PASS, but the hook saw no check pass on the final files', 'the agent ' + plain_check)
+    headline = 'it says PASS, but no check confirmed it' if claims else 'files may have changed, but no check confirmed them'
+    why = ('; '.join(issues[:2]) + (' (+%d more)' % (len(issues) - 2) if len(issues) > 2 else '')).rstrip('.')
     if policy.get('mode') == 'blocking' and not state.get('block_count') and not payload.get('stop_hook_active'):
         state.update(outcome='needs_verification', block_count=1, continuation_pending=True)
-        return {'decision': 'block', 'reason': reason}
+        return {'decision': 'block', 'reason': 'Cadence stopped this reply: ' + headline + '.\nWhy: ' + why + '.\nNext: ' + hints[0] + '.'}
     state.update(outcome='unverified', continuation_pending=False)
-    # The person sees this line; the agent already received the full reason on
-    # the block. Keep it short: what happened and the leading cause.
-    summary = '; '.join(issues[:2]) + (' (+%d more)' % (len(issues) - 2) if len(issues) > 2 else '')
-    return {'systemMessage': 'UNVERIFIED: this PASS was not confirmed by the cadence hooks — ' + summary + '.'}
+    # The agent already continued once; this line is for the person.
+    return {'systemMessage': 'Cadence could not confirm this reply: ' + why + '. The work stays unverified until a check passes on the final files.'}
 
 
 def claude_main():
@@ -1642,7 +1711,7 @@ def claude_main():
     if config.get('enabled') is not True or config.get('workflow', 'legacy') == 'legacy':
         return 3
     if config.get('workflow') != 'proportional':
-        print(json.dumps({'decision': 'block', 'reason': 'Cadence workflow must be legacy or proportional.'}))
+        print(json.dumps({'decision': 'block', 'reason': 'Cadence: cadence.json names an unknown workflow. Set "workflow" to "proportional" or "legacy".'}))
         return 0
     hook = Path(__file__).resolve().parents[1] / 'hooks/codex-evidence.py'
     spec = importlib.util.spec_from_file_location('cadence_evidence_api', hook)
@@ -1650,16 +1719,17 @@ def claude_main():
     spec.loader.exec_module(api)
     policy = config.get('claude_verification', {'mode': 'blocking'})
     if not isinstance(policy, dict) or policy.get('mode') not in ('blocking', 'warn'):
-        print(json.dumps({'systemMessage': 'Cadence Claude execution evidence inactive: configure claude_verification.mode.'}))
+        print(json.dumps({'systemMessage': 'Cadence is not checking this session: set claude_verification.mode to "blocking" or "warn" in cadence.json.'}))
         return 0
     sid = payload.get('session_id')
     if not isinstance(sid, str) or not sid:
-        print(json.dumps({'decision': 'block', 'reason': 'Cadence execution session identity unavailable; report Verification: PENDING — reason.'}))
+        print(json.dumps({'decision': 'block', 'reason': 'Cadence could not identify this session, so it cannot confirm the work. End with "Verification: PENDING — session identity unavailable".'}))
         return 0
     if payload.get('hook_event_name') == 'SubagentStop':
         if not isinstance(payload.get('agent_id'), str) or not payload['agent_id']:
-            reason = 'Cadence child execution identity unavailable; verification remains pending. Controller evidence was not finalized.'
-            result = {'systemMessage': 'UNVERIFIED: ' + reason} if payload.get('stop_hook_active') else {'decision': 'block', 'reason': reason}
+            reason = 'Cadence could not identify this helper agent, so its work stays unconfirmed.'
+            result = ({'systemMessage': reason} if payload.get('stop_hook_active')
+                      else {'decision': 'block', 'reason': reason + ' End with "Verification: PENDING — helper identity unavailable".'})
             print(json.dumps(result))
             return 0
         # The harness reports the actual child identity. Finalize only that
@@ -1689,4 +1759,4 @@ if __name__ == '__main__':
     try:
         sys.exit(claude_main())
     except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
-        print(json.dumps({'decision': 'block', 'reason': 'Cadence execution evidence unavailable; report Verification: PENDING — hook evidence unavailable.'}))
+        print(json.dumps({'decision': 'block', 'reason': 'Cadence hit an internal error and could not confirm this reply. End with "Verification: PENDING — cadence hook error".'}))

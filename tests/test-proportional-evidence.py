@@ -39,6 +39,18 @@ class ProportionalTests(fixture.EvidenceTests):
     def assert_blocked(self):
         self.assertEqual(self.stop('Verification: PASS — current checks cover the changed source').get('decision'), 'block')
 
+    def test_prop_block_reason_reads_as_what_why_next(self):
+        # The same line is printed to the person as a "Stop hook error" and
+        # read by the agent as its instruction, so it is plain and has a shape.
+        self.change()
+        response = self.stop('Verification: PASS — current checks cover the changed source')
+        self.assertEqual(response.get('decision'), 'block')
+        what, why, following = response['reason'].split('\n')
+        self.assertEqual(what, 'Cadence stopped this reply: it says PASS, but no check confirmed it.')
+        self.assertEqual(why, 'Why: the changed files have no passing check that covers them.')
+        self.assertTrue(following.startswith('Next: the agent runs the check '), following)
+        self.assertIn('or ends with "Verification: PENDING — <why>".', following)
+
     def test_actual_wrapper_verifies_with_raw_stdout_hook_payload(self):
         self.change()
         ran, receipt, output = self.run_check()
@@ -876,7 +888,7 @@ class ProportionalTests(fixture.EvidenceTests):
         self.run_check()
         self.event('UserPromptSubmit', turn_id='attempt-waiver')
         response = self.stop('Verification: NOT APPLICABLE — manual diff inspected')
-        self.assertTrue(response.get('decision') == 'block' or 'UNVERIFIED' in response.get('systemMessage', ''))
+        self.assertTrue(response.get('decision') == 'block' or 'could not confirm' in response.get('systemMessage', ''))
         self.assertTrue(self.records()['required_validation']['external'])
         self.assertNotEqual(self.records().get('outcome'), 'verified')
 
@@ -1302,6 +1314,19 @@ class ProportionalTests(fixture.EvidenceTests):
         self.assertTrue(module.readonly_shell("sed -n 's/a/b/p' data | sed -n '2,4p'", api))
         self.assertTrue(module.readonly_shell("sed -n 's@x@y@gp' data", api))
         self.assertTrue(module.readonly_shell("sed -n 's/a\\/b/c\\\\d/p' data", api))
+        # Paging and folder options on git, more read-only git subcommands, and
+        # a few pure readers. Anything that sets config, names an exec path or
+        # an upload-pack program, or writes diff output stays out.
+        for command in ('git --no-pager diff --stat', 'git -P log -1', 'git -C src log --oneline -3',
+                        'git rev-list --count HEAD', 'git merge-base main HEAD', "git for-each-ref --format='%(refname)'",
+                        'git show-ref --heads', 'git stash show -p', "git -C src --no-pager stash show 'stash@{0}'",
+                        'readlink -f src', 'ps aux | grep node', 'sleep 1', 'od -c data | head', 'strings native/module.py'):
+            self.assertTrue(module.readonly_shell(command, api), command)
+        for command in ('git -c core.fsmonitor=touch status', 'git --exec-path=/tmp status', 'git --git-dir=.git status',
+                        'git -C src rm main.py', 'git --no-pager stash', 'git -C', 'git -C -P log', 'git --no-pager',
+                        'git stash show --output=x.txt', 'git -C src log -O/tmp/pager', 'git ls-remote origin',
+                        'git stash drop', 'git symbolic-ref HEAD refs/heads/x', 'env touch x', 'date -s tomorrow'):
+            self.assertFalse(module.readonly_shell(command, api), command)
         self.assertEqual(module.parse_substitution('s@x@touch probe.py #\\\\@e #@'), None)
         self.assertEqual(module.parse_substitution('s/a\\/b/c/gp'), ('gp', None))
         self.assertEqual(module.parse_substitution('s/a/b/w out.txt'), ('', 'out.txt'))
@@ -1457,7 +1482,7 @@ class ProportionalTests(fixture.EvidenceTests):
         self.mutate('src/build/rules.py', 'rule = 1\n')
         self.run_check()
         self.assert_blocked()
-        self.assertIn('the checks can never see', self.stop('Verification: PASS — app check').get('systemMessage', ''))
+        self.assertIn('outside what the checks cover', self.stop('Verification: PASS — app check').get('systemMessage', ''))
 
     def test_prop_ignored_source_write_never_passes(self):
         self.write('.gitignore', 'src/generated.py\n')
@@ -1474,7 +1499,7 @@ class ProportionalTests(fixture.EvidenceTests):
         self.run_check()
         self.delete_observed('src/build/rules.py')
         self.assert_blocked()
-        self.assertIn('the checks can never see', self.stop('Verification: PASS — app check').get('systemMessage', ''))
+        self.assertIn('outside what the checks cover', self.stop('Verification: PASS — app check').get('systemMessage', ''))
 
     def delete_observed(self, rel):
         self.seq += 1
@@ -1755,7 +1780,7 @@ class ClaudeTests(ProportionalTests):
         self.assertEqual(self.stop('Verification: PASS — child report').get('decision'), 'block')
         response = self.event('SubagentStop', last_assistant_message='Verification: PASS — missing child identity')
         self.assertEqual(response.get('decision'), 'block')
-        self.assertIn('identity unavailable', response['reason'])
+        self.assertIn('could not identify this helper agent', response['reason'])
 
     def test_claude_missing_child_identity_has_bounded_continuation(self):
         self.change()
@@ -1764,8 +1789,32 @@ class ClaudeTests(ProportionalTests):
         self.assertEqual(first.get('decision'), 'block')
         repeated = self.event('SubagentStop', stop_hook_active=True, last_assistant_message='Review completed.')
         self.assertNotIn('decision', repeated)
-        self.assertIn('UNVERIFIED', repeated['systemMessage'])
+        self.assertIn('unconfirmed', repeated['systemMessage'])
         self.assertEqual(self.records(), before)
+
+    def test_claude_unclear_command_message_names_the_command_in_plain_words(self):
+        # A command the hook cannot read is reported by its text, the way the
+        # person saw it, and a command that did finish is never called unfinished.
+        command = "sed -e 's/a/b/p' -e 's/c/d/e' data"
+        fields = dict(tool_name='Bash', tool_use_id='unclear-sed', tool_input={'command': command})
+        self.event('PreToolUse', **fields)
+        self.event('PostToolUse', tool_response={'stdout': 'x', 'stderr': '', 'interrupted': False}, **fields)
+        self.assertIn('unclear-sed', self.records()['uncertain'])
+        self.assertTrue(self.records()['mutations']['unclear-sed']['finished'])
+        response = self.stop('Finished the change.')
+        self.assertEqual(response.get('decision'), 'block')
+        reason = response['reason']
+        self.assertTrue(reason.startswith('Cadence stopped this reply: files may have changed, but no check confirmed them.\nWhy: '), reason)
+        self.assertIn('the command `' + command + '`: this sed command could not be read, so the changed files could not be listed', reason)
+        self.assertIn('\nNext: the agent edits files with Edit/Write, runs one plain command per step, or ends with "Verification: PENDING', reason)
+        for label in ('never reported finishing', 'unresolved', 'not confirmed —', 'target'):
+            self.assertNotIn(label, reason)
+        repeated = self.stop('Finished the change.', stop_hook_active=True)
+        self.assertNotIn('decision', repeated)
+        self.assertTrue(repeated['systemMessage'].startswith('Cadence could not confirm this reply: the command `'), repeated)
+        self.assertIn('stays unverified', repeated['systemMessage'])
+        # Saying PENDING honestly is accepted without a second nag.
+        self.assertEqual(self.stop('Verification: PENDING — the sed command could not be classified'), {})
 
     def test_claude_missing_or_crashing_dispatcher_blocks_explicitly(self):
         import shutil

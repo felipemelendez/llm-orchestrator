@@ -27,6 +27,24 @@ live tree's diff hash against the handoff. The tree wins on a mismatch.>
   every merge · a wait loop that greps for a process name matches its own shell.
 - <…>
 
+## 2026-09-19 — plain-language hook messages
+
+- The evidence hook (`scripts/lib/orch-proportional-evidence.py`) runs live from
+  this checkout on every tool call. An edit that calls a name before the edit
+  that defines it crashes the hook, the wrapper exits 2, and every write is
+  blocked, including the fix; only plain single read commands still work. Make
+  each edit to that file self-contained (add the helper and its first call in
+  one edit), and keep a scratch copy path ready. Recovery needs the person to
+  copy the fixed file in from their own shell.
+- Once a shell command is marked "may have changed files", even a read such as
+  `sed -n 1,5p f; echo` with a `;` or `$(...)` counts as a possible write and is
+  blocked the same way. During such a lockout, read with one plain command per
+  call.
+- A test whose output quotes a line like `'0 passed, 1 failed.'` is recorded by
+  the evidence hook as a failed check (`fail_count_re` matches the quoted text).
+  `tests/test-cadence-gate.sh` does this. Do not read the hook's "failed" note
+  as a real failure without looking at the suite's own PASS line.
+
 ## <next session>
 
 - (append here)

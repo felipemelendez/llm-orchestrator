@@ -69,7 +69,7 @@ if [[ ${PROP_RC} -eq 0 && -n "${PROP_RESULT}" ]]; then
   printf '%s\n' "${PROP_RESULT}"
   exit 0
 elif [[ ${PROP_RC} -ne 3 ]]; then
-  printf '%s\n' 'Cadence execution evidence unavailable: the proportional dispatcher failed. Verification: PENDING — restore the installed evidence helper before claiming verification.' >&2
+  printf '%s\n' 'Cadence hit an internal error in its evidence hook, so this tool call could not be recorded. Restore the hook file, then end with "Verification: PENDING — cadence hook error".' >&2
   exit 2
 fi
 [[ -n "${INPUT}" ]] || exit 0
