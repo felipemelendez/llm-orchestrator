@@ -122,13 +122,14 @@ check_latency "orch-handoff-nudge.sh"       "$TRANSCRIPT_EVENT"
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
-check_latency "orch-protocol-grader.sh"     "$TRANSCRIPT_EVENT"
 check_latency "subagent-stop.sh"            "$TRANSCRIPT_EVENT"
 check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-verify-gate.sh"         "$TRANSCRIPT_EVENT"
 ORCH_RETRY_CAP=1 check_latency "orch-retry-cap.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-stop.sh"                "$TRANSCRIPT_EVENT"
-check_latency "orch-evidence-ledger.sh"     "$BASH_EVENT"
+# orch-protocol-grader.sh and orch-evidence-ledger.sh are no longer timed here: the
+# grader is deleted and the ledger is a retired, unregistered stub. Neither is a
+# hook hooks.json fires, so neither has a latency budget to defend.
 check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
 
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"

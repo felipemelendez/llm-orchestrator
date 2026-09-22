@@ -7,7 +7,11 @@
 # returns BLOCKED forever. This reaper releases a mutex ONLY when the evidence
 # ties it to the implementer that just stopped:
 #
-#   1. The mutex map written by orch-evidence-ledger.sh: claims recorded with
+#   1. The mutex map. DEAD since 2026-09-21: orch-evidence-ledger.sh was its
+#      only writer and it is gone, so this source now finds nothing and the
+#      reaper falls through to source 2. That errs toward NOT reaping, which
+#      is the safe direction. Kept so a future writer can fill it again.
+#      Claims were recorded with
 #      THIS agent_id and no matching release → reap those paths exactly.
 #      (Sound because the ledger records a claim only when the COMMAND's
 #      success entails the mkdir's success — "PostToolUse fires only on

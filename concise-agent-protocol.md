@@ -25,7 +25,7 @@ remaining validation; BLOCKED names the unavailable prerequisite. NOT APPLICABLE
 states why no meaningful automated check applies and confirms manual diff
 inspection. It is never an executed pass and cannot clear failed, unknown,
 stale or required validation. Use PARTIAL/BLOCKED when the task remains unfinished.
-The shape grader validates this vocabulary; execution evidence is validated by
+This vocabulary is checked by
 the separate evidence gate. Missing/legacy workflow and disabled/absent cadence
 retain the original `Verify:` contract below.
 
@@ -168,7 +168,7 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 
 ## Linting
 
-The Stop hook `scripts/hooks/orch-protocol-grader.sh` grades the controller's last reply against the six shapes after every turn (non-blocking by default; set `ORCH_STRICT_PROTOCOL=1` to block on failure). `scripts/protocol-lint.sh` is a standalone CLI for the same check. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block).
+`scripts/protocol-lint.sh` is a standalone CLI that checks a reply against the six shapes. The Stop-hook grader that ran it after every turn was removed: this repo's own ablation measured its contribution at zero, and it was a source of terminal noise. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block).
 
 ## Injected blocks (single source)
 
@@ -177,7 +177,7 @@ Two hooks inject protocol text, on two different schedules, from the two marked 
 The two schedules are not interchangeable, and the split follows Anthropic's current guidance:
 
 - **After compaction — re-establish.** `SessionStart` (`source=compact`) injects the *recovery core* below. Compaction is the one moment the earlier context is genuinely gone: the `using-orchestrator` eager block was injected before the boundary and did not survive it, so this block has to stand alone. Anthropic names compaction as a place to re-hydrate context deliberately ("consider hydrating through tools … or during context compaction" — [Prompting best practices → Migrating away from prefilled responses](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices)).
-- **Every turn — nudge, don't restate.** `UserPromptSubmit` injects the *turn nudge* below. This text is paid for on every single exchange and accumulates for the life of the session, so it carries only the format contract the Stop-hook grader actually enforces, in its shortest self-contained form. It is deliberately a distillation, not a copy: Anthropic's Claude 5 guidance retired the practice of stating the same instruction in two places ("Earlier Claude models could sometimes need repeated instructions or be more likely to listen to instructions at the end of their context window than at the start… we could delete these repeat examples" — [The new rules of context engineering](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models)), while still sanctioning one short end-of-context reminder for output shape and length ("In a long system prompt, pair the instruction with a short reminder near the end of the prompt" — [Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)).
+- **Every turn — nudge, don't restate.** `UserPromptSubmit` injects the *turn nudge* below. This text is paid for on every single exchange and accumulates for the life of the session, so it carries only the format contract itself, in its shortest self-contained form. It is deliberately a distillation, not a copy: Anthropic's Claude 5 guidance retired the practice of stating the same instruction in two places ("Earlier Claude models could sometimes need repeated instructions or be more likely to listen to instructions at the end of their context window than at the start… we could delete these repeat examples" — [The new rules of context engineering](https://claude.com/blog/the-new-rules-of-context-engineering-for-claude-5-generation-models)), while still sanctioning one short end-of-context reminder for output shape and length ("In a long system prompt, pair the instruction with a short reminder near the end of the prompt" — [Prompting Claude Opus 5](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-5)).
 
 Anything an agent needs *once* — skill precedence, the working rules, the routing table — belongs in the `using-orchestrator` eager block or the skill body, not here. Repeating it per turn buys nothing on Claude 5 models and teaches the agent that this corpus repeats itself, which is what trains skimming.
 

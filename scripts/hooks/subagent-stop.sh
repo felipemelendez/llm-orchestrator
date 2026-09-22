@@ -60,9 +60,6 @@ if [[ ! -f "${LIB}" ]]; then
 fi
 # shellcheck source=scripts/lib/orch-protocol.sh
 source "${LIB}"
-EV_LIB="${HOOK_DIR}/../lib/orch-evidence.sh"
-# shellcheck source=scripts/lib/orch-evidence.sh
-[[ -f "${EV_LIB}" ]] && source "${EV_LIB}"
 PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
 # shellcheck source=scripts/lib/orch-project.sh
 [[ -f "${PROJ_LIB}" ]] && source "${PROJ_LIB}"
@@ -162,19 +159,6 @@ case "${AGENT_TYPE}" in
     GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_status_block "" "$INPUT" 2>&1)
     if [[ $? -ne 0 ]]; then
       emit "orch-subagent-stop: implementer finished without a valid Status block (${GRADE_OUTPUT}). Expected DONE (Summary: + $VERIFY_LABEL) | DONE_WITH_CONCERNS (Concerns: + $VERIFY_LABEL) | BLOCKED (Need:) | NEEDS_CONTEXT (Ask:) | PARTIAL (Progress: + Remaining:) at the start of a line. A completion claim carries the verification burden: $VERIFY_GUIDANCE"
-    fi
-    # --- Check 3: evidence cross-check on completion claims (warn-only) -----
-    if printf '%s' "${ASSISTANT_TEXT}" | grep -qE '^Status:[[:space:]]*(DONE|DONE_WITH_CONCERNS)\b' \
-       && declare -f orch_evidence_check >/dev/null 2>&1 && [[ -n "${SESSION_ID}" ]]; then
-      LEDGER=$(orch_evidence_ledger_path "${SESSION_ID}")
-      EV_REASON=$(orch_evidence_check "${ASSISTANT_TEXT}" "${LEDGER}")
-      EV_RC=$?
-      if [[ ${EV_RC} -eq 1 ]]; then
-        printf 'orch-subagent-stop: implementer DONE claim fails evidence check — %s Controller: do NOT trust this DONE; resolve the evidence mismatch before marking the task complete.\n' "${EV_REASON}" >&2
-      fi
-      # A return that cites no stamp is silent by construction: citation is
-      # opt-in (ORCH_EVIDENCE_MARKER=1) and the ledger is read directly by the
-      # controller-side gate. Only a stamp that contradicts the ledger speaks.
     fi
     ;;
   *orch-researcher)

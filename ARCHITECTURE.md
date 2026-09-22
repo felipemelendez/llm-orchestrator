@@ -1,6 +1,6 @@
 # Architecture
 
-LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory. One optional, additive exception: `workflows/*.js` — deterministic orchestration scripts for Claude Code's `Workflow` tool. These run only inside that harness and are a *preferred accelerator* for exactly one layer — code review (Layer 6); the markdown path stays canonical, and Layer 4 is deliberately not scripted (see Layer 6's scope decision). The skills/commands/agent prompts (markdown) are portable to any harness that can read them; the hook-based **enforcement** (protocol grader, research gate, guards, handoff) is Claude Code-specific — see "Why this shape" for the precise split. See the "Workflows" entry in the Component contract.
+LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory. One optional, additive exception: `workflows/*.js` — deterministic orchestration scripts for Claude Code's `Workflow` tool. These run only inside that harness and are a *preferred accelerator* for exactly one layer — code review (Layer 6); the markdown path stays canonical, and Layer 4 is deliberately not scripted (see Layer 6's scope decision). The skills/commands/agent prompts (markdown) are portable to any harness that can read them; the hook-based **enforcement** (research gate, guards, shape checks, handoff nudge) is Claude Code-specific — see "Why this shape" for the precise split. See the "Workflows" entry in the Component contract.
 
 This document has two parts. The first part — **Ten layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
 
@@ -33,7 +33,7 @@ Every task category has a defined workflow that produces a durable artifact:
 
 The spec file gets read by `/llm-orchestrator:plan` (which produces the plan file), the plan file gets read by `/llm-orchestrator:dispatch` (which executes it), and the plan file's checkboxes track state across `/clear`.
 
-18 first-party skills today, capped at ~40 by design — past that, discoverability collapses. Published skill-library research also reports that selection accuracy drops sharply once trigger descriptions become semantically confusable, so the binding constraint is distinct triggers, not the raw count.
+19 first-party skills today, capped at ~40 by design — past that, discoverability collapses. Published skill-library research also reports that selection accuracy drops sharply once trigger descriptions become semantically confusable, so the binding constraint is distinct triggers, not the raw count.
 
 ### Layer 3 — State machine for multi-step work
 
@@ -106,7 +106,7 @@ multi-agent boundary that current guidance still endorses, and because the docs 
 cross-checking as the thing a workflow adds beyond "run more agents". Honest status: correct
 (mutation-tested), not *measured* to improve review quality.
 
-### Layer 7 — Evidence-based completion (unfakeable by construction)
+### Layer 7 — Evidence-based completion
 
 Every claim of "done" includes the actual command output that proves it. A `Changed:` block without a `Verify:` line is incomplete:
 
@@ -118,25 +118,20 @@ Verify:
 - pnpm test → 142 passed (was 141 + 1 failing)
 ```
 
-The sharp question for any verification gate is: **does the model sit between the check and the verdict?** A gate that only checks "a Verify: line exists" is defeated by fabrication — the model writes plausible output for a command it never ran (MAST FM-2.6, reasoning-action mismatch, 13.2% of failures). v0.6 closes that path with an **evidence ledger**: `orch-evidence-ledger.sh` runs on `PostToolUse` *and* `PostToolUseFailure` for Bash, and when the command is verify-shaped (test/lint/typecheck/build — command-position anchored, so `git add tests/x.sh` or `echo pytest passed` record nothing), it appends `⟨stamp, exit, epoch, substance, command⟩` to a session ledger only the hook writes. The platform contract was verified live against v2.1.220: success and failure are distinguished by *which event fires* (Bash `tool_response` exposes no exit code).
+The sharp question for any completion check is: **does the model sit between the check and the verdict?** Here it does not. One hook, `scripts/hooks/orch-verify-gate.sh` (109 lines, on `Stop` and `SubagentStop`), reads the transcript the harness already writes and asks one thing: the reply is labelled `Verification: PASS` — did a check actually run and succeed in this turn? If not, it prints one line to stderr. Nothing is cited by the model, nothing is appended to its tool output, and a passing run from an earlier turn does not carry over.
 
-**The ledger is read, never recited.** The `UserPromptSubmit` hook records when the turn began; the Stop-hook verify gate (`orch-verify-gate.sh`) then asks the ledger directly — *did a verify command run green, on real output, since this turn started?* The model cannot opt out by declining to cite, cannot reuse a stale green from three turns ago, and never sees a marker in its tool output.
+Two rules shape it, both learned the hard way:
 
-The one deliberate opt-out is the cosmetic exemption, and it is **scoped to the prescribed form**: `Verify: no verification needed (cosmetic)`, outside any code fence. As a bare substring anywhere in the reply it was a kill switch the model could trip by accident — the phrase quoted from this document, or used in prose *disclaiming* it ("this is not a case of no verification needed (cosmetic)"), silently disabled the gate. Mentioning the phrase no longer invokes it.
+- **It reads the label, never the prose.** Only an explicit `Verification: PASS` line counts — something the agent deliberately writes. The version before it searched the whole reply for phrases like "tests pass", so an audit *quoting* a passing result was treated as claiming one, and the reply got blocked.
+- **It warns; it never blocks.** `docs/MEASUREMENTS.md`, 2026-08-05: 200 runs comparing warn against block scored 100/100 both ways — the dishonest claim the check exists to catch never occurred. A warning costs one line of stderr. A block costs the whole answer twice, in the terminal and in the context window. Warn stays the default.
 
-v0.6.1 removed the citation scheme that preceded this. The hook used to rewrite Bash stdout to append `[orch-evidence <stamp> exit=N] (cite this line in your Verify: block)`. That cost three things and bought nothing the ledger did not already provide: when `tool_response` carried no literal `stdout` string the rewrite **replaced the command's real output with the marker alone**; the parenthetical was an imperative arriving through a data channel, which well-behaved agents correctly refuse, so the mechanism selected against its own adoption; and it reached every agent, including reviewer and explorer seats whose prompts never explained it, which spent review cycles escalating it as an anomaly. `ORCH_EVIDENCE_MARKER=1` restores an inert (non-imperative) marker for cross-agent transport, and even then the rewrite is emitted only when the hook holds the real stdout.
+A turn begins at the last thing the person actually typed, so tool results and hook output cannot be mistaken for a new turn. A command counts as a check when the harness itself reported it succeeded — a failed one is ignored — and the command has to look like a test run (`pytest`, `npm test`, `go test`, `make test`, a script under `tests/`, and so on). The pattern is kept broad on purpose: a runner it does not recognise is a turn this check cannot see.
 
-**`substance` closes the exit-code hole.** `swift test` exits 0 on "Test run with 0 tests in 0 suites passed"; a jest path filter matching nothing exits 0. The ledger records *why* a run was green — `ok`, `none` (explicitly ran zero tests), `red` — and the gate says so. Note what is deliberately NOT a category: empty output. `tsc --noEmit` and `eslint .` print nothing on success, so classifying silence as hollow put a false note on every clean typecheck: *"the verification run exited 0 but reported that it ran no tests."*
+Honest boundary: this catches an invented or careless claim — the failure that actually happens. It cannot catch a model determined to fake a run, and it says nothing about whether the command was the *right* one or whether the suite covers the change.
 
-**Three conditions speak, and absence is not one of them.** Hard (blocks under `ORCH_STRICT_VERIFY=1`): the `Verify:` names a verify-shaped command with no green record this turn; a run this turn failed and was never re-run green; or there is no `Verify:` section at all. Soft (never blocks): the run was green but reported zero tests.
+What came before it was a 2,201-line module that watched every tool call, guessed whether each shell command might write, and hashed the whole repository to compare. It was removed: two adversarial reviews found fifteen defects in it, and the 200-run experiment above could not measure any benefit over simply warning.
 
-The first is what makes this a verification gate rather than a contradiction detector — without it the gate could only say *your evidence is wrong*, never *you have no evidence*, so a wholly invented `Verify:` passed whenever the ledger happened to be empty. What stays silent is a `Verify:` naming a command the regex cannot know: there we genuinely know nothing, and a gate that fires then is how agents learn to tune it out. That is also why the regex is kept broad — every runner it misses is a turn this gate cannot check.
-
-Honest boundary: this defeats fabrication and hallucination — the failure mode that actually occurs — not a deliberately adversarial model, which could use its shell to edit the ledger itself. It also says nothing about whether the verify command was the *right* one, or whether the suite covers the change.
-
-The gate's WIP escape is deliberately narrow: **dirty tree AND a `wip` commit subject**. (It used to skip on any dirty tree — the normal mid-task state — which meant it almost never fired.)
-
-Reinforced two more ways: a `UserPromptSubmit` hook injects a per-turn reminder of the rule, and a `verification-before-completion` skill auto-fires when the agent is about to claim something works. Failed verifications open with `Found:` (the bug) and a debugging path — not `Changed:`. The team never pretends.
+Reinforced two more ways: a `UserPromptSubmit` hook injects a per-turn reminder of the rule, and the `verification-before-completion` skill fires when the agent is about to claim something works. Failed verifications open with `Found:` (the bug) and a debugging path — not `Changed:`. The team never pretends.
 
 ### Layer 8 — Pre-spec verification
 
@@ -154,43 +149,31 @@ After compaction, `session-start.sh` injects a short recovery note pointing to t
 
 ### Layer 10 — The cadence and the lock
 
-**Proportional workflow.** New projects select `workflow: proportional`; missing
-or legacy workflow retains the legacy sequence described below. The skill routes
-Simple direct work, Standard one-reviewer work and Full specification/two-reviewer
-work by risk. Writers can execute checks without supplying independent review.
-The Git gate validates the enabled staged policy (falling back to enabled HEAD)
-and protected amendments before waiving legacy report requirements. It proves
-policy integrity, not that tests or reviewers ran.
-
-`scripts/lib/orch-proportional-evidence.py` supplies shared scope/lifecycle logic
-to Codex and Claude adapters while retaining separate private stores. It records
-observed command outcomes before expensive fingerprint work, retains unresolved
-failures across turns and reuses checks only while covered inputs are unchanged.
-The legacy turn-only behavior below applies to legacy projects. The common
-`Verification:` vocabulary does not make prose into execution evidence.
-
-`scripts/lib/orch-task-resources.py` owns external task scratch, copies/worktrees
-and consumer leases. A per-task lifecycle lock serializes allocation/acquisition
-with explicit finish. Stop hooks only retry already closed tasks; paused, dirty,
-locked, ignored-content or unique work survives. Completed private metadata has
-bounded retention; incomplete work never expires by age. The skill wrapper and
-both installer layouts resolve this same helper.
-
 **The failure mode.** A review process that lives in prose drifts: the stage that costs the most gets skipped first, a reviewer that finds nothing is read as a clean bill, and the sentence that says a stage is mandatory is one edit away from saying it is optional. Nothing in the harness notices either the skip or the edit.
 
-**The mechanism.** A project opts in by running `/llm-orchestrator:cadence-init`, which writes `docs/llm-orchestrator/cadence.json` (the switch and the project's runner grammar), the laws, a marked `ORCH:LAWS` pointer block into `AGENTS.md` and `CLAUDE.md`, the native deny rules, the git layer, and then arms the lock. From then on: every change to production code or tests runs the fixed sequence — brief review (which returns the ticket's class, `CODE` or `PROSE`), implementer, two independent blind reviewers, a refuter only for disagreement or a one-sided catastrophic or serious finding, a fixer, the gate script plus a gate seat on code, landing — and each stage's report is a file the landing check can see. Agreement on actionable findings, severity and disposition skips the refuter regardless of count; matching PASS verdicts alone do not suffice, and a missing or incomplete review must be obtained independently. The refuter assesses only disputed or one-sided top-severity findings and originates none. Explicit project amendments take precedence. The general `workflows/review-diff.js` workflow remains separate from this cadence. The gate script (`skills/cadence/scripts/orch-cadence-gate.sh`) makes its own throwaway copy of the tree, reverts each changed production file and requires the suite to go red; it never mutates the directory it is pointed at. The stop rule is by finding class, not by count: the gate seat names the class of each finding, the controller compares class strings across rounds, and a repeat sends the ticket back to the brief review. The lock over all of it is two layers and no more — see the Hooks entry in the Component contract, which states them once; `docs/install.md`'s "The lock's two layers" is the user-facing version. Everything here is inert in a project without an enabled `cadence.json`: each hook's first statement is that file test, before any decode.
+**The mechanism.** A project opts in by running `/llm-orchestrator:cadence-init`, which writes `docs/llm-orchestrator/cadence.json` (the switch and the project's runner grammar), the laws, a marked `ORCH:LAWS` pointer block into `AGENTS.md` and `CLAUDE.md`, the native deny rules, the git layer, and then arms the lock. New projects get `workflow: proportional`, and from then on every change to production code or tests takes one of three paths by risk: Simple is direct work, Standard adds one independent reviewer, Full adds a reviewed spec and two blind reviewers. A writer may run the checks itself, but it cannot supply the independent review. The project's own laws win over the default.
 
-**Files.** `skills/cadence/SKILL.md` and `skills/cadence/CADENCE.md` (the text), `skills/cadence/references/*` (the seat briefs and the templates the init renders), `skills/cadence/scripts/{orch-cadence-gate.sh,orch-cadence-check.sh,cadence-detect.sh,cadence-init.sh}`, `commands/cadence-init.md`, `scripts/hooks/{session-start.sh,orch-cadence-stop.sh,guard-dispatch-model.sh,codex-cadence-adapter.sh}`, `templates/cadence-global-block.md`, and in the opted-in project `docs/llm-orchestrator/{LAWS.md,cadence.json,LOCK.sha256}` plus `.githooks/{commit-msg,orch-cadence-check.sh}`.
+A refuter — read-only, originating nothing — is dispatched on Full work only when the two reviewers disagree on a finding, its severity or its disposition, or when one of them alone raises something serious or catastrophic. Agreement skips it however many findings there were. Two matching PASS verdicts are not agreement on their own, and a missing or incomplete review is obtained fresh, never assumed.
 
-**Escape hatch.** `ORCH_CADENCE_UNLOCK=1` in the launching environment, for the session that means to amend the rules — refused when a settings file in scope persists the string. Four programs read it: `cadence-init.sh`, `orch-cadence-check.sh --lock`, `guard-dispatch-model.sh` and `codex-cadence-adapter.sh`. `orch-cadence-check.sh --lock` and the dispatch guard scan the project's `.claude/settings.json`, `.claude/settings.local.json` and `~/.claude/settings.json` for a persisted copy; the Codex adapter scans `~/.codex/config.toml`, the project's `.codex/config.toml` and the project's `.claude/settings.json` instead, because a persisted variable on that harness lives in Codex's own config and a project may be opened from either tool. Note what the unlock costs on Codex: with no file persisting the string the adapter returns without reading the command, for every command in that session — the adapter is disarmed until the session ends, not just for the amendment. The hooks themselves are ordinary hooks: `ORCH_DISABLED_HOOKS` and `ORCH_HOOK_PROFILE` name them like any other. Not opting in is the fullest hatch there is.
+Projects with a missing or `legacy` workflow keep the older fixed sequence instead — brief review (returning the ticket's class, `CODE` or `PROSE`), implementer, two blind reviewers, the refuter under the same rule, a fixer, the gate script plus a gate seat on code, then landing — with each stage's report a file the landing check can see. The stop rule there is by finding class, not by count: the gate seat names the class of each finding, the controller compares class strings across rounds, and a repeat sends the ticket back to the brief review.
+
+The gate script (`skills/cadence/scripts/orch-cadence-gate.sh`) makes its own throwaway copy of the tree, reverts each changed production file and requires the suite to go red; it never mutates the directory it is pointed at. The git gate (`orch-cadence-check.sh`) checks something narrower: that the policy files are intact and that any amendment carries a ruling. That is all it proves — not that tests ran, not that a reviewer read anything. A reply saying `Verification: PASS` is a claim, not evidence.
+
+**Task scratch.** `scripts/lib/orch-task-resources.py` owns the scratch directories and worktree copies a task uses, outside the repo. A consumer takes a lease before touching scratch and states, on release, that it and its children have stopped. The Stop hook (`scripts/hooks/orch-task-cleanup.sh`) may only retry cleanup of tasks already marked finished — age, process id, or a confident-sounding final message never count as "done". Finished records are kept seven days; unfinished ones are kept indefinitely.
+
+The general `workflows/review-diff.js` workflow is separate from this cadence. The lock over all of it is two layers and no more — see the Hooks entry in the Component contract, which states them once; `docs/install.md`'s "The lock's two layers" is the user-facing version. Everything here is inert in a project without an enabled `cadence.json`: each hook's first statement is that file test, before any decode.
+
+**Files.** `skills/cadence/SKILL.md` and `skills/cadence/CADENCE.md` (the text), `skills/cadence/references/*` (the seat briefs and the templates the init renders), `skills/cadence/scripts/{orch-cadence-gate.sh,orch-cadence-check.sh,cadence-detect.sh,cadence-init.sh}`, `commands/cadence-init.md`, `scripts/hooks/{session-start.sh,guard-dispatch-model.sh,orch-task-cleanup.sh}`, `scripts/lib/orch-task-resources.py`, `templates/cadence-global-block.md`, and in the opted-in project `docs/llm-orchestrator/{LAWS.md,cadence.json,LOCK.sha256}` plus `.githooks/{commit-msg,orch-cadence-check.sh}`.
+
+**Escape hatch.** `ORCH_CADENCE_UNLOCK=1` in the launching environment, for the session that means to amend the rules — refused when a settings file in scope persists the string, because a persisted unlock is a disarmed lock in every later session. Three programs read it: `cadence-init.sh`, `orch-cadence-check.sh` (the same script `.githooks/commit-msg` runs, and the one `--lock` rewrites the manifest from) and `guard-dispatch-model.sh`. The check script and the dispatch guard scan the project's `.claude/settings.json`, `.claude/settings.local.json` and `~/.claude/settings.json` for a persisted copy. The hooks themselves are ordinary hooks: `ORCH_DISABLED_HOOKS` and `ORCH_HOOK_PROFILE` name them like any other. Not opting in is the fullest hatch there is.
 
 ### Engineering features (cross-layer)
 
 **Termination discipline (MAST-informed).** The MAST taxonomy ([arXiv:2503.13657](https://arxiv.org/abs/2503.13657), N=1642 traces) puts step repetition at 15.7% of multi-agent failures, unawareness of termination conditions at 12.4%, and premature termination at 6.2%. v0.6 attacks all three mechanically:
 
-- *Termination contracts.* Every dispatched task carries `Done when:` (the observable end state — the only path to `DONE`) and `Stop if:` (the abort conditions — a fired one returns `PARTIAL` or `BLOCKED`, never more attempts). The plan template requires both per task; `writing-plans` enforces it; the templates paste them into every envelope. A `type: "prompt"` SubagentStop hook (cheap-model, single-turn, no tools) additionally judges an implementer's final message against the contract and feeds a correction back when it trails off mid-work or claims DONE while its `Verify:` is an assertion rather than pasted output. A prompt hook cannot execute anything — the distinction matters, because the platform's `type: "agent"` hooks can (a subagent with the full toolkit and up to 50 turns). An agent hook on `Stop` that re-runs the suite is strictly stronger evidence than any ledger, since the agent cannot forge a run that happens after it stops; it is documented as an opt-in in `docs/install.md` rather than shipped, because it costs a subagent per turn. (Note: prompt-type hooks cannot read `ORCH_HOOK_PROFILE`, so this one entry is active in every profile — the single exception to profile gating.)
+- *Termination contracts.* Every dispatched task carries `Done when:` (the observable end state — the only path to `DONE`) and `Stop if:` (the abort conditions — a fired one returns `PARTIAL` or `BLOCKED`, never more attempts). The plan template requires both per task; `writing-plans` enforces it; the templates paste them into every envelope. `subagent-stop.sh` then checks the shape of what came back. The strongest available check is an `agent`-type `Stop` hook that re-runs the suite itself: an agent cannot forge a run that happens after it stops. It is documented as an opt-in in `docs/install.md` rather than shipped, because it costs a subagent every turn.
 - *Retry-storm breaker.* `orch-retry-cap.sh` is ON by default (warn-only; `ORCH_RETRY_CAP=0` disables, `ORCH_STRICT_RETRY=1` blocks). On `Stop` it fingerprints the controller's replies (3 near-identical in a row → stuck loop). On `SubagentStop` it scans the agent's own transcript for the same tool call with the same arguments executed ≥3 times consecutively — the step-repetition shape itself, keyed on `agent_id`.
-- *Premature termination is failure.* A subagent that finishes with an empty final message used to pass silently; `subagent-stop.sh` now treats it as a failure signal. The six read-only agents carry `maxTurns` caps; the implementer deliberately does not (a hard cap would strand its writer mutex), and a SubagentStop **reaper** (`orch-worktree-reaper.sh`) releases a mutex abandoned by a dead implementer — but only on *proof of ownership*: the mutex map the evidence-ledger hook records per `agent_id` (sound because PostToolUse fires only for succeeding commands, so a lost `mkdir` race records no claim), or, failing that, the worktree the agent's own CWD sits inside, or the single worktree named in a success-shaped final message. A message naming TWO worktrees reaps nothing — a success return names a sibling's tree just as routinely as a BLOCKED one, and releasing a live sibling's mutex puts two writers in one tree. Anything unprovable is reported, not reaped — a live sibling's mutex must never be released — and the controller frees true leftovers by hand once all implementers finish. A regular *file* at a mutex path (repo root included) is reported as **protocol corruption**, never listed as held: it is an improvised hold-marker no successful `mkdir` claimed, so no writer owns it and the operator removes it by hand (`rm`).
+- *Premature termination is failure.* A subagent that finishes with an empty final message used to pass silently; `subagent-stop.sh` now treats it as a failure signal. The six read-only agents carry `maxTurns` caps; the implementer deliberately does not (a hard cap would strand its writer mutex), and a SubagentStop **reaper** (`orch-worktree-reaper.sh`) releases a mutex abandoned by a dead implementer — but only on *proof of ownership*: the worktree the agent's own CWD sits inside, or failing that, the single worktree named in a success-shaped final message. A message naming TWO worktrees reaps nothing — a success return names a sibling's tree just as routinely as a BLOCKED one, and releasing a live sibling's mutex puts two writers in one tree. Anything unprovable is reported, not reaped — a live sibling's mutex must never be released — and the controller frees true leftovers by hand once all implementers finish. A regular *file* at a mutex path (repo root included) is reported as **protocol corruption**, never listed as held: it is an improvised hold-marker no successful `mkdir` claimed, so no writer owns it and the operator removes it by hand (`rm`).
 
 Four further capabilities span multiple layers and are documented here rather than in a single layer:
 
@@ -233,11 +216,10 @@ How the pieces fit together at the file level.
 - File: `hooks/hooks.json` wires events → `scripts/hooks/<name>.sh`.
 - Profiles via `ORCH_HOOK_PROFILE`:
   - `minimal` — bootstrap only: loads `using-orchestrator` (the Concise Agent Protocol — fixed response shapes) at SessionStart.
-  - `standard` (default) — adds UserPromptSubmit reminders, the research gate, PreToolUse guards, the PostToolUse evidence ledger, SubagentStop validators + retry breaker + implementer mutex reaper, and Stop-hook verify gate + retry breaker + retention pruning.
-  - `strict` — all hooks active and blocking: malformed replies, malformed Status blocks, uncorroborated or failed verification, and retry storms all block. Setting the profile is enough; it implies `ORCH_STRICT_PROTOCOL`, `ORCH_STRICT_STATUS`, `ORCH_STRICT_VERIFY` and `ORCH_STRICT_RETRY`. (It did not until 2026-08-03: no script branched on the profile, so `strict` bought the documented word and none of the behaviour. Each knob can still be set to `0` explicitly to opt a single check back out.)
+  - `standard` (default) — adds UserPromptSubmit reminders, the research gate and handoff nudge, the PreToolUse guards, SubagentStop validators + retry breaker + implementer mutex reaper, and at Stop the completion check, the retry breaker, task-scratch cleanup and retention pruning.
+  - `strict` — the same hooks, with the shape checks blocking: a malformed or empty Status block and a retry storm both stop the turn. Setting the profile is enough; it implies `ORCH_STRICT_STATUS` and `ORCH_STRICT_RETRY`. (It did not until 2026-08-03: no script branched on the profile, so `strict` bought the documented word and none of the behaviour. Each knob can still be set to `0` explicitly to opt a single check back out.) The completion check warns in every profile — see Layer 7 for why.
 - A deterministic bug-shape "skill nudge" hook was built, measured, and REMOVED (2026-08-04, 100 runs/arm on opus): naming the skills inline halved formal skill invocation and, under explicit skip-the-tests pressure, licensed deliberate compliance — behavioural pass 70/100 with vs 85/100 without, p=0.017, collapse concentrated where pressure was bluntest (8% vs 56%). Invocation is a marker of good runs, not a lever; making the test-or-not conflict salient resolves it in the instruction's favor. Negative result archived at `tests/evals/results/archive/2026-08-04-skill-nudge-AB-NEGATIVE-RESULT.json`; the hook lives in git history (ce95050).
-- Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`. Exception: `guard-destructive-git.sh` deliberately ignores both this list and the profile — a data-loss guard must not share an off switch with style hooks; its only opt-out is `ORCH_ALLOW_DESTRUCTIVE_GIT=1` (see `docs/install.md`). The cadence's lock is two layers: the native `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json`, which cover the file tools, the recognised shell file commands and every redirection target — and, with Claude Code's sandbox on, every subprocess — and the alarm, which names a change it did not prevent (the end-of-turn verdict, the session-start line, the `commit-msg` refusal and `--audit` in CI). Its hooks are ordinary hooks: each is nameable in `ORCH_DISABLED_HOOKS`, each is inert until a project's `docs/llm-orchestrator/cadence.json` says `"enabled": true`, and `ORCH_CADENCE_UNLOCK=1` is not an off switch for them but the cadence's own unlock, read by four of the cadence's own programs (the init, the check script's `--lock`, the dispatch-model guard and the Codex adapter) and refused when a settings file in scope persists that string, because a persisted unlock is a disarmed lock in every later session.
-- One exception to profile gating: the `type: "prompt"` SubagentStop termination-contract hook is a single-turn cheap-model evaluation the platform runs directly — it cannot read `ORCH_HOOK_PROFILE` and is active in every profile.
+- Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`. Exception: `guard-destructive-git.sh` deliberately ignores both this list and the profile — a data-loss guard must not share an off switch with style hooks; its only opt-out is `ORCH_ALLOW_DESTRUCTIVE_GIT=1` (see `docs/install.md`). The cadence's lock is two layers. First, the `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json`, which cover the file tools, the recognised shell file commands and every redirection target — and, with Claude Code's sandbox on, every subprocess. Second, the `commit-msg` git hook, which refuses a commit touching a protected file without a numbered ruling. Two smaller things report rather than prevent: the session-start line and `--audit <rev>` in CI. The cadence's own hooks are ordinary hooks: each is nameable in `ORCH_DISABLED_HOOKS`, and each is inert until a project's `docs/llm-orchestrator/cadence.json` says `"enabled": true`. `ORCH_CADENCE_UNLOCK=1` is not an off switch for them but the cadence's own unlock — see Layer 10's escape hatch.
 
 ### Templates
 
@@ -283,7 +265,7 @@ How the pieces fit together at the file level.
 - **Research cache + brief index** live at `~/.llm-orchestrator/research/cache/<hash>/` and `~/.llm-orchestrator/research/briefs-index/<hash>.md`. Written by the SubagentStop validator after `orch-researcher` returns; read by the gate hook on the next compelled trigger.
 - `<project-hash>` = SHA-1 of (a) git remote origin URL, (b) repo root path, or (c) cwd, in that order. Resolved by `scripts/lib/orch-project.sh`.
 - SessionStart loads the using-orchestrator meta-skill only. CLAUDE.md loading is Claude Code's native responsibility.
-- No background observer, and nothing leaves the machine. Two PostToolUse hooks exist: skill telemetry (event-only, off by default) and the evidence ledger, which is **on** under `standard` and records, per verify-shaped command, its first 400 characters, exit code, timestamp, and a substance verdict derived from the output. Command text is content, so this is stated plainly rather than filed under "no capture". State lives in `~/.llm-orchestrator/state/<project-hash>/` — `evidence.<session>.tsv`, `mutex-map.<session>.tsv`, `turn-start.<session>` — pruned after 7 days by the Stop hook.
+- No background observer, and nothing leaves the machine. One PostToolUse hook exists — skill telemetry, event-only and off by default. Nothing records your commands or their output: the completion check reads the transcript the harness already keeps and writes nothing back. The little state there is lives in `~/.llm-orchestrator/state/<project-hash>/` (the retry breaker's reply fingerprints) and `~/.llm-orchestrator/handoff/` (the fire-once nudge marker), both pruned by the Stop hook.
 
 ---
 
@@ -291,8 +273,9 @@ How the pieces fit together at the file level.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│ Harness (Claude Code, Codex, Gemini, Copilot)                    │
+│ Harness (Claude Code)                                            │
 │   - loads skills, commands, hooks                                │
+│   - other tools can read the markdown; the hooks are Claude's    │
 └─────┬────────────────────────────────────────────────────────────┘
       │
       ▼
@@ -328,10 +311,9 @@ How the pieces fit together at the file level.
 │ Hooks (hooks/hooks.json → scripts/hooks/*.sh)                    │
 │   - SessionStart (bootstrap + post-compaction recovery),         │
 │     UserPromptSubmit (reminder + research gate + handoff nudge), │
-│     PreToolUse (guards), PostToolUse (evidence ledger),          │
-│     SubagentStop (validators + retry breaker + mutex reaper +    │
-│     prompt-type termination contract),                           │
-│     Stop (verify gate + retry breaker + protocol grader + prune) │
+│     PreToolUse (guards), PostToolUse (skill telemetry, opt-in),  │
+│     SubagentStop (validators + retry breaker + mutex reaper),    │
+│     Stop (completion check + retry breaker + cleanup + prune)    │
 │   - profiles: minimal | standard | strict                        │
 └─────┬────────────────────────────────────────────────────────────┘
       │
@@ -339,9 +321,9 @@ How the pieces fit together at the file level.
 ┌──────────────────────────────────────────────────────────────────┐
 │ Cadence (opt-in; inert without an enabled cadence.json)          │
 │   - skills/cadence: the text, the seat briefs, the scripts       │
-│   - fixed sequence, class-based stop rule, one ledger row        │
-│   - the lock: native deny rules, then the alarm (end-of-turn     │
-│     verdict, session line, commit-msg hook, --audit in CI)       │
+│   - Simple / Standard / Full by risk (legacy: fixed sequence)    │
+│   - the lock: deny rules, then the commit-msg hook               │
+│     (reporting only: session line, --audit in CI)                │
 └──────────────────────────────────────────────────────────────────┘
 
 User home directory (created on first use):
@@ -363,7 +345,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 
 ## Why this shape
 
-- **Harness boundaries.** Skills and prompts are portable instructions. Claude hooks provide its session, protocol and dispatch controls. Codex has installed file guards and opt-in execution/provenance hooks. Enabled proportional projects share content-scoped verification and resource-cleanup contracts through adapters for each harness. Hook registration is not live trust; unsupported delegated provenance remains pending. Git lock/ruling checks and CI revision audits provide a separate cross-harness policy layer, not proof that tests or reviews ran.
+- **Harness boundaries.** Skills and prompts are portable instructions — any harness that reads markdown gets the guidance. The enforcement is Claude Code's: its hooks own the session, the guards and dispatch. The git layer (the `commit-msg` hook and `--audit` in CI) is the part that works without a harness at all, and it proves only that the policy files are intact and amendments carry a ruling — never that tests or reviews ran.
 - **One file per skill** keeps discovery cheap. `ls skills/` is the catalog.
 - **Plain-markdown memory** is grep-able, readable, editable, and trivially backed up.
 - **Single hooks.json** with calls to `scripts/hooks/*.sh` keeps logic out of inline `node -e` strings.

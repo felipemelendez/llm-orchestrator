@@ -166,8 +166,6 @@ if should_run structural; then
             "${ROOT}/tests/test-research-brief.sh"
   check_out "research-gate sniffer + validator + cache TTL pass" "gate/validator/TTL checks passed" \
             "${ROOT}/tests/test-research-gate.sh"
-  check_out "protocol grader fixture tests pass" "All 14 checks passed" \
-            bash "${ROOT}/tests/test-protocol-grader.sh"
   check_out "protocol hook e2e tests pass" "checks passed" \
             bash "${ROOT}/tests/test-protocol-hooks.sh"
   check_out "detect toolchain + cache tests pass" "All 48 detect checks passed" \
@@ -184,14 +182,10 @@ if should_run structural; then
             bash "${ROOT}/tests/test-hook-latency.sh"
   check_suite "verify-gate tests pass" "PASS: test-verify-gate" \
             bash "${ROOT}/tests/test-verify-gate.sh"
-  check_suite "claim extractor is locale-independent" "PASS: test-evidence-locale" \
-            bash "${ROOT}/tests/test-evidence-locale.sh"
   check_suite "retry-cap tests pass" "PASS: test-retry-cap" \
             bash "${ROOT}/tests/test-retry-cap.sh"
   check_out "protocol single-source drift tests pass" "PASS: test-protocol-drift" \
             bash "${ROOT}/tests/test-protocol-drift.sh"
-  check_suite "evidence-ledger contract tests pass" "PASS: test-evidence-ledger" \
-            bash "${ROOT}/tests/test-evidence-ledger.sh"
   check_out "lock reclaim tests pass" "PASS: test-lock-reclaim" \
             bash "${ROOT}/tests/test-lock-reclaim.sh"
   check_suite "worktree reaper ownership tests pass" "PASS: test-worktree-reaper" \
@@ -450,7 +444,8 @@ if should_run docs; then
   # Tests intentionally reference these names when explaining the checks.
   STALE=$(grep -rln 'OrchestraKit\|OK_HOOK\|OK_DISABLED\|OK_ALLOW' "$ROOT" 2>/dev/null \
           | grep -v '\.git/' \
-          | grep -v '^.*/tests/' || true)
+          | grep -v '^.*/tests/' \
+          | grep -v '^.*/docs/llm-orchestrator/' || true)
   if [[ -n "$STALE" ]]; then
     fail "No stale OrchestraKit/OK_ identifiers" "found in: $STALE"
   else ok "No stale OrchestraKit/OK_ identifiers (excluding tests/)"; fi

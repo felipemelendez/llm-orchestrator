@@ -133,8 +133,8 @@ non-zero on failure.
 | `test-workflow-distribution.sh` | `--copy` ships `workflows/`, and `--check` names it when missing |
 | `test-install.sh` | the installer's claims are true: `--copy` rewrites every hook command to an absolute existing path (positive property, independently asserted) and fails closed; `--check` fails on deleted/corrupted shipped files; docs wire every hook; no dead permission rules |
 | `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
-| `test-protocol-grader.sh`, `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
-| `test-evidence-ledger.sh`, `test-verify-gate.sh` | what the ledger records, and what the Stop gate does and does not say |
+| `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
+| `test-verify-gate.sh` | what the Stop completion check warns about, and the prose it must stay out of |
 | `test-guard-no-verify.sh`, `test-destructive-git-guard.sh` | the two PreToolUse guards — both fail-open and false-positive directions |
 | `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |

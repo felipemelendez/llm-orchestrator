@@ -150,7 +150,9 @@ printf '\n%s== Status enum consistent across consumers ==%s\n' "$DIM" "$RESET"
 grep -q 'PARTIAL' "${ROOT}/scripts/lib/orch-protocol.sh" && ok "grader accepts PARTIAL" || fail "grader PARTIAL" "orch-protocol.sh"
 grep -q 'Status: PARTIAL' "${ROOT}/templates/dispatch-response.md" && ok "dispatch-response documents PARTIAL" || fail "dispatch-response PARTIAL" ""
 grep -q 'Status: PARTIAL' "${ROOT}/templates/implementer-prompt.md" && ok "implementer prompt documents PARTIAL" || fail "implementer-prompt PARTIAL" ""
-grep -q 'PARTIAL' "${ROOT}/AGENTS.md" && ok "AGENTS.md documents PARTIAL" || fail "AGENTS.md PARTIAL" ""
+# AGENTS.md is deliberately no longer a leg of this check: it was cut to the
+# role table alone (126 -> 24 lines) because it loads into every session, and
+# the enum stays single-sourced by the three consumers above.
 
 printf '\n%s== CLAUDE.md references, never duplicates ==%s\n' "$DIM" "$RESET"
 grep -q 'concise-agent-protocol.md' "${ROOT}/CLAUDE.md" && ok "CLAUDE.md points at the canonical file" || fail "CLAUDE.md reference" "missing"

@@ -1,94 +1,26 @@
 # AGENTS.md
 
-Reference for the subagent roles (specialized agents that run orchestrator commands) and the Status values they return. Names below match the `subagent_type:` value the Agent tool expects (the same as each file's frontmatter `name:` in `agents/`). The dispatch tool is `Agent`; `TaskCreate` manages the task list and dispatches nothing.
+Subagent roles. Each name below is the `subagent_type` the Agent tool expects,
+and matches the `name:` in `agents/orch-*.md`.
 
-## House style
+| `subagent_type` | Model | Purpose |
+|---|---|---|
+| `orch-explorer` | opus | Finds where code lives. Read-only; returns `Found:` with file:line refs. |
+| `orch-implementer` | opus | Does one task from a plan; returns a `Status:` block. |
+| `orch-spec-reviewer` | opus | Asks: does this diff do what the spec said? |
+| `orch-code-reviewer` | opus | Asks: is the code correct, safe and plain? |
+| `orch-security-reviewer` | opus | Checks a diff for security problems. Only when it touches auth, crypto, payments or secrets. |
+| `orch-debugger` | opus | Finds the cause of a bug before anyone edits; returns `Found:`. |
+| `orch-researcher` | opus | Checks an API or version against current docs; returns VERIFIED, COULDN'T_VERIFY, CONTRADICTED or NOT_APPLICABLE. |
 
-Enabled projects with `workflow: proportional` select Simple, Standard or Full
-through the cadence skill before dispatch. Simple has no mandatory extra agent;
-Standard has one independent reviewer; Full has its reviewed spec, two blind
-reviews and independent verification. Generic command/role templates do not add
-unrequested roles. Missing/legacy workflow preserves the old pipeline. Writers
-may run checks, but cannot supply a required independent review. Temporary
-reports/copies use owned external scratch and explicit safe task cleanup.
+The Model column copies each file's frontmatter in `agents/`. If the two ever
+differ, the agent file is the truth.
 
-Every subagent in this project follows the Concise Agent Protocol. See [`concise-agent-protocol.md`](./concise-agent-protocol.md) for response shapes. The controller (the main agent you talk to, which routes work to subagents) reads Status blocks to decide what to do next.
+How much process a change needs — Simple, Standard or Full — is in
+`skills/cadence/SKILL.md`.
 
-Subagents:
-- Reply in shape blocks, not paragraphs.
-- Verify with a real command before claiming success.
-- Never write to `main`/`master` without explicit user OK.
-- Stop and return `Status: BLOCKED` rather than guess.
-
-## Roles _(model = capability, chosen per role; effort inherits the session preference — see docs/anthropic-ecosystem.md for the table and the evidence)_
-
-| `subagent_type`        | Model  | Used by                | Purpose                                                          |
-|------------------------|--------|------------------------|------------------------------------------------------------------|
-| `orch-explorer`        | fable  | `/llm-orchestrator:onboard`      | Read-only codebase search; returns `Found:` with file:line refs   |
-| `orch-implementer`     | fable  | `/llm-orchestrator:dispatch`            | Executes one task from a plan; returns `Status:` block           |
-| `orch-spec-reviewer`   | fable  | `/llm-orchestrator:review` stage 1      | "Does the diff match the spec/plan?"                             |
-| `orch-code-reviewer`   | fable  | `/llm-orchestrator:review` stage 2      | "Is the code correct, safe, idiomatic?"                          |
-| `orch-debugger`        | fable  | `/llm-orchestrator:debug` (dispatch it when the investigation is read-heavy; the command's default path runs `systematic-debugging` in-context) | Root-cause investigation before any edit; returns `Found:` |
-| `orch-researcher`      | fable  | research gate          | Verifies external APIs/versions against current docs; returns VERIFIED/COULDN'T_VERIFY/CONTRADICTED/NOT_APPLICABLE |
-| `orch-security-reviewer` | opus | `/llm-orchestrator:review` security pass | Checks diffs for common security issues (injection, auth, secrets, unsafe deps). Deliberately not Fable 5: its safety classifiers fire on benign security work |
-
-Prompt templates live in `templates/`:
-- `implementer-prompt.md`
-- `spec-reviewer-prompt.md`
-- `code-reviewer-prompt.md`
-- `dispatch-prompt.md` (generic envelope)
-- `dispatch-response.md` (status enum reference)
-
-The native subagent definitions live in `agents/orch-*.md`.
-
-**The refuter** is a role, not a shipped agent file: it exists only inside the cadence (`skills/cadence/`), dispatched by a controller on a general agent type with its model named, and its brief is `skills/cadence/references/refuter.md`. It is read-only and it originates nothing. Given both completed independent reviews, it assesses only disputed findings and catastrophic or serious findings raised by one reviewer alone, returning each assigned finding PROMOTED, DROPPED or UNRESOLVED — the burden is on the refuter to drop, a drop must cite the `file:line` that refutes the finding, and anything it cannot settle promotes. That asymmetry is the point: a filter that errs toward silence turns a review into a rubber stamp, and the value here has been re-execution of other seats' claims rather than filtering. It runs only when the reviewers disagree on actionable findings, severity or disposition, or one alone raises a catastrophic or serious finding. When they agree, skip it regardless of finding count or whether the evidence was reasoned or executed. Two PASS verdicts alone do not establish agreement; a missing or incomplete review requires a fresh independent review, never an assumed agreement. Full and legacy work require the two blind reviews; the refuter is no third overlapping review.
-
-When Claude Code's `Workflow` tool is available, these same subagents are dispatched from
-workflow scripts via the `agentType` option (composed with a structured `schema`) — no new roles.
-`workflows/review-diff.js` drives the two-stage review this way; see the `using-workflows` skill
-for when a workflow is preferred over the inline markdown path.
-
-## Status enum
-
-The **implementer** returns exactly one Status block. The read-only agents do not: the explorer and debugger return `Found:`, the three reviewers return `Issues:` + `Verdict:`, and the researcher returns its own four-outcome Status (`VERIFIED` / `COULDN'T_VERIFY` / `CONTRADICTED` / `NOT_APPLICABLE`). Each agent's own file is the contract; this page used to claim all seven returned the enum below, which left a controller waiting on a `Status:` that five of them never emit.
-
-Enabled proportional projects use `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` in place of the legacy `Verify:` section below. This is a completion contract, not proof of execution.
-
-The implementer's enum:
-
-- `DONE` — task complete, verified. Requires a `Verify:` block with the command and its output; the SubagentStop grader rejects a DONE without one.
-- `DONE_WITH_CONCERNS` — complete but flagged issues; see `Concerns:` block. Also requires `Verify:`.
-- `PARTIAL` — a `Stop if:` condition fired mid-task; see `Progress:` / `Remaining:` blocks. The controller resumes or re-dispatches with the remainder — completed work is never redone.
-- `BLOCKED` — cannot proceed; see `Need:` block.
-- `NEEDS_CONTEXT` — missing info from the controller; see `Ask:` block.
-
-Controllers route by Status, not by parsing prose.
-
-## Commands
-
-| Command | What it does |
-|---------|--------------|
-| `/llm-orchestrator:onboard` | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. |
-| `/llm-orchestrator:init` | Add LLM Orchestrator conventions to a project. |
-| `/llm-orchestrator:cadence-init` | Turn the cadence on for a project: detect the toolchain, confirm a `cadence.json`, then write the laws, the marked block, the native deny rules and the git layer, and arm the lock over them. Never overwrites. |
-| `/llm-orchestrator:plan` | Turn an approved spec into a checklist-shaped plan. |
-| `/llm-orchestrator:worktree` | Create an isolated git worktree. |
-| `/llm-orchestrator:dispatch` | Run a focused subagent with a constructed context envelope. |
-| `/llm-orchestrator:review` | Two-stage review (spec + code quality), plus optional security pass. |
-| `/llm-orchestrator:debug` | Root-cause debugging. |
-| `/llm-orchestrator:research` | Verify a planned approach against current sources before building on it, and write a brief the human can read in 30 seconds. |
-| `/llm-orchestrator:verify` | Run tests/lint/typecheck and report evidence. |
-| `/llm-orchestrator:finish` | Decide between merge / PR / keep / discard. |
-| `/llm-orchestrator:remember` | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
-| `/llm-orchestrator:forget` | Soft-delete matching lines from CLAUDE.md or plugin memory. |
-| `/llm-orchestrator:handoff` | Write a short handoff note for the current task so work resumes cleanly after the context is compacted. Invoke manually, or the nudge hook prompts you once when context crosses ~950K tokens. |
-| `/llm-orchestrator:skills` | List the installed skills and commands with their trigger conditions — a one-screen catalog of what the plugin can do and when each fires. Optional keyword filter. |
-
-## Cross-harness
-
-LLM Orchestrator ships Claude Code first. The skills, commands, and agent prompts are plain markdown and work as guidance in any harness that can read them. The enforcement layer — the hooks in `hooks/hooks.json` (protocol grader, research gate, no-verify guard, destructive-git guard, handoff nudge, Status validator) — is Claude Code-specific and is not ported to Gemini / Copilot. In those harnesses you get the skills as instructions without the mechanical enforcement.
-
-For the cadence, `scripts/install.sh --codex` installs the skill, pointer block, file guard, and project-opt-in verification/native-receipt hooks. Optional external Claude reviews use `scripts/providers/claude-review.py`. See `docs/codex-evidence.md`, `docs/codex-provider.md`, and `docs/install.md` for scope and trust requirements. The cadence Git layer requires no harness hook events. Explicit project review/refuter amendments take precedence over the shared default here.
+Every agent ends with `Verification: PASS | PENDING | BLOCKED | NOT APPLICABLE — reason`.
+Only a check you actually ran supports PASS.
 
 <!-- ORCH:LAWS:START -->
 ## The cadence

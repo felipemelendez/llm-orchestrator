@@ -41,13 +41,10 @@ when required. Simple and Standard need only this page.
 Use relevant checks and meaningful regression tests. Honour build/dependency
 restrictions. No default broad suites or mutation batteries for Simple/Standard.
 
-In evidence-enabled Codex projects, use the installed `codex-verify.py` runner
-on the first invocation with fresh output/receipt paths; `CODEX.md` or this
-skill's `.orch-installed` names it. Direct stdout is not a trusted receipt.
-Claude records observed commands through its evidence hooks; a check needs a
-tool timeout longer than its run and concise output to be confirmed. Reuse
-supported delegated evidence only with actual task, command, result and source
-provenance.
+Run each check as one plain foreground command, so it appears in the transcript
+as itself. A Stop hook reads that transcript and warns if a reply says
+`Verification: PASS` when no check ran and passed in the turn. It only warns,
+and it reads only that label — never the prose around it.
 
 Reuse checks across turns/commits preserving covered inputs. Rerun for changes,
 failures or unresolved concerns. Unrelated green cannot erase failure.

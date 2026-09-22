@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
-# End-to-end tests for the actual hook scripts:
-#   scripts/hooks/orch-protocol-grader.sh
+# End-to-end tests for the actual hook script:
 #   scripts/hooks/subagent-stop.sh
+#
+# (The protocol-grader cases that used to live here went with
+# scripts/hooks/orch-protocol-grader.sh, which was deleted. The reply-shape
+# rules it enforced are documented and carried by the UserPromptSubmit
+# reminder; tests/test-protocol-drift.sh still pins those surfaces.)
 #
 # Drives the real hook executables with temp JSONL transcripts in both
 # content schemas (string and array-of-blocks). Validates:
-#
-#   protocol-grader:
-#     (a) canonical Changed:+Verify: reply → no warning, exit 0
-#     (b) reply with no header, non-strict → warn (stderr), exit 0
-#     (c) same under ORCH_STRICT_PROTOCOL=1 → exit 2 + decision:block JSON
-#     (d) array-of-blocks schema, valid reply → exit 0
-#     (e) array-of-blocks schema, no header, strict → exit 2
 #
 #   subagent-stop:
 #     (f) Status: DONE + Summary: string schema → PASS exit 0
@@ -29,7 +26,6 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-GRADER="${ROOT}/scripts/hooks/orch-protocol-grader.sh"
 SUBAGENT="${ROOT}/scripts/hooks/subagent-stop.sh"
 
 # Legacy hook events carry no cwd; run them inside a disposable directory so the
@@ -104,70 +100,6 @@ T_BLOCKS=$(mktemp /tmp/orch-test-hook-blocks-XXXXXX)
 T_MULTI=$(mktemp /tmp/orch-test-hook-multi-XXXXXX)
 cleanup() { rm -f "$T_STRING" "$T_BLOCKS" "$T_MULTI"; rm -rf "$ISOLATED_CWD"; }
 trap cleanup EXIT
-
-printf '%s== Protocol grader hook (orch-protocol-grader.sh) ==%s\n' "$DIM" "$RESET"
-
-# (a) canonical Changed:+Verify: reply → no warning, exit 0
-VALID_REPLY="$(printf 'Changed:\n- scripts/foo.sh:1 — fix\n\nVerify:\n- bash tests/smoke.sh → all pass')"
-write_string_jsonl "$T_STRING" "$VALID_REPLY"
-rc=0; pipe_hook_exit "$GRADER" "$T_STRING" || rc=$?
-if [[ $rc -eq 0 ]]; then ok "(a) valid Changed:+Verify: string schema → exit 0"
-else fail "(a) valid Changed:+Verify: string schema" "expected exit 0, got $rc"; fi
-
-# (b) prose reply, non-strict → warn on stderr, exit 0
-write_string_jsonl "$T_STRING" "just prose no header"
-out=$(pipe_hook_all "$GRADER" "$T_STRING" 2>&1); rc=$?
-if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "does not conform"; then
-  ok "(b) prose reply non-strict → warn exit 0"
-else
-  fail "(b) prose reply non-strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
-fi
-
-# (c) prose reply under ORCH_STRICT_PROTOCOL=1 → exit 2 + decision:block JSON
-write_string_jsonl "$T_STRING" "just prose no header"
-out=$(pipe_hook_all "$GRADER" "$T_STRING" ORCH_STRICT_PROTOCOL=1 2>&1); rc=$?
-if [[ $rc -eq 2 ]] && printf '%s' "$out" | grep -q '"decision":"block"'; then
-  ok "(c) prose reply strict → exit 2 + decision:block"
-else
-  fail "(c) prose reply strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
-fi
-
-# (b2)/(b3) stdin last_assistant_message outranks a lagging transcript.
-# The transcript is written ASYNCHRONOUSLY — at Stop-hook time it may not yet
-# contain the turn's final assistant message (docs: use last_assistant_message
-# on Stop/SubagentStop instead of reading the transcript). The grader must
-# grade the stdin reply, not the transcript's stale last entry.
-write_string_jsonl "$T_STRING" "$VALID_REPLY"   # stale transcript: VALID reply
-out=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "last_assistant_message": "just prose no header"}))' "$T_STRING" \
-      | bash "$GRADER" 2>&1); rc=$?
-if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "does not conform"; then
-  ok "(b2) prose via last_assistant_message → warned despite a valid stale transcript"
-else
-  fail "(b2) stdin prose vs stale-valid transcript" "exit=$rc out=$(printf '%s' "$out" | head -1)"
-fi
-write_string_jsonl "$T_STRING" "just prose no header"   # stale transcript: prose
-out=$(python3 -c 'import json,sys; print(json.dumps({"transcript_path": sys.argv[1], "last_assistant_message": sys.argv[2]}))' "$T_STRING" "$VALID_REPLY" \
-      | bash "$GRADER" 2>&1); rc=$?
-if [[ $rc -eq 0 && -z "$out" ]]; then
-  ok "(b3) valid reply via last_assistant_message → silent despite a prose stale transcript"
-else
-  fail "(b3) stdin valid vs stale-prose transcript" "exit=$rc out=$(printf '%s' "$out" | head -1)"
-fi
-
-# (d) array-of-blocks schema, valid reply → exit 0
-write_blocks_jsonl "$T_BLOCKS" "$VALID_REPLY"
-rc=0; pipe_hook_exit "$GRADER" "$T_BLOCKS" || rc=$?
-if [[ $rc -eq 0 ]]; then ok "(d) valid Changed:+Verify: array-of-blocks schema → exit 0"
-else fail "(d) valid Changed:+Verify: array-of-blocks schema" "expected exit 0, got $rc"; fi
-
-# (e) array-of-blocks schema, prose, strict → exit 2
-write_blocks_jsonl "$T_BLOCKS" "just prose no header"
-out=$(pipe_hook_all "$GRADER" "$T_BLOCKS" ORCH_STRICT_PROTOCOL=1 2>&1); rc=$?
-if [[ $rc -eq 2 ]] && printf '%s' "$out" | grep -q '"decision":"block"'; then
-  ok "(e) prose array-of-blocks strict → exit 2 + decision:block"
-else
-  fail "(e) prose array-of-blocks strict" "exit=$rc out=$(printf '%s' "$out" | head -1)"
-fi
 
 printf '\n%s== SubagentStop hook (subagent-stop.sh) ==%s\n' "$DIM" "$RESET"
 
@@ -365,19 +297,21 @@ rc=0; pipe_hook_exit "$SUBAGENT" "$T_MULTI" || rc=$?
 if [[ $rc -eq 0 ]]; then ok "(m) thinking+text multi-block → Status DONE extracted → exit 0"
 else fail "(m) thinking+text multi-block" "expected exit 0, got $rc"; fi
 
-# (n) text+tool_use multi-block: text with valid Changed:+Verify: then a tool_use block.
-# The grader should see the text block and grade it PASS.
+# (n) text+tool_use multi-block: a text block followed by a tool_use block.
+# Extraction must still see the text. This used to run the protocol grader on
+# a Changed:+Verify: reply; that hook is deleted, so the same schema is driven
+# through subagent-stop.sh instead.
 python3 -c "
 import json
-text = 'Changed:\n- foo:1 -- fix\n\nVerify:\n- bash tests/smoke.sh -> pass'
+text = 'Status: DONE\nSummary: text precedes a tool_use block'
 obj = {'role': 'assistant', 'content': [
     {'type': 'text', 'text': text},
     {'type': 'tool_use', 'id': 'tool_abc', 'name': 'Bash', 'input': {'command': 'ls'}}
 ]}
 print(json.dumps(obj))
 " > "$T_MULTI"
-rc=0; pipe_hook_exit "$GRADER" "$T_MULTI" || rc=$?
-if [[ $rc -eq 0 ]]; then ok "(n) text+tool_use multi-block → Changed:+Verify: extracted → exit 0"
+rc=0; pipe_hook_exit "$SUBAGENT" "$T_MULTI" || rc=$?
+if [[ $rc -eq 0 ]]; then ok "(n) text+tool_use multi-block -> Status: DONE extracted -> exit 0"
 else fail "(n) text+tool_use multi-block" "expected exit 0, got $rc"; fi
 
 # (o) Extra keys on assistant object (id, model) — extraction is key-order-independent.
@@ -419,13 +353,6 @@ for t in sh grep sed head cat dirname wc tr mkdir rm date uname awk tail cut fin
   p=$(command -v "$t" 2>/dev/null) && ln -s "$p" "$NOPY/$t"
 done
 rc=0
-out=$(env ORCH_STRICT_PROTOCOL=1 PATH="$NOPY" "$BASH" "$GRADER" < <(mk_hook_input "$T_STRING") 2>&1) || rc=$?
-if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q 'python3 not found'; then
-  ok "(q) grader: python3 absent → fail-open exit 0 with notice (behavioral)"
-else
-  fail "(q) grader python3-absent behavior" "rc=$rc out=$(printf '%s' "$out" | head -2 | tr '\n' ' ')"
-fi
-rc=0
 out=$(env ORCH_STRICT_STATUS=1 PATH="$NOPY" "$BASH" "$SUBAGENT" < <(mk_hook_input "$T_STRING") 2>&1) || rc=$?
 if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q 'python3 not found'; then
   ok "(q) subagent-stop: python3 absent → fail-open exit 0 with notice (behavioral)"
@@ -438,21 +365,12 @@ printf '\n%s== Fail-open and profile gate ==%s\n' "$DIM" "$RESET"
 
 # (k) missing transcript path → exit 0 (fail-open)
 rc=0
-bash "$GRADER" < <(printf '{"transcript_path":"/tmp/this-file-does-not-exist-orch-test.jsonl"}') >/dev/null 2>&1 || rc=$?
-if [[ $rc -eq 0 ]]; then ok "(k) grader: missing transcript → fail-open exit 0"
-else fail "(k) grader: missing transcript" "expected exit 0, got $rc"; fi
-
-rc=0
 bash "$SUBAGENT" < <(printf '{"transcript_path":"/tmp/this-file-does-not-exist-orch-test.jsonl"}') >/dev/null 2>&1 || rc=$?
 if [[ $rc -eq 0 ]]; then ok "(k) subagent-stop: missing transcript → fail-open exit 0"
 else fail "(k) subagent-stop: missing transcript" "expected exit 0, got $rc"; fi
 
-# (l) ORCH_HOOK_PROFILE=minimal → exit 0 (skipped, both hooks)
+# (l) the minimal hook profile skips the hook entirely -> exit 0
 write_string_jsonl "$T_STRING" "just prose no header"
-rc=0; pipe_hook_exit "$GRADER" "$T_STRING" ORCH_HOOK_PROFILE=minimal ORCH_STRICT_PROTOCOL=1 || rc=$?
-if [[ $rc -eq 0 ]]; then ok "(l) grader: ORCH_HOOK_PROFILE=minimal → exit 0 (skipped)"
-else fail "(l) grader: ORCH_HOOK_PROFILE=minimal" "expected exit 0, got $rc"; fi
-
 rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=minimal ORCH_STRICT_STATUS=1 || rc=$?
 if [[ $rc -eq 0 ]]; then ok "(l) subagent-stop: ORCH_HOOK_PROFILE=minimal → exit 0 (skipped)"
 else fail "(l) subagent-stop: ORCH_HOOK_PROFILE=minimal" "expected exit 0, got $rc"; fi
@@ -463,16 +381,8 @@ printf '\n%s== ORCH_HOOK_PROFILE=strict actually blocks ==%s\n' "$DIM" "$RESET"
 # ORCH_STRICT_* knobs, so setting the profile bought the documented word and
 # none of the behaviour. Measured before the fix: PROFILE=strict ALLOWED on
 # protocol-grader, verify-gate and subagent-stop; the explicit flag blocked on
-# all three.
-write_string_jsonl "$T_STRING" "just prose no header"
-rc=0; pipe_hook_exit "$GRADER" "$T_STRING" ORCH_HOOK_PROFILE=strict || rc=$?
-[[ $rc -eq 2 ]] && ok "grader: PROFILE=strict blocks a malformed reply" \
-  || fail "grader PROFILE=strict" "expected exit 2, got $rc — the profile is documented as blocking"
-# An explicit 0 must still opt out, or the knobs lose their granularity.
-rc=0; pipe_hook_exit "$GRADER" "$T_STRING" ORCH_HOOK_PROFILE=strict ORCH_STRICT_PROTOCOL=0 || rc=$?
-[[ $rc -eq 0 ]] && ok "grader: an explicit ORCH_STRICT_PROTOCOL=0 still opts out of strict" \
-  || fail "grader strict opt-out" "expected exit 0, got $rc"
-
+# all three. The protocol-grader half of this check went with that hook; the
+# subagent-stop half below is unchanged.
 write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
 PIPE_AGENT_TYPE="llm-orchestrator:orch-implementer"
 rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=strict || rc=$?
@@ -601,8 +511,10 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
         assert result.returncode == expected, (hook, reply, expected, result.returncode, result.stdout, result.stderr)
         return result
 
+    # This used to grade orch-protocol-grader.sh alongside subagent-stop.sh.
+    # The grader is deleted; subagent-stop is the only hook left that reads
+    # the completion vocabulary. Every vocabulary case below is unchanged.
     def both(line, expected=0):
-        grade("orch-protocol-grader.sh", "Changed:\nUpdated behavior.\n" + line, expected)
         grade("subagent-stop.sh", "Status: DONE\nSummary: Updated behavior.\n" + line, expected)
 
     config.write_text(json.dumps({"enabled": True, "workflow": "proportional"}))

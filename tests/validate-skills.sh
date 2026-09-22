@@ -288,21 +288,26 @@ for req in $REQUIRED_SKILLS; do
   fi
 done
 
-# The command catalogue tables rot the same way the counts did: AGENTS.md and
-# docs/commands-guide.md are hand-maintained listings of commands/*.md, and by
-# 2026-08 they had drifted to 13 and 11 of the 14 commands that exist — fixed by
-# hand, which without this check they will need again. Every command file must
-# have a `| `/llm-orchestrator:<name>`` table row in BOTH documents. Adding a
-# command therefore forces its catalogue rows in the same commit.
+# The command catalogue table rots the same way the counts did:
+# docs/commands-guide.md is a hand-maintained listing of commands/*.md, and by
+# 2026-08 it had drifted to 11 of the 14 commands that exist — fixed by hand,
+# which without this check it will need again. Every command file must have a
+# `| `/llm-orchestrator:<name>`` table row there. Adding a command therefore
+# forces its catalogue row in the same commit.
+#
+# AGENTS.md was checked here too, until its command table was removed on
+# purpose: AGENTS.md is loaded in full into every session, the table cost
+# ~3,200 tokens of standing context, and every command already carries its own
+# description and appears in the tool list. Demanding the table back would be
+# this check outliving the thing it protected.
 for _cmd_file in "$ROOT"/commands/*.md; do
   [[ -f "$_cmd_file" ]] || continue
   _cmd="$(basename "$_cmd_file" .md)"
-  for _doc in "$ROOT/AGENTS.md" "$ROOT/docs/commands-guide.md"; do
-    if ! command grep -qE "^\| *\`/llm-orchestrator:${_cmd}\`" "$_doc"; then
-      echo "FAIL: ${_doc#$ROOT/} catalogue table has no row for /llm-orchestrator:${_cmd} (commands/${_cmd}.md exists — the listing has rotted)"
-      fail=1
-    fi
-  done
+  _doc="$ROOT/docs/commands-guide.md"
+  if ! command grep -qE "^\| *\`/llm-orchestrator:${_cmd}\`" "$_doc"; then
+    echo "FAIL: ${_doc#$ROOT/} catalogue table has no row for /llm-orchestrator:${_cmd} (commands/${_cmd}.md exists — the listing has rotted)"
+    fail=1
+  fi
 done
 
 # Docs quote this script's own summary line as an example of a passing run, and a
@@ -323,23 +328,20 @@ while IFS= read -r hit; do
 done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* commands, [0-9]* agents' "$ROOT" 2>/dev/null \
          | command grep -v "$ROOT/docs/llm-orchestrator/" | command grep -v "$ROOT/CHANGELOG.md")
 
-# Every agent's model pin is owner policy, and six of the seven had no assertion
-# anywhere. On 2026-08-04 the working tree drifted from `fable` to `opus` on six
-# agents at once; only orch-researcher had a check (in test-research-brief.sh), so
-# five drifted silently and the sixth is the only reason anyone noticed. That is the
-# sibling-path class the whole audit is about: a rule asserted on one path and not
-# its siblings.
+# Every agent's model pin is owner policy, and this list is where it is written
+# down, so a change to a pin shows up in the same commit where a reviewer sees it.
 #
-# Policy: fable everywhere, EXCEPT orch-security-reviewer, which stays on opus
-# deliberately — Fable's safety classifiers fire on benign security-review work.
-# Changing a pin means editing this list in the same commit, where a reviewer sees it.
+# Policy (Felipe, 2026-09-21): opus everywhere.
+# It was fable everywhere except orch-security-reviewer, which was already opus
+# because Fable's safety classifiers fire on benign security-review work. The same
+# thing kept happening beyond security work — a Codex review of this repo's own
+# hook refused an ordinary audit brief as a "cybersecurity risk", and the Fable
+# review route was rate-limited out entirely — so the exception became the rule.
+# The agent files are the source of truth; this list follows them.
 while IFS= read -r agent_file; do
   [[ -f "$agent_file" ]] || continue
   agent_name=$(basename "$agent_file" .md)
-  case "$agent_name" in
-    orch-security-reviewer) want=opus ;;
-    *)                      want=fable ;;
-  esac
+  want=opus
   got=$(awk '/^---$/{c++; next} c==1 && /^model:/{print $2; exit}' "$agent_file")
   if [[ -z "$got" ]]; then
     echo "FAIL: $agent_file has no 'model:' pin (expected ${want})"

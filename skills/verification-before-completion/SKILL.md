@@ -19,15 +19,15 @@ check.
 
 ## How the gate works
 
-A hook records every verify-shaped command the harness actually executed — command, exit code,
-and whether the run had substance — in a ledger the model never writes. The gate reads that
-ledger for the current turn. Nothing needs to be cited specially: you run the command and paste
-what it printed, exactly as you would anyway.
+There is no gate worth the name, and you should know that rather than lean on one. A Stop hook
+reads the transcript the harness already writes. If your reply says `Verification: PASS` and no
+check ran and passed in that turn, it prints one line to your terminal. It never blocks, and it
+never reads the words of your reply — only that one label.
 
-Two things the ledger catches that a `Verify:` line cannot: a claim of success over a run that
-actually failed, and a green run that executed zero tests. `exit 0` is not evidence — a filter
-matching no tests exits 0. If the run did not cover the change, that is a `Found:`, not a
-`Changed:`.
+So it catches the obvious case and nothing subtler. It cannot tell you that a green run executed
+zero tests, or that the suite you ran does not cover what you changed. `exit 0` is not evidence:
+a filter matching no tests exits 0. Those remain yours to notice. If the run did not cover the
+change, that is a `Found:`, not a `Changed:`.
 
 ## Finding the project's gates
 

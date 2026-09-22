@@ -29,11 +29,6 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-handoff-nudge.sh",
             "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-evidence-ledger.sh",
-            "timeout": 10
           }
         ]
       }
@@ -42,6 +37,11 @@
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-cadence-unlock.sh",
+            "timeout": 10
+          },
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-no-verify.sh",
@@ -55,11 +55,6 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-config-protection.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-cadence-unlock.sh",
             "timeout": 10
           }
         ]
@@ -83,16 +78,6 @@
             "timeout": 10
           }
         ]
-      },
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-evidence-ledger.sh",
-            "timeout": 10
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -102,28 +87,6 @@
           {
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/skill-telemetry.sh",
-            "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-evidence-ledger.sh",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "PostToolUseFailure": [
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-evidence-ledger.sh",
             "timeout": 10
           }
         ]
@@ -161,11 +124,6 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-worktree-reaper.sh",
             "timeout": 10
-          },
-          {
-            "type": "prompt",
-            "prompt": "You are validating the implementer final message in last_assistant_message: $ARGUMENTS. Structure is already checked by subagent-stop.sh. Legacy completion uses Verify:; enabled proportional projects use Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE \u2014 explanation. Judge whether a PASS or legacy success claim gives actual observed command/result evidence rather than assertions such as should pass. PENDING/BLOCKED name remaining validation. NOT APPLICABLE is an applicability judgment, not an executed pass: do not reject it merely for lacking command output. It cannot excuse recorded failed, unknown or required checks; the deterministic evidence gate owns that state. Do not demand a new invocation when trustworthy matching execution evidence exists. Return {\"ok\": false, \"reason\": \"...\"} only for a clear unsupported success assertion in DONE/DONE_WITH_CONCERNS. Request truthful evidence or PARTIAL/BLOCKED, never fabricated output. Otherwise, including doubt, return {\"ok\": true}.",
-            "timeout": 30
           }
         ]
       }
@@ -180,22 +138,17 @@
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-protocol-grader.sh",
-            "timeout": 10
-          },
-          {
-            "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-verify-gate.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-retry-cap.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-cadence-stop.sh",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-cadence-stop.sh",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/orch-retry-cap.sh",
             "timeout": 10
           },
           {
