@@ -5,11 +5,10 @@
 #   ./scripts/install.sh --link          symlink into ~/.claude/llm-orchestrator
 #   ./scripts/install.sh --copy <dir>    copy skills/commands/templates into <dir>/.claude/
 #   ./scripts/install.sh --global        render the cadence block into ~/.claude/CLAUDE.md
-#   ./scripts/install.sh --codex         the same block, plus the skill and the hook, for Codex
 #
-# --global and --codex are the only modes that write outside a project, and both
-# write only under $HOME — which they take from the environment, so a test can
-# point them at a temporary directory and prove it.
+# --global is the only mode that writes outside a project, and it writes only
+# under $HOME — which it takes from the environment, so a test can point it at
+# a temporary directory and prove it.
 #
 # Scope note: --check validates the SOURCE CHECKOUT it lives in — never an
 # installed tree (install.sh is not among the files --copy writes, so it cannot
@@ -171,28 +170,13 @@ render_block() {
 # yes/no lines, because "is the cadence actually on here?" is otherwise five
 # separate things to remember.
 _has_block() { [[ -f "$1" ]] && grep -qF "${BLOCK_START}" "$1" 2>/dev/null && echo yes || echo no; }
-# "names the adapter" is not the question — "names an adapter that is still
 # there" is. A checkout that moved leaves the string in place and the hook dead.
-_names_adapter() {
-  local p
-  [[ -f "$1" ]] || { echo no; return 0; }
-  p=$(grep -oE '/[^"]*codex-cadence-adapter\.sh' "$1" 2>/dev/null | head -1 || true)
-  if [[ -z "${p}" ]]; then
-    grep -q 'codex-cadence-adapter' "$1" 2>/dev/null && echo "yes (no absolute path)" || echo no
-  elif [[ -f "${p}" ]]; then
-    echo yes
-  else
-    echo "stale path (${p} does not exist — re-run --codex)"
-  fi
-}
 layers_report() {
   local h="${HOME:-}" proj="${CLAUDE_PROJECT_DIR:-${PWD}}"
   echo "layers present on this machine:"
   printf '  %-44s %s\n' "${h}/.claude/CLAUDE.md cadence block:" "$(_has_block "${h}/.claude/CLAUDE.md")"
-  printf '  %-44s %s\n' "${h}/.codex/AGENTS.md cadence block:" "$(_has_block "${h}/.codex/AGENTS.md")"
   printf '  %-44s %s\n' "${h}/.agents/skills/cadence:" \
     "$([[ -d "${h}/.agents/skills/cadence" ]] && echo yes || echo no)"
-  printf '  %-44s %s\n' "${h}/.codex/hooks.json names the adapter:" "$(_names_adapter "${h}/.codex/hooks.json")"
   printf '  %-44s %s\n' "${proj}/docs/llm-orchestrator/cadence.json:" \
     "$([[ -f "${proj}/docs/llm-orchestrator/cadence.json" ]] && echo yes || echo no)"
 }
@@ -219,9 +203,10 @@ case "${cmd}" in
     # hand-maintained copy of that list drifted two entries behind reality and
     # --check kept saying OK with shipped hooks deleted.
     for f in scripts/lib/orch-lock.sh scripts/lib/orch-protocol.sh scripts/lib/orch-handoff.sh \
-             scripts/lib/orch-project.sh scripts/lib/orch-signals.sh scripts/lib/orch-evidence.sh \
+             scripts/lib/orch-project.sh scripts/lib/orch-signals.sh \
              scripts/lib/orch-json.sh scripts/lib/orch-arch.sh scripts/lib/orch-regression.sh \
              scripts/lib/orch-detect.sh scripts/lib/check-hook-paths.py \
+             scripts/lib/orch-git-classify.py \
              scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh \
              scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md \
              docs/install.md templates/settings.json workflows/review-diff.js \
@@ -230,10 +215,7 @@ case "${cmd}" in
              skills/cadence/scripts/orch-cadence-gate.sh skills/cadence/scripts/orch-cadence-check.sh \
              skills/cadence/scripts/cadence-detect.sh skills/cadence/scripts/cadence-init.sh \
              skills/cadence/references/commit-msg skills/cadence/references/cadence-state.md \
-             templates/cadence-global-block.md scripts/hooks/codex-cadence-adapter.sh \
-             scripts/hooks/codex-evidence.py scripts/lib/codex-cadence-read-command.py \
-             scripts/providers/claude-review.py scripts/verification/codex-verify.py \
-             scripts/lib/orch-proportional-evidence.py scripts/lib/orch-task-resources.py \
+             templates/cadence-global-block.md scripts/lib/orch-task-resources.py \
              skills/cadence/scripts/orch-task-resources.py; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
@@ -328,251 +310,12 @@ case "${cmd}" in
     ;;
 
   --codex)
-    # Three layers, in this order: the skill, the instructions block, the hook.
-    # config.toml is never touched — hooks.json is the file this installer owns.
-    # PREFLIGHT — every refusal fires before the first write, and the layers
-    # report prints on every path. A run that copies the skill, renders the
-    # block and THEN refuses leaves the machine in a state nobody chose.
-    codex_refuse() { echo "refused: $1" >&2; echo >&2; layers_report >&2; exit 1; }
-    skills_dest="${HOME}/.agents/skills/cadence"
-    hooks_file="${HOME}/.codex/hooks.json"
-    adapter="${ROOT}/scripts/hooks/codex-cadence-adapter.sh"
-    evidence="${ROOT}/scripts/hooks/codex-evidence.py"
-
-    command -v python3 >/dev/null 2>&1 || codex_refuse \
-      "--codex needs python3 to merge the Codex hooks file without destroying what is already in it. Install python3 and re-run; nothing was changed."
-    [[ -f "${adapter}" ]] || codex_refuse \
-      "${adapter} is missing — nothing was written to the Codex hooks file."
-    [[ -f "${evidence}" ]] || codex_refuse \
-      "${evidence} is missing — nothing was written to the Codex hooks file."
-    for dependency in scripts/verification/codex-verify.py scripts/providers/claude-review.py scripts/lib/codex-cadence-read-command.py scripts/lib/orch-proportional-evidence.py scripts/lib/orch-task-resources.py scripts/hooks/orch-task-cleanup.sh; do
-      [[ -f "${ROOT}/${dependency}" ]] || codex_refuse \
-        "${ROOT}/${dependency} is missing — nothing was changed."
-    done
-    if [[ -e "${skills_dest}" && ! -f "${skills_dest}/.orch-installed" ]]; then
-      codex_refuse "${skills_dest} exists and this installer did not write it (no .orch-installed marker inside). Move it aside yourself if you want it replaced; nothing was changed."
-    fi
-    if [[ -f "${hooks_file}" ]]; then
-      if ! python3 -m json.tool "${hooks_file}" >/dev/null 2>&1; then
-        codex_refuse "${hooks_file} does not parse as JSON. Fix it or move it aside and re-run; nothing was changed."
-      fi
-      # Parsing is not the shape the merge needs. An array or a scalar parses,
-      # and refusing it only at the merge leaves the skill copied and AGENTS.md
-      # rendered — writes nobody chose, after a refusal. Same line, earlier.
-      if ! python3 -c 'import json,sys; sys.exit(0 if isinstance(json.load(open(sys.argv[1])), dict) else 1)' \
-           "${hooks_file}" >/dev/null 2>&1; then
-        codex_refuse "${hooks_file} is not a JSON object; nothing was changed."
-      fi
-      if ! python3 - "${hooks_file}" <<'PY'
-import json, sys
-hooks = json.load(open(sys.argv[1])).get("hooks", {})
-events = ("PreToolUse", "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop", "SubagentStart", "SubagentStop")
-sys.exit(0 if isinstance(hooks, dict) and all(isinstance(hooks.get(e, []), list) for e in events) else 1)
-PY
-      then codex_refuse "${hooks_file} has invalid hook groups; nothing was changed."
-      fi
-    fi
-    mkdir -p "${HOME}/.codex" "${HOME}/.agents" 2>/dev/null || true
-    for d in "${HOME}/.codex" "${HOME}/.agents"; do
-      [[ -d "${d}" ]] || codex_refuse "${d} could not be created; nothing was changed."
-      [[ -w "${d}" ]] || codex_refuse "${d} is not writable by this user; nothing was changed."
-    done
-
-    if [[ -e "${skills_dest}" ]]; then
-      # Say what goes before it goes. The marker says "safe to delete"; a
-      # person's own notes inside the copy are not, and they are about to be.
-      echo "replacing the previous skill copy at ${skills_dest}; these files go with it:"
-      find "${skills_dest}" -type f | sed "s|^|  |"
-      rm -rf "${skills_dest}"
-    fi
-    mkdir -p "$(dirname "${skills_dest}")"
-    cp -R "${ROOT}/skills/cadence" "${skills_dest}"
-    mkdir -p "${skills_dest}/scripts/lib"
-    cp "${ROOT}/scripts/lib/orch-task-resources.py" "${skills_dest}/scripts/lib/"
-    printf 'written by llm-orchestrator install.sh --codex — safe to delete\n' \
-      > "${skills_dest}/.orch-installed"
-    printf 'verification_runner=%s\n' "${ROOT}/scripts/verification/codex-verify.py" \
-      >> "${skills_dest}/.orch-installed"
-    echo "copied the cadence skill into ${skills_dest} — it is a copy, not a link: re-run --codex after updating the plugin."
-
-    render_block "${HOME}/.codex/AGENTS.md"
-
-    # The hook entry. The adapter is Codex's substitute for the file-deny rules
-    # Claude Code has natively, and nothing more: a Bash command or an
-    # apply_patch header that names a locked FILE and is not one plain read is
-    # refused. Everything else about the lock — the directories, the marked
-    # laws section, a path a command assembles at runtime — is the alarm's:
-    # the session-start line, the end-of-turn verdict, the commit-msg hook and
-    # --audit in CI. Codex sends tool_name and tool_input.command and no file
-    # path, so the adapter is registered for Bash and for apply_patch and reads
-    # the patch headers out of the command string. The hooks.json entry SHAPE
-    # and the apply_patch matcher name are unverified against a live Codex;
-    # this is what the documentation describes, and the git layer is the
-    # enforcement that does not depend on it.
-    if [[ -L "${hooks_file}" && ! -e "${hooks_file}" ]]; then
-      codex_refuse "${hooks_file} is a link that resolves to nothing ($(readlink "${hooks_file}")); nothing was changed."
-    fi
-    hooks_res="$(resolve_target "${hooks_file}")"
-    if [[ "${hooks_res}" != "${hooks_file}" ]]; then
-      case "${hooks_res}" in
-        "${HOME}"/*) echo "${hooks_file} is a link to ${hooks_res}; writing through it." ;;
-        *) codex_refuse "${hooks_file} is a link to ${hooks_res}, which is outside ${HOME}; nothing was changed." ;;
-      esac
-    fi
-    hooks_file="${hooks_res}"
-    mkdir -p "$(dirname "${hooks_file}")"
-    python3 - "${hooks_file}" "${adapter}" "${evidence}" "${ROOT}/scripts/hooks/orch-task-cleanup.sh" <<'PY'
-import json, os, shlex, sys
-
-path, cmd, evidence, cleanup = sys.argv[1:]
-data = {}
-if os.path.exists(path):
-    try:
-        with open(path) as fh:
-            data = json.load(fh)
-    except Exception as exc:
-        sys.stderr.write(
-            "refused: %s does not parse as JSON (%s). Fix it or move it aside; "
-            "nothing was changed (a .bak copy is beside it).\n" % (path, exc))
-        sys.exit(1)
-if not isinstance(data, dict):
-    sys.stderr.write("refused: %s is not a JSON object; nothing was changed.\n" % path)
-    sys.exit(1)
-
-hooks = data.setdefault("hooks", {})
-if not isinstance(hooks, dict):
-    sys.stderr.write("refused: the \"hooks\" key of %s is not an object; nothing was changed.\n" % path)
-    sys.exit(1)
-pre = hooks.get("PreToolUse")
-if not isinstance(pre, list):
-    pre = []
-
-
-def ours(entry):
-    # ONLY this file's own basename. The plugin's name is an ordinary path
-    # word: a person whose notes live in ~/llm-orchestrator-notes/ has their
-    # own hook silently deleted by a name test any looser than this one.
-    if not isinstance(entry, dict):
-        return False
-    c = entry.get("command", "")
-    if not isinstance(c, str):
-        return False
-    return any(part.rsplit("/", 1)[-1] == "codex-cadence-adapter.sh"
-               for part in c.split())
-
-
-# Dedup: every previous entry of ours is REPLACED, never added beside. A second
-# --codex must leave exactly one adapter registration per matcher.
-kept = []
-for group in pre:
-    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-        kept.append(group)
-        continue
-    keep = [h for h in group["hooks"] if not ours(h)]
-    if len(keep) == len(group["hooks"]):
-        kept.append(group)
-    elif keep:
-        group["hooks"] = keep
-        kept.append(group)
-
-for matcher in ("Bash", "apply_patch"):
-    kept.append({"matcher": matcher,
-                 "hooks": [{"type": "command", "command": cmd}]})
-
-hooks["PreToolUse"] = kept
-# Evidence hooks are separately opted in by each project's codex_verification
-# policy. Replacing only our own handler preserves unrelated hook groups.
-evidence_cmd = shlex.join([sys.executable, evidence])
-for event, matcher in (
-    ("UserPromptSubmit", None),
-    ("PreToolUse", "Bash|apply_patch"),
-    ("PostToolUse", "Bash|apply_patch|write_stdin"),
-    ("PostToolUseFailure", "Bash|apply_patch|write_stdin"),
-    ("Stop", None),
-    ("SubagentStart", None),
-    ("SubagentStop", None),
-):
-    groups = hooks.get(event, [])
-    if not isinstance(groups, list):
-        sys.exit("refused: %s hooks must be an array" % event)
-    retained = []
-    for group in groups:
-        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-            retained.append(group)
-            continue
-        handlers = []
-        for handler in group["hooks"]:
-            command = handler.get("command", "") if isinstance(handler, dict) else ""
-            try:
-                owned = isinstance(command, str) and any(os.path.basename(p) == "codex-evidence.py" for p in shlex.split(command))
-            except (ValueError, TypeError):
-                owned = False
-            if not owned:
-                handlers.append(handler)
-        if handlers:
-            retained.append(dict(group, hooks=handlers))
-    group = {"hooks": [{"type": "command", "command": evidence_cmd, "timeout": 10}]}
-    if matcher is not None:
-        group["matcher"] = matcher
-    retained.append(group)
-    hooks[event] = retained
-# Task cleanup has its own ownership boundary. Stop only retries an explicit
-# finish; it never infers completion from this event or releases a consumer.
-retained = []
-for group in hooks.get("Stop", []):
-    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-        retained.append(group)
-        continue
-    handlers = []
-    for handler in group["hooks"]:
-        command = handler.get("command", "") if isinstance(handler, dict) else ""
-        try:
-            owned = any(os.path.basename(p) == "orch-task-cleanup.sh" for p in shlex.split(command))
-        except (ValueError, TypeError):
-            owned = False
-        if not owned:
-            handlers.append(handler)
-    if handlers:
-        retained.append(dict(group, hooks=handlers))
-retained.append({"hooks": [{"type": "command", "command": shlex.join(["bash", cleanup]), "timeout": 10}]})
-hooks["Stop"] = retained
-data["hooks"] = hooks
-new = json.dumps(data, indent=2) + "\n"
-
-old = ""
-if os.path.exists(path):
-    try:
-        old = open(path).read()
-    except Exception:
-        old = ""
-if old == new:
-    print("%s already carries the adapter hook (unchanged, no backup written)" % path)
-    sys.exit(0)
-
-# The backup is the state BEFORE this installer ever touched the file. A .bak
-# rewritten on every run holds the previous run's merge, not the original.
-if old:
-    bak = path + ".bak"
-    n = 1
-    while os.path.exists(bak):
-        bak = "%s.bak.%d" % (path, n)
-        n += 1
-    with open(bak, "w") as fh:
-        fh.write(old)
-    print("backed up %s to %s" % (path, bak))
-
-tmp = path + ".orch-merge.tmp"
-with open(tmp, "w") as fh:
-    fh.write(new)
-os.replace(tmp, path)
-print("merged cadence file guards and opt-in evidence hooks into %s" % path)
-PY
-    echo "The PreToolUse adapter protects named cadence files. Additional hooks record verification and native-agent receipts only in projects with codex_verification.mode set to blocking or warn. See docs/codex-evidence.md for scope and limits."
-    echo "Open /hooks in a fresh Codex CLI session to review and trust the current definitions. Installation does not grant hook trust or prove live hook execution. config.toml and Claude hooks were not changed."
-    echo
-    layers_report
+    echo "refused: --codex is no longer supported." >&2
+    echo "The Codex cross-harness layer was removed: it duplicated the Claude" >&2
+    echo "path and nothing used it. The skills and commands are plain markdown" >&2
+    echo "and still work as instructions in any harness that reads them." >&2
+    exit 1
     ;;
-
   --link)
     target="${HOME}/.claude/llm-orchestrator"
     mkdir -p "$(dirname "${target}")"
@@ -610,7 +353,6 @@ PY
     for f in "${ROOT}/scripts/hooks/"*.sh "${ROOT}/scripts/hooks/"*.py; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"
     done
-    cp "${ROOT}/scripts/verification/codex-verify.py" "${dest}/.claude/scripts/verification/"
     [[ -f "${ROOT}/scripts/statusline.sh" ]] && cp "${ROOT}/scripts/statusline.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/protocol-lint.sh" ]] && cp "${ROOT}/scripts/protocol-lint.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/orch-worktree-materialize.sh" ]] && cp "${ROOT}/scripts/orch-worktree-materialize.sh" "${dest}/.claude/scripts/"
@@ -705,7 +447,6 @@ LLM Orchestrator installer
   $0 --link                 symlink this repo into ~/.claude/llm-orchestrator
   $0 --copy <project-dir>   copy into <project-dir>/.claude/
   $0 --global               render the cadence block into ~/.claude/CLAUDE.md
-  $0 --codex                the cadence skill, the same block and the hook, for Codex
 USAGE
     exit 1
     ;;

@@ -43,19 +43,19 @@ repeating the same review indefinitely.
 
 ### Evidence and temporary resources
 
-Use the execution route and completion vocabulary in `SKILL.md`. The affected
-task retains verification obligations across turns; content-preserving commits
-do not stale a check. Supported evidence binds actual commands/exits to a
-canonical worktree and configured input scope. Missing/empty/invalid scope,
-unresolved mutation targets or interrupted execution cannot produce a pass.
-Keep failures visible. Record scope/fingerprint errors without losing the
-observed command result. Required unavailable validation stays pending/blocked.
+Use the completion vocabulary in `SKILL.md`. An unfinished task keeps its
+verification obligation across turns: a question, a pause or a commit that
+changes no content does not clear it. Keep failures visible. Validation that is
+required but unavailable stays PENDING or BLOCKED.
 
-`verification_scopes` optionally maps names to `selectors` and complete `inputs`
-globs. Resolved command paths select their scopes; unmatched/no paths use
-`prod_globs`, `test_globs` and `verification_config_globs` conservatively, plus
-shared runner/config/lock inputs. Empty source/test scope remains pending.
-Test-file arguments alone do not establish production dependency coverage.
+Nothing watches your commands any more. The machinery that classified every
+shell command, hashed the repository and bound a pass to a file fingerprint was
+removed on 2026-09-21: two adversarial reviews found fifteen defects in it, and
+this project's own 200-run experiment could not measure any benefit over simply
+warning (`docs/MEASUREMENTS.md`, 2026-08-05). What remains is one Stop hook that
+reads the transcript and warns when a reply says PASS with no check behind it.
+So run each check as one plain foreground command, and say PENDING when you have
+not run one. The honesty is yours to supply; the hook only notices the obvious.
 
 Use the task resource helper only when scratch or isolated trees are needed.
 Resources and consumer leases belong to one task. Finish closes admission and

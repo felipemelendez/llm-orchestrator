@@ -35,7 +35,7 @@ Docs, config, and formatting have no behavior to test. Throwaway exploration is 
 
 ## Enforcement
 
-The evidence-ledger hook records every test run the harness executed, with its exit code. A completion claim naming a test command that never ran green this turn is caught (`orch-verify-gate`), and a turn that changed a test file while the suite was only ever seen green gets flagged — that green-only history is the signature of a test written after the code. Both are notes, not blocks; the exceptions above are real. And the ledger sees exit codes, not reasons — a broken import also exits non-zero — so telling a real red from a broken one remains your job, at verify-red.
+Almost none. A Stop hook (`orch-verify-gate`) warns if a reply says `Verification: PASS` when no check ran and passed that turn. It never blocks. Nothing checks that you saw the test fail first, nothing compares a test file's history against the suite's, and nothing can tell a real red from a broken import — those were all removed with the machinery that guessed at them. The red phase is a discipline, not an enforced one, and skipping it is invisible.
 
 ## Output
 

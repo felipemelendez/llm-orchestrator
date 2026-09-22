@@ -3,6 +3,59 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] - 2026-09-22
+
+The completion check stopped watching you work. It used to inspect every command
+you ran, guess whether that command might have changed a file, and hash the whole
+repository to find out — 6,461 files and 143 MB in a real project, twice per
+command it could not classify. When it could not tell, it blocked the reply, and
+the assistant re-sent its whole answer. You read every answer twice.
+
+It now reads the record your tool already keeps and asks one question: the reply
+said PASS, did a check actually run? It says so if not. It never blocks.
+
+### Removed
+
+- The per-command evidence machinery: the 2,201-line hook, its ledger, and the
+  3,789 lines of tests that went with them. Two adversarial reviews found fifteen
+  defects in it, two of them serious enough to accept a false pass. A single
+  symlink anywhere in a project disabled it silently.
+- The Codex installer and its hooks. `--codex` now refuses with a clear message.
+  The skills are plain markdown and still read fine in any assistant; there is
+  just no installer, no hooks and no runner for them there.
+- The Stop-hook reply grader. This project's own measurement put its contribution
+  at zero, and it was a steady source of terminal noise.
+
+### Changed
+
+- Completion is checked once, at the end of a turn, by `orch-verify-gate.sh`
+  (58 lines) and `orch-completion-check.py` (~150). It reads only the explicit
+  `Verification:` label, never the words around it — the old one searched the
+  reply for phrases like "tests pass", so a review *quoting* a passing result was
+  treated as claiming one, and got blocked.
+- It warns instead of blocking. `docs/MEASUREMENTS.md`, 2026-08-05: 200 runs
+  comparing the two scored 100/100 either way. A warning costs one line; a block
+  costs the whole answer twice.
+- `AGENTS.md` is 126 lines shorter. It loads into every session, so that is about
+  2,000 tokens back on each one.
+- Per command you run: 4 checks on the way in, none on the way out. It was 5 in,
+  1 out, 1 more on failure, and those started Python that hashed the repo.
+
+### Fixed
+
+- A test suite covering live code had stopped running: `run-all.sh` only finds
+  `.sh` files and the shim that launched the Python suites was deleted with the
+  machinery. Restored, with its own shim.
+- Stale instructions that told the assistant a hook was watching it when none
+  was, in three prompts it reads while working.
+
+### Upgrading
+
+Nothing to do. Projects using the plugin pick this up on their next session.
+Existing `cadence.json` files keep working; three keys in them (`codex_verification`,
+`claude_verification`, `verification_scopes`) no longer have readers and are
+ignored.
+
 ## [0.9.0] - 2026-09-18
 
 The process now matches the size of the change. Small fixes stay simple,

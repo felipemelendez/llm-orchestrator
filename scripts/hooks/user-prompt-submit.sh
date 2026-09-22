@@ -37,16 +37,11 @@ INPUT=""
 if [[ -n "${INPUT}" && "${ORCH_HOOK_DRY_RUN:-0}" != "1" ]]; then
   _SID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
   if [[ -n "${_SID}" ]]; then
-    _EV_LIB="${HOOK_DIR}/../lib/orch-evidence.sh"
+    # The per-turn stamp this used to write belonged to the evidence ledger,
+    # which is gone; nothing reads it any more.
     _PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
     # shellcheck source=scripts/lib/orch-project.sh
     [[ -f "${_PROJ_LIB}" ]] && source "${_PROJ_LIB}"
-    # shellcheck source=scripts/lib/orch-evidence.sh
-    if [[ -f "${_EV_LIB}" ]]; then
-      source "${_EV_LIB}"
-      _TS=$(orch_turn_start_path "${_SID}")
-      mkdir -p "$(dirname "${_TS}")" 2>/dev/null && date +%s > "${_TS}" 2>/dev/null
-    fi
   fi
 fi
 

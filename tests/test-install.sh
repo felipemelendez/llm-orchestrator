@@ -262,12 +262,13 @@ mv "$TMP/src/agents/orch-implementer.md" "$TMP/keep.a"
 expect_check_fail "--check fails when agents/orch-implementer.md is deleted"
 mv "$TMP/keep.a" "$TMP/src/agents/orch-implementer.md"
 
-# The cadence files. None of them is derived from hooks.json — the Codex
-# adapter is registered in the OTHER harness's hooks file, which this checkout
-# never reads — so the manifest is the only thing that fails closed when one of
-# them is deleted, which is exactly the blind spot this section exists for.
+# The cadence files. None of them is derived from hooks.json — several are
+# scripts and references no hook manifest names — so the manifest is the only
+# thing that fails closed when one of them is deleted, which is exactly the
+# blind spot this section exists for.
+# (scripts/hooks/codex-cadence-adapter.sh was in this list until the Codex
+# layer was removed; the file no longer ships, so there is nothing to protect.)
 for cadence_entry in commands/cadence-init.md \
-                     scripts/hooks/codex-cadence-adapter.sh \
                      templates/cadence-global-block.md \
                      skills/cadence/SKILL.md \
                      skills/cadence/CADENCE.md \

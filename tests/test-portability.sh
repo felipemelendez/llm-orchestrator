@@ -103,7 +103,7 @@ fi
 
 printf '\n'
 if (( FAIL == 0 )); then
-  printf '%s%d portability checks passed.%s\n' "$GREEN" "$PASS" "$RESET"
+  printf '%sPASS: test-portability (%d checks)%s\n' "$GREEN" "$PASS" "$RESET"
   exit 0
 else
   printf '%s%d passed, %d failed.%s See lines above.\n' "$RED" "$PASS" "$FAIL" "$RESET"

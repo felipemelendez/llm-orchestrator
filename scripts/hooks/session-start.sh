@@ -25,7 +25,7 @@ fi
 # Informational only — never fails the hook. Silent under the minimal profile,
 # where those graders are already off.
 if [[ "${PROFILE}" != "minimal" ]] && ! command -v python3 >/dev/null 2>&1; then
-  printf 'LLM Orchestrator: python3 not found — the protocol grader and subagent Status grader are disabled. Install python3 to enable them, or set ORCH_HOOK_PROFILE=minimal to silence this notice.\n' >&2
+  printf 'LLM Orchestrator: python3 not found — the subagent Status grader and the completion check are disabled. Install python3 to enable them, or set ORCH_HOOK_PROFILE=minimal to silence this notice.\n' >&2
 fi
 
 ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"

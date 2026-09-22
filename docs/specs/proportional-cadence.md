@@ -1,5 +1,12 @@
 # Proportional cadence and automatic task cleanup
 
+> **Superseded in part, 2026-09-21.** The evidence mechanics in section 2 —
+> the per-command watcher, the repository fingerprint and the blocking gate —
+> described `scripts/lib/orch-proportional-evidence.py`, which was removed. A
+> Stop hook that reads the transcript and warns replaces all of it. The
+> workflow selection in section 1 (Simple / Standard / Full) still stands and
+> is the live contract; `skills/cadence/SKILL.md` is where an agent reads it.
+
 Status: approved specification, independently reviewed by Codex and Claude with review corrections incorporated.
 Owner: Felipe Melendez. Requested 2026-09-16.
 Framework baseline: `e4963987fca1d0f3f9719215b91141d0ae8cab74`.
