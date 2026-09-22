@@ -13,7 +13,7 @@ Skip the classifier — the user asked for this directly, so treat it as `RESEAR
    pass a file path — paste the filled-in content.
 
    (`templates/research-brief.md` is the shape of the brief the researcher
-   *writes*, not the prompt it *receives*. This command used to point at it.)
+   *writes*, not the prompt it *receives*. Do not send that one.)
 
 2. The researcher returns exactly one outcome:
    - `VERIFIED` — sources confirm the approach. Proceed; cite the brief.

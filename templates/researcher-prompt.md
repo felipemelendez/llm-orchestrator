@@ -56,11 +56,9 @@ date +%F   # the brief's date prefix
 
 ## Why this file exists
 
-`commands/research.md` used to say "dispatch the researcher with
-`templates/research-brief.md`". That file is the **output artifact** template —
-the shape of the brief the researcher writes — not a dispatch envelope, and the
-three things the command told you to paste covered two of the eight required
-fields. The classifier supplies four. Trigger point, Stakes, Capability survey,
+This is the dispatch envelope — what the researcher *receives*.
+`templates/research-brief.md` is the output template: the shape of the brief the
+researcher *writes*. Do not send that one. Trigger point, Stakes, Capability survey,
 Brief output path and Cache root were assembled nowhere, so a researcher
 following its own contract had to return `BLOCKED`, and one that didn't was
 ignoring its own envelope contract.

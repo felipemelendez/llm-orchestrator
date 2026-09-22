@@ -168,7 +168,7 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 
 ## Linting
 
-`scripts/protocol-lint.sh` is a standalone CLI that checks a reply against the six shapes. The Stop-hook grader that ran it after every turn was removed: this repo's own ablation measured its contribution at zero, and it was a source of terminal noise. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block).
+`scripts/protocol-lint.sh` is a standalone CLI that checks a reply against the six shapes. Subagent `Status:` blocks are validated by `scripts/hooks/subagent-stop.sh` (set `ORCH_STRICT_STATUS=1` to block). No hook grades the controller's replies.
 
 ## Injected blocks (single source)
 
@@ -183,7 +183,7 @@ Anything an agent needs *once* — skill precedence, the working rules, the rout
 
 ### Recovery core — SessionStart, post-compaction only
 
-Marker name is historical (`scripts/hooks/session-start.sh` reads it); the block is no longer per-turn.
+Injected once per session, and again after a compaction (`scripts/hooks/session-start.sh`).
 
 <!-- orch-turn-reminder-start -->
 LLM Orchestrator — the protocol still applies after this compaction boundary:

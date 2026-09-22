@@ -7,11 +7,9 @@ description: Use when <trigger>. Not for <adjacent non-trigger>.
 Scaffold for skills/<name>/SKILL.md. Read skills/writing-skills/SKILL.md first —
 this file is that skill's shape, not a substitute for it.
 
-There are no required sections. This scaffold used to mandate five
-(When to use / When NOT to use / Steps / Output shape / Anti-patterns) and kept
-regenerating them for months after the catalogue had moved off that form, because
+There are no required sections. Use whichever headings the content needs.
 CONTRIBUTING.md and docs/skills-guide.md both start a new skill by copying this
-file. Use whichever headings the content needs.
+file, so anything left here spreads.
 
 Governing test for every line: would a capable model get this wrong without it?
 Anthropic cut over 80% of Claude Code's system prompt with no measurable loss,

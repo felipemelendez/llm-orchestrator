@@ -84,8 +84,6 @@ Run them in this order:
 
 So "the auth test is failing, fix it" is `systematic-debugging` first (find the cause), then `test-driven-development` (capture it in a test), then `verification-before-completion`. A failing test you just wrote is the red phase, not a bug — that one starts at tier 2.
 
-This section used to be a "Red flags — thoughts that mean STOP" table pairing each rationalization with its rebuttal. It was a rationalization table, which `writing-skills` and `CLAUDE.md` both ban, sitting in the skill that establishes those rules. It also solved the wrong problem: the failure it guarded against was rarely an agent talking itself out of a skill, it was two skills matching at once with no stated order. That is what the list above fixes.
-
 ## When to invoke other skills
 
 Each row is a directive, not a suggestion. If the trigger matches, invoke.
