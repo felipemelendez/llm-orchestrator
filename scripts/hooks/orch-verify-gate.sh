@@ -3,28 +3,23 @@
 #
 # The question: the reply declared "Verification: PASS" — did a check actually
 # run and succeed in this turn? The transcript the harness already writes has
-# the answer, so there is nothing to observe, hash or classify. The 2,201-line
-# module that used to watch every command and fingerprint the repository was
-# removed on 2026-09-21; this is what replaced it.
+# the answer, so there is nothing to observe, hash or classify.
 #
-# Three rules, each learned the hard way and each having cost a defect:
+# Three rules. Each has already cost a defect, so change them deliberately:
 #
-#   1. Never read the reply's prose. The old version searched for phrases like
-#      "tests pass" anywhere in the text, so an audit QUOTING a passing result
-#      was treated as claiming one. Only the explicit `Verification:` label
-#      counts, and only outside code fences.
+#   1. Read only the explicit `Verification:` label, outside code fences —
+#      never the reply's prose. Searching the text for phrases like "tests
+#      pass" treats a review QUOTING a passing result as claiming one.
 #
-#   2. Never block. docs/MEASUREMENTS.md, 2026-08-05: 200 runs comparing warn
-#      against block scored 100/100 both ways — "the dishonest claim the gate
-#      exists to catch never occurred". A block costs the whole answer twice,
-#      in the terminal and in the context window.
+#   2. Warn; never block. 200 runs comparing the two scored 100/100 either way
+#      (docs/MEASUREMENTS.md, 2026-08-05). A block costs the whole answer
+#      twice, in the terminal and in the context window.
 #
-#   3. Say it where it is read. stderr alone is a no-op on this harness
-#      (CHANGELOG.md:769), so the note also goes out as additionalContext.
+#   3. Print the note as additionalContext, not only stderr. stderr alone is
+#      not delivered to the model on this harness.
 #
-# The logic is in ../lib/orch-completion-check.py. It lives in its own file so
-# it can be tested directly, and because inlining python in a quoted heredoc is
-# how the first version of this hook broke.
+# The logic is in ../lib/orch-completion-check.py, in its own file so it can be
+# tested directly and so the python is not trapped inside a quoted heredoc.
 set -uo pipefail
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"

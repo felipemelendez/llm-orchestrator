@@ -4,14 +4,14 @@
 Reads a Stop / SubagentStop payload on stdin. Prints one note, or nothing.
 Always exits 0: this warns, it never blocks. See orch-verify-gate.sh for why.
 
-Deliberately small. An earlier version added rules for quoted text, pipes and
-"didn't really run" flags; a review measured them catching zero evasions while
-wrongly rejecting ordinary commands. A note that is wrong often gets ignored,
-which is worse than no note, so only the rules that earn their place are here.
+Deliberately small. Rules for quoted text, pipes and "didn't really run" flags
+were measured catching zero evasions while wrongly rejecting ordinary commands,
+so they are not here: a note that is wrong often gets ignored, which is worse
+than no note.
 
 What it does NOT catch, on purpose: a green run that tested nothing, a suite
 that does not cover the change, and anything deliberately dressed up to look
-like a pass. Those were never catchable by watching commands.
+like a pass. Watching commands cannot catch those.
 """
 import json
 import os

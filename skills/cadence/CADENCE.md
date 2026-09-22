@@ -48,12 +48,9 @@ verification obligation across turns: a question, a pause or a commit that
 changes no content does not clear it. Keep failures visible. Validation that is
 required but unavailable stays PENDING or BLOCKED.
 
-Nothing watches your commands any more. The machinery that classified every
-shell command, hashed the repository and bound a pass to a file fingerprint was
-removed on 2026-09-21: two adversarial reviews found fifteen defects in it, and
-this project's own 200-run experiment could not measure any benefit over simply
-warning (`docs/MEASUREMENTS.md`, 2026-08-05). What remains is one Stop hook that
-reads the transcript and warns when a reply says PASS with no check behind it.
+Nothing watches your commands. One Stop hook reads the transcript and warns
+when a reply says PASS with no check behind it. That is the whole of it.
+
 So run each check as one plain foreground command, and say PENDING when you have
 not run one. The honesty is yours to supply; the hook only notices the obvious.
 

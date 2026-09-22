@@ -13,7 +13,17 @@
   },
   "typecheck_cmd": "",
   "unused_cmd": "",
-  "src_roots": ["scripts", "tests", "hooks", "skills", "commands", "agents", "workflows", "templates", "output-styles"],
+  "src_roots": [
+    "scripts",
+    "tests",
+    "hooks",
+    "skills",
+    "commands",
+    "agents",
+    "workflows",
+    "templates",
+    "output-styles"
+  ],
   "prod_globs": [
     "scripts/**",
     "skills/**",
@@ -24,12 +34,23 @@
     "workflows/**",
     "output-styles/**"
   ],
-  "test_globs": ["tests/**"],
-  "lang_globs": ["*.sh"],
-  "suite_globs": ["tests/**/test-*.sh", "tests/validate-*.sh"],
-  "import_patterns": ["{base}\\.sh"],
+  "test_globs": [
+    "tests/**"
+  ],
+  "lang_globs": [
+    "*.sh"
+  ],
+  "suite_globs": [
+    "tests/**/test-*.sh",
+    "tests/validate-*.sh"
+  ],
+  "import_patterns": [
+    "{base}\\.sh"
+  ],
   "export_pattern": "^[A-Za-z_][A-Za-z0-9_]*\\(\\)",
-  "comment_prefixes": ["#"],
+  "comment_prefixes": [
+    "#"
+  ],
   "positive_control": {
     "file_ext": ".sh",
     "snippet": "if then; fi",
@@ -39,7 +60,7 @@
   "wait_timeout_s": 1800,
   "scratch_dir": "",
   "refuse_paths": [],
-  "lock_extra": ["docs/llm-orchestrator/CODEX.md"],
+  "lock_extra": [],
   "install_cmd": "",
   "verification_config_globs": [
     ".claude-plugin/**",
@@ -55,30 +76,5 @@
     "docs/llm-orchestrator/LAWS.md",
     "docs/llm-orchestrator/CODEX.md",
     "docs/llm-orchestrator/LOCK.sha256"
-  ],
-  "codex_verification": {
-    "mode": "blocking",
-    "include_globs": [],
-    "exclude_globs": [],
-    "commands": []
-  },
-  "claude_verification": {
-    "mode": "blocking",
-    "commands": []
-  },
-  "verification_scopes": {
-    "cadence_docs": {
-      "selectors": ["tests/test-cadence-docs.sh"],
-      "inputs": [
-        "scripts/**",
-        "skills/**",
-        "hooks/**",
-        "commands/**",
-        "templates/**",
-        "docs/**",
-        "*.md",
-        "tests/test-cadence-docs.sh"
-      ]
-    }
-  }
+  ]
 }

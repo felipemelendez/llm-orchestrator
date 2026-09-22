@@ -16,21 +16,22 @@ an agent. The re-lock and the ruling commit happen inside that session.
 
 ## 1. What we are building, and why
 
-LLM Orchestrator is a Claude Code plugin and Codex install that makes agent
+LLM Orchestrator is a Claude Code plugin that makes agent
 work proportional and truthful: small changes stay simple, consequential changes
 receive independent review, valid checks are reused, temporary artifacts are
 cleaned safely, and a completion claim is backed by observed execution.
 
 **The promises — judge every line of work by them.**
 
-- A `Verification: PASS` is only ever emitted when the hooks observed the
-  named checks pass on the final source. Text never supplies evidence.
+- A `Verification: PASS` names checks that actually ran. A Stop hook reads the
+  transcript and says so when none did; it warns rather than blocks, so the
+  honesty is the agent's to supply. Text never substitutes for a check.
 - The cadence never weakens itself silently: checker configuration, laws, the
   lock, hook definitions and deny rules change only through the ruling path.
 - The plugin never destroys another session's work: no force removal, no
   stash pop, no adopting paths it did not create, no bulk deletion of documents.
-- Claude and Codex get the same policy, the same completion vocabulary and the
-  same cleanup helper, from the same source files.
+- One harness, one policy: Claude Code. The skills stay readable anywhere, as
+  instructions, with nothing enforcing them.
 
 **Harm ranking.** The severity rule reads these three classes.
 
@@ -52,31 +53,32 @@ cleaned safely, and a completion claim is backed by observed execution.
   the person's own shell.
 - **Rulings that govern the build:**
   `Ruling 1 (2026-09-17, Felipe): the proportional cadence specified in docs/specs/proportional-cadence.md applies to this repository itself, with workflow proportional, Claude and Codex execution evidence in blocking mode, and the shared task-resource cleanup; the framework verifies its own changes through its own hooks.`
+  `Ruling 2 (2026-09-22, Felipe): Claude Code only; completion is checked once at Stop, by warning, never by blocking. Supersedes Ruling 1 where they differ.`
 - **Standing constraints:** shipped files under `scripts/`, `skills/`, `hooks/`,
   `agents/`, `commands/`, `templates/`, `workflows/` and `output-styles/` are
   production; `tests/` are tests; ordinary Markdown is documentation. After a
-  shipped file changes, the installed Claude plugin copy and the Codex copied
-  skill must be refreshed to byte parity before the change is called complete.
+  shipped file changes, the installed Claude plugin copy must be refreshed to
+  byte parity before the change is called complete.
   `templates/cadence-global-block.md` and
   `skills/cadence/references/global-block.md` stay identical. Skill bodies stay
   under 250 lines (`tests/validate-skills.sh`). The Git layer (`.githooks/`
   copies, the marked instruction blocks and the local deny rules) is installed
   by `cadence-init.sh` in a session the person launches, and Git hooks stay
   inert until that person routes them; the plugin never runs `git config`.
-- **Hubs:** `scripts/lib/orch-proportional-evidence.py`,
-  `scripts/hooks/codex-evidence.py`, `skills/cadence/scripts/orch-cadence-check.sh`,
+- **Hubs:** `scripts/lib/orch-completion-check.py`,
+  `scripts/hooks/orch-verify-gate.sh`, `skills/cadence/scripts/orch-cadence-check.sh`,
   `scripts/install.sh` and `hooks/hooks.json`. A change touching two of them
   is Full.
 
 ## 3. Model seats
 
 Every dispatch names its model. Full work on verification, evidence, cleanup or
-lock contracts receives two independent blind reviews: one native Codex
-adversarial review inheriting the controller's model and effort, and one actual
-Claude Fable 5.1 review through the read-only provider runner. Record the served
-model from the receipt; a dropout is not a review and another model is never
-substituted silently. Reviewers never see the implementer's conclusions or each
-other's findings before reporting.
+lock contracts receives two independent blind reviews with different briefs:
+one adversarial, one against the contract. Name the model of each dispatch and
+record what was actually served; a refusal, a rate limit or a dropout is not
+a review, and substituting another model is stated out loud, never silently.
+Reviewers never see the implementer's conclusions or each other's findings
+before reporting.
 
 ## 4. The standard of work
 
@@ -91,17 +93,15 @@ other's findings before reporting.
   checkout, one command per invocation, no wrapper, pipe or flag prefix. The
   full suite is `bash tests/run-all.sh` and is the right check for hub changes;
   it is a script, so name the individual suites it ran when claiming PASS.
-  Run the two legacy evidence suites through
-  `python3 tests/test-proportional-install.py`, which captures their output;
-  the bare ledger suite prints a fixture label the recognizer treats as empty.
+  Python suites run directly, or through their `.sh` shim so `run-all.sh`
+  discovers them - `run-all.sh` finds only `*.sh`, and a suite with no shim
+  silently stops running.
 - **Evidence route:** in Claude, checks are observed by the native Bash tool;
   give each suite a tool timeout longer than its run (the evidence suite takes
   over two minutes) and prefer suites with concise output, because a command
   the harness backgrounds or an output it persists to a file cannot be
   confirmed by the hook.
-  In Codex, run each check through `scripts/verification/codex-verify.py` with
-  fresh absolute receipt and output paths in task-owned scratch. Provider
-  receipts and child prose are never test results. End with
+  A child agent's report is not a test result. End with
   `Verification: PASS | PENDING | BLOCKED | NOT APPLICABLE — reason`.
 - **Cleanup:** temporary reviews, copies, receipts and logs live in task-owned
   scratch created with `skills/cadence/scripts/orch-task-resources.py`; finish
