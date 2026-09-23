@@ -51,6 +51,18 @@ Already installed? Follow [Updating to v0.11.0](./docs/install.md#updating-to-v0
 
 For a task walkthrough, see [the sample session](./docs/examples/sample-session.md).
 
+### Using Codex?
+
+Codex gets a smaller part of the plugin: the cadence skill and three small hooks. In your terminal, clone this repository into a folder you will keep and run the installer:
+
+```sh
+git clone https://github.com/felipemelendez/llm-orchestrator.git
+cd llm-orchestrator
+./scripts/install.sh --codex
+```
+
+Then open a new Codex session and run `/hooks` to trust the three hooks. Codex only runs a hook you have trusted. What you get and what it never does: [Codex](./docs/codex.md).
+
 ---
 
 ## What it does
