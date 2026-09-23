@@ -5,62 +5,44 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [0.11.0] - 2026-09-23
 
-Codex is back, on the new design. `./scripts/install.sh --codex` works again
-and installs two hooks: the file guard that stood in for Claude Code's deny
-rules, unchanged, and a completion check that is the twin of the Claude one.
-The per-command evidence tracker and the verification runner the old Codex
-layer was built on stay deleted.
+Codex is back. `./scripts/install.sh --codex` works again. It installs the
+cadence skill and three small hooks: a guard for the project's rulebook, a
+completion check that works like the Claude Code one, and a cleanup for
+temporary files. The old per-command tracker stays deleted. How to install and
+what you get: [docs/codex.md](docs/codex.md).
 
 ### Added
 
-- `scripts/hooks/codex-verify-gate.sh` and `scripts/lib/codex-completion-check.py`:
-  at Codex's Stop, when the reply says `Verification: PASS`, read the session
-  log Codex already keeps and ask whether a command matching the shared check
-  pattern ran in this turn and passed. Same label rule, same pattern file, same
-  note as the Claude check. Codex cannot hand the model a note without a
-  continuation and its only other output is a warning to the person, so the
-  note goes to the agent as one continuation and the person sees nothing.
-- `docs/codex.md`, and the project's own `docs/llm-orchestrator/CODEX.md`.
-- `tests/test-codex-verify-gate.sh`; the file-guard and Claude-reviewer suites
-  are restored as they were.
+- The Codex completion check (`scripts/hooks/codex-verify-gate.sh`). When a
+  reply ends with `Verification: PASS`, it reads the session log Codex already
+  keeps and asks whether a test command ran and passed in this turn. If not, it
+  sends the assistant back once. It never prints a message for you and never
+  blocks.
+- `docs/codex.md`, and this repository's own `docs/llm-orchestrator/CODEX.md`.
+- `tests/test-codex-verify-gate.sh`. The file-guard and Claude-reviewer suites
+  are back as they were.
 
 ### Changed
 
-- `install.sh --codex` registers the adapter on PreToolUse and the completion
-  check plus task cleanup on Stop, and strips the old `codex-evidence.py`
-  entries an earlier install left behind. Those pointed at a deleted file and
-  made every Codex command fail with a missing hook. Every refusal now comes
-  before the first write: a file of your own inside the skill copy (a link, a
-  file where a shipped directory should be, a marker below the root, an
-  empty directory) is a named refusal rather than a deletion, a directory
-  this user cannot write, enter or read is refused with a line, a scan
-  that could not start or finish is a refusal too, never a pass, the old
-  copy is moved aside before the new one is written (so the copy is always
-  whole, and an old copy that will not delete is named and left beside it), two destinations that are one file or one
-  inside the skill copy are refused, a linked path is judged by where it
-  really is (a linked skill directory keeps its link and the copy behind it
-  is refreshed), and only the script a hook runs, by its name and its
-  `scripts/hooks` directory, decides whether it is ours; a `bash -c` wrapper
-  of yours that names our script as an argument is yours.
-- The Claude completion check counts a command only when the harness wrote a
-  finished result for it: a check that was started and never finished, one
-  asked for with `run_in_background`, and one whose result is the harness's
-  launch acknowledgement are not passes. The command's text is read the plain
-  way it always was (split at operators, matched against the shared pattern),
-  never parsed as shell; `cmd &`, heredoc bodies, `|| true` and quoted text
-  are documented limits, in the spec and the file's docstring. Its note now
-  goes to the model only, no longer also to stderr. The rule that ignores a
-  `Verification:` label inside a code fence no longer re-scans a run of
-  blank lines from every line: a reply padded with tens of thousands of them
-  used to take the hook past its ten-second limit on both harnesses.
-- The shared check pattern recognises `python3 tests/test-<name>.py`, the form
-  the laws name, on both harnesses.
+- The Codex installer now checks everything before it writes anything. It
+  refuses, and says why, when a folder cannot be written, when a file of yours
+  sits inside the skill folder, or when two of its targets turn out to be one
+  file. It replaces its own copy in a way that is always whole, and it removes
+  old hook entries from v0.8 and v0.9 that pointed at deleted files and made
+  every Codex command fail. Your own entries in `hooks.json` are left alone.
+- The Claude completion check counts a test command only when the harness
+  recorded it finishing. A command started in the background, or one that
+  never finished, is not a pass. The note goes to the model only, no longer
+  also to stderr.
+- A reply padded with tens of thousands of blank lines used to take the
+  completion check past its ten-second limit. Fixed on both harnesses.
+- The check recognises `python3 tests/test-<name>.py` as a test command on
+  both harnesses.
 
 ### Removed
 
-- `scripts/hooks/codex-evidence.py` and `scripts/verification/codex-verify.py`
-  are not restored. The check reads exit codes from the log, so the trusted
-  runner they existed for has no job.
+- The old Codex evidence tracker and its verification runner are not coming
+  back. The check reads exit codes from the log, so they have no job.
 
 ## [0.10.0] - 2026-09-22
 

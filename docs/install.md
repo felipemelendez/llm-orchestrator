@@ -3,9 +3,9 @@
 **Plan in Claude Code. Build with Claude Code or Codex.**
 
 The whole plugin lives in Claude Code: brainstorming, planning, implementation,
-review and verification. Codex gets the cadence skill, the same instructions
-block and the same two checks (the file guard and the completion check) from
-one installer; see [Codex](codex.md).
+review and verification. Codex gets a smaller part from one installer: the
+cadence skill, the shared instructions and three small hooks. See
+[Codex](codex.md).
 
 - **New install:** install [the plugin](#option-1--claude-code-plugin).
 - **Codex:** run [the Codex installer](#codex-setup).
@@ -25,17 +25,16 @@ cd llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
-Open a fresh Codex CLI session and run `/hooks`. Review the definitions and
-trust them so Codex can run them. The installer cannot grant that trust for
-you. Keep the framework folder in place; the hooks point to scripts inside it.
+Open a new Codex session and run `/hooks`. Review the three hooks and trust
+them. Codex only runs a hook you have trusted, and the installer cannot do that
+step for you. Keep the framework folder in place, because the hooks point at
+scripts inside it.
 
-What the hooks do, what they read and what they never do is on the
-[Codex page](codex.md). In short: one refuses edits to the locked cadence
-files, another sends the agent back once when a reply claims a passing
-verification that nothing in the turn backs up, and the third retries the
-cleanup of finished task scratch. None of them prints a message for you on
-ordinary work: a refusal is the agent's to read, and the completion note goes
-to the agent.
+In short, the three hooks are: one that stops the assistant editing a
+project's rulebook, one that sends the assistant back once when a reply claims
+tests passed and none ran, and one that cleans up temporary files from
+finished tasks. None of them prints a message for you. The full picture is on
+the [Codex page](codex.md).
 
 ## Enable cadence in a project
 
@@ -124,11 +123,11 @@ git pull --ff-only
 ./scripts/install.sh --codex
 ```
 
-The cadence skill is a copy, so rerun the installer after updating the source.
-Open a fresh Codex CLI session and check `/hooks`; new or changed definitions
-need your trust. If you installed the v0.8 or v0.9 Codex layer, this run also
-removes its old per-command hook entries, which pointed at files v0.10.0
-deleted and made every Codex command fail with a missing hook.
+The skill is a copy, so it only changes when you rerun the installer. Then
+check `/hooks` in a new session: a hook whose text changed needs your trust
+again. If you installed the Codex layer from v0.8 or v0.9, this run also
+removes old hook entries that pointed at deleted files and made every command
+fail.
 
 The remaining sections cover alternative Claude installations and detailed
 settings.
@@ -447,8 +446,8 @@ One seam between the installer and the init is worth knowing before you hit it: 
 
 ## Cross-harness
 
-Claude Code is supported first-class. Codex has an installer (`./scripts/install.sh --codex`) that ships the cadence skill, the same instructions block and the same two checks; what it is and what it reads is on the [Codex page](codex.md).
+Claude Code is supported first-class. Codex has an installer (`./scripts/install.sh --codex`) that ships the cadence skill, the shared instructions and three small hooks. What they do is on the [Codex page](codex.md).
 
-The skills, commands and agent prompts are plain markdown, so they work as written instructions anywhere a tool will read them. For Gemini, Copilot or any other harness, copy `skills/`, `commands/` and `templates/` into its config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`. What you do not get is the enforcement: the hooks and the guards are Claude Code's, and Codex gets the file guard and the completion check only.
+The skills, commands and agent prompts are plain markdown, so they work as written instructions anywhere a tool will read them. For Gemini, Copilot or any other harness, copy `skills/`, `commands/` and `templates/` into its config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`. What you do not get is the enforcement: the hooks and the guards are Claude Code's, and Codex gets the file guard, the completion check and the scratch cleanup only.
 
 The project's own layers are unaffected by any of this. The `.githooks/commit-msg` refusal and `.githooks/orch-cadence-check.sh --audit` live in the repository, not in a harness, so they work from whatever tool made the commit.
