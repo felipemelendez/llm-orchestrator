@@ -131,6 +131,13 @@ check_latency "orch-stop.sh"                "$TRANSCRIPT_EVENT"
 # grader is deleted and the ledger is a retired, unregistered stub. Neither is a
 # hook hooks.json fires, so neither has a latency budget to defend.
 check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
+# The Codex twins: a Stop payload naming the same transcript (the check reads
+# it and finds no PASS label), and a PreToolUse Bash payload on a project with
+# no cadence.json (the adapter's inert path, which every other project takes).
+CODEX_STOP_EVENT="$TMP/codex-stop.json"
+python3 -c 'import json,sys; print(json.dumps({"session_id":"s","turn_id":"t","transcript_path":sys.argv[1],"cwd":sys.argv[2],"hook_event_name":"Stop","model":"m","permission_mode":"default","stop_hook_active":False,"last_assistant_message":"Changed: x\n\nVerification: PASS"}))' "$TRANSCRIPT" "$CADENCE_OFF" > "$CODEX_STOP_EVENT"
+check_latency "codex-verify-gate.sh"        "$CODEX_STOP_EVENT"
+CODEX_PROJECT_DIR="$CADENCE_OFF" check_latency "codex-cadence-adapter.sh" "$BASH_EVENT"
 
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "orch-cadence-stop.sh"    "$TRANSCRIPT_EVENT"

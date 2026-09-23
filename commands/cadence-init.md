@@ -54,9 +54,6 @@ ask them to confirm or correct. Before writing the configuration, confirm:
   verification will stay pending until it is added, and that adding it later is
   a change to a protected file and so needs a numbered ruling.
 - `typecheck_cmd` is right, or intentionally empty.
-- For Codex, `codex_verification.mode` is `blocking` (the assistant must
-  address missing checks before finishing) or `warn` (it only reports the gap);
-  say which behavior the user is choosing.
 
 ### 3. Write the confirmed JSON to a temp file
 

@@ -12,7 +12,7 @@ LLM Orchestrator is a Claude Code plugin for work you want to hand off: agree on
 
 For example: “Implement the approved plan in `docs/feature-plan.md`. Follow this project's cadence and report the reviews and test results.” Replace the example path with your actual plan.
 
-**New in v0.10.0:** the completion check stopped watching you work. It reads the record your tool already keeps, and warns instead of blocking — so a reply is never sent twice. [What changed](./CHANGELOG.md).
+**New in v0.11.0:** Codex is supported again. `./scripts/install.sh --codex` installs the file guard and a completion check that works like the Claude Code one: it reads the record Codex already keeps and sends the agent back once when a reply claims a check that never ran. [What changed](./CHANGELOG.md).
 
 ## Quick Start
 
@@ -47,7 +47,7 @@ The process applies to code and test changes in enabled projects. Documentation-
 
 **Requirements:** Claude Code, Bash, Git, and Python 3 (a few hooks use it). The visual brainstorming panel needs Node.js.
 
-Already installed? Follow [Updating to v0.10.0](./docs/install.md#updating-to-v0100). Publishing a release does not update installed copies automatically.
+Already installed? Follow [Updating to v0.11.0](./docs/install.md#updating-to-v0110). Publishing a release does not update installed copies automatically.
 
 For a task walkthrough, see [the sample session](./docs/examples/sample-session.md).
 
@@ -262,11 +262,11 @@ Projects initialized before this release keep the older fixed sequence (brief re
 
 Three rules, so you can predict them without reading the source:
 
-1. **Defaults warn, never block.** Out of the box nothing stops your turn. Hooks add context, check shapes, and print warnings — the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the end-of-turn completion check included. No hook changes tool output. The four guards are the deliberate exception: `guard-destructive-git`, `guard-no-verify`, `guard-config-protection` and `guard-dispatch-model` refuse the command outright, because a guard that only warns is not a guard. Their escape hatches are in [`docs/install.md`](./docs/install.md#escape-hatches-for-the-hard-guards).
-2. **Blocking is opt-in.** `ORCH_STRICT_STATUS=1` blocks a malformed or empty subagent return; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3); `ORCH_STRICT_RESEARCH=1` blocks a malformed research brief. `ORCH_HOOK_PROFILE=strict` turns on the first two at once. The completion check has no strict mode: 200 runs comparing warn against block scored the same either way ([`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md), 2026-08-05), so it always warns.
+1. **Defaults warn, never block.** Out of the box nothing stops your turn. Hooks add context, check shapes, and warn — the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the end-of-turn completion check (a note to the model, never a message to you) included. On Codex the same completion check sends the agent back once instead, because that harness has no way to hand the model a note quietly; it never prints a message for you ([`docs/codex.md`](./docs/codex.md)). No hook changes tool output. The guards are the deliberate exception: `guard-destructive-git`, `guard-no-verify`, `guard-config-protection`, `guard-dispatch-model`, the cadence unlock guard, and on Codex the cadence file guard refuse the command outright, because a guard that only warns is not a guard. A refusal is addressed to the agent, as the reason its command was refused. Their escape hatches are in [`docs/install.md`](./docs/install.md#escape-hatches-for-the-hard-guards).
+2. **Blocking is opt-in.** `ORCH_STRICT_STATUS=1` blocks a malformed or empty subagent return; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3); `ORCH_STRICT_RESEARCH=1` blocks a malformed research brief. `ORCH_HOOK_PROFILE=strict` turns on the first two at once. The completion check has no strict mode: 200 runs comparing warn against block scored the same either way ([`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md), 2026-08-05), so on Claude Code it always warns, and on Codex it always takes the one route to the agent that harness offers.
 3. **Local-only state.** Nothing leaves your machine. Skill telemetry is opt-in (`ORCH_TELEMETRY=1`, off by default).
 
-`ORCH_HOOK_DRY_RUN=1` makes the hooks that add context or check shapes print what they would have done and then do nothing. Use it to tune behavior before turning a strict flag on. The four guards ignore it on purpose; the completion check, the Stop pruner and the worktree reaper never implemented it.
+`ORCH_HOOK_DRY_RUN=1` makes the hooks that add context or check shapes print what they would have done and then do nothing. Use it to tune behavior before turning a strict flag on. The guards ignore it on purpose; the Stop pruner and the worktree reaper never implemented it.
 
 ---
 
@@ -287,6 +287,7 @@ Other modes:
 
 - **Persistent symlink.** `./scripts/install.sh --link` then `/plugin marketplace add ~/.claude/llm-orchestrator`.
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
+- **Codex.** `./scripts/install.sh --codex` — the cadence skill, the same instructions block and the same two checks, into your Codex setup; then trust them with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
 - **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `950000` (≈95% of a 1M-token window) — the token count at which the agent is reminded once to write a handoff note before native compaction kicks in. Lower it for a smaller context window.

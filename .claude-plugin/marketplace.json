@@ -8,7 +8,7 @@
     {
       "name": "llm-orchestrator",
       "description": "Agent orchestration toolkit. 19 skills, 15 commands, 7 native subagents, file-based memory, native Claude Code hooks, and an opt-in review cadence with a lock over the rules that state it.",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "source": "./",
       "license": "MIT",
       "homepage": "https://github.com/felipemelendez/llm-orchestrator",

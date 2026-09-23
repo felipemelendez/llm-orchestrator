@@ -135,6 +135,9 @@ non-zero on failure.
 | `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
 | `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
 | `test-verify-gate.sh` | what the Stop completion check warns about, and the prose it must stay out of |
+| `test-codex-verify-gate.sh` | the Codex twin: the same question asked of a Codex rollout, answered to the agent once and never to the person |
+| `test-codex-adapter.sh`, `test-claude-provider.sh` | the Codex file guard, and the optional Claude reviewer runner with a fake CLI |
+| `test-install-global.sh` | `--global` and `--codex` under a temporary HOME: the block, the skill copy, the hooks merge, and the installed Stop command run for real |
 | `test-guard-no-verify.sh`, `test-destructive-git-guard.sh` | the two PreToolUse guards — both fail-open and false-positive directions |
 | `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |

@@ -33,6 +33,9 @@ you read it.
 | `deny` and `ask` rules in a project settings file apply without the workspace-trust dialog, since they only restrict | VERIFIED — and the reason the deny rules ship only into a project that ran the init | <https://code.claude.com/docs/en/permissions> |
 | Plugin layout: `.claude-plugin/plugin.json`, `skills/<name>/SKILL.md`, `hooks/hooks.json`; `${CLAUDE_SKILL_DIR}` is the variable available to a skill (`${CLAUDE_PLUGIN_ROOT}` is plugin-scoped), and neither expands in Codex | VERIFIED — the reason `SKILL.md` prints both the expanded and the relative spelling | <https://code.claude.com/docs/en/plugins-reference> |
 | Codex protects `.agents/`, `.codex/` and `.git` as read-only inside a writable root, recursively; it has no native path-deny for an arbitrary file | VERIFIED — the reason the git layer, not a directory, is the cross-tool protection | <https://learn.chatgpt.com/docs/agent-approvals-security> |
+| A Codex `Stop` hook receives `session_id`, `turn_id`, `transcript_path` (nullable), `cwd`, `model`, `permission_mode`, `stop_hook_active` and `last_assistant_message` (nullable) | VERIFIED, read 2026-09-22 (`StopCommandInput`, codex-rs/hooks/src/schema.rs, Codex 0.155.1) | <https://github.com/openai/codex/blob/main/codex-rs/hooks/src/schema.rs> |
+| A Codex `Stop` hook's output is `continue`, `stopReason`, `suppressOutput`, `systemMessage`, `decision` and `reason` — no `hookSpecificOutput.additionalContext`; `systemMessage` is a warning in the person's UI, and `decision: block` does not reject the turn but continues it with `reason` as the agent's next prompt | VERIFIED, read 2026-09-22 — the reason the Codex completion check sends the agent back once instead of warning the person | <https://learn.chatgpt.com/docs/hooks> · <https://github.com/openai/codex/blob/main/codex-rs/hooks/src/schema.rs> |
+| The Codex session log is a rollout JSONL under `~/.codex/sessions/`; since August 2026 Codex writes an `item_completed` / `CommandExecution` record for every command it runs, with the argv, the exit code and the turn; the docs call the transcript format unstable | VERIFIED on this machine's logs, 2026-09-22, Codex 0.155.1 (300 rollouts, every command recorded) — the reason the check reads only those records and nothing the agent wrote; if a build stops writing them, every PASS is sent back once, the safe direction | <https://learn.chatgpt.com/docs/hooks> and `~/.codex/sessions` |
 | An `Edit(path)` deny rule covers the built-in file tools, the Bash file commands Claude Code recognises (`cat`, `head`, `tail`, `sed`) and every Bash redirection target, in every permission mode; it does **not** cover a subprocess that opens the file itself | VERIFIED, read 2026-09-06 | <https://code.claude.com/docs/en/permissions> and <https://code.claude.com/docs/en/permission-modes> (the modes, bypass included) |
 | With the sandbox enabled, `Edit` deny rules merge into an OS-level deny-write list enforced for every subprocess | VERIFIED, read 2026-09-06 — the plugin never enables the sandbox for anyone | <https://code.claude.com/docs/en/sandboxing> (and the settings reference's `sandbox.filesystem`) |
 
@@ -57,6 +60,9 @@ Everything in the table above was read from these pages, the Claude Code set on
 
 ## Unverified, and left that way
 
+- **Whether `agent_transcript_path` on Codex `SubagentStop` is the child's rollout
+  in the same format.** Documented as a nullable string and nothing more, so the
+  completion check is registered on `Stop` only.
 - **Whether a Codex `PreToolUse` hook fires inside a Codex subagent.** The docs
   name only `Interrupt` and `SessionEnd` as not running for subagents, so it is
   implied by an exception list and never stated. Treat the git layer as the
