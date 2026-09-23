@@ -12,7 +12,7 @@ LLM Orchestrator is a Claude Code plugin for work you want to hand off: agree on
 
 For example: “Implement the approved plan in `docs/feature-plan.md`. Follow this project's cadence and report the reviews and test results.” Replace the example path with your actual plan.
 
-**New in v0.11.0:** Codex is supported again. `./scripts/install.sh --codex` installs the file guard and a completion check that works like the Claude Code one: it reads the record Codex already keeps and sends the agent back once when a reply claims a check that never ran. [What changed](./CHANGELOG.md).
+**New in v0.11.0:** Codex is supported again. One command installs the cadence skill and three small hooks: a guard for the project's rulebook, a check that sends the assistant back once when a reply claims tests passed and none ran, and a cleanup for temporary files. [How to install it](./docs/codex.md) · [What changed](./CHANGELOG.md).
 
 ## Quick Start
 
@@ -262,7 +262,7 @@ Projects initialized before this release keep the older fixed sequence (brief re
 
 Three rules, so you can predict them without reading the source:
 
-1. **Defaults warn, never block.** Out of the box nothing stops your turn. Hooks add context, check shapes, and warn — the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the end-of-turn completion check (a note to the model, never a message to you) included. On Codex the same completion check sends the agent back once instead, because that harness has no way to hand the model a note quietly; it never prints a message for you ([`docs/codex.md`](./docs/codex.md)). No hook changes tool output. The guards are the deliberate exception: `guard-destructive-git`, `guard-no-verify`, `guard-config-protection`, `guard-dispatch-model`, the cadence unlock guard, and on Codex the cadence file guard refuse the command outright, because a guard that only warns is not a guard. A refusal is addressed to the agent, as the reason its command was refused. Their escape hatches are in [`docs/install.md`](./docs/install.md#escape-hatches-for-the-hard-guards).
+1. **Defaults warn, never block.** Out of the box nothing stops your turn. Hooks add context, check shapes, and warn — the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the end-of-turn completion check (a note to the model, never a message to you) included. On Codex the same completion check sends the assistant back once instead, because Codex has no way to hand it a quiet note; it never prints a message for you ([`docs/codex.md`](./docs/codex.md)). No hook changes tool output. The guards are the deliberate exception: `guard-destructive-git`, `guard-no-verify`, `guard-config-protection`, `guard-dispatch-model`, the cadence unlock guard, and on Codex the cadence file guard refuse the command outright, because a guard that only warns is not a guard. A refusal is addressed to the agent, as the reason its command was refused. Their escape hatches are in [`docs/install.md`](./docs/install.md#escape-hatches-for-the-hard-guards).
 2. **Blocking is opt-in.** `ORCH_STRICT_STATUS=1` blocks a malformed or empty subagent return; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3); `ORCH_STRICT_RESEARCH=1` blocks a malformed research brief. `ORCH_HOOK_PROFILE=strict` turns on the first two at once. The completion check has no strict mode: 200 runs comparing warn against block scored the same either way ([`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md), 2026-08-05), so on Claude Code it always warns, and on Codex it always takes the one route to the agent that harness offers.
 3. **Local-only state.** Nothing leaves your machine. Skill telemetry is opt-in (`ORCH_TELEMETRY=1`, off by default).
 
@@ -287,7 +287,7 @@ Other modes:
 
 - **Persistent symlink.** `./scripts/install.sh --link` then `/plugin marketplace add ~/.claude/llm-orchestrator`.
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
-- **Codex.** `./scripts/install.sh --codex` — the cadence skill, the same instructions block and the same two checks, into your Codex setup; then trust them with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
+- **Codex.** `./scripts/install.sh --codex` — the cadence skill, the shared instructions and three small hooks, into your Codex setup; then trust the hooks with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
 - **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `950000` (≈95% of a 1M-token window) — the token count at which the agent is reminded once to write a handoff note before native compaction kicks in. Lower it for a smaller context window.
