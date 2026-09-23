@@ -30,7 +30,7 @@ cleaned safely, and a completion claim is backed by observed execution.
   lock, hook definitions and deny rules change only through the ruling path.
 - The plugin never destroys another session's work: no force removal, no
   stash pop, no adopting paths it did not create, no bulk deletion of documents.
-- One harness, one policy: Claude Code. The skills stay readable anywhere, as
+- Claude Code and Codex, one policy. The skills stay readable anywhere, as
   instructions, with nothing enforcing them.
 
 **Harm ranking.** The severity rule reads these three classes.
@@ -54,6 +54,7 @@ cleaned safely, and a completion claim is backed by observed execution.
 - **Rulings that govern the build:**
   `Ruling 1 (2026-09-17, Felipe): the proportional cadence specified in docs/specs/proportional-cadence.md applies to this repository itself, with workflow proportional, Claude and Codex execution evidence in blocking mode, and the shared task-resource cleanup; the framework verifies its own changes through its own hooks.`
   `Ruling 2 (2026-09-22, Felipe): Claude Code only; completion is checked once at Stop, by warning, never by blocking. Supersedes Ruling 1 where they differ.`
+  `Ruling 3 (2026-09-23, Felipe): Codex is a supported harness, with the file guard and the completion check installed by install.sh --codex. On Codex the completion check's single decision:block continuation to the agent is the warning, suppressed on stop_hook_active; systemMessage and any output for the person stay forbidden. docs/llm-orchestrator/CODEX.md is reinstated. "One harness, one policy: Claude Code" is amended to "Claude Code and Codex, one policy". Supersedes Rulings 1 and 2 where they differ.`
 - **Standing constraints:** shipped files under `scripts/`, `skills/`, `hooks/`,
   `agents/`, `commands/`, `templates/`, `workflows/` and `output-styles/` are
   production; `tests/` are tests; ordinary Markdown is documentation. After a
