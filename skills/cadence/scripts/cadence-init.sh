@@ -605,7 +605,7 @@ if d.get("workflow") == "proportional":
         ("prod_globs", "test_globs", "verification_config_globs"))
     if (not isinstance(prod, list) or not isinstance(tests, list)
             or not prod + tests or not isinstance(configs, list)):
-        print("execution evidence scope is incomplete: configure prod_globs/test_globs covering actual source/tests, verification_config_globs, and supported direct check commands (codex_verification.commands / claude_verification.commands). Until configured and checked, verification remains PENDING; initialization does not certify source.")
+        print("execution evidence scope is incomplete: configure prod_globs/test_globs covering actual source/tests, verification_config_globs, and a real runner.test_cmd. Until configured and checked, verification remains PENDING; initialization does not certify source.")
 PYEOF
   [ $? -eq 0 ] || refuse "$CFG_REL" "$(head -1 "$TMPD/cfg.msg")"
 else
