@@ -85,8 +85,9 @@ Codex asks whether to trust each project and saves the answer in
   The installer's hooks are in `~/.codex/hooks.json`, so project trust does
   not affect them.
 - A hook runs only after you trust it in `/hooks`. Trust is saved against a
-  hash of the hook's definition: its event, matcher and command. Editing the
-  script a hook runs does not ask for trust again; changing the command does.
+  hash of the hook's definition: its event, matcher, command and timeout.
+  Changing any of those asks for trust again. Editing the script a hook runs,
+  or a new plugin version, does not.
 - If `~/.codex/AGENTS.override.md` exists, Codex reads it instead of
   `~/.codex/AGENTS.md`, and the cadence block is not read at all. Copy the
   block into the override file, or remove the override.
@@ -105,11 +106,19 @@ instructions block to `~/.codex/AGENTS.md`. Use one or the other for the skill
 and hooks, not both: with both, each hook is registered twice, so it runs
 twice, and the skill is listed twice.
 
-Codex `/import` can also copy Claude Code plugins and hooks. Whether an
-imported copy of this plugin reads the Codex manifest was not tested. If the
-import lists hooks from this plugin's `hooks/hooks.json`, such as
-`session-start.sh` or `orch-verify-gate.sh`, do not keep them: they are
-written for Claude Code's transcript and tools, not Codex's.
+To update a plugin install, run `codex plugin add llm-orchestrator@llm-orchestrator`
+again. Codex runs the plugin from its own cached copy, and neither `git pull`
+nor `codex plugin marketplace upgrade` refreshes that copy.
+
+Codex `/import` also copies Claude Code plugins. An imported copy of this
+plugin reads the Codex manifest too: the cadence skill and the same three
+hooks.
+
+One route still brings the Claude Code hooks over. A `--copy` install wires
+them into a project's `.claude/settings.json`, and Codex offers to move hooks
+found there into the project's `.codex/hooks.json`. Do not accept that for
+this plugin's hooks, such as `session-start.sh` or `orch-verify-gate.sh`: they
+are written for Claude Code's transcript and tools, not Codex's.
 
 ## Turn a project on
 

@@ -434,6 +434,12 @@ claude = json.load(open(root + "/.claude-plugin/plugin.json"))
 problems = []
 if m.get("name") != claude["name"] or m.get("version") != claude["version"]:
     problems.append("name/version differ from .claude-plugin/plugin.json")
+# Metadata plus the two components; any other key (mcpServers, agents, apps,
+# commands, interface...) is a component Codex would load.
+extra = set(m) - {"name", "version", "description", "homepage", "repository",
+                  "license", "skills", "hooks"}
+if extra:
+    problems.append("unexpected keys %s" % sorted(extra))
 if m.get("skills") != "./skills/cadence":
     problems.append("skills is %r, not ./skills/cadence" % m.get("skills"))
 hooks = m.get("hooks", {}).get("hooks") if isinstance(m.get("hooks"), dict) else None
