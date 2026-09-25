@@ -347,18 +347,21 @@ PROJ_DIR="$PROJ" counts "(n4) test_cmd then a redirection" 'bin/suite --fast</de
 PROJ_DIR="$PROJ" counts "(n4)" 'bin/suite --fast>check.log'
 
 # A 200 KB command built to make a backtracking matcher slow must add under
-# 100 ms to the hook, and still gets the note.
+# 500 ms to the hook, and still gets the note. Reading it is linear work that
+# a slow CI runner can spend 100 ms on; a backtracking matcher takes seconds.
+# The command is written into the transcript by Python, never passed as one
+# argument: Linux refuses any single argument over 128 KiB.
 budget_case() { # <label> <python expression for the command>
-  local cmd base big T
-  cmd=$(python3 -c "print($2, end='')")
+  local base big T
   T=$(mk 'user:fix the gate' 'bash:t1:ls' 'result:t1:ok')
   base=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$T"
   base=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$base")
-  T=$(mk 'user:fix the gate' "bash:t1:$cmd" 'result:t1:ok')
+  T=$(mk 'user:fix the gate' 'bash:t1:BUDGET_CMD' 'result:t1:ok')
+  python3 -c "import json,sys; p=sys.argv[1]; s=open(p).read(); assert s.count('\"BUDGET_CMD\"') == 1; open(p,'w').write(s.replace('\"BUDGET_CMD\"', json.dumps($2)))" "$T" || T=""
   big=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$T"
   big=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$big")
-  { [[ $RC -eq 0 ]] && warned && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.1 else 1)' "$big" "$base"; } \
-    && ok "(n5) $1: 200 KB judged within 100 ms of a one-word command, note sent" \
+  { [[ -n $T && $RC -eq 0 ]] && warned && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.5 else 1)' "$big" "$base"; } \
+    && ok "(n5) $1: 200 KB judged within 500 ms of a one-word command, note sent" \
     || fail "(n5) $1 time" "rc=$RC big=${big}s base=${base}s out=$(cat "$TMP/out")"
 }
 budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 20000'

@@ -5,13 +5,14 @@
 #   --verdict                 one line, <= 300 chars, on stdout: whether cadence
 #                             mode is on, the laws' highest ruling, and whether
 #                             the lock still matches the tree. Always exit 0.
-#   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256. The
-#                             only writer of that file.
+#   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256.
+#                             Rewriting an existing one needs a terminal.
 #   --landing <ticket>        legacy report check, or proportional policy note.
 #     [--base <sha>]
 #   --commit-msg <msgfile>    the git-side gate (git hands the message file to
 #                             commit-msg, and to no other hook).
 #   --audit <rev>             the same three checks against a commit, for CI.
+#   --entries                 print the lock set, one entry per line.
 #   --version                 print the version this copy carries.
 #   --root <dir>              use <dir> as the project root instead of resolving
 #                             it (git toplevel of $PWD, else CLAUDE_PROJECT_DIR,
@@ -65,7 +66,7 @@ TMPD="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMPD"' EXIT
 
 usage() {
-  echo "usage: orch-cadence-check.sh [--root <dir>] --verdict | --lock | --landing <ticket> [--base <sha>] | --commit-msg <msgfile> | --audit <rev> | --version"
+  echo "usage: orch-cadence-check.sh [--root <dir>] --verdict | --lock | --landing <ticket> [--base <sha>] | --commit-msg <msgfile> | --audit <rev> | --entries | --version"
 }
 
 # ---------- hashing -----------------------------------------------------------
@@ -282,16 +283,8 @@ git_mode() { # <index-ref-prefix> <head-ref-prefix>
   return 1
 }
 
-unlock_env() { [ "${ORCH_CADENCE_UNLOCK:-}" = "1" ]; }
-
-settings_carrying_unlock() { # prints the first settings file that persists the token
-  local f
-  for f in "$ROOT_DIR/.claude/settings.json" "$ROOT_DIR/.claude/settings.local.json" "${HOME:-/nonexistent}/.claude/settings.json"; do
-    [ -f "$f" ] || continue
-    if grep -q 'ORCH_CADENCE_UNLOCK' "$f" 2>/dev/null; then printf '%s\n' "$f"; return 0; fi
-  done
-  return 1
-}
+# An agent's shell has no terminal, so /dev/tty cannot be opened there.
+has_terminal() { { : < /dev/tty; } 2>/dev/null; }
 
 # ---------- the marked section ------------------------------------------------
 # The FIRST start marker through the first end marker after it. Never the last
@@ -483,7 +476,6 @@ mode_verdict() {
   if git -C "$ROOT_DIR" show "HEAD:$CFG_REL" > "$TMPD/headcfg" 2>/dev/null; then
     cmp -s "$TMPD/headcfg" "$CFG_FILE" || line="$line · config differs from HEAD"
   fi
-  unlock_env && line="$line · UNLOCKED"
   # The skips a session has applied, when the session has a state file to
   # record them in. With no state file the verdict line is unchanged byte for
   # byte — a fresh project must not be told "skips: 0" on its first turn.
@@ -519,7 +511,7 @@ live_skips() { # <state file>
 }
 
 mode_lock() {
-  local sf e h rc out
+  local e h rc out
   cfg_load
   if [ -f "$CFG_FILE" ] && [ "$CFG_OK" != "1" ]; then
     echo "REFUSED: $CFG_REL does not decode — repair the JSON configuration before --lock"
@@ -530,12 +522,8 @@ mode_lock() {
     return 1
   fi
   cfg_workflow || return 1
-  if sf=$(settings_carrying_unlock); then
-    echo "REFUSED: $sf carries ORCH_CADENCE_UNLOCK — a persisted unlock is a disarmed lock; remove it, then re-run --lock"
-    return 1
-  fi
-  if [ -f "$ROOT_DIR/$LOCK_REL" ] && ! unlock_env; then
-    echo "REFUSED: $LOCK_REL already exists; re-run with ORCH_CADENCE_UNLOCK=1 in the environment to rewrite it"
+  if [ -f "$ROOT_DIR/$LOCK_REL" ] && ! has_terminal; then
+    echo "REFUSED: $LOCK_REL already exists and there is no terminal; the person re-records it in their own terminal, with cadence-ruling.sh for a rule change"
     return 1
   fi
   out="$TMPD/lock.new"; : > "$out"
@@ -782,11 +770,11 @@ git_gate() {
   # boilerplate, and then they stop reading it.
   if [ "$defects" -gt 0 ]; then
     if [ "$need_ruling" = "1" ] && [ "$need_relock" = "1" ]; then
-      echo "$label: put \`Ruling <N>\` in the commit message, record it in $LAWS_REL, and re-run --lock under ORCH_CADENCE_UNLOCK=1"
+      echo "$label: put \`Ruling <N>\` in the commit message, record it in $LAWS_REL, and re-run --lock (cadence-ruling.sh does all three)"
     elif [ "$need_ruling" = "1" ]; then
       echo "$label: put \`Ruling <N>\` in the commit message and record it in $LAWS_REL"
     elif [ "$need_relock" = "1" ]; then
-      echo "$label: re-run --lock under ORCH_CADENCE_UNLOCK=1 so the manifest matches what is being committed"
+      echo "$label: re-run --lock in your own terminal so the manifest matches what is being committed"
     fi
     return 1
   fi
@@ -833,6 +821,7 @@ while [ $# -gt 0 ]; do
     --landing)  MODE="landing"; shift; ARG1="${1:-}" ;;
     --commit-msg) MODE="commit-msg"; shift; ARG1="${1:-}" ;;
     --audit)    MODE="audit"; shift; ARG1="${1:-}" ;;
+    --entries)  MODE="entries" ;;
     --base)     shift; BASE="${1:-HEAD}" ;;
     --version)  echo "orch-cadence-check.sh ${ORCH_CADENCE_CHECK_VERSION}"; exit 0 ;;
     -h|--help)  usage; exit 0 ;;
@@ -851,6 +840,7 @@ case "$MODE" in
               mode_landing "$ARG1" "$BASE"; exit $? ;;
   commit-msg) [ -n "$ARG1" ] || { echo "--commit-msg needs the message file"; exit 1; }
               mode_commit_msg "$ARG1"; exit $? ;;
+  entries)    lock_entries; exit 0 ;;
   audit)      [ -n "$ARG1" ] || { echo "--audit needs a revision"; exit 1; }
               mode_audit "$ARG1"; exit $? ;;
 esac

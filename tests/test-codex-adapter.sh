@@ -17,7 +17,6 @@
 #   A5 ordinary work that names nothing
 #   A6 lock_extra, the absolute-path spelling, the case fold, the basename
 #   A7 apply_patch headers in every position
-#   A8 the unlock, and the persisted-unlock refusal
 #   A9 hygiene: the size ceiling, no reference to the deleted guard, HOME clean
 #   A10 .codex-plugin/plugin.json names the cadence and review skills and only Codex hooks
 #
@@ -183,10 +182,10 @@ pf=$(payload Bash command 'cat docs/llm-orchestrator/LAWS.md | jq .')
 rc=$(run_adapter "$CAD" "$pf")
 [[ "$rc" == 2 ]] && ok "a read inside a pipeline is refused (the accepted cost)" \
                  || fail "a read inside a pipeline is refused (the accepted cost)" "exit $rc"
-if grep -q 'cat docs/llm-orchestrator/laws.md' "$TMP/err.txt" && grep -q 'ORCH_CADENCE_UNLOCK=1' "$TMP/err.txt"; then
-  ok "the refusal prints both ways out (one plain read, or the unlock)"
+if grep -q 'cat docs/llm-orchestrator/laws.md' "$TMP/err.txt" && grep -q 'cadence-ruling.sh' "$TMP/err.txt"; then
+  ok "the refusal prints both ways out (one plain read, or a ruling)"
 else
-  fail "the refusal prints both ways out (one plain read, or the unlock)" "$(cat "$TMP/err.txt")"
+  fail "the refusal prints both ways out (one plain read, or a ruling)" "$(cat "$TMP/err.txt")"
 fi
 
 # ------------------------------------------------------------
@@ -240,44 +239,6 @@ patch_pin 0 "*** Begin Patch
 expect 2 "$CAD" apply_patch patch "*** Begin Patch
 *** Update File: docs/llm-orchestrator/LAWS.md
 *** End Patch" 'apply_patch → 2: the patch arrives in tool_input.patch'
-
-# ------------------------------------------------------------
-section "A8 — the unlock and the persisted-unlock refusal"
-pf=$(payload Bash command 'echo x > docs/llm-orchestrator/LAWS.md')
-rc=$(run_adapter "$CAD" "$pf" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 0 ]] && ok "the unlock frees a lock write" || fail "the unlock frees a lock write" "exit $rc"
-pf2=$(payload apply_patch command "*** Begin Patch
-*** Update File: docs/llm-orchestrator/LAWS.md
-*** End Patch")
-rc=$(run_adapter "$CAD" "$pf2" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 0 ]] && ok "the unlock frees a patch too" || fail "the unlock frees a patch too" "exit $rc"
-
-PERS="$TMP/pers"; arm "$PERS"
-printf '{ "env": { "ORCH_CADENCE_UNLOCK": "1" } }\n' > "$PERS/.claude/settings.json"
-pfp=$(payload Bash command 'echo x > docs/llm-orchestrator/LAWS.md')
-rc=$(run_adapter "$PERS" "$pfp" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 2 ]] && ok "a settings file that persists the unlock disarms it" \
-                 || fail "a settings file that persists the unlock disarms it" "exit $rc"
-grep -q 'persisted unlock is a disarmed lock' "$TMP/err.txt" \
-  && ok "the refusal names the file that persists the unlock" \
-  || fail "the refusal names the file that persists the unlock" "$(cat "$TMP/err.txt")"
-
-PERS2="$TMP/pers2"; arm "$PERS2"; mkdir -p "$PERS2/.codex"
-printf 'ORCH_CADENCE_UNLOCK = "1"\n' > "$PERS2/.codex/config.toml"
-rc=$(run_adapter "$PERS2" "$pfp" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 2 ]] && ok "the project Codex config persists it too" || fail "the project Codex config persists it too" "exit $rc"
-
-HOME2="$TMP/home2"; mkdir -p "$HOME2/.codex"
-printf 'ORCH_CADENCE_UNLOCK = "1"\n' > "$HOME2/.codex/config.toml"
-rc=$( ( cd "$CAD" && env HOME="$HOME2" ORCH_CADENCE_UNLOCK=1 bash "$ADAPTER" < "$pfp" ) >/dev/null 2>&1; printf '%s' "$?" )
-[[ "$rc" == 2 ]] && ok "the home Codex config persists it too" || fail "the home Codex config persists it too" "exit $rc"
-
-rc=$(run_adapter "$PERS" "$pfp")
-[[ "$rc" == 2 ]] && ok "with the unlock unset, a persisting file changes nothing" \
-                 || fail "with the unlock unset, a persisting file changes nothing" "exit $rc"
-pfo=$(payload Bash command 'npm test')
-rc=$(run_adapter "$PERS" "$pfo")
-[[ "$rc" == 0 ]] && ok "and ordinary work under it still passes" || fail "and ordinary work under it still passes" "exit $rc"
 
 # ------------------------------------------------------------
 section "A10 — an interior newline is an operator"

@@ -26,7 +26,7 @@ bash .githooks/orch-cadence-check.sh --commit-msg "$1"
 rc=$?
 
 if [ "$rc" -ne 0 ]; then
-  echo "cadence: commit refused — amend the laws with 'Ruling <N>' in the message, in a session the person launched with ORCH_CADENCE_UNLOCK=1, then re-run --lock"
+  echo "cadence: commit refused — the rules change only by a numbered ruling, applied by the person with cadence-ruling.sh in their own terminal"
 fi
 
 exit "$rc"

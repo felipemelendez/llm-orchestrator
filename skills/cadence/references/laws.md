@@ -17,10 +17,9 @@ here. An assistant that believes a rule is wrong says so in its handoff and
 keeps working under the rule as written. Only the owner changes this file.
 
 This file is what the cadence lock protects. It changes only by a numbered
-ruling from the owner, in a commit whose message carries `Ruling <N>`, with
-`LOCK.sha256` re-recorded under `ORCH_CADENCE_UNLOCK=1`, a switch the owner
-sets in their own shell when starting that session, never in a settings file and
-never by an assistant.
+ruling from the owner, in a commit whose message carries `Ruling <N>`. The owner
+makes that commit with the cadence skill's `cadence-ruling.sh`, in their own
+terminal; an assistant proposes the change and never runs it.
 
 ## 1. What we are building, and why
 

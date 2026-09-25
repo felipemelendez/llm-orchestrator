@@ -129,6 +129,8 @@ for t in "${suites[@]}"; do
     printf '  %sok%s   %-38s %ss\n' "$GREEN" "$RESET" "$t" "$dur"
   else
     printf '  %sFAIL%s %-38s %ss (exit %s)\n' "$RED" "$RESET" "$t" "$dur" "$rc"
+    # The failing checks themselves, which the tail below can miss.
+    grep -E -A1 '✗|✘|^not ok' "$RUNTMP/out" | head -40 | sed 's/^/       /'
     tail -25 "$RUNTMP/out" | sed 's/^/       /'
     failed+=("$t")
   fi

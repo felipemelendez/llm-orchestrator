@@ -23,11 +23,11 @@ Otherwise, before anything else:
   outside Git; finish cleanup after consumers stop and work is preserved.
 - `LAWS.md`, `cadence.json`, `LOCK.sha256`, the deny rules in
   `.claude/settings.json`, the git hook in `.githooks/`, and the marked section
-  of `CLAUDE.md` and `AGENTS.md` change only by a numbered ruling, in a commit
-  whose message carries that ruling, with the lock rewritten under
-  `ORCH_CADENCE_UNLOCK=1` — which the person sets in the environment when
-  launching the session, never in a settings file and never by an agent.
-  Propose an amendment in the handoff instead.
+  of `CLAUDE.md` and `AGENTS.md` change only by a numbered ruling. To propose
+  one, explain why, write the change as a patch file outside Git, and show the
+  diff. If the person agrees, give them the one command that applies it,
+  `cadence-ruling.sh <patch> "<their wording>"` from the `cadence` skill's
+  `scripts/`, to run in their own terminal. Never run it yourself.
 
 On Codex read project `CODEX.md` for evidence and hook trust. Installed hooks,
 executed checks and instructions are distinct; Git checks do not prove reviews.
