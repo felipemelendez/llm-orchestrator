@@ -574,7 +574,7 @@ def hook_retry(state_dir=None, payload=None):
         config_path = next((d / "docs/llm-orchestrator/cadence.json"
                             for d in [resolved_cwd, *resolved_cwd.parents]
                             if nested(d, project)
-                            if (d / "docs/llm-orchestrator/cadence.json").exists()), None)
+                            if (d / "docs/llm-orchestrator/cadence.json").is_file()), None)
         if config_path is None:
             return
         config = json.loads(config_path.read_text())

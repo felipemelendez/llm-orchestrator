@@ -90,6 +90,7 @@ orch_file_mtime_date() {
 #      holds docs/llm-orchestrator/cadence.json. Never walk past the git top
 #      level (a directory holding .git, a file in a worktree or submodule) or /.
 #   3. If no directory on the way holds one, the answer is the start directory.
+#      Outside any git repository only the start directory itself counts.
 #
 # So a cadence project nested inside a larger repository (cadence.json in
 # /repo/app) is found from /repo/app and from /repo/app/src alike, and a session
@@ -110,17 +111,25 @@ orch_cadence_find() {
   [[ -n "${start}" ]] || start="${PWD}"
   [[ "${start}" == /* ]] || start="${PWD%/}/${start}"
   while [[ "${start}" == */ && "${start}" != "/" ]]; do start="${start%/}"; done
+  local found="" in_git=""
   d="${start}"
   while :; do
-    if [[ -f "${d%/}/docs/llm-orchestrator/cadence.json" ]]; then
-      ORCH_CADENCE_ROOT="${d}"
-      return 0
+    if [[ -z "${found}" && -f "${d%/}/docs/llm-orchestrator/cadence.json" ]]; then
+      found="${d}"
+      [[ "${d}" == "${start}" ]] && break
     fi
-    [[ -e "${d%/}/.git" || "${d}" == "/" ]] && break
+    if [[ -e "${d%/}/.git" ]]; then in_git=1; break; fi
+    [[ "${d}" == "/" ]] && break
     d="${d%/*}"
     [[ -n "${d}" ]] || d="/"
   done
-  ORCH_CADENCE_ROOT="${start}"
+  # Outside any git repository only the start directory counts, so a stray
+  # cadence.json in $HOME cannot turn the cadence on for every folder below it.
+  if [[ -n "${found}" && ( "${found}" == "${start}" || -n "${in_git}" ) ]]; then
+    ORCH_CADENCE_ROOT="${found}"
+  else
+    ORCH_CADENCE_ROOT="${start}"
+  fi
 }
 
 # orch_cadence_root [hook-input-json] — prints the same answer.

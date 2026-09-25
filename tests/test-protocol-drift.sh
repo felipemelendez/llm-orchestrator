@@ -220,6 +220,12 @@ every_hook "monorepo, a sibling project without a cadence" "$MONO/other" off
 every_hook "monorepo top level (the cadence is below it)" "$MONO" off
 every_hook "repository launched from a subdirectory" "$REPO/sub/dir" on
 every_hook "repository top level" "$REPO" on
+# Outside any git repository only the start directory counts: a stray
+# cadence.json in a home directory must not switch on every folder below it.
+NOGIT="$TMP/nogit-home"; mkdir -p "$NOGIT/docs/llm-orchestrator" "$NOGIT/work/proj"
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$NOGIT/docs/llm-orchestrator/cadence.json"
+every_hook "no git: a folder below a stray cadence.json" "$NOGIT/work/proj" off
+every_hook "no git: the folder that holds the cadence.json" "$NOGIT" on
 
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
