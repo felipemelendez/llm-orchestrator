@@ -290,10 +290,8 @@ Run `/llm-orchestrator:plan`. **Pass:**
 ```
 
 **Watch for:**
-- Agent calls `TaskCreate` to create one task per plan task
 - Agent dispatches `orch-implementer` (you'll see Task tool calls in the conversation)
 - After implementer returns, the review runs through `requesting-code-review` (`orch-review.py run --detach`, then `wait`)
-- Tasks marked `completed` via `TaskUpdate`
 - Plan file's `- [ ]` heading-level checkboxes ticked
 
 **Pass criteria:**

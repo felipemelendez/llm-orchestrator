@@ -24,8 +24,7 @@ def allowed(command):
     if not args:
         return False
     invoked = Path(os.path.expanduser(args[0])).resolve()
-    roots = [Path(__file__).resolve().parents[2] / "skills/cadence/scripts",
-             Path.home() / ".agents/skills/cadence/scripts"]
+    roots = [Path(__file__).resolve().parents[2] / "skills/cadence/scripts"]
     names = ("orch-cadence-check.sh", "orch-cadence-gate.sh")
     candidates = {str((root / name).resolve()): name
                   for root in roots for name in names if (root / name).is_file()}

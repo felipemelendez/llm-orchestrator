@@ -11,7 +11,7 @@ Not for: 3+ independent tasks with no shared files (parallel wins), work small e
 
 ## State
 
-`TaskCreate` one task per plan task before the first dispatch; `TaskUpdate` as you go. The durable copy is the plan file: flip each task's `### N. <name>  - [ ]` heading checkbox to `- [x]` on completion — the heading checkbox only; sub-step boxes are progress notes and counting them corrupts the resume count. Record enough per task that a fresh controller after `/clear` knows where an unfinished task resumes ("fix round 2/3, one finding open", not just a tick). After compaction, trust the plan file and `git log` over your recollection — a controller that lost its place and re-dispatched a completed sequence is the most expensive failure available to you.
+The plan file is the only task state: flip each task's `### N. <name>  - [ ]` heading checkbox to `- [x]` on completion — the heading checkbox only; sub-step boxes are progress notes and counting them corrupts the resume count. Record enough per task that a fresh controller after `/clear` knows where an unfinished task resumes ("fix round 2/3, one finding open", not just a tick). After compaction, trust the plan file and `git log` over your recollection — a controller that lost its place and re-dispatched a completed sequence is the most expensive failure available to you.
 
 ## Per task
 
@@ -25,7 +25,7 @@ Not for: 3+ independent tasks with no shared files (parallel wins), work small e
 
 3. **Review the task** with `requesting-code-review`: `orch-review.py` with `--base` at the commit before this task's first commit, so the review covers the whole task. Not `HEAD~1`: a task is often several commits, and `HEAD~1` silently reviews only the last one. Standard is the default; use `--path full` when the task is Full work. The reviewers work in their own clones and never see the implementer's report. Verdict routing: `READY` → proceed; `NOT-READY` → the fix loop; `READY-WITH-FIXES` → record the mild findings in the plan file and proceed; `INCOMPLETE` → fix the cause it names and run the review again.
 
-4. **Tick and continue.** Mark the task `completed` via `TaskUpdate`, flip its plan heading checkbox, start the next task without asking the user.
+4. **Tick and continue.** Flip the task's plan heading checkbox, start the next task without asking the user.
 
 ## BLOCKED recovery
 

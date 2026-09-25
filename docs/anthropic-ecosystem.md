@@ -20,10 +20,6 @@ The files in `agents/` are native Claude Code subagents. Frontmatter declares:
 
 Each subagent gets a fresh context window. The orchestrator passes content into the agent's prompt; the agent returns a `Status:` block.
 
-### Task tools (built-in)
-
-Used as the state board for plan execution. The `executing-plans` and `dispatching-subagents` skills require them. `TaskCreate` makes one task per plan task; `TaskUpdate` marks it `in_progress` on dispatch and `completed` after the per-task review loop; `TaskList` reports current state.
-
 ### Skills (`skills/<name>/SKILL.md`)
 
 Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trigger; the body is the discipline. The SessionStart hook injects the `using-orchestrator` core, which says when a skill applies; the reply-format rule is added only in a cadence-enabled project.

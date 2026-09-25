@@ -892,12 +892,13 @@ class LifecycleTests(unittest.TestCase):
         self.assertFalse(MOD.owned_disposable_target(copy / "source.py", self.project))
 
     def test_owned_disposable_target_works_from_copied_skill_helper(self):
-        installed = self.root / "installed-skill/scripts"
-        (installed / "lib").mkdir(parents=True)
-        shutil.copy2(SOURCE, installed / "lib/orch-task-resources.py")
-        shutil.copy2(SOURCE.parents[2] / "skills/cadence/scripts/orch-task-resources.py",
-                     installed / "orch-task-resources.py")
-        command = [sys.executable, str(installed / "orch-task-resources.py"),
+        installed = self.root / "installed/.claude"
+        (installed / "scripts/lib").mkdir(parents=True)
+        (installed / "skills/cadence/scripts").mkdir(parents=True)
+        shutil.copy2(SOURCE, installed / "scripts/lib/orch-task-resources.py")
+        shim = installed / "skills/cadence/scripts/orch-task-resources.py"
+        shutil.copy2(SOURCE.parents[2] / "skills/cadence/scripts/orch-task-resources.py", shim)
+        command = [sys.executable, str(shim),
                    "--state-dir", str(self.manager.base)]
         result = subprocess.run(command + ["acquire", "--id", self.task_id, "--consumer", "installed"],
                                 capture_output=True, text=True)
