@@ -40,6 +40,7 @@ when required. Simple and Standard need only this page.
 
 Use relevant checks and meaningful regression tests. Honour build/dependency
 restrictions. No default broad suites or mutation batteries for Simple/Standard.
+Change existing tests only when the task says so; report each change and why.
 
 Run each check as one plain foreground command, so it appears in the transcript
 as itself. A Stop hook reads that transcript and warns if a reply says
