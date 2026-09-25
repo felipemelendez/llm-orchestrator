@@ -1,6 +1,6 @@
 ---
 name: verification-before-completion
-description: Use when about to claim a feature or fix is done, fixed or passing — run the command that proves it first. Not for a small edit the user spelled out. Runs last, after any review.
+description: Use when about to claim a code change (feature, fix, refactor, upgrade, migration) is done, fixed or passing — run the command that proves it first. Not for a small edit the user spelled out. Runs last, after any review.
 ---
 
 # Verification before completion
