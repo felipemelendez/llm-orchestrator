@@ -23,7 +23,8 @@ The three fastest signals, if you want them individually:
 
 Set `ORCH_REQUIRE_DEPS=1` to make a missing dependency a failure instead of a skip — that
 is what CI does, so a runner that lost `python3` cannot turn six guard suites into green
-no-ops.
+no-ops. The Codex CLI is not one of those dependencies: the live Codex probes skip when
+no `codex` is on the PATH, and fail only when `CODEX_BIN` names one that does not work.
 
 ## What each one checks
 

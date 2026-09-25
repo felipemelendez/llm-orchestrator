@@ -537,17 +537,21 @@ printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-or
 PROJ_DIR="$PROJ" counts "(n4) test_cmd then a redirection" 'bin/suite --fast</dev/null'
 PROJ_DIR="$PROJ" counts "(n4)" 'bin/suite --fast>check.log'
 
+# A 200 KB command must add under 500 ms: reading it is linear work that a
+# slow CI runner can spend 100 ms on; a backtracking matcher takes seconds.
+# The command is written into the rollout by Python, never passed as one
+# argument: Linux refuses any single argument over 128 KiB.
 budget_case() { # <label> <python expression for the command>
-  local cmd base big R
-  cmd=$(python3 -c "print($2, end='')")
+  local base big R
   R=$(mk 'turn:t1' 'ran:0:ls')
   base=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$R"
   base=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$base")
-  R=$(mk 'turn:t1' "ran:0:$cmd")
+  R=$(mk 'turn:t1' 'ran:0:BUDGET_CMD')
+  python3 -c "import json,sys; p=sys.argv[1]; s=open(p).read(); assert s.count('\"BUDGET_CMD\"') == 1; open(p,'w').write(s.replace('\"BUDGET_CMD\"', json.dumps($2)))" "$R" || R=""
   big=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$R"
   big=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$big")
-  { [[ $RC -eq 0 ]] && sent_back && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.1 else 1)' "$big" "$base"; } \
-    && ok "(n5) $1: 200 KB judged within 100 ms of a one-word command, sent back" \
+  { [[ -n $R && $RC -eq 0 ]] && sent_back && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.5 else 1)' "$big" "$base"; } \
+    && ok "(n5) $1: 200 KB judged within 500 ms of a one-word command, sent back" \
     || fail "(n5) $1 time" "rc=$RC big=${big}s base=${base}s out=$OUT"
 }
 budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 20000'
