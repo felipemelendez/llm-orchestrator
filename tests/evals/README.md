@@ -22,11 +22,22 @@ bash tests/test-review-compare.sh  # every planted defect is real; scorer dry ru
 
 `claude plugin eval` has no dry-run option, so `test-eval-cases.py` checks each
 case against the case schema that Claude Code 2.1.282 enforces (read from the
-installed binary). It then runs the case's scaffold with the environment the eval
-gives it and requires at least one grader to fail before the agent acts. It also
-applies the case's `reference.sh` and `reference-reply.md` and requires every
-grader to pass on them. It cannot run `tool_used` and `tool_order` graders,
-because they read the session transcript; those are only checked for syntax.
+installed binary), and grades it with the binary's own rules: the `file_exists`
+glob rule (`**` spans directories, `*` and `?` stay within one, and `[` and `]`
+are literal), and `input_match` tested against the JSON of each tool call's input.
+It stages the workspace as the eval does (`<root>/home/cwd`, with a stub `.git`
+and a `.gitconfig` in `home`) and runs the scaffold with the eval's environment.
+Then it requires:
+
+- at least one grader to fail on the bare scaffold;
+- at least one grader to fail on the reference reply with none of the work done
+  (skipped for the four reply-only cases, whose descriptions say so);
+- every grader to pass on the reference solution: `reference.sh`,
+  `reference-reply.md`, a Write call for each file the reference creates or
+  changes, and any other calls in `reference-tools.json`.
+
+Only regex graders on the whole transcript or on MCP mock calls are not
+evaluated; no case uses them.
 
 `test-review-compare.py` runs every template's held-out check on the clean change
 and on each planted defect, builds the cases twice to show the build is
