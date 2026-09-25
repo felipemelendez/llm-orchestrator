@@ -93,12 +93,10 @@ the agent may have pushed more after this file was written):
   11. Docs must say plainly: the lock stops accidental edits and makes
       deliberate ones visible; it cannot stop an agent determined to fake a
       ruling.
-  - **Open question to Felipe (ask him first thing):** do we add signed rule
-    changes? His ruling commits would be signed with his existing SSH key
-    (`~/.ssh/id_ed25519`), the check would refuse unsigned ruling commits, and
-    the key would ask for his fingerprint or password each time. About five
-    minutes of one-time setup. Commit signing is not set up on this machine
-    today. Without it, the lock catches accidents but not a determined agent.
+  - **Decided (Felipe, 2026-09-25): no signing.** The plugin is for everyone
+    and must not depend on any one person's tools. The lock stops accidental
+    rule changes, every change shows in the history, and the docs say plainly
+    what the lock cannot stop (item 11). Do not ask about signing again.
 - **T10, evaluation set** (`refine/t10-evals`, head `af356e8` or later). Built;
   nothing paid has run. Review round 1 (one Opus reviewer, Standard path)
   found 2 serious and 6 mild issues; **all are fixed** (`run-all.sh`: 44 suites
@@ -165,6 +163,8 @@ a tool; without it a hook or Codex waits forever for input.
 
 ## 5. Rules and standards (Felipe's)
 
+- The plugin is for a public audience: never design around Felipe's own
+  machine or tools (e.g. a password manager).
 - Talk to Felipe in plain, short language, with no jargon; lead with the
   answer; give a recommendation when he must decide. Address him as "Captain".
 - Commit, branch, push and PR as needed. **Never merge into `main`.**
@@ -185,7 +185,7 @@ a tool; without it a hook or Codex waits forever for input.
 ## 6. Decisions already made (do not re-ask)
 
 - Keep the rulebook lock. Rule changes: the agent explains why; if Felipe
-  agrees, he runs one command (T20).
+  agrees, he runs one command (T20). No commit signing.
 - Keep the destructive-git guard, the no-verify guard and the lock; the
   dispatch-model, config-protection and unlock guards go (T19 done; T20 removes
   the unlock guard).
