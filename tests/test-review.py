@@ -387,6 +387,8 @@ class ReviewTests(unittest.TestCase):
                 self.assertNotIn(drop, row["env"])
                 if row["brief"] == "sandbox":
                     self.assertNotIn(keep, row["env"])
+                    # codex sandbox reads its permission profiles from $CODEX_HOME's config stack.
+                    self.assertIn("CODEX_HOME", row["env"])
                 else:
                     self.assertIn(keep, row["env"])
 

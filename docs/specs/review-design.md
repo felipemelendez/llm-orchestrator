@@ -145,6 +145,9 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   model (Claude: `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`,
   `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`;
   Codex: `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`).
+  `codex sandbox` (the preflight probe and fix experiments) reaches no
+  model and gets only `CODEX_HOME`, because it reads its permission
+  profiles from the configuration there.
   Cloud credentials and tokens such as `AWS_*` and `GITHUB_TOKEN` are left
   out. A Claude seat that needs Bedrock or Vertex credentials therefore
   cannot sign in and drops out.

@@ -327,7 +327,7 @@ class Review:
         probe = self.run_dir / "sandbox-probe"
         probe.mkdir()
         try:
-            return subprocess.run(sandboxed(probe, ["true"]), stdin=subprocess.DEVNULL, capture_output=True, env=reduced_env(),
+            return subprocess.run(sandboxed(probe, ["true"]), stdin=subprocess.DEVNULL, capture_output=True, env=reduced_env("sandbox"),
                                   timeout=60).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -650,6 +650,9 @@ PROVIDER_ENV = {
     "claude": ("CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
                "CLAUDE_CODE_OAUTH_TOKEN"),
     "codex": ("CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"),
+    # `codex sandbox` reads its permission profiles from the config stack under $CODEX_HOME;
+    # it reaches no model, so it gets no key.
+    "sandbox": ("CODEX_HOME",),
 }
 
 
@@ -682,7 +685,7 @@ def receipt(copy, argv, command, fingerprint, stdin=None):
             # within a second of receipt 1 could run the unpatched code; no bytecode is written instead.
             process = subprocess.Popen(record["argv"], cwd=copy, stdin=subprocess.PIPE, stdout=output,
                                        stderr=subprocess.STDOUT, start_new_session=True,
-                                       env=reduced_env(PYTHONDONTWRITEBYTECODE="1"))
+                                       env=reduced_env("sandbox", PYTHONDONTWRITEBYTECODE="1"))
         except OSError as error:
             record.update(ran=False, exit_code=None, output="", reason=f"could not start: {error}")
         else:
