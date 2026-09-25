@@ -54,7 +54,10 @@ and T9 (commands stay commands).
   1…") appears to contain it — confirm. A live Full review with the sandbox
   was running (`~/.local/state/llm-orchestrator/reviews/…-live2` on the old
   machine; not portable) — **rerun one live Full review** on the new machine.
-  Then a short confirmation by both reviewers, `run-all.sh`, PR, merge.
+  The Opus round 2 review of T5 was stopped unfinished to save time, so it
+  has not been done: run round 2 with both reviewers (the GPT round 2 report
+  is `reviews/t5-adversarial-report-r2.md`; its one finding is the quote-drop
+  fix above). Then `run-all.sh`, PR, merge.
 - T20 `refine/t20-ruling-command` head `11acdcf` (integration merged in
   locally; push may be one merge behind): both reviewers' round 2 items are
   fixed; the Opus reviewer found nothing serious left. Remaining: merge
