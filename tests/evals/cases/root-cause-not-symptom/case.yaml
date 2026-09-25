@@ -31,7 +31,7 @@
         "source": "file",
         "path": "config.py"
       },
-      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![#\\\"'])[^\\n]*(?:\\.splitlines\\(|re\\.split\\(\\s*r?[\"'][^\"'\\n]*\\\\n|\\.replace\\(\\s*[\"']\\\\n[\"']|\\.split\\(\\s*[\"']\\\\n[\"'])"
+      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![ \\t#\\\"'])[^\\n]*(?:\\.splitlines\\(|re\\.split\\(\\s*r?[\"'][^\"'\\n]*\\\\n|\\.replace\\(\\s*[\"']\\\\n[\"']|\\.split\\(\\s*[\"']\\\\n[\"'])"
     },
     {
       "name": "split-pairs-still-splits-semicolon",
@@ -40,7 +40,7 @@
         "source": "file",
         "path": "config.py"
       },
-      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![#\\\"'])[^\\n]*;"
+      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![ \\t#\\\"'])[^\\n]*;"
     },
     {
       "name": "parse-config-uses-split-pairs",
