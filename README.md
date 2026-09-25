@@ -53,11 +53,13 @@ For a task walkthrough, see [the sample session](./docs/examples/sample-session.
 
 ### Using Codex?
 
-Codex gets a smaller part of the plugin: the cadence skill and three small hooks. In your terminal, clone this repository into a folder you will keep and run the installer:
+Codex gets a smaller part of the plugin: the cadence skill and three small hooks, installed as a Codex plugin, plus the shared instructions, added by the installer. In your terminal, clone this repository into a folder you will keep and run:
 
 ```sh
 git clone https://github.com/felipemelendez/llm-orchestrator.git
 cd llm-orchestrator
+codex plugin marketplace add "$PWD"
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
@@ -197,7 +199,7 @@ Controller (the agent you talk to)
 
 Every agent sets `model: opus` (Opus 5.5) except the read-only explorer, which sets `model: sonnet` (the latest Sonnet) because it runs often and costs half as much. Fable was dropped after its review route was rate-limited, and Opus costs less per token. Both run the same safety classifiers, so on either model a request flagged as cybersecurity re-runs on Opus 4.8. The three reviewers set `effort: high`, because a reviewer that stops early misses findings. The other agents set no `effort:` and inherit the session's level, which is `medium` on Opus 5.5 when nobody has chosen one.
 
-The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
+The controller — the agent you interact with — keeps task state in plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 
 Adding a role (`orch-refactorer`, `orch-test-writer`) is one new markdown file in `agents/` plus wiring it into a workflow skill or template — `./tests/validate-skills.sh` then confirms shape.
 
@@ -243,7 +245,7 @@ Ten layers, each solving a specific failure mode of single-agent AI tooling on r
 
 1. **Memory** — additive to Claude Code's native CLAUDE.md, not a replacement. `/llm-orchestrator:remember` auto-classifies facts into `## Conventions` / `## Decisions` / `## People` / `## Notes` of your project's `./CLAUDE.md`, creating sections as needed. `/llm-orchestrator:forget` soft-deletes matching lines to `~/.llm-orchestrator/memory/.trash/` so accidents are recoverable. Concurrent sessions serialize writes through a portable file lock. Alongside CLAUDE.md, the plugin maintains a TTL-pruned doc cache and a brief index under `~/.llm-orchestrator/research/` that surfaces prior researcher verdicts to future tasks on the same library.
 2. **Workflow scaffolding** — skills and commands produce durable artifacts (specs, plans, reviews) committed under `docs/llm-orchestrator/`.
-3. **State machine** — the native Task tools plus plan-file checkboxes survive `/clear`. The next session reads the plan file and knows exactly where to resume.
+3. **State machine** — plan-file checkboxes survive `/clear`. The next session reads the plan file and knows exactly where to resume.
 4. **Dispatch routing + collision-proof isolation** — parallel for independent tasks, sequential for dependent. The controller scans plan-task bodies for symbol references to other tasks and downgrades `Independent: yes` to sequential when it spots a real dependency. Parallel *writers* never share a checkout undeclared: by default each runs in its own git worktree, claimed atomically in an ownership registry (`scripts/orch-worktree-materialize.sh`) — and when a project rules out worktrees, writers may share the checkout only under an explicitly declared, controller-partitioned file-ownership mode (disjoint exclusive file lists, a stated writer cap, no locks or hold-markers). A `PreToolUse` guard blocks the working-tree-destroying git commands for the controller and every sub-agent. Read-only agents (review/research/explore) safely share the tree. Merge-back is a speculative queue: one suite run at the combined tip for the green path, bisect-and-eject on red, and the base only ever fast-forwards to a suite-green SHA. See "Safe parallel work" above.
 5. **Autonomous BLOCKED recovery** — when a subagent returns `Status: BLOCKED`, the controller routes through a 5-branch tree (missing context, sibling wait, decomposition, model escalation, or genuinely needs the user). Missing context is a `SendMessage` **resume** of the same agent — its partial work and context survive; only genuine model escalation pays for a cold re-dispatch. `PARTIAL` returns (a fired `Stop if:`) keep completed work and enumerate the remainder. Branches 1–4 happen invisibly; only branch 5 ever reaches you.
 6. **Two-stage code review** — fresh-context reviewers, told explicitly not to trust the implementer. Reviewers report everything with a confidence tag; the controller demotes below 0.8 into `Notes:`. Filtering never happens inside the reviewer. In the workflow path, every finding carries a proposed fix, and the skeptic pass **executes** the fix in a scratch copy where the claim is runnable — a finding whose fix changes nothing observable is refuted (the fix-guided filter from arXiv:2603.00539). A refuted finding is removed from the confirmed set but never deleted from the record: the workflow returns it in a separate `refuted` list with the method and reason that cleared it.
@@ -307,7 +309,7 @@ Other modes:
 
 - **Persistent symlink.** `./scripts/install.sh --link` then `/plugin marketplace add ~/.claude/llm-orchestrator`.
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
-- **Codex.** `./scripts/install.sh --codex` — the cadence skill, the shared instructions and three small hooks, into your Codex setup; then trust the hooks with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
+- **Codex.** `codex plugin add llm-orchestrator@llm-orchestrator` for the cadence skill and three small hooks, and `./scripts/install.sh --codex` for the shared instructions; then trust the hooks with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders (which only cadence-enabled projects get) and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
 - **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `950000` (≈95% of a 1M-token window) — the token count at which the agent is reminded once to write a handoff note before native compaction kicks in. Lower it for a smaller context window.
