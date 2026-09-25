@@ -13,9 +13,9 @@ On Codex also read its `CODEX.md` for installed tools, evidence and trust.
 Absent/disabled cadence and ordinary documentation/questions are out of scope.
 User instructions and project amendments govern.
 
-Check `workflow`: `proportional` uses the paths below. Missing or `legacy`
-uses the [legacy procedure](CADENCE.md#legacy-procedure). Unknown values are a
-configuration error; do not silently choose the lighter process.
+Check `workflow`: `proportional` uses the paths below. Any other value, or
+none, is a configuration error; fix it (`"workflow": "proportional"`) before
+working, and never guess a process.
 
 ## Proportional paths
 
@@ -60,7 +60,6 @@ This cannot waive failures, uncertain writes or stale/unavailable required check
 
 Keep maintained specifications, research conclusions, design decisions and
 runbooks. Reviews, temporary plans/logs and disposable copies belong outside Git.
-No proportional path requires the five stage reports or a ledger commit.
 
 Use this skill's `scripts/orch-task-resources.py --help` for task resources.
 Acquire consumer leases before use; finish after consumers stop and

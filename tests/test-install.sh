@@ -288,7 +288,7 @@ for cadence_entry in commands/cadence-init.md \
                      skills/cadence/scripts/cadence-detect.sh \
                      skills/cadence/scripts/cadence-init.sh \
                      skills/cadence/references/commit-msg \
-                     skills/cadence/references/cadence-state.md; do
+                     skills/cadence/references/laws.md; do
   if [[ -f "$TMP/src/$cadence_entry" ]]; then
     mv "$TMP/src/$cadence_entry" "$TMP/keep.a"
     expect_check_fail "--check fails when ${cadence_entry} is deleted"

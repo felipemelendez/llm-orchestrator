@@ -272,7 +272,7 @@ case "${cmd}" in
              skills/cadence/SKILL.md skills/cadence/CADENCE.md \
              skills/cadence/scripts/orch-cadence-gate.sh skills/cadence/scripts/orch-cadence-check.sh \
              skills/cadence/scripts/cadence-detect.sh skills/cadence/scripts/cadence-init.sh \
-             skills/cadence/references/commit-msg skills/cadence/references/cadence-state.md \
+             skills/cadence/references/commit-msg skills/cadence/references/laws.md \
              templates/cadence-global-block.md scripts/lib/orch-task-resources.py \
              skills/cadence/scripts/orch-task-resources.py \
              scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \

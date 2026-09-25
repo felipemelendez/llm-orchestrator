@@ -27,7 +27,7 @@ Otherwise open each reply with **exactly one** of these six headers, on its own 
 - `Plan:` — "what's the best approach", "how should we", a multi-step proposal
 - `Status:` — subagent reporting to controller
 
-`Recommendation:`, `Verify:`, `Verification:`, `Why:`, `Next:`, `Notes:` are sub-sections. In legacy projects, `Changed:` MUST include a `Verify:` line (observed command/output; cosmetic: `Verify: no verification needed (cosmetic)`). Enabled `workflow: proportional` uses `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation`; PASS needs observed checks; NOT APPLICABLE never clears failed, unknown or required validation. `Plan:` includes risks and checking steps. See [`concise-agent-protocol.md`](../../concise-agent-protocol.md).
+`Recommendation:`, `Verify:`, `Verification:`, `Why:`, `Next:`, `Notes:` are sub-sections. Without an enabled cadence, `Changed:` MUST include a `Verify:` line (observed command/output; cosmetic: `Verify: no verification needed (cosmetic)`). Enabled `workflow: proportional` uses `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation`; PASS needs observed checks; NOT APPLICABLE never clears failed, unknown or required validation. `Plan:` includes risks and checking steps. See [`concise-agent-protocol.md`](../../concise-agent-protocol.md).
 <!-- ORCH:FORMAT:END -->
 
 ## Instruction priority
@@ -57,7 +57,7 @@ The sub-sections and the first working rule apply when the six headers do (see a
 
 ### Required sub-sections
 
-- `Changed:` uses the project's verification format above: proportional `Verification:` or legacy `Verify:`. Report actual observed results; preserve pending validation.
+- `Changed:` uses the project's verification format above: `Verification:` with an enabled cadence, `Verify:` without one. Report actual observed results; preserve pending validation.
 - `Found:` SHOULD include `Recommendation:` and `Next:` when applicable.
 - `Plan:` SHOULD include `Risks:` and `Verify after each step:`.
 

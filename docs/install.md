@@ -61,8 +61,9 @@ proposes the configuration and drafts rulebook text for your approval.
 **Step 2 — confirm the config.** The assistant shows you a proposed
 `docs/llm-orchestrator/cadence.json`. Check two things: the test command is
 the one you actually use, and the folders listed as production code and tests
-are right. New projects get `workflow: proportional`; older projects keep their
-existing workflow until you migrate them on purpose. If the initializer could
+are right. It sets `workflow: proportional`, the only workflow; a
+`cadence.json` without it, or with another value, is refused with the one-line
+fix. If the initializer could
 not recognize your stack, it says so and leaves the test command for you to
 fill in; until it is filled in, the assistant reports verification as pending
 rather than passed.

@@ -12,15 +12,14 @@ Otherwise, before anything else:
   reviews, findings resolution and independent verification. Choose by risk,
   uncertainty and reversibility. User directions and project amendments govern.
   Ordinary questions/docs need no pipeline.
-- Missing or `legacy` workflow retains the legacy brief/implementer/blind-pair/
-  adjudication/fixer/gate/landing sequence and its reports. Unknown workflow is
-  an error. Installing this block does not migrate a project.
-- Full/legacy uses a refuter only for disagreement or a one-sided serious/
+- Any other `workflow`, or none, is a configuration error; the fix is
+  `"workflow": "proportional"`.
+- Full uses a refuter only for disagreement or a one-sided serious/
   catastrophic finding. Missing reviews are never agreement. Name dispatch models.
-- Writers may run checks and inspect their diff in proportional mode; they
-  cannot supply a required independent review/gate. Legacy independence stays.
-- Keep useful specs/research/design/runbooks. Proportional reports/copies live
-  outside Git; finish cleanup after consumers stop and work is preserved.
+- Writers may run checks and inspect their diff; they cannot supply a required
+  independent review/gate.
+- Keep useful specs/research/design/runbooks. Reports and copies live outside
+  Git; finish cleanup after consumers stop and work is preserved.
 - `LAWS.md`, `cadence.json`, `LOCK.sha256`, the deny rules in
   `.claude/settings.json`, the git hook in `.githooks/`, and the marked section
   of `CLAUDE.md` and `AGENTS.md` change only by a numbered ruling, in a commit

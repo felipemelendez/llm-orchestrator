@@ -44,9 +44,7 @@ Show the user the whole proposal, not a summary — it is the contract the gate,
 the check and the git layer all read. Then say in one line what it detected and
 ask them to confirm or correct. Before writing the configuration, confirm:
 
-- `workflow` is `proportional` for a new project. Only a legacy project keeps
-  it absent, and only then do the legacy report settings (`notes_dir`,
-  `ticket_re`) matter.
+- `workflow` is `proportional`. The init refuses any other value, or none.
 - `runner.test_cmd`, `prod_globs` and `test_globs` match where this project's
   tests, production code and test files actually live. A `profile` of `unknown`
   means no test command was found: ask for the real command now rather than
@@ -77,7 +75,7 @@ changes the report's wording and drops the placeholder reminder; nothing is
 overwritten either way). Add `--dry-run` when they asked to see the plan first —
 then stop and show them the plan.
 
-The script writes, in this order: `LAWS.md` and its three companions →
+The script writes, in this order: `LAWS.md` and its two companions →
 `AGENTS.md` → `CLAUDE.md` → `.claude/settings.json` → `.githooks/` →
 `docs/llm-orchestrator/cadence.json` last → the lock. It never overwrites: every
 file the project already has comes back as `kept` — except the marked
@@ -97,11 +95,10 @@ git config core.hooksPath .githooks
 ```
 
 Report the lock line separately, then end with an honest completion line: the
-rulebook, the re-lock and the hook routing are still the user's to do, so a
-proportional project ends with `Verification: PENDING — rulebook completion,
-re-locking and hook activation remain`, and a legacy one with a `Verify:` line
-naming the verdict command and its output. A Git policy verdict is not test
-execution, so never write PASS here.
+rulebook, the re-lock and the hook routing are still the user's to do, so end
+with `Verification: PENDING — rulebook completion, re-locking and hook
+activation remain`. A Git policy verdict is not test execution, so never write
+PASS here.
 
 The recipe the script prints is ordered, and the order is load-bearing: fill in
 the `<PLACEHOLDER>`s, re-lock under `ORCH_CADENCE_UNLOCK=1` (the fill changed

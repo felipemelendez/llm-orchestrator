@@ -11,8 +11,8 @@ For enabled `workflow: proportional`, finish the cadence's selected path.
 Reuse valid checks; validate changed inputs. Follow authorized delivery without
 another menu. Commit/push/merge/discard need authorization. After consumers stop
 and work is preserved, finish resources through the task helper: clean disposable
-copies; retain unique/dirty/active work and report its path. Stop here; legacy
-preconditions below add no requirements to proportional work.
+copies; retain unique/dirty/active work and report its path. Stop here; the
+preconditions below are for projects without an enabled cadence.
 
 ## Preconditions
 
