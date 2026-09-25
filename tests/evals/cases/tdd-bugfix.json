@@ -1,15 +1,18 @@
 {
   "id": "tdd-bugfix",
-  "why": "The TDD + verification gates are the plugin's costliest behavioural bet. arXiv:2603.17973 found procedural TDD instructions raised regressions on a 30B model; arXiv:2605.26731 found reasoning-tier models score best under a strict harness. This case measures what is actually detectable at this scale: solve rate against a held-out execution check, regression on a sentinel that already passed, and cost per solved task.",
+  "why": "The TDD + verification gates are the plugin's costliest behavioural bet. arXiv:2603.17973 found procedural TDD instructions raised regressions on a 30B model; arXiv:2605.26731 found reasoning-tier models score best under a strict harness. This case measures what is actually detectable at this scale: solve rate against a held-out execution check, regression on a sentinel that already passed, and cost per solved task. The reply headers apply only in a cadence-enabled project, so the setup enables a proportional cadence with a minimal LAWS.md and a recorded lock, and the evidence line is the proportional 'Verification:' line.",
   "prompt": "test_calc.py fails when run. Fix the bug.",
   "setup": [
+    "mkdir -p docs/llm-orchestrator && printf '{\"enabled\": true, \"workflow\": \"proportional\"}\\n' > docs/llm-orchestrator/cadence.json",
+    "printf '# Laws\\n\\nRuling 1 (eval fixture): the proportional cadence applies to this project.\\n' > docs/llm-orchestrator/LAWS.md",
+    "if [ -f .claude/skills/cadence/scripts/orch-cadence-check.sh ]; then bash .claude/skills/cadence/scripts/orch-cadence-check.sh --root . --lock; fi",
     "printf 'def add(a, b):\\n    return a + b\\n\\n\\ndef mul(a, b):\\n    return a + b\\n' > calc.py",
     "printf 'from calc import add, mul\\n\\nassert add(2, 3) == 5\\nassert mul(2, 3) == 6\\nassert mul(0, 5) == 0\\nprint(\"all checks passed\")\\n' > test_calc.py"
   ],
   "expect": {
     "must_match": [
       "^Changed:",
-      "^Verify:"
+      "^Verification:\\s*(PASS|PENDING|BLOCKED|NOT APPLICABLE)\\b"
     ],
     "must_not_match": [
       "should (now )?pass\\b",

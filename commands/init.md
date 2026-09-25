@@ -1,5 +1,5 @@
 ---
-description: Initialize LLM Orchestrator conventions in the current project. Adds CLAUDE.md, AGENTS.md, .gitignore entries, and the docs/llm-orchestrator/ scaffold without overwriting existing files.
+description: Add LLM Orchestrator files to this project (CLAUDE.md, AGENTS.md, .gitignore entries, docs/llm-orchestrator/) without overwriting.
 ---
 
 You are running `/llm-orchestrator:init` for LLM Orchestrator.

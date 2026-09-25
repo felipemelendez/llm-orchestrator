@@ -1,20 +1,24 @@
 ---
 name: using-orchestrator
-description: Use when starting any session in an LLM Orchestrator project. Establishes the Concise Agent Protocol response shapes and mandates skill invocation before any response or action.
+description: Use when deciding which orchestrator skill fits a task, or which reply format a cadence-enabled project uses.
 ---
 
 <!-- ORCH:EAGER:START -->
 # Using LLM Orchestrator
 
-This is the meta-skill. SessionStart injects the core below; the rest of this file (instruction priority, working rules, skill precedence, the full routing table, and subagent dispatch) is reference — open the full `using-orchestrator` skill when you need to decide which skill applies.
+This is the meta-skill. SessionStart injects the core below; the rest of this file is reference — open the full `using-orchestrator` skill when you need to decide which skill applies.
 
 **If you were dispatched as a subagent to run one task, stop here.** Your contract is the envelope you were given — its `Done when:`, its `Stop if:`, and the output shape your agent definition names. Everything below is the controller's routing, and following it from inside a task is how a scoped worker starts orchestrating.
 
-**Invoke relevant skills before responding.** When a trigger clearly matches the user's message, invoke the skill first; if it turns out not to apply, discard it — but skipping a check that should have happened is the failure mode. Common triggers: investigate / bug / test failure → `systematic-debugging`; build / design / new feature → `brainstorming`; library + version + design verb → `research-classifier`; approved spec → `writing-plans`; diff ready → `requesting-code-review`; about to claim done/fixed/passing → `verification-before-completion`; remember / save / forget → `managing-memory`; context filling on a long task → `handing-off-to-fresh-context`. When two triggers match at once, run them in this order: process (`brainstorming`, `systematic-debugging`, `research-classifier`) → implementation (`test-driven-development`, `writing-plans`, `dispatching-*`) → verification (`requesting-code-review`, `verification-before-completion`, `finishing-a-branch`). For a read-heavy sweep (many files, many naming conventions), dispatch the explorer subagent instead of doing the reads inline — you want its conclusion, not its file dumps.
+**Use a skill only when the task matches its trigger.** Ordinary questions, explanations and small edits need no skill: answer or make the change directly. A small edit is one the user spelled out (rename this, change that value); a bug or failing test to investigate is not. Triggers: a bug, test failure or unexpected behavior to investigate → `systematic-debugging`; a new feature or design with open choices → `brainstorming`; a plan that depends on a library version or vendor API → `research-classifier`; an approved spec → `writing-plans`; a finished diff about to merge → `requesting-code-review`; about to claim a code change (feature, fix, refactor, upgrade, migration) is done or passing → `verification-before-completion`; remember / save / forget → `managing-memory`; context filling on a long task → `handing-off-to-fresh-context`. When two triggers match at once, run them in this order: process (`brainstorming`, `systematic-debugging`, `research-classifier`) → implementation (`test-driven-development`, `writing-plans`, `dispatching-*`) → verification (`requesting-code-review`, `verification-before-completion`, `finishing-a-branch`). For a read-heavy sweep (many files, many naming conventions), dispatch the explorer subagent instead of doing the reads inline — you want its conclusion, not its file dumps.
+<!-- ORCH:EAGER:END -->
 
-## Response shape — the hard rule
+<!-- ORCH:FORMAT:START -->
+## Reply format in a cadence-enabled project
 
-Every reply opens with **exactly one** of these six headers, on its own line, before any other text:
+Applies only where `docs/llm-orchestrator/cadence.json` sets `enabled: true`. If the project's own instructions (CLAUDE.md, AGENTS.md) set a reply format, that format wins and these headers are optional; subagent returns keep their required shapes.
+
+Otherwise open each reply with **exactly one** of these six headers, on its own line, before any other text:
 
 - `Changed:` — you just edited code
 - `Found:` — research, "what files…", "where is…", "find X", and explanation queries ("what does X do", "how does Y work")
@@ -24,7 +28,7 @@ Every reply opens with **exactly one** of these six headers, on its own line, be
 - `Status:` — subagent reporting to controller
 
 `Recommendation:`, `Verify:`, `Verification:`, `Why:`, `Next:`, `Notes:` are sub-sections. In legacy projects, `Changed:` MUST include a `Verify:` line (observed command/output; cosmetic: `Verify: no verification needed (cosmetic)`). Enabled `workflow: proportional` uses `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation`; PASS needs observed checks; NOT APPLICABLE never clears failed, unknown or required validation. `Plan:` includes risks and checking steps. See [`concise-agent-protocol.md`](../../concise-agent-protocol.md).
-<!-- ORCH:EAGER:END -->
+<!-- ORCH:FORMAT:END -->
 
 ## Instruction priority
 
@@ -38,15 +42,18 @@ If the user says "don't use TDD" and a skill says "always use TDD," follow the u
 
 ## The rule
 
-**Invoke relevant skills before any response or action.** If the invoked skill turns out not to apply, you don't have to follow it — but the *check* is the point. Skipping a check that should have happened is the failure mode, not running one and discarding the result.
+**Use a skill when the task matches its trigger; otherwise just do the work.** A question, an explanation or a small, local edit needs no skill. A skill's description says when it applies; if one clearly matches, invoke it before acting.
 
 Concrete examples:
-- User says "investigate this bug" → invoke `systematic-debugging`. Even if you think you can fix it directly, invoke first.
-- User says "what's the best approach to X" → invoke `brainstorming` if X is design-shaped, otherwise reply directly with `Plan:`.
-- User asks you to "add" or "implement" anything touching a named library → the research-gate hook will compel; invoke `research-classifier` before drafting a spec.
+- User says "investigate this bug" → invoke `systematic-debugging` before proposing a fix.
+- User says "what's the best approach to X" → invoke `brainstorming` if X is design-shaped, otherwise answer directly.
+- User asks for a new feature or design that touches a named library → invoke `research-classifier` before drafting a spec. A small edit near a library needs none.
 - User says "remember", "save this", "I told you before" → invoke `managing-memory`.
+- User asks "what does this function do" or "rename this variable" → no skill; answer or edit directly.
 
 ## Response detail
+
+The sub-sections and the first working rule apply when the six headers do (see above); the rest apply to every reply.
 
 ### Required sub-sections
 
@@ -86,7 +93,7 @@ So "the auth test is failing, fix it" is `systematic-debugging` first (find the 
 
 ## When to invoke other skills
 
-Each row is a directive, not a suggestion. If the trigger matches, invoke.
+Invoke a row's skill when its trigger clearly matches. Questions and small edits the user spelled out match none.
 
 | Trigger                                                          | Invoke skill                       |
 |------------------------------------------------------------------|-------------------------------------|
@@ -94,9 +101,9 @@ Each row is a directive, not a suggestion. If the trigger matches, invoke.
 | About to brainstorm or plan a library/version-touched task       | `research-classifier`              |
 | Approved spec, ready to code                                     | `writing-plans`                    |
 | Walking a multi-task plan end-to-end                             | `executing-plans`                  |
-| Implementing a feature or bugfix                                 | `test-driven-development`          |
+| Implementing a feature or a bug fix                              | `test-driven-development`          |
 | Bug, test failure, unexpected behavior, "investigate"            | `systematic-debugging`             |
-| About to claim "done" or "fixed"                                 | `verification-before-completion`   |
+| About to claim a code change is "done" or "fixed"               | `verification-before-completion`   |
 | Needs branch isolation                                           | `using-git-worktrees`              |
 | Dependent or shared-file task                                    | `dispatching-subagents`            |
 | 3+ truly independent tasks, no shared files                      | `dispatching-parallel-agents`      |
@@ -135,4 +142,4 @@ Delegate for size, not reflexively. Current models delegate readily on their own
 
 When a task is design-shaped (new feature, multi-step build), **go through `brainstorming` → spec → `/llm-orchestrator:plan` → `/llm-orchestrator:dispatch`.** Don't implement features inline when the orchestration path exists.
 
-The shape header at the top of every reply is the signal that a skill ran. The reader doesn't need you to name which subagent produced it.
+The reader does not need you to name which subagent produced a result.

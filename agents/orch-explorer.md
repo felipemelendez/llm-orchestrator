@@ -1,6 +1,6 @@
 ---
 name: orch-explorer
-description: Read-only codebase scout. Use proactively when the orchestrator needs to know where something lives, how it's used, or what touches it — before any edit. Returns file:line refs, never edits.
+description: Read-only codebase search. Use for sweeps across many files — where something lives, how it is used, what touches it. Returns file:line refs; never edits.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 maxTurns: 25

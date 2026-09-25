@@ -133,7 +133,7 @@ Honest boundary: this catches an invented or careless claim — the failure that
 
 What came before it was a 2,201-line module that watched every tool call, guessed whether each shell command might write, and hashed the whole repository to compare. It was removed: two adversarial reviews found fifteen defects in it, and the 200-run experiment above could not measure any benefit over simply warning.
 
-Reinforced two more ways: a `UserPromptSubmit` hook injects a per-turn reminder of the rule, and the `verification-before-completion` skill fires when the agent is about to claim something works. Failed verifications open with `Found:` (the bug) and a debugging path — not `Changed:`. The team never pretends.
+Reinforced two more ways: in a cadence-enabled project a `UserPromptSubmit` hook injects a per-turn reminder of the rule, and the `verification-before-completion` skill fires when the agent is about to claim something works. Failed verifications open with `Found:` (the bug) and a debugging path — not `Changed:`. The team never pretends.
 
 ### Layer 8 — Pre-spec verification
 
@@ -217,8 +217,8 @@ How the pieces fit together at the file level.
 
 - File: `hooks/hooks.json` wires events → `scripts/hooks/<name>.sh`.
 - Profiles via `ORCH_HOOK_PROFILE`:
-  - `minimal` — bootstrap only: loads `using-orchestrator` (the Concise Agent Protocol — fixed response shapes) at SessionStart.
-  - `standard` (default) — adds UserPromptSubmit reminders, the research gate and handoff nudge, the PreToolUse guards, SubagentStop validators + retry breaker + implementer mutex reaper, and at Stop the completion check, the retry breaker, task-scratch cleanup and retention pruning.
+  - `minimal` — bootstrap only: loads the `using-orchestrator` core at SessionStart (plus the Concise Agent Protocol's fixed response shapes in a cadence-enabled project).
+  - `standard` (default) — adds UserPromptSubmit reminders (cadence-enabled projects only), the research gate and handoff nudge, the PreToolUse guards, SubagentStop validators + retry breaker + implementer mutex reaper, and at Stop the completion check, the retry breaker, task-scratch cleanup and retention pruning.
   - `strict` — the same hooks, with the shape checks blocking: a malformed or empty Status block and a retry storm both stop the turn. Setting the profile is enough; it implies `ORCH_STRICT_STATUS` and `ORCH_STRICT_RETRY`. (It did not until 2026-08-03: no script branched on the profile, so `strict` bought the documented word and none of the behaviour. Each knob can still be set to `0` explicitly to opt a single check back out.) The completion check never blocks in any profile (on Codex it takes the one route to the agent that harness offers); `minimal` turns it off along with the other per-turn hooks — see Layer 7 for why it warns.
 - A deterministic bug-shape "skill nudge" hook was built, measured, and REMOVED (2026-08-04, 100 runs/arm on opus): naming the skills inline halved formal skill invocation and, under explicit skip-the-tests pressure, licensed deliberate compliance — behavioural pass 70/100 with vs 85/100 without, p=0.017, collapse concentrated where pressure was bluntest (8% vs 56%). Invocation is a marker of good runs, not a lever; making the test-or-not conflict salient resolves it in the instruction's favor. Negative result archived at `tests/evals/results/archive/2026-08-04-skill-nudge-AB-NEGATIVE-RESULT.json`; the hook lives in git history (ce95050).
 - Disable individual hooks with `ORCH_DISABLED_HOOKS="hook-a,hook-b"`. Exception: `guard-destructive-git.sh` deliberately ignores both this list and the profile — a data-loss guard must not share an off switch with style hooks; its only opt-out is `ORCH_ALLOW_DESTRUCTIVE_GIT=1` (see `docs/install.md`). The cadence's lock is two layers. First, the `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json`, which cover the file tools, the recognised shell file commands and every redirection target — and, with Claude Code's sandbox on, every subprocess. Second, the `commit-msg` git hook, which refuses a commit touching a protected file without a numbered ruling. Two smaller things report rather than prevent: the session-start line and `--audit <rev>` in CI. The cadence's own hooks are inert until a project's `docs/llm-orchestrator/cadence.json` says `"enabled": true`; all but the unlock guard and the Codex file guard are nameable in `ORCH_DISABLED_HOOKS`. `ORCH_CADENCE_UNLOCK=1` is not an off switch for them but the cadence's own unlock — see Layer 10's escape hatch.
@@ -266,7 +266,8 @@ How the pieces fit together at the file level.
 - **Plugin-internal state** lives at `~/.llm-orchestrator/memory/<project-hash>.md` — reserved for `## Research config` (aggressiveness knob) and `declined_mcp:` entries. Read at trigger time by `orch-research-gate.sh`, not at SessionStart.
 - **Research cache + brief index** live at `~/.llm-orchestrator/research/cache/<hash>/` and `~/.llm-orchestrator/research/briefs-index/<hash>.md`. Written by the SubagentStop validator after `orch-researcher` returns; read by the gate hook on the next compelled trigger.
 - `<project-hash>` = SHA-1 of (a) git remote origin URL, (b) repo root path, or (c) cwd, in that order. Resolved by `scripts/lib/orch-project.sh`.
-- SessionStart loads the using-orchestrator meta-skill only. CLAUDE.md loading is Claude Code's native responsibility.
+- Every hook finds the cadence with one rule (`orch_cadence_find` in `scripts/lib/orch-project.sh`): start at `CLAUDE_PROJECT_DIR`, else the event's cwd, else the current directory; walk up to the git top level and take the nearest directory holding `docs/llm-orchestrator/cadence.json` (outside any git repository only the start directory counts). So a cadence project nested inside a larger repository, and a session launched from a subdirectory, look the same to session start, the per-turn hook, the guards and the stop hooks.
+- SessionStart loads the using-orchestrator core only: when a skill applies, and ordinary questions and small edits need none. Its reply-format block (the six headers) and the per-turn reminder are added only where `docs/llm-orchestrator/cadence.json` is enabled, and a reply format the project's own instructions set wins over them. CLAUDE.md loading is Claude Code's native responsibility.
 - No background observer, and nothing leaves the machine. One PostToolUse hook exists — skill telemetry, event-only and off by default. Nothing records your commands or their output: the completion check reads the transcript the harness already keeps and writes nothing back. The little state there is lives in `~/.llm-orchestrator/state/<project-hash>/` (the retry breaker's reply fingerprints) and `~/.llm-orchestrator/handoff/` (the fire-once nudge marker), both pruned by the Stop hook.
 
 ---
@@ -284,8 +285,8 @@ How the pieces fit together at the file level.
       ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │ Bootstrap: SessionStart hook                                     │
-│   - injects using-orchestrator (Concise Agent Protocol)          │
-│     plain-voice protocol core (~610 tokens; body on demand)      │
+│   - injects the using-orchestrator core (~500 tokens; body on    │
+│     demand); the reply format only in cadence-enabled projects   │
 └─────┬────────────────────────────────────────────────────────────┘
       │
       ▼

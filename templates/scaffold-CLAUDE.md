@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This project uses LLM Orchestrator. The agent follows the Concise Agent Protocol — replies land in one of six fixed shapes (`Changed`, `Found`, `Blocked`, `Issues`, `Plan`, `Status`). No preamble. No trailing summaries.
+This project uses LLM Orchestrator. Its skills apply when a task matches their trigger; ordinary questions and small edits need none. The six reply shapes of the Concise Agent Protocol (`Changed`, `Found`, `Blocked`, `Issues`, `Plan`, `Status`) apply only once the cadence is on (`/cadence-init`), and a reply format set in this file wins over them.
 
 Full reference: the protocol doc inside the LLM Orchestrator install.
 

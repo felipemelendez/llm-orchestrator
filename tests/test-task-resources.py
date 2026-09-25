@@ -516,6 +516,22 @@ class LifecycleTests(unittest.TestCase):
         MOD.hook_retry(self.manager.base, {"cwd": str(config.parent)})
         self.assertFalse(self.scratch.exists())
 
+    def test_hook_skips_a_directory_named_cadence_json(self):
+        token = self.acquire()
+        self.manager.finish(self.task_id)
+        self.release(token)
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"enabled": True, "workflow": "proportional"}))
+        # A directory with the config's name is not a config: the walk passes it
+        # and finds the real file at the project root, as the bash -f test does.
+        app = self.project / "app"
+        (app / "docs/llm-orchestrator/cadence.json").mkdir(parents=True)
+        with mock.patch("sys.stderr") as warning:
+            MOD.hook_retry(self.manager.base, {"cwd": str(app)})
+            self.assertFalse(warning.write.called)
+        self.assertFalse(self.scratch.exists())
+
     def test_hook_ignores_open_task_and_other_project(self):
         second = self.root / "second-project"
         self.git("clone", "-q", str(self.project), str(second))

@@ -1,6 +1,6 @@
 ---
 name: handing-off-to-fresh-context
-description: Use when context is filling on a long task and you should leave a short note so work resumes cleanly after the conversation is compacted.
+description: Use when context is filling on a long task, to leave a short note so work resumes cleanly after compaction.
 ---
 
 # Handing off to fresh context
