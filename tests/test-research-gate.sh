@@ -365,6 +365,23 @@ else
   fail "LAM present-but-empty semantics" "rc=$rc out=$out"
 fi
 
+# Captured auto-mode payload (Claude Code 2.1.282): the report is the
+# SubagentHandback message; last_assistant_message is only "Report delivered to
+# caller.". The validator must grade the handback report.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+CAP_DIR=$(mktemp -d)
+out=$(python3 "$MAT" auto "$CAP_DIR" --agent-type llm-orchestrator:orch-researcher \
+        --report "Status: VERIFIED
+Brief: $TMP/briefs/sneaky-verified.md" \
+      | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+rc=$?
+rm -rf "$CAP_DIR"
+if [[ "$rc" == "0" ]] && echo "$out" | grep -q 'deprecation/removal/rename'; then
+  ok "captured auto payload: the SubagentHandback report is validated, not the closing text"
+else
+  fail "captured auto payload (researcher)" "rc=$rc out=$out"
+fi
+
 # ============================================================
 # Gate prior-injection tests (Fix 1 + Fix 2 read enforcement)
 # ============================================================
@@ -410,6 +427,15 @@ if [[ -n "$output" ]] \
   ok "No prior files → gate emits classifier guidance only, no spurious sections"
 else
   fail "No-priors fail-open" "output unexpectedly contains a prior section: $output"
+fi
+
+# --- Test: the guidance is scoped to new features and design work ---
+output=$(gate_with_priors "add a retry to the stripe webhook handler")
+if echo "$output" | grep -q 'applies only to a new feature or design work' \
+   && echo "$output" | grep -q 'A small edit or a question needs no research step'; then
+  ok "Guidance says it applies only to new features or design work, not small edits"
+else
+  fail "Guidance scope" "output lacks the new-feature scope or the small-edit exemption: $output"
 fi
 
 # --- Test: fresh cache file → 'Cache priors' section appears ---

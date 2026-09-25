@@ -172,6 +172,24 @@ if [[ "${out%%|*}" == "0" && "${out#*|}" == "" ]]; then
 else fail "subagent varied" "out='$out'"; fi
 rm -rf "$SUBBASE"
 
+# Captured auto-mode payload (Claude Code 2.1.282): the subagent transcript sits
+# where the hook derives it, and its one SubagentHandback call is not a repeat.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+cap_fire() { # [materialize args...] -> "rc|stderr"
+  local dir; dir=$(mktemp -d)
+  local err rc
+  err=$(python3 "$MAT" auto "$dir" "$@" | env ORCH_HOME="$dir/home" bash "$HOOK" 2>&1 1>/dev/null); rc=$?
+  rm -rf "$dir"
+  printf '%s|%s' "$rc" "$err"
+}
+out=$(cap_fire)
+if [[ "$out" == "0|" ]]; then ok "captured auto payload → silent"
+else fail "captured auto payload" "out='$out'"; fi
+out=$(cap_fire --repeat-tool 2)
+if [[ "${out%%|*}" == "0" && "$out" == *"SAME Bash action 3 times"* ]]; then
+  ok "captured auto payload with a Bash call repeated 3× → step-repetition warn"
+else fail "captured auto payload, repeated" "out='$out'"; fi
+
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-retry-cap%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"; exit 0

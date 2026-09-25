@@ -1,6 +1,6 @@
 ---
 name: executing-plans
-description: Use when you have a written plan and need to drive it task-by-task to completion. Top-level orchestrator that routes each task to sequential or parallel dispatch and tracks state.
+description: Use when driving a written plan to completion, task by task. Routes each task to sequential or parallel dispatch.
 ---
 
 # Executing plans

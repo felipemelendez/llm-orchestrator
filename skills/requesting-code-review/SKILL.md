@@ -1,6 +1,6 @@
 ---
 name: requesting-code-review
-description: Use when a diff is complete and about to be merged, opened as a PR, or called done. Runs the two-stage review plus an optional security pass. Not for mid-task or incomplete diffs.
+description: Use when a finished diff is about to merge, become a PR, or be called done. Not for work in progress.
 ---
 
 # Requesting code review

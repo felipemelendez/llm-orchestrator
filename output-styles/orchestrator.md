@@ -1,9 +1,10 @@
 ---
 name: orchestrator
 description: Enforces the Concise Agent Protocol — every reply opens with one of six named headers on its own line. No preamble, no trailing summaries.
+keep-coding-instructions: true
 ---
 
-You are using the LLM Orchestrator output style. Every reply uses the Concise Agent Protocol.
+You are using the LLM Orchestrator output style. Every reply uses the Concise Agent Protocol. If the project's own instructions (CLAUDE.md, AGENTS.md) set a reply format, follow that format instead; the headers below are then optional.
 
 ## The hard rule
 

@@ -23,22 +23,49 @@
 ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 
 # Resolve policy from the actual project, never from an agent's claimed path
-# selection. Hook cwd wins; CLI callers use their current project directory.
-orch_protocol_is_proportional() { # [hook-input-json]
-  python3 - "${1:-}" <<'PYEOF' 2>/dev/null
-import json, os, pathlib, subprocess, sys
+# selection. Where the cadence lives is decided by orch_cadence_find
+# (scripts/lib/orch-project.sh), the one rule every hook shares.
+_ORCH_PROTOCOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/orch-project.sh
+[[ -f "${_ORCH_PROTOCOL_DIR}/orch-project.sh" ]] && source "${_ORCH_PROTOCOL_DIR}/orch-project.sh"
+
+# orch_protocol_workflow [hook-input-json]: prints "proportional" or "legacy"
+# for a project whose cadence.json has enabled: true, "error" when the file
+# exists but does not decode, and nothing when the cadence is absent or
+# disabled. Only "proportional" and "legacy" mean the cadence is on; "error"
+# lets the session-start verdict report the broken file. Without python3 the
+# file is read with grep instead: it counts as enabled when it contains
+# "enabled": true, and as proportional when it contains
+# "workflow": "proportional".
+orch_protocol_workflow() { # [hook-input-json]
+  local cfg
+  declare -f orch_cadence_find >/dev/null 2>&1 || return 0
+  orch_cadence_find "${1:-}"
+  cfg="${ORCH_CADENCE_ROOT%/}/docs/llm-orchestrator/cadence.json"
+  [[ -f "${cfg}" ]] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${cfg}" <<'PYEOF' 2>/dev/null
+import json, sys
 try:
-    event = json.loads(sys.argv[1]) if sys.argv[1] else {}
-    cwd = pathlib.Path(event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve(strict=True)
-    result = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=2)
-    root = pathlib.Path(result.stdout.strip()) if result.returncode == 0 else cwd
-    config = json.loads((root / "docs/llm-orchestrator/cadence.json").read_text())
-    active = isinstance(config, dict) and config.get("enabled") is True and config.get("workflow") == "proportional"
-except (OSError, ValueError, AttributeError, TypeError, subprocess.SubprocessError):
-    active = False
-sys.exit(0 if active else 1)
+    config = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    print("error")
+    sys.exit(0)
+if isinstance(config, dict) and config.get("enabled") is True:
+    print("proportional" if config.get("workflow") == "proportional" else "legacy")
 PYEOF
+    return 0
+  fi
+  grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "${cfg}" || return 0
+  if grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"' "${cfg}"; then
+    printf 'proportional\n'
+  else
+    printf 'legacy\n'
+  fi
+}
+
+orch_protocol_is_proportional() { # [hook-input-json]
+  [[ "$(orch_protocol_workflow "${1:-}")" == "proportional" ]]
 }
 
 # This validates completion vocabulary only. In particular NOT APPLICABLE is
@@ -120,6 +147,105 @@ except Exception:
 
 if last_text is not None:
     print(last_text, end='')
+PYEOF
+}
+
+# orch_subagent_report <payload_file>
+#
+# Prints the report a finished subagent sent its caller, from a SubagentStop
+# payload saved to a file. The first output character is a sentinel: "1" means
+# a report source existed (so an empty report is a real observation), "0" means
+# an old harness sent neither source.
+#
+# In auto mode a subagent sends its report as the SubagentHandback tool's
+# `message`, and last_assistant_message holds only its closing text ("Report
+# delivered to caller." in a captured payload). So the last SubagentHandback
+# call in the subagent's own transcript wins, unless its tool result was an
+# error. A later prompt from a person (a resumed agent) discards it; entries
+# the harness injects (isMeta, tool results, <task-notification> and similar
+# tagged text) do not. Without one, last_assistant_message is the report.
+orch_subagent_report() {
+  python3 - "${1:-}" <<'PYEOF' 2>/dev/null || printf '0'
+import json, os, sys
+
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except Exception:
+    data = None
+if not isinstance(data, dict):
+    sys.stdout.write("0")
+    sys.exit(0)
+
+
+# Tags the harness puts at the start of text it injects; the same list as
+# MACHINE in orch-completion-check.py.
+MACHINE = ("<task-notification>", "<local-command-", "<bash-", "<command-name>", "<system-reminder>")
+
+
+def person_prompt(obj, content):
+    """True when a user entry is a prompt typed by a person or a caller."""
+    if obj.get("isMeta"):
+        return False
+    if isinstance(content, str):
+        texts = [content]
+    elif isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return False
+        texts = [b.get("text") or "" for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
+    else:
+        return False
+    text = "".join(texts).lstrip()
+    return bool(text) and not text.startswith(MACHINE)
+
+
+path = data.get("agent_transcript_path") or ""
+main = data.get("transcript_path") or ""
+if not isinstance(path, str) or not isinstance(main, str):
+    path, main = "", ""
+if not path and main.endswith(".jsonl") and data.get("agent_id"):
+    path = "%s/subagents/agent-%s.jsonl" % (main[:-len(".jsonl")], data["agent_id"])
+report = None   # the last handback not answered by an error
+pending = {}    # tool_use id -> (message, report before that call)
+if path and os.path.isfile(path):
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(obj, dict) or not isinstance(obj.get("message"), dict):
+                    continue
+                content = obj["message"].get("content")
+                if obj.get("type") == "user":
+                    if person_prompt(obj, content):
+                        report, pending = None, {}
+                        continue
+                    for b in content if isinstance(content, list) else []:
+                        if (isinstance(b, dict) and b.get("type") == "tool_result"
+                                and b.get("is_error") and b.get("tool_use_id") in pending):
+                            report = pending.pop(b["tool_use_id"])[1]
+                elif obj.get("type") == "assistant" and isinstance(content, list):
+                    for b in content:
+                        if not (isinstance(b, dict) and b.get("type") == "tool_use"
+                                and b.get("name") == "SubagentHandback"):
+                            continue
+                        inp = b.get("input")
+                        if isinstance(inp, dict) and isinstance(inp.get("message"), str):
+                            pending[b.get("id")] = (inp["message"], report)
+                            report = inp["message"]
+    except OSError:
+        report = None
+
+if report is not None:
+    sys.stdout.write("1" + report)
+elif "last_assistant_message" in data:
+    lam = data.get("last_assistant_message")
+    sys.stdout.write("1" + (lam if isinstance(lam, str) else ""))
+else:
+    sys.stdout.write("0")
 PYEOF
 }
 

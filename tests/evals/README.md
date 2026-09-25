@@ -168,8 +168,9 @@ confident wrong answer on a run that had already been paid for.
 
 | case | defends | grader |
 |---|---|---|
-| `shape-header` | protocol shape on a lookup question | text |
+| `shape-header` | protocol shape on a lookup question, in a cadence-enabled project | text |
 | `shape-header-no-turn-hook` | ablation: the per-turn protocol injection | text |
+| `shape-header-plain-project` | no reply-format rule without an enabled cadence | text |
 | `verify-evidence` | a completion claim carries the command and its output | text |
 | `research-gate-skips` | negative control — the gate stays quiet on pure logic | text |
 | `tdd-bugfix` | test-first on an ordinary bug | execution |

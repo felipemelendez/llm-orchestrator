@@ -15,7 +15,7 @@ The files in `agents/` are native Claude Code subagents. Frontmatter declares:
 - `name` — invoked via the Task tool with `subagent_type: <name>`
 - `description` — used by Claude to decide when to dispatch
 - `tools` — comma-separated allow-list
-- `model` — `sonnet` | `opus` | `fable` | a full model ID | `inherit`
+- `model` — `haiku` | `sonnet` | `opus` | `fable` | a full model ID | `inherit`
 - `effort` — `low` | `medium` | `high` | `xhigh` | `max` (honored for plugin agents; `hooks`, `mcpServers`, and `permissionMode` are not)
 
 Each subagent gets a fresh context window. The orchestrator passes content into the agent's prompt; the agent returns a `Status:` block.
@@ -26,13 +26,13 @@ Used as the state board for plan execution. The `executing-plans` and `dispatchi
 
 ### Skills (`skills/<name>/SKILL.md`)
 
-Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trigger; the body is the discipline. The SessionStart hook injects the `using-orchestrator` meta-skill so the protocol is always live.
+Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trigger; the body is the discipline. The SessionStart hook injects the `using-orchestrator` core, which says when a skill applies; the reply-format rule is added only in a cadence-enabled project.
 
 ### Hooks (`hooks/hooks.json`)
 
 We wire sixteen hook scripts across seven events; `hooks/hooks.json` is the source of truth:
-- **SessionStart** — bootstrap the protocol meta-skill. Loading CLAUDE.md stays Claude Code's own job.
-- **UserPromptSubmit** — per-turn protocol reminder, research gate, handoff nudge.
+- **SessionStart** — bootstrap the `using-orchestrator` core, plus the reply format in a cadence-enabled project. Loading CLAUDE.md stays Claude Code's own job.
+- **UserPromptSubmit** — per-turn protocol reminder (cadence-enabled projects only), research gate, handoff nudge.
 - **PreToolUse** — the three safety guards: destructive git, verification bypass, config protection.
 - **PostToolUse / PostToolUseFailure** — evidence ledger, and opt-in skill telemetry.
 - **SubagentStop** — Status-block validator, researcher validator, retry cap, writer-mutex reaper.
@@ -58,21 +58,21 @@ When an agent fails, ask which one failed: **it didn't know enough → raise the
 
 One invariant is not a preference. **A reviewer must be at least as capable as what it reviews.** Claude Code's advisor tool enforces exactly this rule for its own pairings, and the measured effect is large: an off-the-shelf weak critic moves resolve rate by 0.0/−0.2/+0.8 points, while a frontier critic moves it by +17.4 to +22.2 ([arXiv:2606.21811](https://arxiv.org/abs/2606.21811), Table 1). An **off-the-shelf** cheap reviewer is not a cheap reviewer; it is no reviewer — which is the case an agent roster actually faces. Note the paper's own thesis runs the other way: it is titled *Steer, Don't Solve: Training Small Critic Models for Large Code Agents*, and a **trained** 8B critic yields +3.0–5.2 points at 30–92× lower cost. Capability parity is what this plugin chooses given untrained critics, not what the paper concludes in general.
 
-Our agents ship pre-configured on that basis:
+Our agents ship pre-configured on that basis. Every agent except `orch-explorer` sets `model: opus`, which is Opus 5.5 on the Anthropic API ([model configuration](https://code.claude.com/docs/en/model-config)); the explorer sets `model: sonnet`, the latest Sonnet. Felipe set the Opus policy on 2026-09-21 after the Fable review route was rate-limited, and the Sonnet explorer on 2026-09-25. Opus 5.5 also costs less per token than Fable ([models overview](https://platform.claude.com/docs/en/about-claude/models/overview)). The policy list in `tests/validate-skills.sh` checks every pin.
 
 | Agent | Model | Why |
 |---|---|---|
-| `orch-explorer` | Fable 5 | Retrieval that MISSES is indistinguishable from code that isn't there — a scout's false negative silently narrows every decision downstream of it |
-| `orch-implementer` | Fable 5 | Highest-capability coding tier available |
-| `orch-spec-reviewer` | Fable 5 | Reviewer tier ≥ implementer tier |
-| `orch-code-reviewer` | Fable 5 | Same |
-| `orch-security-reviewer` | Opus | The one deliberate exception to the Fable 5 roster: Fable 5's safety classifiers fire on benign security work, which would break exactly this seat. This leaves the security seat one tier below the Fable 5 implementer — accepted because Stage 3 is advisory and a misfiring reviewer is worse than a slightly weaker one |
-| `orch-debugger` | Fable 5 | Ambiguous root-cause work |
-| `orch-researcher` | Fable 5 | Its job is verifying against *live* sources, so retrieval discipline outranks cutoff freshness. Trade-off noted: Opus 5's reliable knowledge cutoff (May 2026) is fresher than Fable 5's (Jan 2026) |
+| `orch-explorer` | Sonnet | Read-only search that runs often; Sonnet costs half as much as Opus. The risk, not yet measured, is that a missed result narrows every later decision |
+| `orch-implementer` | Opus | The roster's coding tier |
+| `orch-spec-reviewer` | Opus | Reviewer tier ≥ implementer tier |
+| `orch-code-reviewer` | Opus | Same |
+| `orch-security-reviewer` | Opus | Same. Opus 5.5 runs the same safety classifiers as Fable: on either model, a request flagged as cybersecurity re-runs on Opus 4.8 and the session stays there ([automatic model fallback](https://code.claude.com/docs/en/model-config#automatic-model-fallback)). Opus therefore does not avoid those fallbacks on security work |
+| `orch-debugger` | Opus | Ambiguous root-cause work |
+| `orch-researcher` | Opus | Its job is verifying against *live* sources, so retrieval discipline outranks cutoff freshness. Opus 5.5 and Fable share a reliable knowledge cutoff of June 2026 |
 
 Haiku 4.5 is absent by design: it accepts no `effort` parameter at all, and its reliable knowledge cutoff is Feb 2025.
 
-**Effort is deliberately NOT pinned.** Agents inherit the session's effort level. Two pieces of evidence drove removing the earlier per-agent `effort:` pins: HAL's 21,730-rollout study found **higher reasoning effort reduced accuracy in the majority of runs**, and Anthropic's own guidance is to *"treat effort as a general preference rather than a task-by-task decision"*. The model-configuration docs additionally note that `max` "may show diminishing returns and is prone to overthinking" — `max` only, with no claim about structured output. (An earlier version of this line attributed an `xhigh`/`max`-overthinks-on-structured-output warning to the blog above; the blog contains no such warning and in fact says the opposite — that effort "generally won't artificially inflate usage for simple tasks" and that overthinking is trained against.) A pinned value also overrides the user's session preference in both directions. The plugin's own eval suite cannot measure per-agent effort effects at an affordable N, so this follows the external evidence rather than an unmeasured guess.
+**Effort is set only on the reviewers.** `orch-spec-reviewer`, `orch-code-reviewer` and `orch-security-reviewer` set `effort: high`; every other agent inherits the session's level. Opus 5.5 defaults to `medium` while every other effort-capable model defaults to `high` ([model configuration](https://code.claude.com/docs/en/model-config#adjust-effort-level)), so without a pin the reviewers would run at `medium` in a session where nobody has chosen a level. The reason for the exception: a reviewer that stops early misses findings, and the model-choice guidance above says to raise effort when an agent did not try hard enough. The evidence against pinning still applies to the other agents: HAL's 21,730-rollout study found higher reasoning effort reduced accuracy in the majority of runs, and Anthropic advises treating effort as a general preference. A pin overrides the person's session choice in both directions, so a session at `max` runs its reviewers at `high`. Whether `high` improves review is not measured; the evaluation work is meant to test it.
 
 Effort resolution order: `CLAUDE_CODE_EFFORT_LEVEL` > frontmatter > session level > model default. Per the official docs, frontmatter effort "applies when that skill or subagent is active, overriding the session level" but not the environment variable. (This page previously listed session above frontmatter — inverted, and contradicting its own argument two paragraphs up that a pinned value overrides the user's session preference.) Setting a level a model doesn't support degrades to the highest supported level rather than erroring.
 
@@ -101,7 +101,7 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## What we ship one of (not many)
 
-- **Output styles** — we ship exactly one (`output-styles/orchestrator.md`) that carries the Concise Agent Protocol. The protocol is the differentiator; adding alternative styles dilutes it. Users who want a different voice should fork the file rather than layer more on top.
+- **Output styles** — we ship exactly one (`output-styles/orchestrator.md`) that carries the Concise Agent Protocol. It sets `keep-coding-instructions: true`, so choosing it keeps Claude Code's own instructions on scoping and verifying work. Claude Code's built-in Concise style covers "no preamble, no recap" but not the six headers. Users who want a different voice should fork the file rather than layer more on top.
 
 ## What we deliberately don't use
 
@@ -118,7 +118,7 @@ Claude Code now ships first-party versions of several capabilities this plugin p
 | Code review | `/code-review` (multi-agent, confidence-filtered; `ultra` for cloud review) and `/security-review` | Stage 1 spec-compliance review (native review doesn't check a diff against a spec), the spec-gates-quality order, and the failure-scenario evidence rule | Native review cannot be model-invoked (v2.1.215), so the plugin's reviewer agents are the only automatable substrate. `/code-review xhigh` is an excellent manual pass. Stage 1 and the gating order are this plugin's contract |
 | Worktree isolation | Per-agent worktree isolation on agent dispatch | Ownership registry with atomic claims, `.orch-worktree` provenance, green-baseline capture, test-gated sequential merge-back | Prefer native isolation for the checkout itself; the registry/baseline/merge-back discipline still applies |
 | Memory | CLAUDE.md hierarchy (native, automatic) plus the assistant's auto-memory directory | Write-side classification (`/remember` → Conventions/Decisions/People/Notes) and recoverable `/forget` | Native surfaces store; the plugin only classifies and soft-deletes |
-| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Fable 5 variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
+| Exploration | Built-in Explore agent (read-only search) | `orch-explorer` as a tools-restricted Sonnet variant with a `file:line` output contract | Either works; use the native Explore agent when breadth matters, `orch-explorer` when the Status-block contract matters |
 | Planning | Native plan mode and Plan agent | Durable spec/plan artifacts under `docs/llm-orchestrator/` with checkbox state that survives `/clear` | Native plan mode for the proposal loop; plugin artifacts for cross-session state |
 | Fan-out orchestration | `Workflow` tool (deterministic scripts, structured schema, resume) | The routing rule (`using-workflows`) and ready-made scripts (`workflows/review-diff.js`) | Already delegation-shaped: the plugin only supplies scripts and the when-to-fan-out policy |
 

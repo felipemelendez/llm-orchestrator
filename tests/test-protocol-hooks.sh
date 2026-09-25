@@ -500,7 +500,9 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
     child.mkdir()
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     env = dict(os.environ, ORCH_HOOK_PROFILE="strict", ORCH_HOME=str(pathlib.Path(tmp) / "private"))
-    for key in ("ORCH_STRICT_STATUS", "ORCH_STRICT_PROTOCOL", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "ORCH_DISABLE_PROTOCOL_GRADER"):
+    # CLAUDE_PROJECT_DIR would win over the event's cwd; drop it so the hook
+    # starts from cwd (a subdirectory) and walks up to the project.
+    for key in ("ORCH_STRICT_STATUS", "ORCH_STRICT_PROTOCOL", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "ORCH_DISABLE_PROTOCOL_GRADER", "CLAUDE_PROJECT_DIR"):
         env.pop(key, None)
 
     def grade(hook, reply, expected=0, cwd=child):
@@ -545,6 +547,71 @@ print("proportional and legacy hook fixtures passed")
 PY
 then ok "shared completion vocabulary is selected by project config, with legacy behavior preserved"
 else fail "proportional protocol hooks" "config-backed end-to-end fixture failed"; fi
+
+printf '\n%s== Captured SubagentStop payloads (SubagentHandback) ==%s\n' "$DIM" "$RESET"
+# Captured from Claude Code 2.1.282: in auto mode the explorer sent its report
+# through SubagentHandback and last_assistant_message was "Report delivered to
+# caller.".
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+cap_fire() { # <mode> [materialize args...] -> "rc|stderr"
+  local dir; dir=$(mktemp -d)
+  local out rc
+  out=$(python3 "$MAT" "$@" "$dir" | bash "$SUBAGENT" 2>&1 1>/dev/null); rc=$?
+  rm -rf "$dir"
+  printf '%s|%s' "$rc" "$out"
+}
+cap_dir=$(mktemp -d)
+python3 "$MAT" auto "$cap_dir" > "$cap_dir/payload.json"
+report=$(bash -c "source '$LIB'; orch_subagent_report '$cap_dir/payload.json'")
+rm -rf "$cap_dir"
+if [[ "$report" == "1Found:"* && "$report" != *"Report delivered"* ]]; then
+  ok "orch_subagent_report returns the SubagentHandback message, not the closing text"
+else
+  fail "orch_subagent_report on captured auto payload" "got: $(printf '%s' "$report" | head -1)"
+fi
+out=$(cap_fire auto)
+if [[ "$out" == "0|" ]]; then ok "auto-mode explorer with a valid handback report → silent"
+else fail "captured auto payload" "out='$out'"; fi
+out=$(cap_fire auto --no-agent-path)
+if [[ "$out" == "0|" ]]; then ok "no agent_transcript_path → subagent transcript found from transcript_path + agent_id"
+else fail "captured auto payload, derived path" "out='$out'"; fi
+out=$(cap_fire auto --report "here is what I found: calc.py")
+if [[ "${out%%|*}" == "0" && "$out" == *"here is what I found"* && "$out" != *"Report delivered"* ]]; then
+  ok "badly shaped handback report → warns about the report itself"
+else fail "captured auto payload, bad report" "out='$out'"; fi
+out=$(cap_fire auto --agent-type llm-orchestrator:orch-implementer --report "Status: BLOCKED")
+if [[ "${out%%|*}" == "0" && "$out" == *'Status: BLOCKED requires a "Need:"'* ]]; then
+  ok "implementer handback report is graded against the Status contract"
+else fail "captured auto payload, implementer" "out='$out'"; fi
+out=$(cap_fire default)
+if [[ "${out%%|*}" == "0" && "$out" == *"returns the sum"* ]]; then
+  ok "default mode (no handback) → last_assistant_message is graded"
+else fail "captured default payload" "out='$out'"; fi
+out=$(cap_fire auto --append '"str"' --append '[1,2]')
+if [[ "$out" == "0|" ]]; then ok "transcript lines that are JSON but not objects are skipped"
+else fail "captured auto payload, non-object lines" "out='$out'"; fi
+out=$(cap_fire auto --handback-input '[1,2]')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "SubagentHandback input that is not an object → falls back to last_assistant_message"
+else fail "captured auto payload, non-object handback input" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>\nnote\n</system-reminder>"}}')
+if [[ "$out" == "0|" ]]; then ok "harness-injected isMeta entry after the handback keeps the handback"
+else fail "captured auto payload, isMeta after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<task-notification>done</task-notification>"}]}}')
+if [[ "$out" == "0|" ]]; then ok "<task-notification> entry after the handback keeps the handback"
+else fail "captured auto payload, task-notification after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":"Please also check sub.py"}}')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a person's prompt after the handback discards it (resumed agent)"
+else fail "captured auto payload, prompt after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":"<div> in header.vue is misaligned"}}')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a person's prompt that starts with a tag still discards it"
+else fail "captured auto payload, tag-led prompt after handback" "out='$out'"; fi
+out=$(cap_fire auto --handback-error)
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a SubagentHandback call answered by an error does not count"
+else fail "captured auto payload, handback error" "out='$out'"; fi
 
 TOTAL=$((PASS + FAIL))
 printf '\n'

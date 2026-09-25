@@ -1,0 +1,12 @@
+{
+  "session_id": "24dce8e3-f761-423b-9106-411f746233bd",
+  "transcript_path": "__PROJECTS__/24dce8e3-f761-423b-9106-411f746233bd.jsonl",
+  "cwd": "__REPO__",
+  "permission_mode": "default",
+  "agent_id": "a66e2157032a781d3",
+  "agent_type": "llm-orchestrator:orch-explorer",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "__PROJECTS__/24dce8e3-f761-423b-9106-411f746233bd/subagents/agent-a66e2157032a781d3.jsonl",
+  "last_assistant_message": "The `add` function in calc.py returns the sum of its two arguments."
+}
