@@ -84,10 +84,10 @@ and T9 (commands stay commands).
   **For the combined ruling:** the AGENTS.md marked block still describes
   legacy; `.githooks/orch-cadence-check.sh` becomes an old copy; `cadence.json`
   still has `notes_dir` and `ticket_re`, which nothing reads.
-  **Felipe to decide (ask him, plainly):** without python3 the commit check
-  refuses every commit in a cadence project; that requirement may no longer
-  be needed now that the legacy report check is gone. Recommend dropping it
-  if the check can decide without python3.
+  **Decided (Felipe):** Python 3 stays required. The coordinator checked
+  the T6 branch: with Python missing or broken, the commit check already says
+  "a working python3 is needed to validate docs/llm-orchestrator/cadence.json;
+  install or configure it". Nothing more to do; do not ask again.
 
 In progress (each on its branch; check its latest pushed commit first, since
 the agent may have pushed more after this file was written):
