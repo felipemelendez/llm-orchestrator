@@ -95,8 +95,8 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   --mcp-config '{"mcpServers":{}}' --no-session-persistence`. It runs in the
   copy, with the prompt on stdin. It starts with no MCP servers, so the
   person's connectors (for example claude.ai Slack or Gmail) are neither
-  visible nor usable. If the stream's `system` `init` event lists any MCP
-  server, the launch is a dropout (R7).
+  visible nor usable. If the stream's `system` `init` event has a non-empty
+  `mcp_servers`, the launch is a dropout (R7).
   The served model is the assistant messages' `model` field. It must belong
   to the model family of the requested alias.
 - **R6.** GPT launch: `codex exec --json -s workspace-write -C <copy>
@@ -417,6 +417,10 @@ Verified on 2026-09-25:
   as an assistant `tool_use` block with `input.command`, and its result as a
   user `tool_result` block with the output text and `is_error`. The final
   `result` event carries `modelUsage` with the served model. R9 reads these.
+- With `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`, the
+  `system` `init` event has `mcp_servers: []` and lists no claude.ai
+  connectors. Without these flags, a nested `claude -p` loaded the person's
+  connectors.
 - `codex exec --json -s read-only --skip-git-repo-check` (0.157.0) emits
   `item.completed` events of type `command_execution` with the fields
   `command`, `aggregated_output`, `exit_code` and `status`. R9 reads these.
@@ -429,10 +433,6 @@ Not verified:
 
 - the full R5 flag set together (`--safe-mode`, `--restricted`,
   `--json-schema`, `--allowedTools`); the checks above used a smaller set;
-- that `--strict-mcp-config` with an empty `--mcp-config` also removes
-  claude.ai connectors (a nested `claude -p` without these flags loaded the
-  person's connectors), and the name of the `init` field that lists MCP
-  servers;
 - what `workspace-write` allows outside `-C`;
 - that the agent's shell on Codex allows a 540-second `wait`.
 
