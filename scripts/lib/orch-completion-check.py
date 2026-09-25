@@ -527,9 +527,15 @@ def main():
     if active(payload):
         return 0            # already spoke this turn; do not nag on every re-entry
 
+    # On SubagentStop the reply is the report the subagent sent its caller: in
+    # auto mode that is a SubagentHandback message, and last_assistant_message
+    # holds only the closing text.
+    reply = payload.get("last_assistant_message")
+    if payload.get("hook_event_name") == "SubagentStop":
+        reply = subagent_report(payload)
     # A label inside a code fence is being quoted, not claimed. The last verdict
     # in the reply is the verdict.
-    found = LABEL.findall(FENCE.sub("", payload.get("last_assistant_message") or ""))
+    found = LABEL.findall(FENCE.sub("", reply if isinstance(reply, str) else ""))
     if not found or found[-1].strip().upper() != "PASS":
         return 0
 
@@ -581,6 +587,19 @@ def main():
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": payload.get("hook_event_name") or "Stop", "additionalContext": NOTE}}))
     return 0
+
+
+def subagent_report(payload):
+    """The report the subagent sent its caller, by the rules in
+    orch-subagent-report.py. Loaded only here, so codex-completion-check.py,
+    which imports this file, does not need it."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "orch_subagent_report",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "orch-subagent-report.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.subagent_report(payload)
 
 
 def child_file(transcript, payload):

@@ -189,7 +189,7 @@ both_hooks "python3 missing, plain project" "$TMP/plain" off "$NOPY"
 
 printf '\n%s== every hook finds the same cadence ==%s\n' "$DIM" "$RESET"
 # One rule decides where the cadence lives (orch_cadence_find). Session start,
-# the per-turn hook, both cadence guards and the cadence stop hook must all see
+# the per-turn hook, the unlock guard and the cadence stop hook must all see
 # the cadence on, or all see it off, for the same CLAUDE_PROJECT_DIR.
 every_hook() { # <label> <CLAUDE_PROJECT_DIR> <expect on|off>
   local label="$1" dir="$2" want="$3" got="" h rc out
@@ -200,12 +200,9 @@ every_hook() { # <label> <CLAUDE_PROJECT_DIR> <expect on|off>
   rc=0; printf '{"tool_name":"Bash","tool_input":{"command":"echo $ORCH_HOOK_PROFILE"}}' \
     | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" bash "${ROOT}/scripts/hooks/guard-cadence-unlock.sh" ) >/dev/null 2>&1 || rc=$?
   [[ "$rc" == "2" ]] && got="${got} unlock-guard=on" || got="${got} unlock-guard=off"
-  rc=0; printf '{"tool_name":"Agent","tool_input":{"description":"x","prompt":"y"}}' \
-    | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" HOME="$TMP/home" bash "${ROOT}/scripts/hooks/guard-dispatch-model.sh" ) >/dev/null 2>&1 || rc=$?
-  [[ "$rc" == "2" ]] && got="${got} model-guard=on" || got="${got} model-guard=off"
   out=$(printf '{"session_id":"s"}' | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/orch-cadence-stop.sh" 2>/dev/null ))
   [[ -n "$out" ]] && got="${got} stop=on" || got="${got} stop=off"
-  if [[ "$got" == " turn=${want} start=${want} unlock-guard=${want} model-guard=${want} stop=${want}" ]]; then
+  if [[ "$got" == " turn=${want} start=${want} unlock-guard=${want} stop=${want}" ]]; then
     ok "${label}: every hook sees the cadence ${want}"
   else
     fail "${label}: every hook agrees (${want})" "$got"

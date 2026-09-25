@@ -196,11 +196,7 @@ expect_check_fail() {
 
 expect_check_ok "--check passes on a pristine copy"
 
-# Deleting either of the two hook scripts the old hand list had drifted past.
-mv "$TMP/src/scripts/hooks/guard-config-protection.sh" "$TMP/keep.a"
-expect_check_fail "--check fails when guard-config-protection.sh is deleted"
-mv "$TMP/keep.a" "$TMP/src/scripts/hooks/guard-config-protection.sh"
-
+# Deleting a hook script the old hand list had drifted past.
 mv "$TMP/src/scripts/hooks/skill-telemetry.sh" "$TMP/keep.a"
 expect_check_fail "--check fails when skill-telemetry.sh is deleted"
 mv "$TMP/keep.a" "$TMP/src/scripts/hooks/skill-telemetry.sh"
@@ -343,7 +339,7 @@ fi
 # ------------------------------------------------------------
 section "escape hatches (P6)"
 
-for knob in ORCH_ALLOW_DESTRUCTIVE_GIT ORCH_ALLOW_CONFIG_EDIT; do
+for knob in ORCH_ALLOW_DESTRUCTIVE_GIT; do
   if grep -q "$knob" "$ROOT/docs/install.md"; then
     ok "$knob documented in docs/install.md"
   else

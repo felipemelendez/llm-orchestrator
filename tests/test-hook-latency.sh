@@ -61,7 +61,6 @@ TRANSCRIPT_EVENT="$TMP/te.json"; printf '{"transcript_path":"%s","source":"start
 SKILL_EVENT="$TMP/sk.json"; printf '{"tool_name":"Skill","tool_input":{"skill":"llm-orchestrator:brainstorming"}}' > "$SKILL_EVENT"
 BASH_EVENT="$TMP/bash.json"; printf '{"tool_name":"Bash","tool_input":{"command":"git status"}}' > "$BASH_EVENT"
 START_EVENT="$TMP/start.json"; printf '{"source":"startup"}' > "$START_EVENT"
-AGENT_EVENT="$TMP/agent.json"; printf '{"tool_name":"Agent","tool_input":{"description":"one seat","prompt":"do the thing","model":"opus"}}' > "$AGENT_EVENT"
 
 # The cadence hooks are measured twice: on the INERT path every other project
 # takes (stage 1 is a file test and a grep, so it must cost almost nothing), and
@@ -139,12 +138,10 @@ python3 -c 'import json,sys; print(json.dumps({"session_id":"s","turn_id":"t","t
 check_latency "codex-verify-gate.sh"        "$CODEX_STOP_EVENT"
 CODEX_PROJECT_DIR="$CADENCE_OFF" check_latency "codex-cadence-adapter.sh" "$BASH_EVENT"
 
-CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "orch-cadence-stop.sh"    "$TRANSCRIPT_EVENT"
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n%s== In cadence mode (the same 500 ms budget) ==%s\n' "$DIM" "$RESET"
-CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
 CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n'
