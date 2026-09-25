@@ -7,9 +7,9 @@ description: Use when adding a new skill or editing an existing one. Not for com
 
 House style for `skills/<name>/SKILL.md`. One test governs every line: would a
 capable model get this wrong without it? Anthropic cut over 80% of Claude
-Code's system prompt "with no measurable loss", and skills written for prior
-models "are often too prescriptive for Claude Fable 5 and can degrade output
-quality". State the opinion, contract, or fact the model cannot infer; let it
+Code's system prompt "with no measurable loss", and its Fable guide warns that
+skills written for prior models are often too prescriptive and can degrade
+output quality. State the opinion, contract, or fact the model cannot infer; let it
 judge the rest.
 
 ## Before you write

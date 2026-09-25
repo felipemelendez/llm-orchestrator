@@ -2,7 +2,7 @@
 name: orch-explorer
 description: Read-only codebase search. Use for sweeps across many files — where something lives, how it is used, what touches it. Returns file:line refs; never edits.
 tools: Read, Grep, Glob, Bash
-model: opus
+model: sonnet
 maxTurns: 25
 ---
 

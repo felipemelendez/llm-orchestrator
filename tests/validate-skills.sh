@@ -331,17 +331,22 @@ done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* command
 # Every agent's model pin is owner policy, and this list is where it is written
 # down, so a change to a pin shows up in the same commit where a reviewer sees it.
 #
-# Policy (Felipe, 2026-09-21): opus everywhere.
+# Policy (Felipe, 2026-09-21): opus everywhere; the explorer is sonnet (2026-09-25).
 # It was fable everywhere except orch-security-reviewer, which was already opus
 # because Fable's safety classifiers fire on benign security-review work. The same
 # thing kept happening beyond security work — a Codex review of this repo's own
 # hook refused an ordinary audit brief as a "cybersecurity risk", and the Fable
 # review route was rate-limited out entirely — so the exception became the rule.
+# Opus 5.5, which `opus` now means, runs the same safety classifiers as Fable
+# (cybersecurity-flagged requests re-run on Opus 4.8), so the classifier reason
+# no longer separates the two; the rate limit and the lower price still do.
 # The agent files are the source of truth; this list follows them.
 while IFS= read -r agent_file; do
   [[ -f "$agent_file" ]] || continue
   agent_name=$(basename "$agent_file" .md)
   want=opus
+  # Felipe, 2026-09-25: the read-only explorer runs on the latest Sonnet.
+  [[ "$agent_name" == "orch-explorer" ]] && want=sonnet
   got=$(awk '/^---$/{c++; next} c==1 && /^model:/{print $2; exit}' "$agent_file")
   if [[ -z "$got" ]]; then
     echo "FAIL: $agent_file has no 'model:' pin (expected ${want})"
@@ -349,6 +354,18 @@ while IFS= read -r agent_file; do
   elif [[ "$got" != "$want" ]]; then
     echo "FAIL: $agent_file pins 'model: ${got}' but policy says '${want}'"
     echo "      Change the policy list in tests/validate-skills.sh in this same commit and say why."
+    fail=1
+  fi
+  # Effort (Felipe, 2026-09-25): the three reviewers run at high, because a
+  # reviewer that stops early misses findings; every other agent inherits the
+  # session's level.
+  case "$agent_name" in
+    orch-spec-reviewer|orch-code-reviewer|orch-security-reviewer) want_effort=high ;;
+    *) want_effort="" ;;
+  esac
+  got_effort=$(awk '/^---$/{c++; next} c==1 && /^effort:/{print $2; exit}' "$agent_file")
+  if [[ "$got_effort" != "$want_effort" ]]; then
+    echo "FAIL: $agent_file has 'effort: ${got_effort:-<unset>}' but policy says '${want_effort:-<unset>}'"
     fail=1
   fi
 done < <(find "$ROOT/agents" -maxdepth 1 -name '*.md' | sort)
