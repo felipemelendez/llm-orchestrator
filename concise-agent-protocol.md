@@ -179,7 +179,7 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 
 ## Injected blocks (single source)
 
-Two hooks inject protocol text, on two different schedules, from the marked blocks below, and only in a project whose `cadence.json` is enabled; elsewhere the per-turn hook injects nothing and the post-compaction note carries no format rule. Edit them HERE — both hooks extract at runtime and only fall back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
+Two hooks inject protocol text, on two different schedules, from the marked blocks below, and only in a project whose `cadence.json` is enabled. Elsewhere the per-turn hook injects nothing, and the post-compaction note carries no format rule; it re-injects the `using-orchestrator` core (when a skill applies) instead. Edit them HERE — both hooks extract at runtime and only fall back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
 
 The two schedules are not interchangeable, and the split follows Anthropic's current guidance:
 
@@ -201,17 +201,16 @@ LLM Orchestrator — the protocol still applies after this compaction boundary:
 
 ### Turn nudge — UserPromptSubmit, every turn
 
-Budget: 233 bytes, its size before the project-format clause was added. `tests/test-protocol-drift.sh` enforces the ceiling.
+Budget: 233 bytes. `tests/test-protocol-drift.sh` enforces the ceiling.
 
 <!-- orch-turn-nudge-start -->
-LLM Orchestrator — open with one header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:", unless project instructions set a reply format. A "Changed:" block REQUIRES a "Verify:" line (real command + its output).
+LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. "Changed:" REQUIRES a "Verify:" line (real command + output). Lead with the outcome.
 <!-- orch-turn-nudge-end -->
 
 ### Proportional recovery and turn reminders
 
 The hooks select these blocks only from an enabled proportional project config.
-The turn nudge's budget is 273 bytes, its size before the project-format clause
-was added. Shape acceptance does not attest
+The turn nudge's budget is 273 bytes. Shape acceptance does not attest
 that verification ran.
 
 <!-- orch-proportional-reminder-start -->
@@ -222,5 +221,5 @@ LLM Orchestrator — the protocol still applies after this compaction boundary:
 <!-- orch-proportional-reminder-end -->
 
 <!-- orch-proportional-nudge-start -->
-LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS.
+Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", "Status:" unless project instructions set a reply format. End with "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — why". PASS needs checks you ran; applicability never clears failed or required checks.
 <!-- orch-proportional-nudge-end -->
