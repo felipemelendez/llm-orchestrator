@@ -34,7 +34,9 @@ In short, the three hooks are: one that stops the assistant editing a
 project's rulebook, one that sends the assistant back once when a reply claims
 tests passed and none ran, and one that cleans up temporary files from
 finished tasks. None of them prints a message for you. The full picture is on
-the [Codex page](codex.md).
+the [Codex page](codex.md), including how project trust and
+`~/.codex/AGENTS.override.md` change what Codex reads, and what happens if you
+add this repository as a Codex plugin.
 
 ## Enable cadence in a project
 
@@ -124,8 +126,8 @@ git pull --ff-only
 ```
 
 The skill is a copy, so it only changes when you rerun the installer. Then
-check `/hooks` in a new session: a hook whose text changed needs your trust
-again. If you installed the Codex layer from v0.8 or v0.9, this run also
+check `/hooks` in a new session: a hook whose definition changed needs your
+trust again. If you installed the Codex layer from v0.8 or v0.9, this run also
 removes old hook entries that pointed at deleted files and made every command
 fail.
 

@@ -238,7 +238,8 @@ case "${cmd}" in
     fail=0
     degraded=""
     for f in README.md AGENTS.md CLAUDE.md concise-agent-protocol.md ARCHITECTURE.md \
-             .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json; do
+             .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json \
+             .codex-plugin/plugin.json; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -324,17 +325,20 @@ case "${cmd}" in
     # which is the failure --check exists to catch.
     if command -v python3 >/dev/null 2>&1; then
       for j in .claude-plugin/plugin.json .claude-plugin/marketplace.json \
-               hooks/hooks.json templates/settings.json; do
+               .codex-plugin/plugin.json hooks/hooks.json templates/settings.json; do
         if [[ -f "${ROOT}/${j}" ]] && ! python3 -m json.tool "${ROOT}/${j}" >/dev/null 2>&1; then
           echo "invalid JSON: ${j}"; fail=1
         fi
       done
-      if [[ -f "${ROOT}/hooks/hooks.json" && -f "${ROOT}/scripts/lib/check-hook-paths.py" ]]; then
-        if ! hook_out=$(python3 "${ROOT}/scripts/lib/check-hook-paths.py" \
-                          "${ROOT}/hooks/hooks.json" --root "${ROOT}" 2>&1); then
-          echo "${hook_out}"; fail=1
+      # The Codex manifest carries its hooks inline; the same check reads it.
+      for j in hooks/hooks.json .codex-plugin/plugin.json; do
+        if [[ -f "${ROOT}/${j}" && -f "${ROOT}/scripts/lib/check-hook-paths.py" ]]; then
+          if ! hook_out=$(python3 "${ROOT}/scripts/lib/check-hook-paths.py" \
+                            "${ROOT}/${j}" --root "${ROOT}" 2>&1); then
+            echo "${hook_out}"; fail=1
+          fi
         fi
-      fi
+      done
     else
       degraded="python3 not found — JSON validity and hook-command resolution were NOT checked"
     fi
