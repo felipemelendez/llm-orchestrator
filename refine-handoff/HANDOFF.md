@@ -62,9 +62,31 @@ and T9 (commands stay commands).
   locally; push may be one merge behind): both reviewers' round 2 items are
   fixed; the Opus reviewer found nothing serious left. Remaining: merge
   `origin/refine/integration`, `run-all.sh`, PR, merge.
-- T6 `refine/t6-remove-legacy` head `10c9a50` is a **WIP commit saved by the
-  coordinator**: partial, not reviewed, tests not run. Read its diff, finish
-  the ticket, then Full review.
+- T6 `refine/t6-remove-legacy` head `669a55d` (partial; its last, empty
+  commit lists done and left). **Done, tests first:** the cadence scripts,
+  init, detect, task cleanup and protocol hooks now give one clear error for a
+  missing or non-proportional `workflow`; legacy code paths, `--landing`,
+  `--base`, the five-report check, `ticket_re` are gone; legacy nudges gone;
+  tests updated. **Left:** cut the legacy procedure from `CADENCE.md` (keep
+  T5's Full steps 3–4 and T20's lock text); `SKILL.md` lines 16–17 and 63;
+  delete briefs brief-review, cadence-state (also `scripts/install.sh:275`,
+  `tests/test-install.sh:291`), fixer, gate-seat, implementer, seat-rules,
+  handoff; trim reviewer-spec, reviewer-plain, refuter only after T5 merges
+  (T5 replaces them); `global-block.md` and its template copy;
+  `commands/cadence-init.md`, `commands/handoff.md`; reword (not delete) the
+  word "legacy" where it means "no cadence" (handing-off, worktrees,
+  finishing-a-branch, using-orchestrator, orch-implementer, templates, output
+  style); ARCHITECTURE.md, `.gitignore` notes line,
+  `docs/llm-orchestrator/HANDOFF_TEMPLATE.md`, test-cadence-docs; the
+  "printed as your final message" wording; then validate-skills, run-all and
+  a Full review. Expect small conflicts with T20 and T5.
+  **For the combined ruling:** the AGENTS.md marked block still describes
+  legacy; `.githooks/orch-cadence-check.sh` becomes an old copy; `cadence.json`
+  still has `notes_dir` and `ticket_re`, which nothing reads.
+  **Felipe to decide (ask him, plainly):** without python3 the commit check
+  refuses every commit in a cadence project; that requirement may no longer
+  be needed now that the legacy report check is gone. Recommend dropping it
+  if the check can decide without python3.
 
 In progress (each on its branch; check its latest pushed commit first, since
 the agent may have pushed more after this file was written):
