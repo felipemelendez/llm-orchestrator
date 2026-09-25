@@ -26,8 +26,9 @@
 #   G12 a dotfiles-managed link is written through, not over
 #   G13 --codex refuses before it writes, and a hooks.json it cannot read is
 #       named and left alone
-#   G14 --codex removes only this plugin's hook entries from ~/.codex/hooks.json,
-#       keeps the first backup, and a second run changes nothing
+#   G14 with the plugin installed, --codex removes only this plugin's hook
+#       entries from ~/.codex/hooks.json, keeps the first backup, and a second
+#       run changes nothing; without the plugin it removes nothing
 #   G16 the plugin's Stop command runs against a rollout fixture
 #   G17 with CODEX_BIN set: a real plugin install, then Codex's hooks/list and
 #       skills/list show each hook and the skill once, fresh and after an upgrade
@@ -244,9 +245,18 @@ else
   fail "a second --codex changes nothing and says so" "$OUT"
 fi
 
+# What `codex plugin add` records in config.toml.
+record_plugin() { mkdir -p "$1/.codex"; printf '[plugins."llm-orchestrator@llm-orchestrator"]\nenabled = true\n' > "$1/.codex/config.toml"; }
+# A folder that looks like an earlier llm-orchestrator checkout.
+old_checkout() {  # old_checkout <dir>
+  mkdir -p "$1/.claude-plugin" "$1/scripts/hooks"
+  printf '{"name": "llm-orchestrator", "version": "0.9.0"}\n' > "$1/.claude-plugin/plugin.json"
+}
 # What an earlier install.sh --codex wrote: a marked skill copy with the task
 # helper beside it, and four hook entries in ~/.codex/hooks.json pointing at
 # this checkout. <extra-json> is a hooks object of the person's own to merge in.
+# The plugin is recorded as installed; the tests of an upgrade without it
+# change config.toml.
 old_install() {  # old_install <home> [<extra hooks json>]
   local h="$1" extra="${2:-}"
   [[ -n "$extra" ]] || extra='{}'
@@ -265,9 +275,10 @@ hooks.setdefault("PreToolUse", []).extend(
 hooks.setdefault("Stop", []).append({"hooks": [cmd("codex-verify-gate.sh"), cmd("orch-task-cleanup.sh")]})
 json.dump({"hooks": hooks}, open(path, "w"), indent=2)
 PY
+  record_plugin "$h"
 }
 # How many entries of ours a hooks file still carries.
-ours_in() { python3 "$ROOT/scripts/lib/codex-old-hooks.py" count "$1"; }
+ours_in() { python3 "$ROOT/scripts/lib/codex-old-hooks.py" count "$1" "$ROOT"; }
 
 SNAP="$TMP/snap.py"
 cat > "$SNAP" <<'PY'
@@ -328,6 +339,25 @@ run_install "$H17" --codex >/dev/null 2>&1
 AFTER=$(snap "$H17")
 unchanged "a second run changes nothing and writes no second backup" "$BEFORE" "$AFTER"
 
+# Without the plugin, removing the old install would leave Codex with no
+# checks: nothing is removed, the block is written, and the run says why.
+for plugin_state in absent disabled; do
+  H60=$(new_home); old_install "$H60"
+  if [[ "$plugin_state" == absent ]]; then rm "$H60/.codex/config.toml"
+  else printf '[plugins."llm-orchestrator@llm-orchestrator"]\nenabled = false\n' > "$H60/.codex/config.toml"; fi
+  BEFORE=$(snap "$H60/.agents"); cp "$H60/.codex/hooks.json" "$TMP/h60.before"
+  if run_install "$H60" --codex; then ok "--codex with the plugin $plugin_state exits 0"
+  else fail "--codex with the plugin $plugin_state exits 0" "$OUT"; fi
+  if cmp -s "$TMP/h60.before" "$H60/.codex/hooks.json" && [[ ! -e "$H60/.codex/hooks.json.bak" ]]; then
+    unchanged "with the plugin $plugin_state, the old hooks and the skill copy are kept" "$BEFORE" "$(snap "$H60/.agents")"
+  else
+    fail "with the plugin $plugin_state, the old hooks are kept" "$(ls "$H60/.codex")"
+  fi
+  grep -qF "$START" "$H60/.codex/AGENTS.md" && printf '%s' "$OUT" | grep -q 'add the plugin first' \
+    && ok "the block is written and the run says to add the plugin first, then run --codex again ($plugin_state)" \
+    || fail "the run says to add the plugin first ($plugin_state)" "$OUT"
+done
+
 # A hooks file with nothing of ours is not rewritten and gets no backup.
 H7=$(new_home)
 mkdir -p "$H7/.codex"
@@ -339,41 +369,42 @@ cmp -s "$TMP/h7.orig" "$H7/.codex/hooks.json" && [[ ! -e "$H7/.codex/hooks.json.
   || fail "a hooks file with nothing of ours is left alone" "$(ls "$H7/.codex")"
 
 # v0.8/v0.9 registered codex-evidence.py on every event.
-H21=$(new_home)
-mkdir -p "$H21/.codex"
-cat > "$H21/.codex/hooks.json" <<'STALE'
+H21=$(new_home); record_plugin "$H21"; old_checkout "$H21/old"
+cat > "$H21/.codex/hooks.json.in" <<'STALE'
 {"hooks":{
   "PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/old/scripts/hooks/codex-cadence-adapter.sh"}]},
                 {"hooks":[{"type":"command","command":"/opt/python3.14 /old/scripts/hooks/codex-evidence.py","timeout":10}],"matcher":"Bash|apply_patch"}],
   "UserPromptSubmit":[{"hooks":[{"type":"command","command":"/opt/python3.14 /old/scripts/hooks/codex-evidence.py","timeout":10}]}],
   "PostToolUse":[{"hooks":[{"type":"command","command":"/opt/python3.14 /old/scripts/hooks/codex-evidence.py","timeout":10}],"matcher":"Bash|apply_patch|write_stdin"},
-                 {"matcher":"Bash","hooks":[{"type":"command","command":"/home/me/mine.sh"}]}],
+                 {"matcher":"Bash","hooks":[{"type":"command","command":"/home/me/mine.sh"}]},
+                 {"matcher":"Bash","hooks":[{"type":"command","command":"bash /home/me/tools/scripts/hooks/codex-verify-gate.sh"}]}],
   "SubagentStart":[{"hooks":[{"type":"command","command":"/opt/python3.14 /old/scripts/hooks/codex-evidence.py","timeout":10}]}],
   "SubagentStop":[{"hooks":[{"type":"command","command":"/opt/python3.14 /old/scripts/hooks/codex-evidence.py","timeout":10}]}],
   "Stop":[{"hooks":[{"type":"command","command":"/opt/python3.14 /old/scripts/hooks/codex-evidence.py","timeout":10}]},
           {"hooks":[{"type":"command","command":"bash /old/scripts/hooks/orch-task-cleanup.sh","timeout":10}]}]}}
 STALE
+sed "s|/old/|$H21/old/|g" "$H21/.codex/hooks.json.in" > "$H21/.codex/hooks.json"; rm "$H21/.codex/hooks.json.in"
 run_install "$H21" --codex >/dev/null 2>&1
-! grep -q '/old/' "$H21/.codex/hooks.json" \
+! grep -q "$H21/old/" "$H21/.codex/hooks.json" \
   && ok "every entry of the retired evidence hook and every stale path of ours is gone" \
-  || fail "stale entries removed" "$(grep -n '/old/' "$H21/.codex/hooks.json")"
-grep -q '/home/me/mine.sh' "$H21/.codex/hooks.json" \
-  && ok "the person's own PostToolUse hook beside them survives" \
+  || fail "stale entries removed" "$(grep -n "$H21/old/" "$H21/.codex/hooks.json")"
+grep -q '/home/me/mine.sh' "$H21/.codex/hooks.json" && grep -q '/home/me/tools/scripts/hooks/codex-verify-gate.sh' "$H21/.codex/hooks.json" \
+  && ok "the person's own PostToolUse hooks survive, including one at another scripts/hooks/codex-verify-gate.sh" \
   || fail "the person's own PostToolUse hook survives" "$(cat "$H21/.codex/hooks.json")"
 python3 -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]; sys.exit(0 if set(h) == {"PostToolUse"} else 1)' "$H21/.codex/hooks.json" \
   && ok "events left with no entries are dropped" \
   || fail "events left with no entries are dropped" "$(cat "$H21/.codex/hooks.json")"
 
 # Ownership is the invoked script's name AND its home, never an argument.
-H44=$(new_home)
-mkdir -p "$H44/.codex" "$H44/my-hooks"
+H44=$(new_home); record_plugin "$H44"; old_checkout "$H44/old"
+mkdir -p "$H44/my-hooks"
 printf '#!/bin/sh\necho FOREIGN_HOOK_RAN\n' > "$H44/my-hooks/codex-verify-gate.sh"
 python3 -c 'import json,sys
 root, home = sys.argv[1], sys.argv[2]
 json.dump({"hooks": {"Stop": [{"hooks": [
   {"type": "command", "command": "env LANG=C bash %s/scripts/hooks/codex-verify-gate.sh" % root},
   {"type": "command", "command": "bash -c %s/scripts/hooks/codex-verify-gate.sh" % root},
-  {"type": "command", "command": "env python3 /old/scripts/hooks/codex-evidence.py"},
+  {"type": "command", "command": "env python3 %s/old/scripts/hooks/codex-evidence.py" % home},
   {"type": "command", "command": "bash /home/me/audit.sh codex-evidence.py"},
   {"type": "command", "command": "/Users/me/llm-orchestrator-notes/my-own-hook.sh"},
   {"type": "command", "command": "bash -c \"%s/my-hooks/wrap %s/scripts/hooks/codex-verify-gate.sh\"" % (home, root)},
@@ -382,7 +413,7 @@ json.dump({"hooks": {"Stop": [{"hooks": [
 BEFORE=$(snap "$H44/my-hooks")
 run_install "$H44" --codex >/dev/null 2>&1
 unchanged "the person's own hook script is byte-identical after the run" "$BEFORE" "$(snap "$H44/my-hooks")"
-[[ "$(ours_in "$H44/.codex/hooks.json")" == "0" ]] && ! grep -q '/old/' "$H44/.codex/hooks.json" \
+[[ "$(ours_in "$H44/.codex/hooks.json")" == "0" ]] && ! grep -q "$H44/old/" "$H44/.codex/hooks.json" \
   && ok "env-prefixed and -c entries of ours are removed" \
   || fail "env-prefixed and -c entries of ours are removed" "$(cat "$H44/.codex/hooks.json")"
 n_kept=$(python3 -c 'import json,sys; print(sum(len(g["hooks"]) for g in json.load(open(sys.argv[1]))["hooks"]["Stop"]))' "$H44/.codex/hooks.json")
@@ -395,7 +426,7 @@ grep -q 'audit.sh codex-evidence.py' "$H44/.codex/hooks.json" && grep -q 'my-own
 # ------------------------------------------------------------
 section "G8 — the skill copy: only a marked copy, and only what this plugin ships"
 # ------------------------------------------------------------
-H6=$(new_home)
+H6=$(new_home); record_plugin "$H6"
 mkdir -p "$H6/.agents/skills/cadence"
 printf 'someone else\n' > "$H6/.agents/skills/cadence/SKILL.md"
 BEFORE=$(snap "$H6/.agents")
@@ -513,7 +544,7 @@ rm -rf "$H31.agents-outside"
 # A hooks file that is not JSON cannot be loaded by Codex either: it is named,
 # left alone, and the block is still rendered.
 for body in 'not json at all {{{' '[{"matcher":"Bash"}]'; do
-  H15=$(new_home); mkdir -p "$H15/.codex"
+  H15=$(new_home); record_plugin "$H15"
   printf '%s\n' "$body" > "$H15/.codex/hooks.json"
   cp "$H15/.codex/hooks.json" "$TMP/h15.before"
   run_install "$H15" --codex
@@ -548,12 +579,11 @@ run_install "$H19" --codex >/dev/null 2>&1
 run_install "$H19" --check >/dev/null 2>&1
 printf '%s' "$OUT" | grep 'earlier --codex' | grep -q 'none$' \
   && ok "after --codex it reports none" || fail "after --codex it reports none" "$OUT"
-printf '%s' "$OUT" | grep 'Codex plugin' | grep -q 'no$' \
-  && ok "the report says the Codex plugin is not installed in this home" || fail "plugin line says no" "$OUT"
-printf '[plugins."llm-orchestrator@llm-orchestrator"]\nenabled = true\n' > "$H19/.codex/config.toml"
-run_install "$H19" --check >/dev/null 2>&1
 printf '%s' "$OUT" | grep 'Codex plugin' | grep -q 'yes$' \
-  && ok "and yes once config.toml names it" || fail "plugin line says yes" "$OUT"
+  && ok "the report says the Codex plugin is installed when config.toml names it" || fail "plugin line says yes" "$OUT"
+run_install "$(new_home)" --check >/dev/null 2>&1
+printf '%s' "$OUT" | grep 'Codex plugin' | grep -q 'no$' \
+  && ok "and no in a home without it" || fail "plugin line says no" "$OUT"
 
 # ------------------------------------------------------------
 section "G16 — the plugin's Stop command runs against a rollout fixture"
@@ -635,7 +665,19 @@ skill llm-orchestrator:cadence"
   else
     fail "a fresh plugin install plus --codex" "$OUT"
   fi
-  HB=$(new_home); old_install "$HB"
+  # The upgrade starts from the installer as it was at 5141c9d, the last
+  # commit whose --codex copied the skill and merged the hooks.
+  OLD_TREE="$TMP/old-5141c9d"; mkdir -p "$OLD_TREE"
+  if git -C "$ROOT" archive 5141c9d 2>/dev/null | tar -x -C "$OLD_TREE" 2>/dev/null \
+     && [[ -f "$OLD_TREE/scripts/install.sh" ]]; then
+  HC=$(new_home)
+  env HOME="$HC" bash "$OLD_TREE/scripts/install.sh" --codex >/dev/null 2>&1
+  run_install "$HC" --codex >/dev/null 2>&1
+  n=$(codex_lists "$HC" | grep -c '^hook .* user ')
+  [[ "$n" == "4" ]] && ok "without the plugin, --codex keeps the four hooks the old installer registered" \
+    || fail "without the plugin, --codex keeps the old hooks" "found $n user hooks"
+  HB=$(new_home)
+  env HOME="$HB" bash "$OLD_TREE/scripts/install.sh" --codex >/dev/null 2>&1
   if plugin_install "$HB"; then
     n=$(codex_lists "$HB" | grep -c 'codex-verify-gate.sh')
     [[ "$n" == "2" ]] && ok "before --codex, an earlier install and the plugin list the completion check twice" \
@@ -644,6 +686,11 @@ skill llm-orchestrator:cadence"
     once "after --codex, the upgrade lists each hook and the skill once, all from the plugin" "$HB"
   else
     fail "the plugin installs over an earlier --codex" "codex plugin add failed"
+  fi
+  elif [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
+    fail "the old installer at 5141c9d" "not in this clone's history"
+  else
+    printf '  skip the upgrade probes (5141c9d is not in this clone'"'"'s history)\n'
   fi
 elif [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
   fail "live Codex probes" "no Codex CLI at CODEX_BIN=$CODEX_BIN under ORCH_REQUIRE_DEPS=1"
