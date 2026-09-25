@@ -286,12 +286,74 @@ def command_check(args):
 # ---------------------------------------------------------------- run
 
 
+# Every arm gets this sentence, or (for orch-review.py) the same spec file through --spec.
+SPEC_NOTE = ("The change must implement the spec in {spec}. Read it, and report every place where the "
+             "change does not meet it, as well as any other defect.")
+BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
+            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")
+PROVIDER_ENV = {
+    "claude": ("CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+               "CLAUDE_CODE_OAUTH_TOKEN"),
+    "codex": ("CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"),
+}
+
+
 def load_arms():
     return json.loads(ARMS_FILE.read_text())["arms"]
 
 
+def codex_home():
+    return pathlib.Path(os.environ.get("CODEX_HOME") or pathlib.Path.home() / ".codex")
+
+
+def codex_mcp_off():
+    """Arguments that turn off every MCP server in config.toml, and the apps and plugins features,
+    as orch-review.py does for its Codex seat."""
+    import tomllib
+    try:
+        servers = tomllib.loads((codex_home() / "config.toml").read_text()).get("mcp_servers") or {}
+    except (OSError, tomllib.TOMLDecodeError):
+        servers = {}
+    argv = []
+    for name in sorted(servers):
+        key = name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+        argv += ["-c", f"mcp_servers.{key}.enabled=false"]
+    return argv + ["--disable", "apps", "--disable", "plugins"]
+
+
 def expand(argv, values):
-    return [part.format(**values) for part in argv]
+    out = []
+    for part in argv:
+        if part == "{codex_mcp_off}":
+            out += codex_mcp_off()
+        else:
+            out.append(part.format(**values))
+    return out
+
+
+def arm_env(arm, out_dir):
+    """orch-review.py narrows each seat's environment itself; the native arms get the same narrowing."""
+    if arm["provider"] == "orch-review":
+        env = dict(os.environ)
+    else:
+        keep = BASE_ENV + PROVIDER_ENV[arm["provider"]]
+        env = {k: os.environ[k] for k in keep if k in os.environ}
+    if arm["provider"] == "codex":
+        # At codex_otel=info, codex logs the MCP servers it started.
+        env["RUST_LOG"] = "warn,codex_otel=info"
+    # orch-review.py appends its outcome rows under XDG_STATE_HOME; keep them out of the real log.
+    env["XDG_STATE_HOME"] = str(out_dir / "state")
+    return env
+
+
+def codex_mcp_started(stderr):
+    """The MCP servers codex started, from its conversation_starts log line, or None when absent."""
+    for line in stderr.splitlines():
+        if 'event.name="codex.conversation_starts"' in line:
+            match = re.search(r'mcp_servers="([^"]*)"', line)
+            if match:
+                return [n.strip() for n in match[1].split(",") if n.strip()]
+    return None
 
 
 def run_one(arm, case, repo_src, out_dir, plugin_root, timeout):
@@ -301,14 +363,11 @@ def run_one(arm, case, repo_src, out_dir, plugin_root, timeout):
     shutil.copytree(repo_src, repo, symlinks=True)
     review_dir = work / "review"
     values = {"plugin": str(plugin_root), "spec": case["spec"], "run_dir": str(review_dir),
-              "python": sys.executable}
-    env = dict(os.environ)
-    # orch-review.py appends its outcome rows under XDG_STATE_HOME; keep them out of the real log.
-    env["XDG_STATE_HOME"] = str(out_dir / "state")
+              "python": sys.executable, "spec_note": SPEC_NOTE.format(spec=case["spec"])}
     started = time.time()
     try:
-        proc = subprocess.run(expand(arm["command"], values), cwd=repo, env=env, capture_output=True,
-                              text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        proc = subprocess.run(expand(arm["command"], values), cwd=repo, env=arm_env(arm, out_dir),
+                              capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
         code, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired as e:
         code, stdout, stderr = "timeout", e.stdout or "", e.stderr or ""
@@ -321,6 +380,8 @@ def run_one(arm, case, repo_src, out_dir, plugin_root, timeout):
     if (review_dir / "review.json").is_file():
         shutil.copy(review_dir / "review.json", out_dir / "review.json")
     meta = {"arm": arm["name"], "case": case["id"], "exit": code, "seconds": seconds}
+    if arm["provider"] == "codex":
+        meta["mcp_servers"] = codex_mcp_started(stderr)
     (out_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     shutil.rmtree(work, ignore_errors=True)
     return meta
@@ -338,6 +399,12 @@ def command_run(args):
         if arms[name].get("unavailable"):
             print(f"review_compare: arm {name!r} cannot run: {arms[name]['unavailable']}", file=sys.stderr)
             return 2
+    plugin_root = pathlib.Path(args.plugin_root).resolve()
+    if any(arms[n]["provider"] == "orch-review" for n in chosen) \
+            and not (plugin_root / "scripts" / "lib" / "orch-review.py").is_file():
+        print(f"review_compare: {plugin_root}/scripts/lib/orch-review.py does not exist; "
+              "the orch-review arms need the review script (ticket T5) merged", file=sys.stderr)
+        return 2
     cases = [c for c in key["cases"] if not args.case or any(fnmatch.fnmatch(c["id"], g) for g in args.case)]
     if args.large_only:
         cases = [c for c in cases if c["diff_lines"] > 150]
@@ -354,8 +421,7 @@ def command_run(args):
                     print(f"stopped: reported cost ${spent:.2f} reached --max-cost-usd; "
                           "run the same command again later to continue")
                     return 3
-                meta = run_one(arms[name], case, built / "cases" / case["id"], out_dir,
-                               pathlib.Path(args.plugin_root).resolve(), args.timeout)
+                meta = run_one(arms[name], case, built / "cases" / case["id"], out_dir, plugin_root, args.timeout)
                 run = read_run(out_dir, arms[name])
                 spent += cost_of(run)
                 print(f"  {case['id']:<34} {name:<22} try {attempt}  exit {meta['exit']}  "
@@ -368,26 +434,38 @@ def command_run(args):
 # ---------------------------------------------------------------- parse arm output
 
 
-LOCATION = re.compile(r"(?P<file>[\w./-]+\.[A-Za-z]{1,5})(?::|,? lines? |#L)(?P<line>\d+)")
+FILE = re.compile(r"(?P<file>[\w./-]*[\w-]+\.(?:py|md|json|toml|ya?ml|txt|csv|cfg|ini))\b"
+                  r"(?:(?::|,? lines? |#L)(?P<line>\d+))?")
 
 
 def text_findings(text):
-    """Split free-text review output into findings, one per item that names a file and line."""
-    findings, current = [], []
+    """Split free-text review output into findings: one per list item or heading that names a file."""
+    blocks, current = [], []
     starts = re.compile(r"^\s*(?:[-*•]|\d+[.)]|#{1,6}\s|\[P\d\]|\*\*\d)")
     for line in text.splitlines():
         if starts.match(line) and current:
-            findings.append("\n".join(current))
+            blocks.append("\n".join(current))
             current = []
         current.append(line)
     if current:
-        findings.append("\n".join(current))
+        blocks.append("\n".join(current))
     out = []
-    for block in findings:
-        match = LOCATION.search(block)
-        if match:
-            out.append({"file": match["file"], "line": int(match["line"]), "text": block.strip()[:500]})
+    for block in blocks:
+        located = [m for m in FILE.finditer(block)]
+        if not located:
+            continue
+        match = next((m for m in located if m["line"]), located[0])
+        out.append({"file": match["file"], "line": int(match["line"]) if match["line"] else None,
+                    "text": block.strip()[:1000]})
     return out
+
+
+def token_total(usage):
+    """Tokens not read from a cache. Cached input and reasoning output are parts of the input and
+    output counts in Codex usage, so adding them would count those tokens twice."""
+    skip = ("cached", "cache_read", "reasoning")
+    values = [v for k, v in (usage or {}).items() if isinstance(v, int) and not any(s in k for s in skip)]
+    return sum(values) or None
 
 
 def parse_claude_json(stdout):
@@ -397,9 +475,8 @@ def parse_claude_json(stdout):
         return "", None, None
     if result.get("is_error"):
         return "", result.get("total_cost_usd"), None
-    usage = result.get("usage") or {}
-    tokens = sum(v for k, v in usage.items() if k.endswith("_tokens") and isinstance(v, int)) or None
-    return str(result.get("result") or ""), result.get("total_cost_usd"), tokens
+    usage = {k: v for k, v in (result.get("usage") or {}).items() if k.endswith("_tokens")}
+    return str(result.get("result") or ""), result.get("total_cost_usd"), token_total(usage)
 
 
 def parse_codex_text(stdout):
@@ -407,11 +484,21 @@ def parse_codex_text(stdout):
     return stdout, None, int(match[1].replace(",", "")) if match else None
 
 
+def unverified(finding):
+    """Serious or worse, and the script could not back it: bad evidence, or not reproduced."""
+    if finding.get("rank") == "mild":
+        return False
+    backed = finding.get("reproduced") or finding.get("not_runnable")
+    return not (finding.get("evidence_valid") and backed)
+
+
 def read_run(out_dir, arm):
     meta = json.loads((out_dir / "meta.json").read_text())
     stdout = (out_dir / "stdout.txt").read_text() if (out_dir / "stdout.txt").is_file() else ""
     run = {"meta": meta, "complete": meta["exit"] == 0, "findings": [], "cost_usd": None,
            "tokens": None, "verdict": None}
+    if meta.get("mcp_servers"):
+        run["complete"] = False
     if arm["output"] == "review-json":
         path = out_dir / "review.json"
         if not path.is_file():
@@ -420,18 +507,17 @@ def read_run(out_dir, arm):
         review = json.loads(path.read_text())
         run["verdict"] = review.get("verdict")
         run["complete"] = run["complete"] and review.get("verdict") != "INCOMPLETE"
-        costs = [l.get("cost_usd") for l in review.get("launches", []) if isinstance(l.get("cost_usd"), (int, float))]
+        launches = review.get("launches", [])
+        costs = [l.get("cost_usd") for l in launches if isinstance(l.get("cost_usd"), (int, float))]
         run["cost_usd"] = round(sum(costs), 4) if costs else None
-        tokens = [v for l in review.get("launches", []) for v in (l.get("tokens") or {}).values()
-                  if isinstance(v, int)]
-        run["tokens"] = sum(tokens) or None
+        run["tokens"] = sum(token_total(l.get("tokens")) or 0 for l in launches) or None
         for f in review.get("findings", []):
             if f.get("status") in ("note", "dropped"):
                 continue
             line = f.get("line")
             run["findings"].append({"file": f.get("file") or "", "line": line if isinstance(line, int) else None,
-                                    "text": str(f.get("claim") or "")[:500], "rank": f.get("rank"),
-                                    "status": f.get("status")})
+                                    "text": str(f.get("claim") or "")[:1000], "rank": f.get("rank"),
+                                    "provider": f.get("provider"), "unverified": unverified(f)})
         return run
     if arm["output"] == "claude-json":
         text, run["cost_usd"], run["tokens"] = parse_claude_json(stdout)
@@ -454,42 +540,62 @@ def fmt_cost(value):
 # ---------------------------------------------------------------- score
 
 
+STOP = set("""a an and are as at be by for from in into is it its not of on or the this that to was
+with when which while without than then there their them they one two its does do can cannot never
+only instead same other""".split())
+
+
+def stems(text):
+    return {w[:5] for w in re.findall(r"[a-z]+", text.lower()) if len(w) >= 4 and w not in STOP}
+
+
 def same_file(reported, planted):
     reported = reported.lstrip("./")
     return reported == planted or reported.endswith("/" + planted) or planted.endswith("/" + reported)
 
 
 def distance(finding, defect):
-    """How far `finding` is from `defect` in lines, or None when it does not point at it."""
+    """How far `finding` is from `defect` in lines, or None when it does not point at it. A finding
+    with no line points at a defect in its file when it names the defect's symbol, in every arm."""
     best = None
     for span in defect["spans"]:
         if not same_file(finding["file"], span["file"]):
             continue
         if finding["line"] is None:
-            if re.search(rf"\b{re.escape(defect['symbol'])}\b", finding["text"]):
-                best = LINE_SLACK if best is None else min(best, LINE_SLACK)
-            continue
-        gap = max(span["start"] - finding["line"], finding["line"] - span["end"], 0)
-        if gap <= LINE_SLACK:
+            gap = LINE_SLACK if re.search(rf"\b{re.escape(defect['symbol'])}\b", finding["text"]) else None
+        else:
+            gap = max(span["start"] - finding["line"], finding["line"] - span["end"], 0)
+            gap = gap if gap <= LINE_SLACK else None
+        if gap is not None:
             best = gap if best is None else min(best, gap)
     return best
 
 
-def matches(finding, defect):
-    return distance(finding, defect) is not None
+def claim_matches(finding, defect):
+    """The finding says what the defect is: it names the symbol, or shares two content words with the
+    defect's description."""
+    if re.search(rf"\b{re.escape(defect['symbol'])}\b", finding["text"]):
+        return True
+    return len(stems(finding["text"]) & stems(defect["what"])) >= 2
 
 
 def score_run(run, case):
-    """Credit each finding to the nearest defect it points at; a finding that points at none is false."""
+    """Credit each finding to the nearest defect it points at and describes. A finding that points at a
+    defect but describes something else is location-only; one that points at none is false."""
     found = {d["id"]: False for d in case["defects"]}
-    false = []
+    false, location_only, credited = [], [], []
     for finding in run["findings"]:
-        near = [(distance(finding, d), n, d) for n, d in enumerate(case["defects"]) if matches(finding, d)]
-        if near:
-            found[min(near)[2]["id"]] = True
+        near = sorted((distance(finding, d), n, d) for n, d in enumerate(case["defects"])
+                      if distance(finding, d) is not None)
+        described = [d for _, _, d in near if claim_matches(finding, d)]
+        if described:
+            found[described[0]["id"]] = True
+            credited.append((finding, described[0]))
+        elif near:
+            location_only.append(finding)
         else:
             false.append(finding)
-    return found, false
+    return found, false, location_only, credited
 
 
 def mcnemar(b, c):
@@ -500,6 +606,10 @@ def mcnemar(b, c):
     k = min(b, c)
     tail = sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n
     return min(1.0, 2 * tail)
+
+
+def share(found, planted):
+    return {"found": found, "planted": planted}
 
 
 def command_score(args):
@@ -513,36 +623,47 @@ def command_score(args):
         if case_id not in key or arm_name not in arms or not (run_dir / "meta.json").is_file():
             continue
         run = read_run(run_dir, arms[arm_name])
-        entry = per_arm.setdefault(arm_name, {"runs": [], "found": {}, "incomplete": 0})
+        entry = per_arm.setdefault(arm_name, {"runs": [], "found": {}, "false": {}, "incomplete": 0})
         if not run["complete"]:
             entry["incomplete"] += 1
-        found, false = score_run(run, key[case_id])
+        found, false, location_only, credited = score_run(run, key[case_id])
         entry["runs"].append({"case": case_id, "attempt": int(attempt), "complete": run["complete"],
-                              "found": found, "false": false, "cost_usd": run["cost_usd"],
+                              "found": found, "false": false, "location_only": location_only,
+                              "credited": credited, "findings": run["findings"], "cost_usd": run["cost_usd"],
                               "tokens": run["tokens"], "seconds": run["meta"]["seconds"],
                               "clean": not key[case_id]["defects"]})
         if int(attempt) == 1 and run["complete"]:
             entry["found"].update(found)
-    ranks = {d["id"]: d["rank"] for c in key.values() for d in c["defects"]}
+            entry["false"][case_id] = len(false)
+    defects = {d["id"]: d for c in key.values() for d in c["defects"]}
     report = {"arms": {}, "pairs": []}
     for name, entry in sorted(per_arm.items()):
-        runs = entry["runs"]
-        complete = [r for r in runs if r["complete"]]
-        planted = [(r, d) for r in complete for d in r["found"]]
-        by_rank = {}
-        for rank in RANKS:
-            hits = [f for r, d in planted if ranks[d] == rank for f in [r["found"][d]]]
-            by_rank[rank] = {"found": sum(hits), "planted": len(hits)}
+        complete = [r for r in entry["runs"] if r["complete"]]
+        planted = [(d, r["found"][d]) for r in complete for d in r["found"]]
         costs = [r["cost_usd"] for r in complete if r["cost_usd"] is not None]
         tokens = [r["tokens"] for r in complete if r["tokens"] is not None]
         clean = [r for r in complete if r["clean"]]
+        real = {id(f) for r in complete for f, _ in r["credited"]}
+        unverified_by = {}
+        for r in complete:
+            for f in r["findings"]:
+                if f.get("unverified"):
+                    row = unverified_by.setdefault(f.get("provider") or "unknown", {"unverified": 0, "real": 0})
+                    row["unverified"] += 1
+                    row["real"] += id(f) in real
+        false_count = sum(len(r["false"]) for r in complete)
         report["arms"][name] = {
-            "runs": len(runs), "incomplete": entry["incomplete"],
-            "defects_found": sum(f for r, d in planted for f in [r["found"][d]]),
-            "defects_planted": len(planted), "by_rank": by_rank,
-            "false_findings": sum(len(r["false"]) for r in complete),
-            "false_per_run": round(sum(len(r["false"]) for r in complete) / len(complete), 2) if complete else None,
+            "runs": len(entry["runs"]), "incomplete": entry["incomplete"],
+            "defects_found": sum(hit for _, hit in planted), "defects_planted": len(planted),
+            "by_rank": {rank: share(sum(h for d, h in planted if defects[d]["rank"] == rank),
+                                    sum(defects[d]["rank"] == rank for d, _ in planted)) for rank in RANKS},
+            "by_kind": {kind: share(sum(h for d, h in planted if defects[d]["kind"] == kind),
+                                    sum(defects[d]["kind"] == kind for d, _ in planted)) for kind in KINDS},
+            "false_findings": false_count,
+            "false_per_run": round(false_count / len(complete), 2) if complete else None,
+            "location_only_findings": sum(len(r["location_only"]) for r in complete),
             "clean_runs_with_no_finding": sum(not r["false"] for r in clean), "clean_runs": len(clean),
+            "unverified_serious_by_provider": unverified_by,
             "cost_usd_total": round(sum(costs), 2) if costs else None,
             "cost_usd_per_run": round(sum(costs) / len(costs), 2) if costs else None,
             "tokens_per_run": round(sum(tokens) / len(tokens)) if tokens else None,
@@ -551,11 +672,19 @@ def command_score(args):
     names = sorted(per_arm)
     for i, a in enumerate(names):
         for b in names[i + 1:]:
-            shared = per_arm[a]["found"].keys() & per_arm[b]["found"].keys()
-            only_a = sum(per_arm[a]["found"][d] and not per_arm[b]["found"][d] for d in shared)
-            only_b = sum(per_arm[b]["found"][d] and not per_arm[a]["found"][d] for d in shared)
-            report["pairs"].append({"a": a, "b": b, "shared_defects": len(shared),
-                                    "a_only": only_a, "b_only": only_b, "p": round(mcnemar(only_a, only_b), 4)})
+            fa, fb = per_arm[a]["found"], per_arm[b]["found"]
+            shared = fa.keys() & fb.keys()
+            only_a = sum(fa[d] and not fb[d] for d in shared)
+            only_b = sum(fb[d] and not fa[d] for d in shared)
+            xa, xb = per_arm[a]["false"], per_arm[b]["false"]
+            cases = xa.keys() & xb.keys()
+            more_a = sum(xa[c] > xb[c] for c in cases)
+            more_b = sum(xb[c] > xa[c] for c in cases)
+            report["pairs"].append({
+                "a": a, "b": b, "shared_defects": len(shared), "a_only": only_a, "b_only": only_b,
+                "p": round(mcnemar(only_a, only_b), 4),
+                "shared_cases": len(cases), "a_more_false": more_a, "b_more_false": more_b,
+                "p_false": round(mcnemar(more_a, more_b), 4)})
     if args.json:
         pathlib.Path(args.json).write_text(json.dumps(report, indent=2) + "\n")
     print_report(report)
@@ -563,20 +692,28 @@ def command_score(args):
 
 
 def print_report(report):
-    print(f"{'ARM':<22} {'FOUND':>9} {'SERIOUS':>9} {'MILD':>9} {'FALSE':>6} {'FALSE/RUN':>9} "
-          f"{'CLEAN OK':>9} {'$/RUN':>7} {'TOKENS':>8} {'MIN':>5} {'INCOMPLETE':>10}")
+    def cell(value):
+        return "-" if value is None else value
+
+    print(f"{'ARM':<22} {'FOUND':>9} {'SERIOUS':>9} {'MILD':>9} {'TAMPER':>7} {'FALSE':>6} {'FALSE/RUN':>9} "
+          f"{'LOC-ONLY':>8} {'CLEAN OK':>9} {'$/RUN':>7} {'TOKENS':>8} {'MIN':>5} {'INCOMPLETE':>10}")
     for name, a in report["arms"].items():
-        ser, mild = a["by_rank"]["serious"], a["by_rank"]["mild"]
+        ser, mild, tamper = a["by_rank"]["serious"], a["by_rank"]["mild"], a["by_kind"]["test-tampering"]
         print(f"{name:<22} {a['defects_found']:>4}/{a['defects_planted']:<4} "
               f"{ser['found']:>4}/{ser['planted']:<4} {mild['found']:>4}/{mild['planted']:<4} "
-              f"{a['false_findings']:>6} {a['false_per_run'] if a['false_per_run'] is not None else '-':>9} "
+              f"{tamper['found']:>3}/{tamper['planted']:<3} "
+              f"{a['false_findings']:>6} {cell(a['false_per_run']):>9} {a['location_only_findings']:>8} "
               f"{a['clean_runs_with_no_finding']:>4}/{a['clean_runs']:<4} "
-              f"{a['cost_usd_per_run'] if a['cost_usd_per_run'] is not None else '-':>7} "
-              f"{a['tokens_per_run'] if a['tokens_per_run'] is not None else '-':>8} "
-              f"{a['minutes_per_run'] if a['minutes_per_run'] is not None else '-':>5} {a['incomplete']:>10}")
+              f"{cell(a['cost_usd_per_run']):>7} {cell(a['tokens_per_run']):>8} "
+              f"{cell(a['minutes_per_run']):>5} {a['incomplete']:>10}")
+        for provider, row in sorted(a["unverified_serious_by_provider"].items()):
+            print(f"    unverified serious findings from {provider}: {row['unverified']}, "
+                  f"of which {row['real']} matched a planted defect")
     for p in report["pairs"]:
         print(f"McNemar {p['a']} vs {p['b']}: {p['shared_defects']} shared defects, "
               f"{p['a_only']} found only by {p['a']}, {p['b_only']} only by {p['b']}, p = {p['p']}")
+        print(f"  false findings on {p['shared_cases']} shared cases: {p['a']} more on {p['a_more_false']}, "
+              f"{p['b']} more on {p['b_more_false']}, p = {p['p_false']}")
 
 
 # ---------------------------------------------------------------- main
