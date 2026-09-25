@@ -72,6 +72,21 @@ FAKE_CODEX = "#!/usr/bin/env python3\n" + TREE_HASH + textwrap.dedent("""\
     here = pathlib.Path(__file__).resolve().parent
     with open(here / 'calls.jsonl', 'a') as log:
         log.write(json.dumps({'tool': 'codex', 'argv': sys.argv[1:], 'env': sorted(os.environ)}) + '\\n')
+    # Refuse what codex 0.157.0 refuses: a PROMPT with --uncommitted, --base or --commit.
+    args, positional, n = sys.argv[1:], [], 1
+    with_value = {'-c', '--config', '--base', '--commit', '--title', '--enable', '--disable'}
+    while n < len(args):
+        if args[n] in with_value:
+            n += 2
+            continue
+        if not args[n].startswith('-'):
+            positional.append(args[n])
+        n += 1
+    target = [a for a in ('--uncommitted', '--base', '--commit') if a in args]
+    if args[:1] != ['review'] or (positional and target):
+        print(f"error: the argument '{target[0] if target else args[:1]}' cannot be used with '[PROMPT]'",
+              file=sys.stderr)
+        sys.exit(2)
     plan = json.loads((here / 'plan.json').read_text())[tree_hash()]['codex-review']
     for f in plan:
         print(f"- [P1] {f['claim']} — {f['file']}:{f['line']}-{f['line'] + 2}")
@@ -292,7 +307,9 @@ class DryRun(unittest.TestCase):
         claude_argv = calls["claude"]["argv"]
         self.assertIn(spec, claude_argv[claude_argv.index("--append-system-prompt") + 1])
         codex_argv = calls["codex"]["argv"]
-        self.assertIn(spec, codex_argv[-1])
+        notes = [v for v in codex_argv if v.startswith("developer_instructions=")]
+        self.assertEqual(len(notes), 1)
+        self.assertIn(spec, json.loads(notes[0].split("=", 1)[1]))
         self.assertIn("mcp_servers.gmail.enabled=false", codex_argv)
         self.assertIn("--uncommitted", codex_argv)
         for tool in ("claude", "codex"):

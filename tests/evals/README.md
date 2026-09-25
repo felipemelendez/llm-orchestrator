@@ -112,7 +112,8 @@ through `--spec` and puts it in its own briefs. The two native arms receive the
 same sentence naming the spec: "The change must implement the spec in <spec>.
 Read it, and report every place where the change does not meet it, as well as
 any other defect." It goes to `/code-review` through `--append-system-prompt`,
-and to `codex review` as its custom instructions. Each tool still uses its own
+and to `codex review` as `-c developer_instructions=...`, because codex 0.157.0
+refuses a custom-instructions PROMPT together with `--uncommitted`. Each tool still uses its own
 review brief around that sentence, so a difference between arms is a difference
 between the whole methods, not only the reviewers.
 
@@ -120,7 +121,7 @@ between the whole methods, not only the reviewers.
 |---|---|
 | `full` | `orch-review.py run --path full --writer claude --base HEAD --spec <spec>` |
 | `code-review` | `claude -p "/code-review high" --model opus --effort high --safe-mode --append-system-prompt <sentence>`, no MCP servers |
-| `codex-review` | `codex review --uncommitted -c model_reasoning_effort="high" <sentence>`, with every MCP server in `config.toml`, apps and plugins turned off |
+| `codex-review` | `codex review --uncommitted -c model_reasoning_effort="high" -c developer_instructions=<sentence>`, with every MCP server in `config.toml`, apps and plugins turned off |
 | `full-swap` | `full` with `--adversarial-provider claude` |
 | `full-no-refuter` | `full` with `--no-refuter` |
 | `full-split` | `full` with `--split` (run with `--large-only`) |
@@ -172,8 +173,10 @@ Limits of the comparison:
 - Two defects in the same case are not independent, and McNemar treats them as
   if they were. With one try per case there is one sample per defect.
 - Not verified without a paid run: that `/code-review` works in `-p` mode under
-  `--safe-mode` with the appended sentence, that `codex review --uncommitted`
-  accepts custom instructions and logs its MCP servers, and the exact layout of
+  `--safe-mode` with the appended sentence, that `codex review` passes
+  `developer_instructions` to its reviewer (0.157.0 accepts the key: a signed-out
+  `--strict-config` run rejected an unknown key and loaded this one), that it logs
+  its MCP servers, and the exact layout of
   both outputs. The pilot in step 1 checks these before the main spend.
 
 The orch-review arms need `scripts/lib/orch-review.py` (ticket T5) merged; `run`

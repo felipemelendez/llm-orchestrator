@@ -364,6 +364,8 @@ def run_one(arm, case, repo_src, out_dir, plugin_root, timeout):
     review_dir = work / "review"
     values = {"plugin": str(plugin_root), "spec": case["spec"], "run_dir": str(review_dir),
               "python": sys.executable, "spec_note": SPEC_NOTE.format(spec=case["spec"])}
+    # A TOML string for `codex -c`; codex 0.157.0 refuses a PROMPT together with --uncommitted.
+    values["spec_note_toml"] = json.dumps(values["spec_note"])
     started = time.time()
     try:
         proc = subprocess.run(expand(arm["command"], values), cwd=repo, env=arm_env(arm, out_dir),

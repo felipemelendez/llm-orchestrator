@@ -165,8 +165,9 @@
         "--uncommitted",
         "-c",
         "model_reasoning_effort=\"high\"",
-        "{codex_mcp_off}",
-        "{spec_note}"
+        "-c",
+        "developer_instructions={spec_note_toml}",
+        "{codex_mcp_off}"
       ]
     },
     {
