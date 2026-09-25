@@ -60,7 +60,7 @@ mkproj() { # mkproj <dir> [enabled]
   local d="$1"
   mkdir -p "$d/docs/llm-orchestrator" "$d/.claude"
   if [[ -n "${2:-}" ]]; then
-    printf '{ "schema": 1, "enabled": %s }\n' "$2" > "$d/docs/llm-orchestrator/cadence.json"
+    printf '{ "schema": 1, "enabled": %s, "workflow": "proportional" }\n' "$2" > "$d/docs/llm-orchestrator/cadence.json"
     printf '# Laws\n\nRuling 3 — the cadence is the process.\n' > "$d/docs/llm-orchestrator/LAWS.md"
   fi
   printf '{}\n' > "$d/.claude/settings.json"

@@ -111,7 +111,7 @@ lock_probe() { # <agents-file|""> [<claude-file>] -> LOCK_RC, LOCK_SECT_SHA, LOC
   local src="$1" cl="${2:-}" d rc
   LPN=$((LPN+1)); d="$TMP/lockprobe.$LPN"
   mkdir -p "$d/docs/llm-orchestrator"
-  printf '{ "schema": 1, "enabled": true }\n' > "$d/docs/llm-orchestrator/cadence.json"
+  printf '{ "schema": 1, "enabled": true, "workflow": "proportional" }\n' > "$d/docs/llm-orchestrator/cadence.json"
   [[ -n "$src" && -f "$src" ]] && cp "$src" "$d/AGENTS.md"
   [[ -n "$cl" && -f "$cl" ]] && cp "$cl" "$d/CLAUDE.md"
   bash "$CHECK" --root "$d" --lock > "$TMP/lockprobe.log" 2>&1; rc=$?
@@ -150,7 +150,7 @@ RC=$(run "$F")
 [[ "$RC" == "0" ]] && ok "a fresh project initializes at exit 0" || fail "fresh exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
 
 MISSING=""
-for f in docs/llm-orchestrator/LAWS.md docs/llm-orchestrator/HANDOFF_TEMPLATE.md \
+for f in docs/llm-orchestrator/LAWS.md \
          docs/llm-orchestrator/DESIGN_RULINGS.md docs/llm-orchestrator/TRAPS.md \
          docs/llm-orchestrator/cadence.json docs/llm-orchestrator/LOCK.sha256 \
          AGENTS.md CLAUDE.md .claude/settings.json \
@@ -161,10 +161,9 @@ done
 
 BAD=""
 cmp -s "$REFS/laws.md"           "$F/docs/llm-orchestrator/LAWS.md"            || BAD="$BAD LAWS.md"
-cmp -s "$REFS/handoff.md"        "$F/docs/llm-orchestrator/HANDOFF_TEMPLATE.md" || BAD="$BAD HANDOFF_TEMPLATE.md"
 cmp -s "$REFS/design-rulings.md" "$F/docs/llm-orchestrator/DESIGN_RULINGS.md"  || BAD="$BAD DESIGN_RULINGS.md"
 cmp -s "$REFS/traps.md"          "$F/docs/llm-orchestrator/TRAPS.md"           || BAD="$BAD TRAPS.md"
-[[ -z "$BAD" ]] && ok "the four law documents are byte copies of the skill's references" || fail "law doc bytes" "differ:$BAD"
+[[ -z "$BAD" ]] && ok "the three law documents are byte copies of the skill's references" || fail "law doc bytes" "differ:$BAD"
 
 if [[ "$(head -1 "$F/CLAUDE.md")" == "@AGENTS.md" ]]; then ok "CLAUDE.md opens with @AGENTS.md"; else fail "claude import" "$(head -3 "$F/CLAUDE.md")"; fi
 if has "$F/AGENTS.md" '<!-- ORCH:LAWS:START -->' && has "$F/AGENTS.md" '<!-- ORCH:LAWS:END -->'; then
@@ -395,7 +394,7 @@ printf '\n%s== --config is what lands as cadence.json ==%s\n' "$DIM" "$RESET"
 # a cadence that is off, and report that it armed one).
 G="$TMP/cfg"; mkrepo "$G"
 cat > "$TMP/confirmed.json" <<'JSON'
-{ "schema": 9, "enabled": false, "notes_dir": "docs/notes", "ticket_re": "^[A-Z]+-[0-9]+:",
+{ "schema": 9, "enabled": false, "workflow": "proportional", "scratch_dir": "docs/scratch",
   "runner": { "profile": "pytest", "test_cmd": "python3 -m pytest -q" } }
 JSON
 RC=$(run "$G" --config "$TMP/confirmed.json")
@@ -405,10 +404,33 @@ import json, sys
 d = json.load(open(sys.argv[1]))
 assert d["schema"] == 1, "schema not forced to 1"
 assert d["enabled"] is True, "enabled not forced to true"
-assert d["notes_dir"] == "docs/notes", "the user's notes_dir was lost"
+assert d["scratch_dir"] == "docs/scratch", "the user's scratch_dir was lost"
 assert d["runner"]["profile"] == "pytest", "the user's runner was lost"
 PY
 then ok "the confirmed config lands with schema 1 and enabled true forced"; else fail "config content" "$(cat "$G/docs/llm-orchestrator/cadence.json")"; fi
+
+printf '\n%s== a config without "workflow": "proportional" is refused ==%s\n' "$DIM" "$RESET"
+# SCENE: given a config with no workflow, or with "legacy"; when init runs, with
+# or without python3; expect one refusal naming the one-line fix and nothing
+# written.
+WF_FIX='needs "workflow": "proportional"'
+printf '{ "schema": 1, "enabled": true }\n' > "$TMP/wf-none.json"
+printf '{ "schema": 1, "enabled": true, "workflow": "legacy" }\n' > "$TMP/wf-legacy.json"
+for WV in none legacy; do
+  for PYV in python3 /nonexistent/python3; do
+    WN=$((${WN:-0} + 1)); WG="$TMP/wf-$WN"; mkrepo "$WG"
+    RC=$( ORCH_CADENCE_PYTHON="$PYV" bash "$INIT" --root "$WG" --config "$TMP/wf-$WV.json" > "$OUT" 2>"$ERR"; echo $?)
+    if [[ "$RC" == "1" ]] && has "$OUT" "$WF_FIX" && has "$OUT" 'nothing was written' \
+       && [[ ! -e "$WG/docs" && ! -e "$WG/AGENTS.md" ]]; then
+      ok "workflow $WV ($PYV): refused with the fix, nothing written"
+    else fail "init workflow $WV ($PYV)" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"; fi
+  done
+done
+# A project that already has such a cadence.json is refused the same way on a re-run.
+WR="$TMP/wf-rerun"; mkrepo "$WR"; mkdir -p "$WR/docs/llm-orchestrator"
+cp "$TMP/wf-none.json" "$WR/docs/llm-orchestrator/cadence.json"
+RC=$(run "$WR")
+if [[ "$RC" == "1" ]] && has "$OUT" "$WF_FIX"; then ok "an existing cadence.json with no workflow is refused on a re-run"; else fail "init rerun workflow" "rc=$RC out=$(cat "$OUT")"; fi
 
 printf '\n%s== the git layer end to end ==%s\n' "$DIM" "$RESET"
 # SCENE: given an initialized repo with core.hooksPath set; when a commit edits

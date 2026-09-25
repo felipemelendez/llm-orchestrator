@@ -59,10 +59,10 @@ fi
 arm() {  # arm <dir> [lock_extra-json]
   mkdir -p "$1/docs/llm-orchestrator/notes" "$1/.claude" "$1/.githooks" "$1/src"
   if [[ -n "${2:-}" ]]; then
-    printf '{ "schema": 1, "enabled": true, "lock_extra": %s }\n' "$2" \
+    printf '{ "schema": 1, "enabled": true, "workflow": "proportional", "lock_extra": %s }\n' "$2" \
       > "$1/docs/llm-orchestrator/cadence.json"
   else
-    printf '{ "schema": 1, "enabled": true }\n' > "$1/docs/llm-orchestrator/cadence.json"
+    printf '{ "schema": 1, "enabled": true, "workflow": "proportional" }\n' > "$1/docs/llm-orchestrator/cadence.json"
   fi
   printf '# Laws\n' > "$1/docs/llm-orchestrator/LAWS.md"
   printf 'abc  docs/llm-orchestrator/LAWS.md\n' > "$1/docs/llm-orchestrator/LOCK.sha256"

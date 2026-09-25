@@ -66,9 +66,8 @@ if [ -n "$FORCE_PROFILE" ]; then PROFILE="$FORCE_PROFILE"; else PROFILE="$(detec
 
 case "$PROFILE" in
   jest) cat <<'JSON'
-{ "schema": 1, "enabled": true, "workflow": "proportional", "notes_dir": "docs/llm-orchestrator/notes",
+{ "schema": 1, "enabled": true, "workflow": "proportional",
   "verification_config_globs": ["package.json", "*lock*", "jest.config.*", "babel.config.*", "tsconfig*.json", "eslint.config.*", ".eslintrc*"],
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
   "runner": { "profile": "jest", "test_cmd": "npx jest --maxWorkers=2", "summary_re": "^Tests:",
               "fail_count_re": "([0-9]+) failed", "suites_re": "^Test Suites:" },
   "typecheck_cmd": "npx tsc --noEmit", "unused_cmd": "",
@@ -85,9 +84,8 @@ case "$PROFILE" in
 JSON
   ;;
   vitest) cat <<'JSON'
-{ "schema": 1, "enabled": true, "workflow": "proportional", "notes_dir": "docs/llm-orchestrator/notes",
+{ "schema": 1, "enabled": true, "workflow": "proportional",
   "verification_config_globs": ["package.json", "*lock*", "vitest.config.*", "vite.config.*", "tsconfig*.json", "eslint.config.*", ".eslintrc*"],
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
   "runner": { "profile": "vitest", "test_cmd": "npx vitest run", "summary_re": "^[[:space:]]*Tests[[:space:]]",
               "fail_count_re": "([0-9]+) failed", "suites_re": "^[[:space:]]*Test Files" },
   "typecheck_cmd": "npx tsc --noEmit", "unused_cmd": "",
@@ -104,9 +102,8 @@ JSON
 JSON
   ;;
   pytest) cat <<'JSON'
-{ "schema": 1, "enabled": true, "workflow": "proportional", "notes_dir": "docs/llm-orchestrator/notes",
+{ "schema": 1, "enabled": true, "workflow": "proportional",
   "verification_config_globs": ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini", "conftest.py", "requirements*.txt", "*lock*"],
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
   "runner": { "profile": "pytest", "test_cmd": "python3 -m pytest -q", "summary_re": "(passed|failed|error)",
               "fail_count_re": "([0-9]+) failed", "suites_re": "^collected" },
   "typecheck_cmd": "", "unused_cmd": "",
@@ -123,9 +120,8 @@ JSON
 JSON
   ;;
   shell-suites) cat <<'JSON'
-{ "schema": 1, "enabled": true, "workflow": "proportional", "notes_dir": "docs/llm-orchestrator/notes",
+{ "schema": 1, "enabled": true, "workflow": "proportional",
   "verification_config_globs": [".shellcheckrc", ".github/workflows/*", "hooks/*.json", "package.json", "*lock*"],
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
   "runner": { "profile": "shell-suites", "test_cmd": "", "summary_re": "^(PASS|FAIL)|[0-9]+ (passed|failed)|^FAILED",
               "fail_count_re": "([0-9]+) failed", "suites_re": "" },
   "typecheck_cmd": "", "unused_cmd": "",
@@ -143,9 +139,8 @@ JSON
 JSON
   ;;
   *) cat <<'JSON'
-{ "schema": 1, "enabled": true, "workflow": "proportional", "notes_dir": "docs/llm-orchestrator/notes",
+{ "schema": 1, "enabled": true, "workflow": "proportional",
   "verification_config_globs": [],
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
   "runner": { "profile": "unknown", "test_cmd": "", "summary_re": "", "fail_count_re": "([0-9]+) failed", "suites_re": "" },
   "typecheck_cmd": "", "unused_cmd": "",
   "src_roots": ["."],

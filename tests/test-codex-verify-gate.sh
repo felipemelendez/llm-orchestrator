@@ -458,7 +458,7 @@ fire "$CLAIM" "$R"
 printf '\n%s== the project'"'"'s own test_cmd counts ==%s\n' "$DIM" "$RESET"
 
 PROJ="$TMP/project"; mkdir -p "$PROJ/docs/llm-orchestrator"
-printf '{ "schema": 1, "enabled": true,\n  "runner": { "profile": "custom", "test_cmd": "bin/suite --fast" } }\n' \
+printf '{ "schema": 1, "enabled": true, "workflow": "proportional",\n  "runner": { "profile": "custom", "test_cmd": "bin/suite --fast" } }\n' \
   > "$PROJ/docs/llm-orchestrator/cadence.json"
 ignored "(l1) no cadence.json: a command the lists do not know" 'bin/suite --fast unit'
 PROJ_DIR="$PROJ" counts  "(l2) it starts with runner.test_cmd" 'bin/suite --fast unit'

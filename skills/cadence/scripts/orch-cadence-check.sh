@@ -7,8 +7,6 @@
 #                             the lock still matches the tree. Always exit 0.
 #   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256. The
 #                             only writer of that file.
-#   --landing <ticket>        legacy report check, or proportional policy note.
-#     [--base <sha>]
 #   --commit-msg <msgfile>    the git-side gate (git hands the message file to
 #                             commit-msg, and to no other hook).
 #   --audit <rev>             the same three checks against a commit, for CI.
@@ -36,8 +34,8 @@
 #   --verdict and --commit-msg stay correct; ARRAY keys (lock_extra) are empty in
 #   that case and ONE note goes to stderr per invocation. Set
 #   ORCH_CADENCE_PYTHON to point at another interpreter (or at a path that does
-#   not exist, to exercise the python-free path). The proportional report
-#   waiver requires a working parser; an unvalidated config cannot waive checks.
+#   not exist, to exercise the python-free path). The git layer needs a
+#   working parser to validate the workflow and refuses without one.
 #   The git layer decides cadence on/off from GIT, never from the working tree:
 #   --commit-msg reads the config staged in the index and the one at HEAD (on if
 #   either is on), --audit reads it at the revision. A config that is present but
@@ -65,7 +63,7 @@ TMPD="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMPD"' EXIT
 
 usage() {
-  echo "usage: orch-cadence-check.sh [--root <dir>] --verdict | --lock | --landing <ticket> [--base <sha>] | --commit-msg <msgfile> | --audit <rev> | --version"
+  echo "usage: orch-cadence-check.sh [--root <dir>] --verdict | --lock | --commit-msg <msgfile> | --audit <rev> | --version"
 }
 
 # ---------- hashing -----------------------------------------------------------
@@ -113,10 +111,8 @@ except Exception:
     sys.exit(2)
 if not isinstance(d, dict):
     sys.exit(2)
-# Emit the typed workflow separately: null, an empty string and an absent key
-# have different meanings. Only absence opts an existing project into legacy.
-w = d.get("workflow", "legacy")
-print("W\t%s" % (w if isinstance(w, str) and w in ("legacy", "proportional") else "INVALID"))
+# Emit the typed workflow separately: only the string "proportional" is valid.
+print("W\t%s" % ("proportional" if d.get("workflow") == "proportional" else "INVALID"))
 def emit(k, v):
     if isinstance(v, list):
         for x in v:
@@ -205,27 +201,24 @@ cfg_array() { # <key> — one element per line
   return 0
 }
 
-cfg_workflow() { # [validated] assigns WORKFLOW; invalid policy is never a waiver
+cfg_workflow() { # [validated] rc 0 when the workflow is "proportional"
+  local w="INVALID"
   cfg_load
-  WORKFLOW="legacy"
   if [ -n "$CFG_DUMP" ] && [ -s "$CFG_DUMP" ]; then
-    WORKFLOW=$(awk -F'\t' '$1=="W" {print $2; exit}' "$CFG_DUMP")
-  elif [ -f "$CFG_FILE" ] && grep -qE '"workflow"[[:space:]]*:' "$CFG_FILE"; then
-    WORKFLOW=$(cfg_scalar workflow)
-    # On the interpreter-free path only an exact quoted value is acceptable.
-    case "$WORKFLOW" in
-      legacy|proportional)
-        grep -qE "\"workflow\"[[:space:]]*:[[:space:]]*\"$WORKFLOW\"[[:space:]]*([,}]|$)" "$CFG_FILE" || WORKFLOW="INVALID" ;;
-    esac
+    w=$(awk -F'\t' '$1=="W" {print $2; exit}' "$CFG_DUMP")
+  elif [ -f "$CFG_FILE" ] && grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"[[:space:]]*([,}]|$)' "$CFG_FILE"; then
+    # On the interpreter-free path only the exact quoted value is acceptable.
+    w="proportional"
   fi
-  if [ "$WORKFLOW" = "proportional" ] && [ "${1:-}" = "validated" ] && [ ! -s "$CFG_DUMP" ]; then
-    echo "CADENCE: proportional report policy needs a working python3 to validate $CFG_REL; install/configure it before landing"
+  if [ "$w" != "proportional" ]; then
+    echo "CADENCE: $CFG_REL needs \"workflow\": \"proportional\" (the legacy workflow was removed); add or fix that one line"
     return 1
   fi
-  case "$WORKFLOW" in
-    legacy|proportional) return 0 ;;
-    *) echo "CADENCE: invalid workflow in $CFG_REL — use \"legacy\" or \"proportional\" (omit only for legacy)"; return 1 ;;
-  esac
+  if [ "${1:-}" = "validated" ] && [ ! -s "$CFG_DUMP" ]; then
+    echo "CADENCE: a working python3 is needed to validate $CFG_REL; install or configure it"
+    return 1
+  fi
+  return 0
 }
 
 # ---------- root and mode -----------------------------------------------------
@@ -259,11 +252,12 @@ cadence_on() { # 0 = on
 # enabled:false into it, or delete it, without staging anything. Mode comes from
 # the config being COMMITTED and the one at HEAD; either one enabled arms the
 # gate, and a copy that is present but does not decode arms it too (fail
-# closed). The chosen blob then serves ticket_re, notes_dir and lock_extra, so
-# the revision is graded with the revision's own config.
-# rc 0 = on (CFG_FILE now points at the blob), 1 = off, 2 = cannot decide.
+# closed). The chosen blob then serves lock_extra, so the revision is graded
+# with the revision's own config.
+# rc 0 = on (CFG_FILE now points at the blob), 1 = off, 2 = cannot decide,
+# 3 = the workflow is not valid (the reason is already printed, once).
 git_mode() { # <index-ref-prefix> <head-ref-prefix>
-  local pref blob n=0 present=0 on=0 bad=0 chosen=""
+  local pref blob msg n=0 present=0 on=0 bad=0 wbad="" chosen=""
   for pref in "$1" "$2"; do
     n=$((n + 1))
     blob="$TMPD/gitcfg.$n"
@@ -272,11 +266,12 @@ git_mode() { # <index-ref-prefix> <head-ref-prefix>
     cfg_use "$blob"; cfg_load
     if [ "$CFG_OK" != "1" ]; then bad=1; continue; fi
     if cfg_bool enabled; then
-      cfg_workflow validated || { bad=1; continue; }
+      msg=$(cfg_workflow validated) || { wbad="$msg"; continue; }
       on=1; [ -n "$chosen" ] || chosen="$blob"
     fi
   done
   [ "$bad" = "1" ] && return 2
+  if [ -n "$wbad" ]; then printf '%s\n' "$wbad"; return 3; fi
   if [ "$on" = "1" ]; then cfg_use "$chosen"; return 0; fi
   [ "$present" = "1" ] && return 1
   return 1
@@ -484,38 +479,8 @@ mode_verdict() {
     cmp -s "$TMPD/headcfg" "$CFG_FILE" || line="$line · config differs from HEAD"
   fi
   unlock_env && line="$line · UNLOCKED"
-  # The skips a session has applied, when the session has a state file to
-  # record them in. With no state file the verdict line is unchanged byte for
-  # byte — a fresh project must not be told "skips: 0" on its first turn.
-  local sdir sfile
-  sdir=$(cfg_scalar notes_dir); [ -n "$sdir" ] || sdir="docs/llm-orchestrator/notes"
-  sfile="$ROOT_DIR/$sdir/CADENCE_STATE.md"
-  if [ -f "$sfile" ]; then
-    line="$line · skips: $(live_skips "$sfile")"
-  fi
   printf '%s\n' "${line:0:300}"
   return 0
-}
-
-# A skip is live until a later `re-armed:` or `expired:` line names the SAME
-# stage and the SAME class. Counting every `skip:` line reported skips that had
-# already been cancelled, which is the opposite of what the number is for.
-live_skips() { # <state file>
-  awk '
-    function key(l,   stage, cls) {
-      sub(/^[a-z-]+:[[:space:]]*/, "", l)
-      stage = l; sub(/[[:space:]]*\xc2\xb7.*$/, "", stage)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", stage)
-      cls = ""
-      if (match(l, /class[[:space:]]+[A-Za-z0-9_-]+/)) {
-        cls = substr(l, RSTART, RLENGTH); sub(/^class[[:space:]]+/, "", cls)
-      }
-      return stage "\034" cls
-    }
-    /^skip:/            { k = key($0); n[k]++; next }
-    /^re-armed:|^expired:/ { k = key($0); n[k] = 0; next }
-    END { t = 0; for (k in n) t += n[k]; print t }
-  ' "$1" 2>/dev/null || printf '0'
 }
 
 mode_lock() {
@@ -562,79 +527,6 @@ mode_lock() {
   return 0
 }
 
-# base_date <rev> -> the commit's author date as YYYY-MM-DD HH:MM:SS, in the
-# LOCAL zone. The evidence stamps are written by `date` on the machine running
-# the seats; rendering the commit in the AUTHOR's zone compares two different
-# clocks, which passes stale evidence from one direction and rejects fresh
-# evidence from the other.
-base_date() {
-  git -C "$ROOT_DIR" log -1 --format=%ad --date=format-local:'%Y-%m-%d %H:%M:%S' "$1" 2>/dev/null
-}
-
-# mode_landing <ticket> <base> [<rev-ref-prefix>]
-# With a ref prefix the evidence is read AT that revision (git show), so an
-# audit grades the commit with the files the commit carried, not with whatever
-# the working tree holds today.
-mode_landing() {
-  local ticket="$1" base="$2" pref="${3:-}" nd bts defects f r ts fin
-  cfg_load
-  if [ -f "$CFG_FILE" ] && [ "$CFG_OK" != "1" ]; then
-    echo "LANDING $ticket: $CFG_REL does not decode — repair the JSON configuration"
-    return 1
-  fi
-  if [ -z "$pref" ] && ! cadence_on; then
-    echo "cadence: off in $ROOT_DIR — --landing needs $CFG_REL with \"enabled\": true"
-    return 1
-  fi
-  cfg_workflow validated || return 1
-  if [ "$WORKFLOW" = "proportional" ]; then
-    echo "LANDING $ticket: proportional workflow requires no stored reports; this is not commit authorization or proof of verification/review"
-    return 0
-  fi
-  nd=$(cfg_scalar notes_dir); [ -n "$nd" ] || nd="docs/llm-orchestrator/notes"
-  bts=$(base_date "$base")
-  if [ -z "$bts" ]; then
-    echo "LANDING $ticket: cannot read the author date of base $base"
-    return 1
-  fi
-  defects=0
-  for r in BRIEFREV REV1 REV2 REFUTE GATE; do
-    if [ -n "$pref" ]; then
-      f="$TMPD/evidence_${r}.md"
-      git -C "$ROOT_DIR" show "${pref}${nd}/${ticket}_${r}_report.md" > "$f" 2>/dev/null || rm -f "$f"
-    else
-      f="$ROOT_DIR/$nd/${ticket}_${r}_report.md"
-    fi
-    if [ ! -f "$f" ]; then
-      echo "LANDING $ticket: missing ${nd}/${ticket}_${r}_report.md"
-      defects=$((defects + 1)); continue
-    fi
-    ts=$(grep -oE 'Started: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' "$f" | head -1 | sed 's/^Started: //')
-    if [ -z "$ts" ]; then
-      echo "LANDING $ticket: ${ticket}_${r}_report.md has no Started: YYYY-MM-DD HH:MM:SS stamp"
-      defects=$((defects + 1))
-    elif [ ! "$ts" \> "$bts" ]; then
-      echo "LANDING $ticket: ${ticket}_${r}_report.md Started $ts is not later than the base commit ($bts) — stale evidence"
-      defects=$((defects + 1))
-    fi
-    fin=$(grep -oE 'Finished: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}' "$f" | tail -1 | sed 's/^Finished: //')
-    if [ -z "$fin" ]; then
-      echo "LANDING $ticket: ${ticket}_${r}_report.md has no Finished: YYYY-MM-DD HH:MM:SS stamp"
-      defects=$((defects + 1))
-    elif [ ! "$fin" \> "$bts" ]; then
-      echo "LANDING $ticket: ${ticket}_${r}_report.md Finished $fin is not later than the base commit ($bts) — stale evidence"
-      defects=$((defects + 1))
-    fi
-    if [ "$r" = "GATE" ] && [ "$(tail -n 1 "$f")" != "EXIT=0" ]; then
-      echo "LANDING $ticket: ${ticket}_${r}_report.md last line is not EXIT=0"
-      defects=$((defects + 1))
-    fi
-  done
-  if [ "$defects" -gt 0 ]; then return 1; fi
-  echo "LANDING $ticket: OK (5 reports, all finished after $bts)"
-  return 0
-}
-
 # git_lock_entries <index-ref-prefix> <head-ref-prefix> <outfile>
 # The set the git layer enforces: the fixed entries, the config's lock_extra
 # when it can be read, AND every path the staged or HEAD manifest records. The
@@ -649,11 +541,11 @@ git_lock_entries() {
   } | grep -v '^$' | sort -u > "$3"
 }
 
-# git_gate <index-ref-prefix> <head-ref-prefix> <message-file> <label> <landing-base>
+# git_gate <index-ref-prefix> <head-ref-prefix> <message-file> <label>
 # The three checks of the git layer, shared by --commit-msg and --audit.
 git_gate() {
-  local ipref="$1" hpref="$2" msgf="$3" label="$4" lbase="$5"
-  local defects=0 lockblob e hi hh rec rc rch changed=0 subject tre tid n headlaws hr staged_laws
+  local ipref="$1" hpref="$2" msgf="$3" label="$4"
+  local defects=0 lockblob e hi hh rec rc rch changed=0 n headlaws hr staged_laws
   local need_ruling=0 need_relock=0 armed_at_head=0 armed_in_index=0 entries="$TMPD/gitentries"
   git_lock_entries "$ipref" "$hpref" "$entries"
   git -C "$ROOT_DIR" show "${hpref}${LOCK_REL}" > "$TMPD/headlock" 2>/dev/null && armed_at_head=1
@@ -752,29 +644,12 @@ git_gate() {
     fi
   fi
 
-  # 3 — only legacy workflow stores ticket evidence. Validate policy and rule
-  # protection first; a policy flip cannot waive its own amendment checks.
+  # 3 — the workflow, validated after rule protection so a policy change
+  # cannot waive its own amendment checks.
   cfg_workflow || return 1
-  if [ "$WORKFLOW" = "proportional" ] && [ "$defects" -eq 0 ]; then
-    echo "$label: proportional Git policy OK; no stored reports required (verification and reviews are not attested by this check)"
+  if [ "$defects" -eq 0 ]; then
+    echo "$label: Git policy OK (verification and reviews are not attested by this check)"
     return 0
-  fi
-  subject=$(head -1 "$msgf" 2>/dev/null)
-  tre=$(cfg_scalar ticket_re)
-  if [ "$WORKFLOW" = "legacy" ] && [ -n "$tre" ] && [ -n "$subject" ]; then
-    tid=$(printf '%s' "$subject" | grep -oE "$tre" | head -1)
-    tid="${tid%:}"
-    if [ -n "$tid" ]; then
-      local nd
-      nd=$(cfg_scalar notes_dir); [ -n "$nd" ] || nd="docs/llm-orchestrator/notes"
-      if [ "$lbase" = "WORKTREE" ]; then
-        mode_landing "$tid" HEAD || defects=$((defects + 1))
-      elif [ -z "$(git -C "$ROOT_DIR" ls-tree -d --name-only "${lbase}" -- "$nd" 2>/dev/null)" ]; then
-        echo "$label: landing check SKIPPED — $nd is not in the tree at this revision (the hook checked it at commit time)"
-      else
-        mode_landing "$tid" "$lbase" "${lbase}:" || defects=$((defects + 1))
-      fi
-    fi
   fi
 
   # The remedy names the piece that is missing and no other: telling someone to
@@ -797,12 +672,13 @@ mode_commit_msg() { # <msgfile>
   local m
   git_mode ":" "HEAD:"; m=$?
   [ "$m" -eq 1 ] && return 0
+  [ "$m" -eq 3 ] && return 1
   if [ "$m" -eq 2 ]; then
     echo "CADENCE: $CFG_REL does not decode at this revision — refusing (a config nobody can read is not an off switch)"
     return 1
   fi
   [ -f "$1" ] || { echo "CADENCE: no commit message file at $1"; return 1; }
-  git_gate ":" "HEAD:" "$1" "CADENCE" "WORKTREE"
+  git_gate ":" "HEAD:" "$1" "CADENCE"
 }
 
 mode_audit() { # <rev>
@@ -814,26 +690,25 @@ mode_audit() { # <rev>
     echo "cadence: off at $rev — --audit needs $CFG_REL with \"enabled\": true at that revision"
     return 1
   fi
+  [ "$m" -eq 3 ] && return 1
   if [ "$m" -eq 2 ]; then
     echo "AUDIT $rev: $CFG_REL does not decode at that revision — refusing"
     return 1
   fi
   msgf="$TMPD/auditmsg"
   git -C "$ROOT_DIR" log -1 --format=%B "$rev" > "$msgf" 2>/dev/null
-  git_gate "${rev}:" "${rev}^:" "$msgf" "AUDIT $rev" "$rev"
+  git_gate "${rev}:" "${rev}^:" "$msgf" "AUDIT $rev"
 }
 
 # ---------- argument parsing --------------------------------------------------
-MODE=""; ARG1=""; BASE="HEAD"
+MODE=""; ARG1=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --root)     shift; OPT_ROOT="${1:-}" ;;
     --verdict)  MODE="verdict" ;;
     --lock)     MODE="lock" ;;
-    --landing)  MODE="landing"; shift; ARG1="${1:-}" ;;
     --commit-msg) MODE="commit-msg"; shift; ARG1="${1:-}" ;;
     --audit)    MODE="audit"; shift; ARG1="${1:-}" ;;
-    --base)     shift; BASE="${1:-HEAD}" ;;
     --version)  echo "orch-cadence-check.sh ${ORCH_CADENCE_CHECK_VERSION}"; exit 0 ;;
     -h|--help)  usage; exit 0 ;;
     *)          echo "unknown option: $1"; usage; exit 1 ;;
@@ -847,8 +722,6 @@ resolve_root
 case "$MODE" in
   verdict)    mode_verdict; exit 0 ;;
   lock)       mode_lock; exit $? ;;
-  landing)    [ -n "$ARG1" ] || { echo "--landing needs a ticket id"; exit 1; }
-              mode_landing "$ARG1" "$BASE"; exit $? ;;
   commit-msg) [ -n "$ARG1" ] || { echo "--commit-msg needs the message file"; exit 1; }
               mode_commit_msg "$ARG1"; exit $? ;;
   audit)      [ -n "$ARG1" ] || { echo "--audit needs a revision"; exit 1; }
