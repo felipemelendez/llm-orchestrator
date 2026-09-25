@@ -19,6 +19,7 @@
 #   A7 apply_patch headers in every position
 #   A8 the unlock, and the persisted-unlock refusal
 #   A9 hygiene: the size ceiling, no reference to the deleted guard, HOME clean
+#   A10 .codex-plugin/plugin.json names the cadence skill and only Codex hooks
 #
 # Bash 3.2 compatible. Exits non-zero on any failure.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -406,6 +407,59 @@ if grep -q 'guard-cadence-lock' "$ADAPTER"; then
 else ok "the adapter names no deleted guard"; fi
 if [[ "$(home_state)" == "$HOME_BEFORE" ]]; then ok "the temp HOME is byte-identical after every run"
 else fail "the temp HOME is byte-identical after every run" "the adapter wrote into HOME"; fi
+
+# ------------------------------------------------------------
+section "A10 — the Codex plugin manifest"
+# Codex reads .codex-plugin/plugin.json before .claude-plugin/plugin.json, and a
+# manifest that names no hooks falls back to hooks/hooks.json, the Claude Code
+# hooks. So the manifest must name the hooks, and only the three Codex ones.
+MANIFEST="$ROOT/.codex-plugin/plugin.json"
+manifest_out=$(python3 - "$MANIFEST" "$ROOT" <<'PY' 2>&1
+import json, os, re, sys
+path, root = sys.argv[1:]
+m = json.load(open(path))
+claude = json.load(open(root + "/.claude-plugin/plugin.json"))
+problems = []
+if m.get("name") != claude["name"] or m.get("version") != claude["version"]:
+    problems.append("name/version differ from .claude-plugin/plugin.json")
+# Metadata plus the two components; any other key (mcpServers, agents, apps,
+# commands, interface...) is a component Codex would load.
+extra = set(m) - {"name", "version", "description", "homepage", "repository",
+                  "license", "skills", "hooks"}
+if extra:
+    problems.append("unexpected keys %s" % sorted(extra))
+if m.get("skills") != "./skills/cadence":
+    problems.append("skills is %r, not ./skills/cadence" % m.get("skills"))
+hooks = m.get("hooks", {}).get("hooks") if isinstance(m.get("hooks"), dict) else None
+if not isinstance(hooks, dict):
+    problems.append("hooks is not an inline hooks object")
+    hooks = {}
+named = set()
+for event, groups in hooks.items():
+    for group in groups:
+        for h in group["hooks"]:
+            found = re.fullmatch(r'bash "\$\{PLUGIN_ROOT\}/(scripts/hooks/[a-z-]+\.sh)"', h["command"])
+            if not found:
+                problems.append("unexpected command %r" % h["command"])
+                continue
+            named.add((event, group.get("matcher"), found.group(1)))
+want = {("PreToolUse", "Bash", "scripts/hooks/codex-cadence-adapter.sh"),
+        ("PreToolUse", "apply_patch", "scripts/hooks/codex-cadence-adapter.sh"),
+        ("Stop", None, "scripts/hooks/codex-verify-gate.sh"),
+        ("Stop", None, "scripts/hooks/orch-task-cleanup.sh")}
+if named != want:
+    problems.append("hooks named %s" % sorted(named, key=str))
+for _, _, script in named:
+    if not os.path.isfile(os.path.join(root, script)):
+        problems.append("missing %s" % script)
+print("\n".join(problems))
+PY
+)
+if [[ -f "$MANIFEST" && -z "$manifest_out" ]]; then
+  ok "the Codex manifest names the cadence skill and only the three Codex hooks"
+else
+  fail "the Codex manifest names the cadence skill and only the three Codex hooks" "${manifest_out:-missing $MANIFEST}"
+fi
 
 # ------------------------------------------------------------
 printf '\n'
