@@ -48,12 +48,13 @@ never by meaning, and never names a class itself.
 
 ## Report
 
-`<SCRATCH>/<TICKET>_GATE_report.md`, printed as your final message. It opens
-with a `Status:` block of at most 20 lines — `Started:` first, the verdict, the
-findings with their `CLASS:` lines, `Finished:` last — then a `---` line with
-the five sections and the shasums below it, and the literal last line `EXIT=0`
-on a pass (or a pass-with-mild-fixes), else `EXIT=1`. The landing check reads
-that last line.
+`<SCRATCH>/<TICKET>_GATE_report.md`, sent to your caller as your report (the
+`SubagentHandback` message when the harness offers that tool, as in Claude Code
+auto mode; otherwise your final message). It opens with a `Status:` block of at
+most 20 lines — `Started:` first, the verdict, the findings with their `CLASS:`
+lines, `Finished:` last — then a `---` line with the five sections and the
+shasums below it, and the literal last line `EXIT=0` on a pass (or a
+pass-with-mild-fixes), else `EXIT=1`. The landing check reads that last line.
 
 On a mild-only ticket, and on any `PROSE` ticket, there is no gate seat, and the
 file under this same name is the complete output of the gate script, saved by

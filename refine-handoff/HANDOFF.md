@@ -1,0 +1,248 @@
+# Handoff: llm-orchestrator refinement (2026-09-25)
+
+Read this whole file before doing anything. It is the state of the work, the
+process, and the rules. The owner is Felipe; address him as "Captain".
+
+> **This folder must not reach `main`.** `refine-handoff/` is working material.
+> Delete the whole folder, in its own commit on `refine/integration`, before
+> Felipe merges PR #34. PR #34's checklist and ticket T12 both say so. Run
+> `git ls-tree -r --name-only origin/refine/integration | grep '^refine-handoff/'`
+> before handing PR #34 to Felipe; it must print nothing.
+
+## 1. What we are building
+
+Felipe's plugin, `github.com/felipemelendez/llm-orchestrator`, for Claude Code
+and Codex. The goal is a system that is light for simple questions and
+reliable for long, complex projects, with nothing unused or legacy left in it.
+Felipe is the only user; nothing old is kept for compatibility.
+
+- `plans/2026-09-25-assessment.md`: why each change is being made.
+- `plans/2026-09-25-tickets.md`: every ticket, the rules for every ticket, the
+  order, and the decisions. **This is the working plan.**
+- `research/`: what Anthropic, OpenAI and published papers say (2026-09-25).
+  Leads, not proof: confirm a claim before building on it.
+- `reviews/`: GPT reviews still waiting to be fixed (T5, T20).
+- The approved review design is committed at `docs/specs/review-design.md`.
+
+On this machine the plan and research files lived in gitignored folders
+(`docs/llm-orchestrator/plans/`, `.../research/`); here they are committed
+copies. Keep working from these copies and update them as you go.
+
+## 2. Where the work is
+
+- Repo: `https://github.com/felipemelendez/llm-orchestrator` (public).
+- `refine/integration`: the staging branch. Every ticket lands here through
+  its own PR (#21–#33 so far).
+- PR #34 (draft): `refine/integration` → `main`. **Only Felipe merges it.**
+  Update its description as tickets land (fetch the live body first, then
+  change it minimally).
+- Ticket branches: `refine/t<N>-<slug>`, cut from `refine/integration`. On a
+  new machine, clone the repo and use `git worktree add ../llm-orchestrator-wt/<slug> origin/refine/<branch>` per ticket.
+
+## 3. State of every ticket
+
+Merged into `refine/integration`: T1, T3, T4 (spec), T7, T8, T13, T14, T15,
+T16, T17, T18, T19, T21.
+
+Dropped by Felipe: T2 (no notice shown to him; the check tells the agent only)
+and T9 (commands stay commands).
+
+In progress (each on its branch; check its latest pushed commit first, since
+the agent may have pushed more after this file was written):
+
+- **T5, build the review system** (`refine/t5-review-build`). Built and working;
+  a live Full review on a planted bug gave NOT-READY with both reviewers
+  finding it. Two reviews came back (GPT adversarial in
+  `reviews/t5-adversarial-report.md`; Opus contract summarized below). The
+  builder was fixing all of them when this was written. Remaining fix list, as
+  sent to the builder:
+  - GPT 1: Claude seats run Bash unsandboxed: sandbox Claude seats (Claude Code
+    sandbox settings), start seats with a reduced environment (no cloud
+    tokens); a seat that cannot run sandboxed is a dropout.
+  - GPT 2: missing/unreadable findings.json gives READY: any missing run file
+    is INCOMPLETE; keep the run dir outside paths experiments can write.
+  - GPT 3: quote-based drops accept any explanation: tighten R15 (only for
+    findings with no receipts and not not_runnable; quote must be in the named
+    file and lines); fix tests/test-review.py around line 792.
+  - GPT 4 / Opus 11: `git clone --local` hardlinks objects: use
+    `--no-hardlinks`, verify no shared inodes.
+  - GPT 5 / Opus 8: kill the whole process group on timeout.
+  - GPT 6 / Opus 1: submodules are empty in copies: initialize them at their
+    recorded commits from the local module store, or mark INCOMPLETE.
+  - GPT 7: a background-command acknowledgement counts as test evidence:
+    reject background and unfinished commands.
+  - GPT 8: a lowered rank without a valid refuter verdict gives READY-WITH-FIXES:
+    check the verdict first; unjudged serious → INCOMPLETE.
+  - Opus, rules with no test that would fail: R15 explanation required; R15
+    timed-out receipt; R17 repro-copy fingerprint; R17 errors.json → INCOMPLETE;
+    R14 notes kept from refuter; R8 not_runnable dropped with repro; R10 600 s
+    timeout; R14 refuter is Claude on a Codex-written Full review; R1 real crash.
+  - Opus 2–7, 9, 10: refuter lowering an invalid-evidence finding gives `mild`
+    not `note`; mild test-tampering raised to serious without repro gives
+    INCOMPLETE; dropout seats' findings are lost (R19); `review.copy_ignored`
+    via `.git/info/exclude` makes every run INCOMPLETE; non-ASCII names
+    (`-z` / `core.quotePath=false`); `{"verdicts": []}` from a seat KeyErrors;
+    a Claude stream with no init event must be a dropout; verify `codex sandbox`
+    passes stdin to `git apply -`.
+  - Simplify: drop decide's duplicate fingerprint loop and the unneeded
+    counters; name `--allow-test-changes`, `run --child` and the 3600 s seat
+    timeout in the spec.
+  - After fixes: both reviewers check again (Full path), `run-all.sh`, PR,
+    merge. Ruling 4 text (remove `workflows/` from LAWS and cadence.json) is in
+    the T5 report and must go into the combined ruling (section 6).
+- **T20, the rule-change command** (`refine/t20-ruling-command`).
+  `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by Felipe
+  in his terminal. Fix list sent to the builder (GPT review in
+  `reviews/t20-adversarial-report.md`):
+  1. Copy the patch to a private temp file before validating; apply only that
+     copy; show its hash in the prompt.
+  2. Check rename sources and deletes, not only destinations.
+  3. Trap INT/TERM/EXIT to undo; if undo fails, say so and name the files.
+  4. Resolve `--root` to an absolute path once.
+  5. Refuse when a protected file differs from the index; run `--audit HEAD`
+     after committing and undo on mismatch.
+  6. Allow protected paths not yet in the lock (defined by cadence.json/deny
+     rules).
+  7. Old projects keep old `.githooks` copies that honour
+     `ORCH_CADENCE_UNLOCK`: cadence-init must write a ready-made upgrade
+     ruling patch and print the one command; document the upgrade.
+  8. Test undo after the lock is written.
+  9. Only the marked section of AGENTS.md/CLAUDE.md is protected.
+  10. Refuse when `CLAUDECODE=1` or a Codex session variable is set; add a
+      `Bash(*cadence-ruling.sh*)` deny rule in cadence-init.
+  11. Docs must say plainly: the lock stops accidental edits and makes
+      deliberate ones visible; it cannot stop an agent determined to fake a
+      ruling.
+  - **Open question to Felipe (ask him first thing):** do we add signed rule
+    changes? His ruling commits would be signed with his existing SSH key
+    (`~/.ssh/id_ed25519`), the check would refuse unsigned ruling commits, and
+    the key would ask for his fingerprint or password each time. About five
+    minutes of one-time setup. Commit signing is not set up on this machine
+    today. Without it, the lock catches accidents but not a determined agent.
+- **T10, evaluation set** (`refine/t10-evals`). Built; nothing paid has run.
+  Fix list sent to the builder:
+  1. `file_exists` globs with `[0-9]` never match in the real grader (it
+     escapes `[`/`]`); use `*` globs and make the free check use the binary's
+     rule.
+  2. Only Full arms get the spec: give every arm the same spec text.
+  3. Score line-less findings the same in every arm; credit only findings
+     whose claim matches the defect; report false findings with a paired test.
+  4. Strengthen weak graders (median, split-pairs, ran-test-*).
+  5. Free check: also run the scripted reply without the work; check
+     `tool_used` offline; stage the workspace like the real eval.
+  6. Score test-tampering separately; unverified serious per provider; no
+     double-counted Codex tokens; isolate `codex review` from the person's
+     Codex config and MCP servers.
+  7. Ground cost estimates; name the smallest decisive run
+     (`run --arms full,code-review` on all 83 cases) with its price.
+  8. Stale references: `scripts/hooks/user-prompt-submit.sh:45`,
+     `docs/specs/review-design.md:393`, the "2.1.269 or later" claim.
+  - The effort arm stays unavailable: reviewers stay at high effort.
+  - After fixes and review: bring Felipe the price of the smallest decisive
+    run. **Never run paid evals yourself.**
+
+Not started (in order):
+- **T6**, remove the legacy procedure. Starts after T5 merges (both edit
+  `skills/cadence/CADENCE.md`). Also fixes the "printed as your final message"
+  wording T18's review found, and `skills/cadence/references/refuter.md:59`.
+- **T12**, remove everything unused. Runs on the finished tree. Its ticket
+  lists known items (stale hooks text in `docs/anthropic-ecosystem.md`; the
+  `session-start.sh` stdin hang; add `scripts/lib/orch-subagent-report.py`
+  and `cadence-ruling.sh` to `install.sh --check`; two tests that fail under
+  machine load). **Also delete `refine-handoff/`.**
+- **T11**, release notes and version. Last.
+
+## 4. How the work is run
+
+For each ticket:
+1. One agent with a fresh context does it, in its own worktree on its own
+   branch cut from `refine/integration`, and pushes. It does not open the PR.
+2. The coordinator (you) reads the diff and gets fresh reviewers by path
+   (the repo's laws, `docs/llm-orchestrator/LAWS.md`):
+   - Simple: coordinator review only.
+   - Standard: one fresh Opus reviewer that never saw the author's report.
+   - Full (two hubs, the lock, verification or review contracts): two blind
+     reviewers with different briefs, never seeing each other's findings: an
+     Opus contract reviewer (checks against the ticket or spec) and a GPT
+     adversarial reviewer through Codex (plain-language scene, tries to make
+     the wrong thing happen). A refuter only if they disagree or one alone
+     reports something serious.
+3. Send every finding back to the same author agent at once (it keeps its
+   context). Fix clear defects without asking Felipe. Scope later review
+   rounds to what an honest agent would really do; stop chasing contrived
+   cases and write them down as known limits instead.
+4. Merge `origin/refine/integration` into the branch, run
+   `bash tests/run-all.sh </dev/null` (about 15–20 minutes), then open the PR
+   into `refine/integration` with a plain description and merge it.
+5. Run independent tickets in parallel; only wait where two tickets edit the
+   same files.
+
+The GPT reviewer command (Codex CLI 0.157.0, logged in with ChatGPT; its
+default model is `gpt-6-astra`). Build the list of switched-off MCP servers as
+an array; in zsh a plain string is passed as one argument and breaks the call:
+
+```bash
+C=$(command -v codex)   # on the old machine: ~/.local/share/mise/installs/node/24.18.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/bin/codex
+OFF=(); for n in $(grep -oE '^\[mcp_servers\.[^].]+' ~/.codex/config.toml | sed 's/\[mcp_servers\.//' | sort -u); do OFF+=(-c "mcp_servers.$n.enabled=false"); done
+"$C" exec -s read-only -c model_reasoning_effort=high "${OFF[@]}" --disable apps --disable plugins \
+  -C <worktree> -o <report.md> "$(cat <brief.md>)" < /dev/null > <log> 2>&1
+```
+
+Always close input with `</dev/null` when running tests or `codex exec` from
+a tool; without it a hook or Codex waits forever for input.
+
+## 5. Rules and standards (Felipe's)
+
+- Talk to Felipe in plain, short language, with no jargon; lead with the
+  answer; give a recommendation when he must decide. Address him as "Captain".
+- Commit, branch, push and PR as needed. **Never merge into `main`.**
+- The work must be excellent: tests first (confirm they fail before the fix),
+  no new hooks, nothing unused or legacy left behind, docs updated in the same
+  change, no dated counts or machine-specific numbers in shipped docs.
+- Never edit protected files (`docs/llm-orchestrator/LAWS.md`, `cadence.json`,
+  `LOCK.sha256`, `.claude/settings.json`, `.githooks/`). Write the exact
+  proposed change for Felipe instead.
+- Never run paid evaluations. Small live `claude -p` / `codex exec` probes to
+  confirm behavior are fine; keep them tiny.
+- Verify before claiming: agents' reports, research files and comments are
+  leads until checked in code, docs or a live run.
+- One-line commit messages. PR bodies end with the Claude Code line.
+- Reviewers: Claude on the latest Opus (`opus`), GPT on the Codex CLI default,
+  reviewer effort high. The explorer agent is on `sonnet`.
+
+## 6. Decisions already made (do not re-ask)
+
+- Keep the rulebook lock. Rule changes: the agent explains why; if Felipe
+  agrees, he runs one command (T20).
+- Keep the destructive-git guard, the no-verify guard and the lock; the
+  dispatch-model, config-protection and unlock guards go (T19 done; T20 removes
+  the unlock guard).
+- Review design (T4) approved with all seven decisions: one Python script; the
+  refuter runs on every serious finding; the refuter is always Claude Opus; the
+  GPT reviewer may write in its own copy; review history stays outside the
+  repo; security is a lens in both reviewers' briefs; Claude reviewers use
+  `opus`.
+- Codex: one install route (the plugin installs skills and hooks;
+  `install.sh --codex` only writes the instructions block). Done in T21.
+- No legacy workflow survives.
+
+## 7. The end
+
+1. After T5, T20, T10, T6 and T12 land, build **one combined ruling patch**
+   with everything that needs a ruling, and give Felipe the one
+   `cadence-ruling.sh` command to run:
+   - the Ruling 3 amendment (text in T21's PR #29 and its report; latest
+     version says `install.sh --codex` removes old entries "once the plugin is
+     installed");
+   - Ruling 4, removing `workflows/` from LAWS.md section 2 and from
+     `cadence.json` `src_roots` and `prod_globs` (from T5);
+   - T20's own protected changes (LAWS intro and standing order, the AGENTS.md
+     marked block, the new `.githooks` copies), a first version is
+     `reviews/t20-ruling-4.patch`; regenerate it from the final T20 branch.
+   Number the rulings from the next free number at HEAD.
+2. Refresh the installed plugin copy to match the source (a standing rule in
+   LAWS section 2), wherever Felipe has it installed.
+3. T11 release notes and version.
+4. Delete `refine-handoff/`, confirm it is gone from `refine/integration`,
+   mark PR #34 ready, and tell Felipe his three steps: run the ruling command,
+   try the Codex checks in a real Codex session, review and merge PR #34.

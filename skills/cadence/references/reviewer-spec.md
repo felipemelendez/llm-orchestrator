@@ -33,8 +33,10 @@ Run the suites in the copy, unpiped, and read the summary from the log.
 
 ## Report
 
-`<SCRATCH>/<TICKET>_REV1_report.md`, printed as your final message. It opens
-with a `Status:` block of at most 20 lines — `Started:` first, the verdict
+`<SCRATCH>/<TICKET>_REV1_report.md`, sent to your caller as your report (the
+`SubagentHandback` message when the harness offers that tool, as in Claude Code
+auto mode; otherwise your final message). It opens with a `Status:` block of at
+most 20 lines — `Started:` first, the verdict
 `READY | READY-WITH-FIXES | NOT-READY` and the counts per rank, `Finished:`
 last — then a `---` line and the evidence below it: the findings in rank order
 with ids (`C-1…`, `S-1…`, `M-1…`), the spec table, and the shasums of anything

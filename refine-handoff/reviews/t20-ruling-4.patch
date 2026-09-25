@@ -1,0 +1,145 @@
+diff --git a/docs/llm-orchestrator/LAWS.md b/docs/llm-orchestrator/LAWS.md
+--- a/docs/llm-orchestrator/LAWS.md
++++ b/docs/llm-orchestrator/LAWS.md
+@@ -9,10 +9,9 @@
+ handoff and keeps working under the law as written. Only Felipe rules.
+ 
+ This file is what the cadence lock protects. It changes only by a numbered
+-ruling, in a commit whose message carries `Ruling <N>`, with `LOCK.sha256`
+-rewritten under `ORCH_CADENCE_UNLOCK=1`, which the person sets in the
+-environment when launching that session, never in a settings file and never by
+-an agent. The re-lock and the ruling commit happen inside that session.
++ruling, in a commit whose message carries `Ruling <N>`. Felipe makes that commit
++by running `skills/cadence/scripts/cadence-ruling.sh` in his own terminal; an
++agent proposes the change as a patch, with its reasons, and never runs it.
+ 
+ ## 1. What we are building, and why
+ 
+@@ -48,13 +47,14 @@
+ 
+ - **Standing orders:** never commit, push, merge or tag unless Felipe asks in
+   that turn; stage by explicit pathspec, never `git add -A`. Never run paid
+-  evaluations (`tests/evals/`) unattended. Never set or persist the unlock, the
+-  hook profile, the disabled-hooks list or any allow hatch; those belong to
+-  the person's own shell.
++  evaluations (`tests/evals/`) unattended. Never run `cadence-ruling.sh`, and never
++  set or persist the hook profile, the disabled-hooks list or any allow hatch;
++  those belong to the person's own shell.
+ - **Rulings that govern the build:**
+   `Ruling 1 (2026-09-17, Felipe): the proportional cadence specified in docs/specs/proportional-cadence.md applies to this repository itself, with workflow proportional, Claude and Codex execution evidence in blocking mode, and the shared task-resource cleanup; the framework verifies its own changes through its own hooks.`
+   `Ruling 2 (2026-09-22, Felipe): Claude Code only; completion is checked once at Stop, by warning, never by blocking. Supersedes Ruling 1 where they differ.`
+   `Ruling 3 (2026-09-23, Felipe): Codex is a supported harness, with the file guard and the completion check installed by install.sh --codex. On Codex the completion check's single decision:block continuation to the agent is the warning, suppressed on stop_hook_active; systemMessage and any output for the person stay forbidden. docs/llm-orchestrator/CODEX.md is reinstated. "One harness, one policy: Claude Code" is amended to "Claude Code and Codex, one policy". Supersedes Rulings 1 and 2 where they differ.`
++  `Ruling 4 (2026-09-25, Felipe): a rule change is proposed by the agent as a patch with its reasons; Felipe applies an agreed one by running skills/cadence/scripts/cadence-ruling.sh in his own terminal, which re-records the lock and commits the ruling. ORCH_CADENCE_UNLOCK and its guard are removed.`
+ - **Standing constraints:** shipped files under `scripts/`, `skills/`, `hooks/`,
+   `agents/`, `commands/`, `templates/`, `workflows/` and `output-styles/` are
+   production; `tests/` are tests; ordinary Markdown is documentation. After a
+diff --git a/AGENTS.md b/AGENTS.md
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -47,11 +47,11 @@
+   outside Git; finish cleanup after consumers stop and work is preserved.
+ - `LAWS.md`, `cadence.json`, `LOCK.sha256`, the deny rules in
+   `.claude/settings.json`, the git hook in `.githooks/`, and the marked section
+-  of `CLAUDE.md` and `AGENTS.md` change only by a numbered ruling, in a commit
+-  whose message carries that ruling, with the lock rewritten under
+-  `ORCH_CADENCE_UNLOCK=1` — which the person sets in the environment when
+-  launching the session, never in a settings file and never by an agent.
+-  Propose an amendment in the handoff instead.
++  of `CLAUDE.md` and `AGENTS.md` change only by a numbered ruling. To propose
++  one, explain why, write the change as a patch file outside Git, and show the
++  diff. If the person agrees, give them the one command that applies it,
++  `cadence-ruling.sh <patch> "<their wording>"` from the `cadence` skill's
++  `scripts/`, to run in their own terminal. Never run it yourself.
+ 
+ On Codex read project `CODEX.md` for evidence and hook trust. Installed hooks,
+ executed checks and instructions are distinct; Git checks do not prove reviews.
+diff --git a/.githooks/commit-msg b/.githooks/commit-msg
+--- a/.githooks/commit-msg
++++ b/.githooks/commit-msg
+@@ -26,7 +26,7 @@
+ rc=$?
+ 
+ if [ "$rc" -ne 0 ]; then
+-  echo "cadence: commit refused — amend the laws with 'Ruling <N>' in the message, in a session the person launched with ORCH_CADENCE_UNLOCK=1, then re-run --lock"
++  echo "cadence: commit refused — the rules change only by a numbered ruling, applied by the person with cadence-ruling.sh in their own terminal"
+ fi
+ 
+ exit "$rc"
+diff --git a/.githooks/orch-cadence-check.sh b/.githooks/orch-cadence-check.sh
+--- a/.githooks/orch-cadence-check.sh
++++ b/.githooks/orch-cadence-check.sh
+@@ -6,7 +6,8 @@
+ #                             mode is on, the laws' highest ruling, and whether
+ #                             the lock still matches the tree. Always exit 0.
+ #   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256. The
+-#                             only writer of that file.
++#                             only writer of that file; rewriting an existing
++#                             one needs a terminal.
+ #   --landing <ticket>        legacy report check, or proportional policy note.
+ #     [--base <sha>]
+ #   --commit-msg <msgfile>    the git-side gate (git hands the message file to
+@@ -282,16 +283,8 @@
+   return 1
+ }
+ 
+-unlock_env() { [ "${ORCH_CADENCE_UNLOCK:-}" = "1" ]; }
+-
+-settings_carrying_unlock() { # prints the first settings file that persists the token
+-  local f
+-  for f in "$ROOT_DIR/.claude/settings.json" "$ROOT_DIR/.claude/settings.local.json" "${HOME:-/nonexistent}/.claude/settings.json"; do
+-    [ -f "$f" ] || continue
+-    if grep -q 'ORCH_CADENCE_UNLOCK' "$f" 2>/dev/null; then printf '%s\n' "$f"; return 0; fi
+-  done
+-  return 1
+-}
++# An agent's shell has no terminal, so /dev/tty cannot be opened there.
++has_terminal() { { : < /dev/tty; } 2>/dev/null; }
+ 
+ # ---------- the marked section ------------------------------------------------
+ # The FIRST start marker through the first end marker after it. Never the last
+@@ -483,7 +476,6 @@
+   if git -C "$ROOT_DIR" show "HEAD:$CFG_REL" > "$TMPD/headcfg" 2>/dev/null; then
+     cmp -s "$TMPD/headcfg" "$CFG_FILE" || line="$line · config differs from HEAD"
+   fi
+-  unlock_env && line="$line · UNLOCKED"
+   # The skips a session has applied, when the session has a state file to
+   # record them in. With no state file the verdict line is unchanged byte for
+   # byte — a fresh project must not be told "skips: 0" on its first turn.
+@@ -519,7 +511,7 @@
+ }
+ 
+ mode_lock() {
+-  local sf e h rc out
++  local e h rc out
+   cfg_load
+   if [ -f "$CFG_FILE" ] && [ "$CFG_OK" != "1" ]; then
+     echo "REFUSED: $CFG_REL does not decode — repair the JSON configuration before --lock"
+@@ -530,12 +522,8 @@
+     return 1
+   fi
+   cfg_workflow || return 1
+-  if sf=$(settings_carrying_unlock); then
+-    echo "REFUSED: $sf carries ORCH_CADENCE_UNLOCK — a persisted unlock is a disarmed lock; remove it, then re-run --lock"
+-    return 1
+-  fi
+-  if [ -f "$ROOT_DIR/$LOCK_REL" ] && ! unlock_env; then
+-    echo "REFUSED: $LOCK_REL already exists; re-run with ORCH_CADENCE_UNLOCK=1 in the environment to rewrite it"
++  if [ -f "$ROOT_DIR/$LOCK_REL" ] && ! has_terminal; then
++    echo "REFUSED: $LOCK_REL already exists and there is no terminal; the person re-records it in their own terminal, with cadence-ruling.sh for a rule change"
+     return 1
+   fi
+   out="$TMPD/lock.new"; : > "$out"
+@@ -782,11 +770,11 @@
+   # boilerplate, and then they stop reading it.
+   if [ "$defects" -gt 0 ]; then
+     if [ "$need_ruling" = "1" ] && [ "$need_relock" = "1" ]; then
+-      echo "$label: put \`Ruling <N>\` in the commit message, record it in $LAWS_REL, and re-run --lock under ORCH_CADENCE_UNLOCK=1"
++      echo "$label: put \`Ruling <N>\` in the commit message, record it in $LAWS_REL, and re-run --lock (cadence-ruling.sh does all three)"
+     elif [ "$need_ruling" = "1" ]; then
+       echo "$label: put \`Ruling <N>\` in the commit message and record it in $LAWS_REL"
+     elif [ "$need_relock" = "1" ]; then
+-      echo "$label: re-run --lock under ORCH_CADENCE_UNLOCK=1 so the manifest matches what is being committed"
++      echo "$label: re-run --lock in your own terminal so the manifest matches what is being committed"
+     fi
+     return 1
+   fi

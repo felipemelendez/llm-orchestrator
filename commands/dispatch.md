@@ -16,10 +16,8 @@ Steps:
 
 2. Resolve `$ARGUMENTS` into a task set.
 
-3. Use `TaskCreate` (native Claude Code task tool) to create one task per resolved plan task, in plan order. This is your state board for the rest of the run.
-
-4. Decide routing per task by reading its `Independent:` line:
-   - **Three or more** selected tasks, all `Independent: yes`, no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 7 does per-task review for high-risk surface and a combined-diff review otherwise). Below three, coordination cost beats the speedup and the skill itself declines the work, so route them sequentially.
+3. Decide routing per task by reading its `Independent:` line:
+   - **Three or more** selected tasks, all `Independent: yes`, no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 6 does per-task review for high-risk surface and a combined-diff review otherwise). Below three, coordination cost beats the speedup and the skill itself declines the work, so route them sequentially.
    - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with per-task two-stage review).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
 
@@ -41,11 +39,11 @@ Steps:
    the dispatch skills directly: it owns the post-group assertions and the
    tier-boundary handoff that routing straight to a dispatch skill skips.
 
-5. Follow the invoked skill exactly. After each task completes, mark its task `completed` via `TaskUpdate` and tick the plan checkbox in the plan file.
+4. Follow the invoked skill exactly. After each task completes, tick its heading checkbox in the plan file.
 
-6. Continuous execution: do not ask the user between tasks. Stop only on unresolvable `BLOCKED`, genuine ambiguity, or all-done.
+5. Continuous execution: do not ask the user between tasks. Stop only on unresolvable `BLOCKED`, genuine ambiguity, or all-done.
 
-7. When the task set is empty, report:
+6. When the task set is empty, report:
 
 ```
 Found:

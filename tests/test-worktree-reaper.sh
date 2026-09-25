@@ -160,6 +160,36 @@ OUT=$(fire "$W" 'Status: DONE
 Summary: all good')
 held "$W/.worktrees/only" && ok "unnamed worktree left alone" || fail "reaped without evidence" "$OUT"
 
+printf '\n%s== the report the implementer sent its caller is read ==%s\n' "$DIM" "$RESET"
+# Captured Claude Code 2.1.282 payloads. In auto mode the report is the
+# SubagentHandback message and last_assistant_message is "Report delivered to
+# caller."; in default mode the report is last_assistant_message.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+fire_captured() { # fire_captured <out-dir> <materialize args...>
+  local dir="$1"; shift
+  python3 "$MAT" "$@" --agent-type llm-orchestrator:orch-implementer "$dir" | bash "$HOOK" 2>&1
+}
+DONE_REPORT='Status: DONE
+Summary: finished in .worktrees/only
+Verify: bash tests/test-a.sh → 3 passed'
+W="$TMP/h"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" auto --report "$DONE_REPORT")
+held "$W/repo/.worktrees/only" && fail "auto mode: DONE in the SubagentHandback report not read" "$OUT" \
+  || ok "auto mode: the one worktree named in a DONE handback report is reaped"
+W="$TMP/i"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" auto --report "$DONE_REPORT" --handback-error)
+held "$W/repo/.worktrees/only" && ok "auto mode: a SubagentHandback answered by an error is not the report" \
+  || fail "auto mode: reaped from an errored handback" "$OUT"
+W="$TMP/j"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" default --report "$DONE_REPORT")
+held "$W/repo/.worktrees/only" && fail "default mode: DONE in last_assistant_message not read" "$OUT" \
+  || ok "default mode: the one worktree named in a DONE last_assistant_message is reaped"
+W="$TMP/k"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" default --report 'Status: BLOCKED
+Need: .worktrees/only is held')
+held "$W/repo/.worktrees/only" && ok "default mode: a BLOCKED report reaps nothing" \
+  || fail "default mode: reaped on BLOCKED" "$OUT"
+
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-worktree-reaper%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"; exit 0
