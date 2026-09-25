@@ -16,7 +16,8 @@
 #   P2  docs/install.md Option B wires every hook script hooks.json ships.
 #   P3  --copy seeds settings.json from templates/settings.json and ships
 #       docs/install.md so the settings _hooks_note pointer resolves.
-#   P4  --check fails on deleted referenced files and corrupted JSON.
+#   P4  --check fails on deleted referenced files and corrupted JSON, the Codex
+#       manifest included.
 #   P6  both hard-guard escape hatches are documented.
 #   P7  templates/settings.json contains no permission rules that cannot fire.
 #   P8  validate-workflows signals degraded mode when node is absent.
@@ -152,7 +153,7 @@ section "--copy fails closed on unresolvable hooks (P1)"
 copy_tree() {
   local dst="$1" item
   mkdir -p "$dst"
-  for item in "$ROOT"/* "$ROOT"/.claude-plugin "$ROOT"/.github; do
+  for item in "$ROOT"/* "$ROOT"/.claude-plugin "$ROOT"/.codex-plugin "$ROOT"/.github; do
     [[ -e "$item" ]] || continue
     cp -R "$item" "$dst/"
   done
@@ -228,6 +229,18 @@ io.open(p, "w", encoding="utf-8").write(s)
 PY
 expect_check_fail "--check fails when hooks.json references a missing script"
 cp "$TMP/keep.a" "$TMP/src/hooks/hooks.json"
+
+# The Codex manifest carries its hooks inline; the same two checks cover it.
+cp "$TMP/src/.codex-plugin/plugin.json" "$TMP/keep.a"
+printf 'NOT JSON{{{\n' > "$TMP/src/.codex-plugin/plugin.json"
+expect_check_fail "--check fails when .codex-plugin/plugin.json is not JSON"
+python3 - "$TMP/keep.a" "$TMP/src/.codex-plugin/plugin.json" <<'PY'
+import io, sys
+s = io.open(sys.argv[1], encoding="utf-8").read()
+io.open(sys.argv[2], "w", encoding="utf-8").write(s.replace("codex-verify-gate.sh", "does-not-exist.sh", 1))
+PY
+expect_check_fail "--check fails when .codex-plugin/plugin.json references a missing script"
+cp "$TMP/keep.a" "$TMP/src/.codex-plugin/plugin.json"
 
 # Referenced artifacts proven deletable-without-detection before the fix.
 mv "$TMP/src/workflows/review-diff.js" "$TMP/keep.a"

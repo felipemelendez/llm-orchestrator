@@ -372,7 +372,8 @@ done < <(find "$ROOT/agents" -maxdepth 1 -name '*.md' | sort)
 
 # The plugin version is quoted in prose, and a quoted version rots: manual-testing
 # claimed 0.1.0 while the plugin shipped 0.6.0, and marketplace.json is a second
-# copy that must agree with plugin.json or an install advertises the wrong build.
+# copy that must agree with plugin.json or an install advertises the wrong build;
+# .codex-plugin/plugin.json is a third copy, and Codex keys its cached install by it.
 # One source of truth, checked against every copy.
 PLUGIN_VERSION=$(python3 -c "import json;print(json.load(open('${ROOT}/.claude-plugin/plugin.json'))['version'])" 2>/dev/null)
 if [[ -z "${PLUGIN_VERSION}" ]]; then
@@ -385,6 +386,11 @@ d=json.load(open('${ROOT}/.claude-plugin/marketplace.json'))
 print(d['plugins'][0].get('version',''))" 2>/dev/null)
   if [[ "${MP_VERSION}" != "${PLUGIN_VERSION}" ]]; then
     echo "FAIL: marketplace.json says '${MP_VERSION}' but plugin.json says '${PLUGIN_VERSION}'"
+    fail=1
+  fi
+  CODEX_VERSION=$(python3 -c "import json;print(json.load(open('${ROOT}/.codex-plugin/plugin.json')).get('version',''))" 2>/dev/null)
+  if [[ "${CODEX_VERSION}" != "${PLUGIN_VERSION}" ]]; then
+    echo "FAIL: .codex-plugin/plugin.json says '${CODEX_VERSION}' but .claude-plugin/plugin.json says '${PLUGIN_VERSION}'"
     fail=1
   fi
   while IFS= read -r hit; do
