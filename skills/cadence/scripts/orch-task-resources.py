@@ -5,13 +5,7 @@ import runpy
 import sys
 
 here = Path(__file__).resolve()
-candidates = (
-    here.parent / "lib/orch-task-resources.py",
-    here.parents[3] / "scripts/lib/orch-task-resources.py",
-)
-for candidate in candidates:
-    if candidate.is_file():
-        runpy.run_path(str(candidate), run_name="__main__")
-        break
-else:
+helper = here.parents[3] / "scripts/lib/orch-task-resources.py"
+if not helper.is_file():
     sys.exit("Task-resource helper missing; reinstall the cadence skill.")
+runpy.run_path(str(helper), run_name="__main__")

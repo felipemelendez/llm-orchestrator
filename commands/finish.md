@@ -9,7 +9,7 @@ User input: $ARGUMENTS (optional — chosen option number 1-4)
 Preconditions:
 - `/llm-orchestrator:verify` returned green.
 - `/llm-orchestrator:review` verdict is `yes`, or `with-fixes` is fully addressed.
-- All tasks for this plan are marked `completed` (`TaskList` shows none in flight).
+- Every task heading checkbox in the plan file is ticked.
 
 If preconditions are not met, stop and report which one.
 
