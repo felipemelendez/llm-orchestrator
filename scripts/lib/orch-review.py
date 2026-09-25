@@ -544,23 +544,14 @@ class Review:
             f"`git diff {state['base']}` shows it.", ""])
 
     def check_refuter(self):
-        """Record whether each refuter verdict's evidence is valid under R9 (R15, R16)."""
+        """Keep each refuter verdict with the evidence type it cited (R15, R16)."""
         output = read_json(self.run_dir / "launches/refuter/output.json", {})
         checked = []
         for raw in output.get("verdicts", []) if isinstance(output, dict) else []:
             item = raw if isinstance(raw, dict) else {}
             evidence = item.get("evidence") if isinstance(item.get("evidence"), dict) else {}
-            valid, why = False, "no evidence"
-            if evidence.get("type") == "file-line":
-                valid, why = file_line_valid(self.project, self.tree, evidence)
-                explanation = evidence.get("explanation")
-                if valid and not (isinstance(explanation, str) and explanation.strip()):
-                    valid, why = False, "a quote without an explanation"
-            elif evidence.get("type") == "receipt-1":
-                valid, why = True, "cites receipt 1"
             checked.append({"raw": raw, "id": item.get("id"), "verdict": item.get("verdict"),
-                            "rank": item.get("rank"), "evidence": evidence,
-                            "evidence_valid": valid, "evidence_reason": why})
+                            "rank": item.get("rank"), "evidence": evidence})
         write_json(self.run_dir / "refuter.json", checked)
 
     # The whole run
@@ -761,8 +752,17 @@ def finish_launch(fields, output, launch_dir):
     return fields
 
 
+def sandbox_probe(launch_dir):
+    """A command whose result shows whether the seat's Bash runs in the sandbox: it tries to write
+    outside the copy, which the sandbox refuses."""
+    target = launch_dir / "sandbox-probe"
+    return target, (f"touch {shlex.quote(str(target))} 2>&1 && echo ORCH-SANDBOX-OFF || echo ORCH-SANDBOX-ON")
+
+
 def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
     """R5. Returns the launch fields; a dropout (R7) keeps status "dropout" with a reason."""
+    target, probe = sandbox_probe(launch_dir)
+    prompt = f"Sandbox check: run exactly this command first: {probe}\n\n{prompt}"
     argv = ["claude", "-p", "--settings", claude_sandbox(copy, run_dir),
             "--output-format", "stream-json", "--verbose", "--model", CLAUDE_ALIAS,
             "--effort", EFFORT, "--json-schema", schema, "--safe-mode", "--restricted",
@@ -815,6 +815,11 @@ def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
         fields["reason"] = "the stream has no system init event, so its MCP servers are unknown"
     if not fields["reason"] and unsandboxed:
         fields["reason"] = "a Bash call asked to run outside the sandbox"
+    probed = [run for run in commands if run["command"].strip() == probe]
+    fields["sandbox_check"] = probed[0]["output"] if probed else None
+    if not fields["reason"] and (target.exists() or not probed or "ORCH-SANDBOX-ON" not in probed[0]["output"]
+                                 or "ORCH-SANDBOX-OFF" in probed[0]["output"]):
+        fields["reason"] = "the sandbox check did not show a refused write outside the copy"
     return finish_launch(fields, output, launch_dir)
 
 
@@ -940,24 +945,12 @@ def initial_status(found):
 
 
 def drop_allowed(found, verdict):
-    """R15: which evidence may drop a finding, or lower its rank (R16).
-
-    A passing receipt 1 may drop a finding whose experiment ran. A quoted line may drop only a
-    finding whose experiment did not run, and only a line in the file and at the line the
-    finding names."""
-    if found["reproduced"] or found["not_runnable"] or not verdict["evidence_valid"]:
+    """R15 and R16: only a passing receipt 1 on the seat's own command may drop a finding or lower
+    its rank. A reproduced or not_runnable finding, or one whose experiment did not run, cannot."""
+    if found["reproduced"] or found["not_runnable"] or verdict["evidence"].get("type") != "receipt-1":
         return False
-    evidence = verdict["evidence"]
-    if evidence.get("type") == "receipt-1":
-        first = found["receipts"].get("1", {})
-        return bool(found["repro"] and first.get("ran") and not first.get("timed_out")
-                    and first.get("exit_code") == 0)
-    if evidence.get("type") != "file-line" or any(r.get("ran") for r in found["receipts"].values()):
-        return False
-    named = found["evidence"] if isinstance(found["evidence"], dict) else {}
-    lines = {found["line"], named.get("line") if named.get("type") == "file-line" else None} - {None}
-    same_file = str(evidence.get("file", "")).removeprefix("./") == str(found["file"] or "").removeprefix("./")
-    return same_file and evidence.get("line") in lines
+    first = found["receipts"].get("1", {})
+    return bool(found["repro"] and first.get("ran") and not first.get("timed_out") and first.get("exit_code") == 0)
 
 
 def decide(run_dir):
@@ -1061,7 +1054,7 @@ def decide(run_dir):
             "diff_lines": start["diff_lines"] if start else 0,
             "launches": [{key: launch.get(key) for key in (
                 "name", "provider", "brief", "status", "reason", "requested_model", "served_model",
-                "requested_effort", "served_effort", "cost_usd", "tokens")} for launch in launches],
+                "requested_effort", "served_effort", "cost_usd", "tokens", "sandbox_check")} for launch in launches],
             "findings": findings, "not_checked": not_checked, "counts": counts,
             "cleanup": read_json(run_dir / "cleanup.json")}
 
@@ -1092,9 +1085,7 @@ def adjudicate(findings, verdicts):
             found["status"] = verdict["verdict"].lower()
         if verdict:
             found["refuter"] = {"verdict": verdict.get("verdict"), "rank": verdict.get("rank"),
-                                "evidence": verdict.get("evidence"),
-                                "evidence_valid": verdict.get("evidence_valid"),
-                                "evidence_reason": verdict.get("evidence_reason")}
+                                "evidence": verdict.get("evidence")}
 
 
 def outcome_path():

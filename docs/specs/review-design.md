@@ -274,19 +274,16 @@ lacked. T10 tests the swap.
   - `--no-refuter` skips the refuter (T10 only), and the review is marked
     `experimental`.
 - **R15.** A reproduced finding and a `not_runnable` finding can never be
-  dropped. For any other finding, `DROPPED` is valid only when it does one
-  of these:
-  - cites the seat's own receipt 1, and receipt 1 passed: the claimed
-    failure did not happen. A patch that did not apply, or a receipt 2 that
-    failed, proves nothing and cannot support a drop;
-  - gives a `file-line` quote that is valid under R9, and explains why that
-    line contradicts the claim. A quote may drop only a finding whose fix
-    experiment did not run (no receipt ran), and only a quote of the file
-    and line the finding names.
-
-  An invalid `DROPPED` counts as `UNRESOLVED`.
+  dropped. For any other finding, `DROPPED` is valid only when it cites the
+  seat's own receipt 1 and receipt 1 passed (finished within 600 seconds with
+  exit 0): the claimed failure did not happen. A patch that did not apply,
+  or a receipt 2 that failed, proves nothing. A finding whose experiment did
+  not run cannot be dropped: the refuter can only promote it or leave it
+  `unresolved`, and both block. A quoted line is never enough, because a
+  refuter can quote the defective line itself and argue that it is
+  intended. An invalid `DROPPED` counts as `UNRESOLVED`.
 - **R16.** The refuter may lower a rank only where R15 would allow a drop,
-  with the same evidence. A reproduced or `not_runnable` finding keeps its
+  with the same evidence (a passing receipt 1). A reproduced or `not_runnable` finding keeps its
   rank. The refuter never raises a rank, and a verdict other than
   `PROMOTED`, `DROPPED` or `UNRESOLVED` changes nothing: the finding is
   `unjudged`. A finding lowered to `mild` then follows the `mild` rule of

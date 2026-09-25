@@ -8,15 +8,11 @@ repository with the change, so you can read files and run commands.
 Return one verdict for each serious or catastrophic finding, by its id:
 
 - `PROMOTED`: the finding holds, or you cannot show that it does not.
-- `DROPPED`: you can show that it does not hold. A drop counts only with one
-  of these as evidence:
-  - `receipt-1`: the finding's own receipt 1 passed, so the claimed failure
-    did not happen. A patch that did not apply, or a receipt 2 that failed,
-    proves nothing and cannot support a drop.
-  - `file-line`: the exact text of one line of the reviewed files (`file`,
-    `line`, `quote`), and an `explanation` of why that line contradicts the
-    claim.
-  Any other drop is counted as `UNRESOLVED`.
+- `DROPPED`: the finding's own receipt 1 passed, so the claimed failure did
+  not happen. Cite it as evidence type `receipt-1`. This is the only drop the
+  script accepts. A patch that did not apply, or a receipt 2 that failed,
+  proves nothing. A finding whose experiment did not run cannot be dropped:
+  promote it or leave it unresolved. Any other drop counts as `UNRESOLVED`.
 - `UNRESOLVED`: you could not settle it; say why in `explanation`.
 
 ## Rules
@@ -32,10 +28,10 @@ Return one verdict for each serious or catastrophic finding, by its id:
 4. **Findings about the same defect are judged one by one.** Give each id its
    own verdict.
 5. **Length and certainty are not evidence.** Never side with the more
-   confident or longer finding; cite a line or a receipt.
+   confident or longer finding; a receipt is the evidence.
 6. **Wording is the owner's call.** A finding about a sentence a person reads
    is promoted, never dropped.
 7. **Add no findings.** Judge only the ids you were given.
 
-Set unused evidence fields to null. For `PROMOTED` and `UNRESOLVED`, use
-evidence type `none` unless you have a line to cite.
+Use evidence type `none` for `PROMOTED` and `UNRESOLVED`, and put your
+reasons in `explanation`.

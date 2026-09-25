@@ -45,9 +45,6 @@
             "additionalProperties": false,
             "required": [
               "type",
-              "file",
-              "line",
-              "quote",
               "explanation"
             ],
             "properties": {
@@ -55,26 +52,7 @@
                 "type": "string",
                 "enum": [
                   "receipt-1",
-                  "file-line",
                   "none"
-                ]
-              },
-              "file": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "line": {
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "quote": {
-                "type": [
-                  "string",
-                  "null"
                 ]
               },
               "explanation": {

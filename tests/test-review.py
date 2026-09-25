@@ -83,6 +83,13 @@ def emit(event):
     print(json.dumps(event), flush=True)
 if not spec.get("no_init"):
     emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", [])})
+probe = re.search(r"^Sandbox check: run exactly this command first: (.+)$", prompt, re.M)
+if probe and spec.get("probe", "sandboxed") != "skip":
+    if spec.get("probe", "sandboxed") == "sandboxed":
+        spec.setdefault("commands", []).insert(0, {"command": probe.group(1),
+                                                   "output": "touch: x: Operation not permitted\nORCH-SANDBOX-ON\n"})
+    else:
+        spec.setdefault("commands", []).insert(0, {"command": probe.group(1)})
 background = {item["command"] for item in spec.get("commands", []) if item.get("background")}
 unsandboxed = {item["command"] for item in spec.get("commands", []) if item.get("unsandboxed")}
 for n, (command, output, code) in enumerate(run_commands(spec, os.getcwd())):
@@ -174,8 +181,7 @@ def seat(*findings, not_checked=(), **extra):
 
 def verdict(finding_id, word, rank=None, evidence=None):
     return {"id": finding_id, "verdict": word, "rank": rank,
-            "evidence": evidence or {"type": "none", "file": None, "line": None, "quote": None,
-                                     "explanation": None}}
+            "evidence": evidence or {"type": "none", "explanation": None}}
 
 
 def refuter(*verdicts, **extra):
@@ -418,6 +424,13 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(sandbox["filesystem"]["allowWrite"], [cwd])
         self.assertIn(str(self.run_dir), sandbox["filesystem"]["denyRead"])
         self.assertEqual(sandbox["network"]["allowedDomains"], [])
+
+    def test_r5_a_claude_seat_whose_sandbox_check_fails_or_is_skipped_is_a_dropout(self):
+        for probe in ("unsandboxed", "skip"):
+            with self.subTest(probe):
+                self.scenario["claude"]["seats"]["contract"] = seat(probe=probe)
+                review = self.review("standard", "claude")
+                self.assert_incomplete(review, "sandbox check")
 
     def test_r5_a_claude_bash_call_outside_the_sandbox_is_a_dropout(self):
         self.scenario["claude"]["seats"]["contract"] = seat(commands=[{"command": "ls", "output": "x",
@@ -874,8 +887,7 @@ class ReviewTests(unittest.TestCase):
     def test_r15_a_drop_needs_a_passing_receipt_1(self):
         passing = finding(repro={"command": "true", "patch": FIX})
         failing = finding(repro={"command": CHECK, "patch": "not a patch\n"})
-        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None,
-                "explanation": "the command passed without the fix"}
+        cite = {"type": "receipt-1", "explanation": "the command passed without the fix"}
         self.scenario["codex"]["seats"]["adversarial"] = seat(passing, failing)
         self.scenario["claude"]["seats"]["refuter"] = refuter(
             verdict("adversarial-1-1", "DROPPED", evidence=cite),
@@ -897,19 +909,16 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review["verdict"], "NOT-READY")
         self.assertEqual(review["findings"][0]["refuter"]["evidence"], quote)
 
-    def test_r15_a_quote_drops_only_an_unrun_finding_and_only_on_its_own_line(self):
+    def test_r15_a_quote_never_drops_a_finding_even_when_its_experiment_did_not_run(self):
+        # The round-2 reviewer's scene: no sandbox, so no receipt ran; the refuter quotes the
+        # defective line itself and claims the spec wants a difference.
         self.scenario["codex"]["sandbox"] = False
-        self.scenario["codex"]["seats"]["adversarial"] = seat(finding(), finding())
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding())
         own = {"type": "file-line", "file": "calc.py", "line": 2, "quote": "return a - b",
                "explanation": "the spec asks for the difference"}
-        other = {"type": "file-line", "file": "check.py", "line": 3,
-                 "quote": "sys.exit(0 if calc.add(2, 2) == 4 else 1)", "explanation": "the check expects 4"}
-        self.scenario["claude"]["seats"]["refuter"] = refuter(
-            verdict("adversarial-1-1", "DROPPED", evidence=own),
-            verdict("adversarial-1-2", "DROPPED", evidence=other))
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "DROPPED", evidence=own))
         review = self.review("full", "claude")
-        self.assertEqual(self.status(review, "adversarial-1-1"), "dropped")
-        self.assertEqual(self.status(review, "adversarial-1-2"), "unresolved")
+        self.assertEqual(self.status(review, "adversarial-1-1"), "unresolved")
         self.assertEqual(review["verdict"], "NOT-READY")
 
     # R16
@@ -917,8 +926,7 @@ class ReviewTests(unittest.TestCase):
         not_applied = {"command": CHECK, "patch": "not a patch\n"}
         quote = {"type": "file-line", "file": "calc.py", "line": 1, "quote": "def add(a, b):",
                  "explanation": "only a naming concern"}
-        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None,
-                "explanation": "the command passed without the fix"}
+        cite = {"type": "receipt-1", "explanation": "the command passed without the fix"}
         self.scenario["codex"]["seats"]["adversarial"] = seat(
             finding(repro={"command": "true", "patch": FIX}), finding(repro=not_applied), finding(),
             finding("mild", repro=None))
@@ -936,7 +944,7 @@ class ReviewTests(unittest.TestCase):
 
     def test_r16_a_rank_change_without_a_valid_verdict_leaves_the_finding_unjudged(self):
         self.scenario["codex"]["seats"]["adversarial"] = seat(finding(repro={"command": "true", "patch": FIX}))
-        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None, "explanation": "passed"}
+        cite = {"type": "receipt-1", "explanation": "passed"}
         self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "MAYBE", rank="mild",
                                                                       evidence=cite))
         review = self.review("full", "claude")
@@ -954,16 +962,9 @@ class ReviewTests(unittest.TestCase):
         (copy / "findings.json").write_text(json.dumps(recorded))
         return MOD.decide(copy)
 
-    def test_r15_a_quote_drop_needs_an_explanation(self):
-        self.scenario["codex"]["sandbox"] = False
-        self.scenario["codex"]["seats"]["adversarial"] = seat(finding())
-        bare = {"type": "file-line", "file": "calc.py", "line": 2, "quote": "return a - b", "explanation": None}
-        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "DROPPED", evidence=bare))
-        self.assertEqual(self.status(self.review("full", "claude"), "adversarial-1-1"), "unresolved")
-
     def test_r15_a_timed_out_receipt_1_cannot_support_a_drop(self):
         self.scenario["codex"]["seats"]["adversarial"] = seat(finding(repro={"command": "true", "patch": FIX}))
-        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None, "explanation": "it passed"}
+        cite = {"type": "receipt-1", "explanation": "it passed"}
         self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "DROPPED", evidence=cite))
         self.assertEqual(self.status(self.review("full", "claude"), "adversarial-1-1"), "dropped")
         def time_out(recorded):
@@ -1037,7 +1038,7 @@ class ReviewTests(unittest.TestCase):
     def test_r11_a_finding_lowered_to_mild_follows_the_mild_rules(self):
         weak = finding(repro={"command": "true", "patch": FIX}, confidence=0.1)
         self.scenario["codex"]["seats"]["adversarial"] = seat(weak)
-        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None, "explanation": "it passed"}
+        cite = {"type": "receipt-1", "explanation": "it passed"}
         self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "PROMOTED", rank="mild",
                                                                       evidence=cite))
         review = self.review("full", "claude")
