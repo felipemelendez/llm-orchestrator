@@ -20,7 +20,7 @@ Steps:
 
 4. Decide routing per task by reading its `Independent:` line:
    - **Three or more** selected tasks, all `Independent: yes`, no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 7 does per-task review for high-risk surface and a combined-diff review otherwise). Below three, coordination cost beats the speedup and the skill itself declines the work, so route them sequentially.
-   - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with per-task two-stage review).
+   - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with a review after each task).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
 
    Before any parallel batch, satisfy that skill's hard precondition: **every

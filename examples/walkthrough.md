@@ -106,18 +106,14 @@ Verify:
 
 User: `/llm-orchestrator:review`
 
-Stage 1 — spec compliance. Verdict: yes.
-Stage 2 — code quality. One Important issue: missing test for the concern.
+The command runs a Standard review: `orch-review.py` starts one contract seat in a disposable clone, checks its evidence, and writes `review.json` outside the repository.
 
 ```
-Issues:
-- Critical: 0
-- Important: 1 — src/middleware/rate-limit.ts:20 lacks a test for the new client construction
-- Minor: 2
-Verdict:
-- with-fixes — address 1 Important before merging
+Verdict: READY-WITH-FIXES
+Mild:
+- contract-1-1 — src/middleware/rate-limit.ts:20 lacks a test for the new client construction
 Next:
-- Add the missing test, then /llm-orchestrator:verify and /llm-orchestrator:finish.
+- Add the missing test, record the disposition with orch-review.py record, then /llm-orchestrator:verify and /llm-orchestrator:finish.
 ```
 
 ## 6. Verify

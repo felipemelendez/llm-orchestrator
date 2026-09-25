@@ -8,7 +8,7 @@ User input: $ARGUMENTS (optional — chosen option number 1-4)
 
 Preconditions:
 - `/llm-orchestrator:verify` returned green.
-- `/llm-orchestrator:review` verdict is `yes`, or `with-fixes` is fully addressed.
+- `/llm-orchestrator:review` verdict is `READY`, or `READY-WITH-FIXES` with the mild findings handled.
 - All tasks for this plan are marked `completed` (`TaskList` shows none in flight).
 
 If preconditions are not met, stop and report which one.

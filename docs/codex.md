@@ -24,8 +24,10 @@ what you get, how to install it, and what it never does.
      see a message from it.
   3. *Scratch cleanup.* Removes temporary files left behind by finished tasks.
 
-Everything else, such as planning, brainstorming, the reviewers and the merge
-queue, stays in Claude Code.
+Code review also runs on Codex: the `requesting-code-review` skill starts
+`scripts/lib/orch-review.py`, which works the same on both harnesses (see
+[codex-provider.md](codex-provider.md)). Everything else, such as planning,
+brainstorming and the merge queue, stays in Claude Code.
 
 ## Install
 
@@ -113,10 +115,10 @@ Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or
   live session. One Codex turn that ends in PASS with no check is enough to see
   it work.
 
-## Optional: a Claude reviewer from Codex
+## Reviews from Codex
 
-On Full work, one of the two independent reviews can come from Claude through
-your existing Claude login. See [codex-provider.md](codex-provider.md).
+On Full work the review script runs one seat on Codex and one on Claude,
+through your existing Claude login. See [codex-provider.md](codex-provider.md).
 
 ## Tests
 
@@ -124,5 +126,5 @@ your existing Claude login. See [codex-provider.md](codex-provider.md).
 bash tests/test-codex-verify-gate.sh   # the completion check on log fixtures
 bash tests/test-codex-adapter.sh       # the file guard
 bash tests/test-install-global.sh      # the installer under a temporary HOME
-python3 tests/test-claude-provider.py  # the optional Claude reviewer, with a fake CLI
+python3 tests/test-review.py          # the review script, with fake claude and codex
 ```

@@ -23,7 +23,7 @@ Use when a plan exists at `docs/llm-orchestrator/plans/`, more than one task rem
 
 6. **Run continuously**, group to group, without asking the user. Stops: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
 
-7. **When all groups complete:** run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the combined diff; `Ready: yes` → `/llm-orchestrator:finish`. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
+7. **When all groups complete:** run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the combined diff; `READY`, or `READY-WITH-FIXES` with the mild findings handled → `/llm-orchestrator:finish`. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
 
 ## Resuming from a handoff
 

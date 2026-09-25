@@ -1,7 +1,6 @@
 # Spec: one review design for Standard and Full
 
-Status: proposed 2026-09-25 (ticket T4). Not built. T5 builds it only after
-Felipe approves this file.
+Status: approved by Felipe on 2026-09-25 (ticket T4) and built in ticket T5.
 
 ## Goal
 

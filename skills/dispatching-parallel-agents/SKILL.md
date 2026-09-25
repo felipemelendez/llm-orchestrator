@@ -19,7 +19,7 @@ Every writer envelope declares its mode: a worktree path, or the shared-checkout
 
 ## When (not) to apply
 
-3+ read-only agents, or 3+ writer tasks all `Independent: yes` in separate worktrees, with no two tasks touching the same file (so the merges stay trivial). Not for: tasks with dependencies (sequential), fewer than 3 tasks (coordination cost beats the speedup), writers you can't or won't isolate on a project that allows worktrees (sequential), or a problem you haven't understood — don't parallelize confusion. Once the fan-out is decided, `using-workflows` chooses the substrate (Workflow tool or inline): this skill decides *whether*, that one decides *where*.
+3+ read-only agents, or 3+ writer tasks all `Independent: yes` in separate worktrees, with no two tasks touching the same file (so the merges stay trivial). Not for: tasks with dependencies (sequential), fewer than 3 tasks (coordination cost beats the speedup), writers you can't or won't isolate on a project that allows worktrees (sequential), or a problem you haven't understood — don't parallelize confusion.
 
 ## Read-only fan-out
 
@@ -40,7 +40,7 @@ Build N envelopes (`templates/dispatch-prompt.md`), each stating explicitly: rea
 4. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its printed worktree path, each self-contained.
 5. **Send in parallel, one message. Wait for all N returns** before any follow-up.
 6. **Triage each Status:** `DONE`/`DONE_WITH_CONCERNS` → mark completed, tick the plan checkbox. `BLOCKED` → the recovery tree in `dispatching-subagents` (missing context resumes the same agent via `SendMessage` by agentId — its partial context survives; sibling-wait, decomposition, and model escalation re-dispatch fresh). `NEEDS_CONTEXT` → answer the `Ask:` via `SendMessage`; the resume returns in the background — don't spawn a duplicate while waiting. `PARTIAL` → record `Progress:`, resume with unblocking guidance, or re-dispatch fresh with `Progress:`/`Remaining:` pasted if the transcript shows a retry storm.
-7. **Review** after all are done: per-task spec+code review for high-risk surface, or `/llm-orchestrator:review` on the combined diff for low-risk.
+7. **Review** after all are done: `requesting-code-review` per task for high-risk surface, or `/llm-orchestrator:review` on the combined diff for low-risk.
 8. **Merge back with the integration engine — don't merge by hand:**
    ```bash
    cd "$(git rev-parse --show-toplevel)"
