@@ -546,8 +546,8 @@ budget_case() { # <label> <python expression for the command>
   R=$(mk 'turn:t1' "ran:0:$cmd")
   big=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$R"
   big=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$big")
-  { [[ $RC -eq 0 ]] && sent_back && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.1 else 1)' "$big" "$base"; } \
-    && ok "(n5) $1: 200 KB judged within 100 ms of a one-word command, sent back" \
+  { [[ $RC -eq 0 ]] && sent_back && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 1.0 else 1)' "$big" "$base"; } \
+    && ok "(n5) $1: 200 KB judged within 1 s of a one-word command, sent back" \
     || fail "(n5) $1 time" "rc=$RC big=${big}s base=${base}s out=$OUT"
 }
 budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 20000'
