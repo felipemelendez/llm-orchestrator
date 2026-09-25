@@ -11,7 +11,7 @@ Not for: 3+ independent tasks with no shared files (parallel wins), work small e
 
 ## State
 
-`TaskCreate` one task per plan task before the first dispatch; `TaskUpdate` as you go. The durable copy is the plan file: flip each task's `### N. <name>  - [ ]` heading checkbox to `- [x]` on completion — the heading checkbox only; sub-step boxes are progress notes and counting them corrupts the resume count. Record enough per task that a fresh controller after `/clear` knows where an unfinished task resumes ("fix round 2/3, one finding open", not just a tick). After compaction, trust the plan file and `git log` over your recollection — a controller that lost its place and re-dispatched a completed sequence is the most expensive failure available to you.
+The plan file is the only task state: flip each task's `### N. <name>  - [ ]` heading checkbox to `- [x]` on completion — the heading checkbox only; sub-step boxes are progress notes and counting them corrupts the resume count. Record enough per task that a fresh controller after `/clear` knows where an unfinished task resumes ("fix round 2/3, one finding open", not just a tick). After compaction, trust the plan file and `git log` over your recollection — a controller that lost its place and re-dispatched a completed sequence is the most expensive failure available to you.
 
 ## Per task
 
@@ -25,7 +25,7 @@ Not for: 3+ independent tasks with no shared files (parallel wins), work small e
 
 3. **Review in two stages**, each in a fresh subagent so no context reviews its own reasoning. First `orch-spec-reviewer` (`templates/spec-reviewer-prompt.md`) — paste the spec, the plan task, and the diff since this task's first commit. Not `HEAD~1`: a task is often several commits, and `HEAD~1` silently reviews only the last one. Only after the spec verdict clears, `orch-code-reviewer` (`templates/code-reviewer-prompt.md`) with the diff and the relevant CLAUDE.md section. Reviewers tag every finding with a confidence; you demote anything below 0.8 into `Notes:` — the threshold lives in your filter, never in the reviewer's instructions, because a reviewer told to withhold loses recall. Verdict routing per stage: `Ready: yes` → proceed; Critical or Important findings, or `Ready: no` → the fix loop; Minor only → record in the plan file and proceed.
 
-4. **Tick and continue.** Mark the task `completed` via `TaskUpdate`, flip its plan heading checkbox, start the next task without asking the user.
+4. **Tick and continue.** Flip the task's plan heading checkbox, start the next task without asking the user.
 
 ## BLOCKED recovery
 
