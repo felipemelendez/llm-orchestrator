@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: Use when starting creative work — a new feature, added functionality, a system design, or a behavior change — before any code is written. Not for one-line fixes, mechanical chores, or when an approved spec already exists.
+description: Use when starting a new feature or design with open choices, before code is written. Not for small fixes, chores, or work with an approved spec.
 ---
 
 # Brainstorming

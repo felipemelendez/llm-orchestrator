@@ -1,5 +1,5 @@
 ---
-description: One-time codebase onboarding — study architecture once, seed CLAUDE.md, never re-ask. Idempotent: skips if already onboarded.
+description: Study the codebase once and record its decisions and conventions in CLAUDE.md. Skips if already onboarded.
 ---
 
 You are running `/llm-orchestrator:onboard`.

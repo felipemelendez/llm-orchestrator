@@ -288,7 +288,7 @@ export ORCH_HOOK_PROFILE=standard   # default — everything active
 export ORCH_HOOK_PROFILE=strict     # everything active AND blocking
 ```
 
-- `minimal` — these hooks exit without acting: protocol reminders (`user-prompt-submit`), research gate, handoff nudge, the `--no-verify` guard, config-protection guard, retry cap, Status validators (`subagent-stop`, researcher validator), worktree reaper. SessionStart still loads the protocol core.
+- `minimal` — these hooks exit without acting: protocol reminders (`user-prompt-submit`), research gate, handoff nudge, the `--no-verify` guard, config-protection guard, retry cap, Status validators (`subagent-stop`, researcher validator), worktree reaper. SessionStart still loads the `using-orchestrator` core (and the reply format in a cadence-enabled project).
 - `standard` (default) — all of the above are active.
 - `strict` — everything in `standard`, and the two gradeable checks **block** instead of warning: it implies `ORCH_STRICT_STATUS` and `ORCH_STRICT_RETRY`. To keep one check non-blocking under this profile, set that knob to `0` explicitly — an explicit value always wins over the profile. (Before 2026-08-03 no script branched on the profile at all, so `strict` was accepted and behaved exactly like `standard`.)
 

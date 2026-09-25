@@ -1,5 +1,5 @@
 ---
-description: Run the project's verification (tests, lint, typecheck) and report evidence. No assertion without output.
+description: Run the project's tests, lint and typecheck, and report the output.
 ---
 
 You are running `/llm-orchestrator:verify`.

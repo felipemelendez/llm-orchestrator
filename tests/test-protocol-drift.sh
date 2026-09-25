@@ -11,10 +11,12 @@
 #      per-turn hook's embedded fallback is byte-identical to its source:
 #        - orch-turn-reminder — SessionStart's post-compaction recovery core
 #        - orch-turn-nudge    — UserPromptSubmit's every-turn distillation,
-#                               capped at NUDGE_MAX bytes so it cannot re-bloat
+#                               capped at its byte ceiling so it cannot re-bloat
 #                               into a second copy of the recovery core
-#   3. the using-orchestrator EAGER core and output-styles/orchestrator.md
-#      carry the six headers and the Verify: hard rule
+#      Both are injected only in a project whose cadence.json is enabled.
+#   3. the using-orchestrator FORMAT block and output-styles/orchestrator.md
+#      carry the six headers and the Verify: hard rule; the always-injected
+#      EAGER core carries none of it
 #   4. the Status enum is consistent across grader, templates, and AGENTS.md
 #   5. CLAUDE.md references the canonical file instead of duplicating it
 #
@@ -58,7 +60,10 @@ grep -q 'PROTOCOL_MARKER="orch-turn-reminder"' "${ROOT}/scripts/hooks/session-st
   || fail "compact path wiring" "session-start.sh no longer extracts orch-turn-reminder"
 
 printf '\n%s== per-turn nudge is single-sourced and stays small ==%s\n' "$DIM" "$RESET"
-NUDGE_MAX=300
+# The ceilings are the per-turn budgets. The nudge is paid on every turn in a
+# cadence-enabled project, so it may not grow past them.
+NUDGE_MAX=233
+PNUDGE_MAX=273
 NUDGE=$(awk '/<!-- orch-turn-nudge-start -->/{f=1;next} /<!-- orch-turn-nudge-end -->/{f=0} f' "$CANON")
 [[ -n "$NUDGE" ]] && ok "canonical carries the marked turn-nudge block" || fail "nudge block" "markers missing or empty"
 for h in $HEADERS; do printf '%s' "$NUDGE" | grep -q "\"$h\"" || { fail "nudge headers" "nudge block missing \"$h\""; break; }; done
@@ -85,13 +90,16 @@ printf '%s' "$NUDGE" | grep -q 'systematic-debugging' \
 # must be identical — the embedded fallback may not drift from the source.
 extract_ctx() { python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-# The legacy nudge is the fixture here; select it from a disposable directory,
-# not from whatever cadence policy the launching checkout carries.
+# The legacy nudge is the fixture here; select it from a disposable project
+# with an enabled legacy cadence, not from whatever cadence policy the
+# launching checkout carries.
 cd "$TMP" || exit 1
-export CLAUDE_PROJECT_DIR="$TMP"
-LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-mkdir -p "$TMP/x/hooks"
+mkdir -p "$TMP/legacy/docs/llm-orchestrator" "$TMP/x/hooks" "$TMP/x/lib"
+printf '{"enabled":true}\n' > "$TMP/legacy/docs/llm-orchestrator/cadence.json"
+export CLAUDE_PROJECT_DIR="$TMP/legacy"
 cp "${ROOT}/scripts/hooks/user-prompt-submit.sh" "$TMP/x/hooks/"
+cp "${ROOT}/scripts/lib/orch-protocol.sh" "${ROOT}/scripts/lib/orch-project.sh" "$TMP/x/lib/"
+LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 FALLBACK=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
 if [[ -n "$LIVE" && "$LIVE" == "$FALLBACK" ]]; then
   ok "hook fallback is byte-identical to the canonical block"
@@ -103,30 +111,138 @@ fi
 printf '\n%s== proportional reminders use actual project policy ==%s\n' "$DIM" "$RESET"
 PNUDGE=$(awk '/<!-- orch-proportional-nudge-start -->/{f=1;next} /<!-- orch-proportional-nudge-end -->/{f=0} f' "$CANON")
 PBYTES=$(printf '%s' "$PNUDGE" | wc -c | tr -d ' ')
-[[ -n "$PNUDGE" && "$PBYTES" -le "$NUDGE_MAX" ]] && ok "proportional nudge stays within 300 bytes" || fail "proportional nudge budget" "$PBYTES bytes"
-mkdir -p "$TMP/project/docs/llm-orchestrator" "$TMP/x/lib"
+[[ -n "$PNUDGE" && "$PBYTES" -le "$PNUDGE_MAX" ]] && ok "proportional nudge stays within ${PNUDGE_MAX} bytes (${PBYTES})" || fail "proportional nudge budget" "$PBYTES bytes"
+printf '%s' "$NUDGE" | grep -q 'Lead with the outcome\.' && ok "legacy nudge says to lead with the outcome" || fail "legacy nudge outcome" "missing"
+printf '%s' "$PNUDGE" | grep -q 'applicability never clears failed or required checks' \
+  && ok "proportional nudge says applicability never clears failed or required checks" \
+  || fail "proportional nudge applicability" "missing"
+for n in "$NUDGE" "$PNUDGE"; do
+  printf '%s' "$n" | grep -q 'unless project instructions set a reply format' \
+    || { fail "nudge yields to the project's format" "a nudge lacks the project-format clause"; break; }
+done
+mkdir -p "$TMP/project/docs/llm-orchestrator"
 printf '{"enabled":true,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
-cp "${ROOT}/scripts/lib/orch-protocol.sh" "$TMP/x/lib/"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$TMP/project")
-PLIVE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-PFALLBACK=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
+PLIVE=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
+PFALLBACK=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
 [[ "$PLIVE" == "$PNUDGE" && "$PFALLBACK" == "$PNUDGE" ]] && ok "proportional live and installed fallback reminders match canonical" || fail "proportional reminder drift" "$PLIVE / $PFALLBACK"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":"compact"}))' "$TMP/project")
 PCOMPACT=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')
 if printf '%s' "$PCOMPACT" | grep -q 'Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE' && ! printf '%s' "$PCOMPACT" | grep -q 'REQUIRE a "Verify:"'; then
   ok "proportional compaction chooses the shared completion vocabulary"
 else fail "proportional compaction vocabulary" "$PCOMPACT"; fi
+
+printf '\n%s== a project without an enabled cadence gets no format rule ==%s\n' "$DIM" "$RESET"
+mkdir -p "$TMP/plain"
 printf '{"enabled":false,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
-DISABLED_NUDGE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-[[ "$DISABLED_NUDGE" == "$NUDGE" ]] && ok "disabled cadence retains legacy reminder" || fail "disabled reminder" "$DISABLED_NUDGE"
+for proj in "$TMP/project" "$TMP/plain"; do
+  label="disabled cadence"; [[ "$proj" == "$TMP/plain" ]] && label="no cadence.json"
+  PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$proj")
+  RAW=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$proj" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh")
+  [[ -z "$RAW" ]] && ok "${label}: the per-turn hook injects nothing" || fail "${label}: per-turn hook" "$RAW"
+  for src in startup compact; do
+    PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":sys.argv[2]}))' "$proj" "$src")
+    CTX=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$proj" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | extract_ctx)
+    if printf '%s' "$CTX" | grep -qE 'Changed:|Verification: PASS|shape header'; then
+      fail "${label}: session start (${src}) carries no reply-format rule" "$(printf '%s' "$CTX" | grep -m1 -E 'Changed:|Verification: PASS|shape header')"
+    else
+      ok "${label}: session start (${src}) carries no reply-format rule"
+    fi
+  done
+done
+
+printf '\n%s== both hooks decide "enabled" the same way ==%s\n' "$DIM" "$RESET"
+# session-start.sh and user-prompt-submit.sh share orch_protocol_workflow. Each
+# case below must give the same answer from both: the per-turn nudge appears
+# exactly when the session-start reply-format block does.
+FORMAT_MARK='## Reply format in a cadence-enabled project'
+both_hooks() { # <label> <project-dir> <expect on|off> [PATH override]
+  local label="$1" dir="$2" want="$3" path="${4:-$PATH}" raw ctx turn=off start=off
+  raw=$(printf '{"prompt":"x"}' | ( cd "$dir" && env PATH="$path" CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" "$BASH" "${ROOT}/scripts/hooks/user-prompt-submit.sh" ))
+  [[ -n "$raw" ]] && turn=on
+  ctx=$(printf '{"source":"startup"}' | ( cd "$dir" && env PATH="$path" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" "$BASH" "${ROOT}/scripts/hooks/session-start.sh" 2>/dev/null ) | extract_ctx)
+  case "$ctx" in *"$FORMAT_MARK"*) start=on ;; esac
+  if [[ "$turn" == "$want" && "$start" == "$want" ]]; then
+    ok "${label}: per-turn and session start both ${want}"
+  else
+    fail "${label}: hooks agree (${want})" "per-turn=${turn} session-start=${start}"
+  fi
+}
+MALFORMED="$TMP/malformed"; mkdir -p "$MALFORMED/docs/llm-orchestrator"
+printf '{"enabled": true, "workflow": "proportional",\n' > "$MALFORMED/docs/llm-orchestrator/cadence.json"
+both_hooks "malformed cadence.json" "$MALFORMED" off
+MCTX=$(printf '{"source":"startup"}' | ( cd "$MALFORMED" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" ) | extract_ctx)
+case "$MCTX" in *"does not decode"*) ok "malformed cadence.json: the session-start verdict still reports the error" ;;
+  *) fail "malformed verdict" "$(printf '%s' "$MCTX" | head -1)" ;; esac
+REPO="$TMP/repo"; mkdir -p "$REPO/docs/llm-orchestrator" "$REPO/sub/dir"
+git -C "$REPO" init -q
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$REPO/docs/llm-orchestrator/cadence.json"
+both_hooks "launched from a subdirectory of an enabled repo" "$REPO/sub/dir" on
+NOPY="$TMP/nopy"; mkdir -p "$NOPY"
+for t in bash sh grep sed awk head tail cat dirname basename git mkdir ls tr cut cmp wc date find sort uname mktemp rm env comm shasum sha256sum openssl od; do
+  p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$NOPY/$t"
+done
+ENABLED2="$TMP/enabled2"; mkdir -p "$ENABLED2/docs/llm-orchestrator"
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$ENABLED2/docs/llm-orchestrator/cadence.json"
+both_hooks "python3 missing, enabled project" "$ENABLED2" on "$NOPY"
+both_hooks "python3 missing, plain project" "$TMP/plain" off "$NOPY"
+
+printf '\n%s== every hook finds the same cadence ==%s\n' "$DIM" "$RESET"
+# One rule decides where the cadence lives (orch_cadence_find). Session start,
+# the per-turn hook, both cadence guards and the cadence stop hook must all see
+# the cadence on, or all see it off, for the same CLAUDE_PROJECT_DIR.
+every_hook() { # <label> <CLAUDE_PROJECT_DIR> <expect on|off>
+  local label="$1" dir="$2" want="$3" got="" h rc out
+  out=$(printf '{"prompt":"x"}' | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" ))
+  [[ -n "$out" ]] && got="${got} turn=on" || got="${got} turn=off"
+  out=$(printf '{"source":"startup"}' | ( cd "$dir" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" ) | extract_ctx)
+  case "$out" in *"$FORMAT_MARK"*) got="${got} start=on" ;; *) got="${got} start=off" ;; esac
+  rc=0; printf '{"tool_name":"Bash","tool_input":{"command":"echo $ORCH_HOOK_PROFILE"}}' \
+    | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" bash "${ROOT}/scripts/hooks/guard-cadence-unlock.sh" ) >/dev/null 2>&1 || rc=$?
+  [[ "$rc" == "2" ]] && got="${got} unlock-guard=on" || got="${got} unlock-guard=off"
+  rc=0; printf '{"tool_name":"Agent","tool_input":{"description":"x","prompt":"y"}}' \
+    | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" HOME="$TMP/home" bash "${ROOT}/scripts/hooks/guard-dispatch-model.sh" ) >/dev/null 2>&1 || rc=$?
+  [[ "$rc" == "2" ]] && got="${got} model-guard=on" || got="${got} model-guard=off"
+  out=$(printf '{"session_id":"s"}' | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/orch-cadence-stop.sh" 2>/dev/null ))
+  [[ -n "$out" ]] && got="${got} stop=on" || got="${got} stop=off"
+  if [[ "$got" == " turn=${want} start=${want} unlock-guard=${want} model-guard=${want} stop=${want}" ]]; then
+    ok "${label}: every hook sees the cadence ${want}"
+  else
+    fail "${label}: every hook agrees (${want})" "$got"
+  fi
+}
+MONO="$TMP/mono"; mkdir -p "$MONO/app/docs/llm-orchestrator" "$MONO/app/src" "$MONO/other"
+git -C "$MONO" init -q
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$MONO/app/docs/llm-orchestrator/cadence.json"
+every_hook "monorepo, cadence project nested at app/" "$MONO/app" on
+every_hook "monorepo, launched from app/src" "$MONO/app/src" on
+every_hook "monorepo, a sibling project without a cadence" "$MONO/other" off
+every_hook "monorepo top level (the cadence is below it)" "$MONO" off
+every_hook "repository launched from a subdirectory" "$REPO/sub/dir" on
+every_hook "repository top level" "$REPO" on
+# Outside any git repository only the start directory counts: a stray
+# cadence.json in a home directory must not switch on every folder below it.
+NOGIT="$TMP/nogit-home"; mkdir -p "$NOGIT/docs/llm-orchestrator" "$NOGIT/work/proj"
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$NOGIT/docs/llm-orchestrator/cadence.json"
+every_hook "no git: a folder below a stray cadence.json" "$NOGIT/work/proj" off
+every_hook "no git: the folder that holds the cadence.json" "$NOGIT" on
 
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
-for h in $HEADERS; do printf '%s' "$CORE" | grep -q "${h}" || { fail "skill core headers" "EAGER core missing ${h}"; break; }; done
+FORMAT=$(awk '/<!-- ORCH:FORMAT:START -->/{f=1;next} /<!-- ORCH:FORMAT:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
+for h in $HEADERS; do printf '%s' "$FORMAT" | grep -q "${h}" || { fail "skill format headers" "FORMAT block missing ${h}"; break; }; done
 # Match the HARD-RULE SENTENCE, not the bare token: `Verify:` also appears in
-# the eager core's sub-section list, so a token grep stayed green with the rule
-# deleted — verified by removing the sentence and watching the tick persist.
-printf '%s' "$CORE" | grep -q 'MUST include a `Verify:` line' && ok "using-orchestrator EAGER core carries the six headers + Verify rule" || fail "skill core Verify" "the Changed:-requires-Verify: hard-rule sentence is missing from the EAGER core"
+# the sub-section list, so a token grep stayed green with the rule deleted —
+# verified by removing the sentence and watching the tick persist.
+printf '%s' "$FORMAT" | grep -q 'MUST include a `Verify:` line' && ok "using-orchestrator FORMAT block carries the six headers + Verify rule" || fail "skill format Verify" "the Changed:-requires-Verify: hard-rule sentence is missing from the FORMAT block"
+printf '%s' "$FORMAT" | grep -q 'that format wins' && ok "FORMAT block says the project's own reply format wins" || fail "FORMAT project format" "missing"
+# The EAGER core is injected in every project, so it must carry no reply-format rule.
+printf '%s' "$CORE" | grep -qE '`(Changed|Found|Blocked|Issues|Plan):`' \
+  && fail "EAGER core format-free" "the always-injected core names a reply header" \
+  || ok "EAGER core (injected everywhere) names no reply header"
+printf '%s' "$CORE" | grep -q 'Ordinary questions, explanations and small edits need no skill' \
+  && ok "EAGER core says ordinary questions and small edits need no skill" \
+  || fail "EAGER core skill rule" "the no-skill-needed sentence is missing"
 # The precedence ordering left the per-turn hook; the eager block is now its only
 # eagerly-loaded home. If it is not here, it is nowhere until the skill is read.
 #
@@ -145,6 +261,9 @@ fi
 STYLE="${ROOT}/output-styles/orchestrator.md"
 for h in $HEADERS; do grep -q "\`${h}\`" "$STYLE" || { fail "output style headers" "missing \`${h}\`"; break; }; done
 grep -q 'Verify:' "$STYLE" && ok "output style carries the six headers + Verify rule" || fail "output style Verify" "missing"
+# Without this field, choosing the style drops Claude Code's own instructions
+# on scoping and verifying work.
+grep -qx 'keep-coding-instructions: true' "$STYLE" && ok "output style keeps Claude Code's coding instructions" || fail "output style keep-coding-instructions" "missing"
 
 printf '\n%s== Status enum consistent across consumers ==%s\n' "$DIM" "$RESET"
 grep -q 'PARTIAL' "${ROOT}/scripts/lib/orch-protocol.sh" && ok "grader accepts PARTIAL" || fail "grader PARTIAL" "orch-protocol.sh"

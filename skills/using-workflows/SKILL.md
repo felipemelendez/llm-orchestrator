@@ -1,6 +1,6 @@
 ---
 name: using-workflows
-description: Use when deciding whether an already-chosen fan-out (multi-dimension review, parallel implementation, multi-source research) runs on the Workflow tool or inline. Do not use to decide whether to parallelize at all — that is dispatching-parallel-agents.
+description: Use when a fan-out is already chosen and you must decide between the Workflow tool and running it inline. Not for deciding whether to parallelize.
 ---
 
 # Using workflows

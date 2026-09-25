@@ -1,5 +1,5 @@
 ---
-description: List the orchestrator's skills and commands with their trigger conditions, so you can see what is available and when each fires.
+description: List the orchestrator's skills and commands and when each applies.
 ---
 
 You are running `/llm-orchestrator:skills`.

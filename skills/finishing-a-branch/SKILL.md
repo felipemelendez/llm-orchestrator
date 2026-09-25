@@ -1,6 +1,6 @@
 ---
 name: finishing-a-branch
-description: Use when implementation is complete and tests pass. Decides between merge, PR, keep, or discard — without destructive actions unless the user confirms.
+description: Use when a branch's work is done and tests pass, to choose merge, PR, keep or discard. Nothing destructive without confirmation.
 ---
 
 # Finishing a branch

@@ -1,5 +1,5 @@
 ---
-description: Root-cause-first debugging. Thin wrapper that invokes the systematic-debugging skill with a small gathering step.
+description: Find a bug's root cause before fixing it (runs the systematic-debugging skill).
 ---
 
 You are running `/llm-orchestrator:debug`.

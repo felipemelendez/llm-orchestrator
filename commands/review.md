@@ -1,5 +1,5 @@
 ---
-description: Two-stage review of the current diff, with optional Stage 3 security review when the diff touches auth/crypto/payments/secrets. Stage 1 — spec compliance. Stage 2 — code quality. Stage 3 — security (conditional).
+description: Review the current diff — spec compliance, then code quality, plus a security pass when it touches auth, crypto, payments or secrets.
 ---
 
 You are running `/llm-orchestrator:review`.

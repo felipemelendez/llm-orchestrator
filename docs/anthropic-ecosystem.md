@@ -26,13 +26,13 @@ Used as the state board for plan execution. The `executing-plans` and `dispatchi
 
 ### Skills (`skills/<name>/SKILL.md`)
 
-Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trigger; the body is the discipline. The SessionStart hook injects the `using-orchestrator` meta-skill so the protocol is always live.
+Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trigger; the body is the discipline. The SessionStart hook injects the `using-orchestrator` core, which says when a skill applies; the reply-format rule is added only in a cadence-enabled project.
 
 ### Hooks (`hooks/hooks.json`)
 
 We wire sixteen hook scripts across seven events; `hooks/hooks.json` is the source of truth:
-- **SessionStart** — bootstrap the protocol meta-skill. Loading CLAUDE.md stays Claude Code's own job.
-- **UserPromptSubmit** — per-turn protocol reminder, research gate, handoff nudge.
+- **SessionStart** — bootstrap the `using-orchestrator` core, plus the reply format in a cadence-enabled project. Loading CLAUDE.md stays Claude Code's own job.
+- **UserPromptSubmit** — per-turn protocol reminder (cadence-enabled projects only), research gate, handoff nudge.
 - **PreToolUse** — the three safety guards: destructive git, verification bypass, config protection.
 - **PostToolUse / PostToolUseFailure** — evidence ledger, and opt-in skill telemetry.
 - **SubagentStop** — Status-block validator, researcher validator, retry cap, writer-mutex reaper.
@@ -101,7 +101,7 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## What we ship one of (not many)
 
-- **Output styles** — we ship exactly one (`output-styles/orchestrator.md`) that carries the Concise Agent Protocol. The protocol is the differentiator; adding alternative styles dilutes it. Users who want a different voice should fork the file rather than layer more on top.
+- **Output styles** — we ship exactly one (`output-styles/orchestrator.md`) that carries the Concise Agent Protocol. It sets `keep-coding-instructions: true`, so choosing it keeps Claude Code's own instructions on scoping and verifying work. Claude Code's built-in Concise style covers "no preamble, no recap" but not the six headers. Users who want a different voice should fork the file rather than layer more on top.
 
 ## What we deliberately don't use
 

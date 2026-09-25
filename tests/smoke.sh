@@ -206,8 +206,8 @@ if should_run hooks; then
 
   # SessionStart — loads the using-orchestrator skill body only. User-curated
   # project facts now live in CLAUDE.md (native), loaded by Claude Code itself.
-  # CLAUDE_PROJECT_DIR points at scratch: these fixtures assert the legacy
-  # reminder, independent of the launching checkout's own cadence policy.
+  # CLAUDE_PROJECT_DIR points at scratch, a project with no cadence, independent
+  # of the launching checkout's own cadence policy.
   CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$SMOKE_TMP/mem" \
     bash "${ROOT}/scripts/hooks/session-start.sh" > $SMOKE_TMP/out.json 2>&1
 
@@ -219,8 +219,18 @@ if should_run hooks; then
   check "SessionStart eager body stays lean (< 3500 bytes)" \
     bash -c '[ "$(wc -c < $SMOKE_TMP/out.json)" -lt 3500 ]'
 
-  # UserPromptSubmit — injects protocol reminder
+  check "SessionStart without a cadence carries no reply-format rule" \
+    bash -c "! grep -q 'Changed:' $SMOKE_TMP/out.json"
+
+  # UserPromptSubmit — silent without an enabled cadence
   printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
+  check "UserPromptSubmit injects nothing without an enabled cadence" \
+    bash -c "[ ! -s $SMOKE_TMP/out.json ]"
+
+  # UserPromptSubmit — injects the protocol reminder in an enabled project
+  mkdir -p $SMOKE_TMP/enabled/docs/llm-orchestrator
+  printf '{"enabled": true}\n' > $SMOKE_TMP/enabled/docs/llm-orchestrator/cadence.json
+  printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP/enabled" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
   check "UserPromptSubmit emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "UserPromptSubmit reminder mentions the six shape headers" "Changed:" \
             cat $SMOKE_TMP/out.json
@@ -551,7 +561,9 @@ sys.exit(0 if d.get('hookSpecificOutput', {}).get('hookEventName') == 'SessionSt
     fail "SessionStart hookEventName" "missing from output JSON"
   fi
 
-  OUT=$(printf '{"session_id":"smoke","prompt":"x"}' | ORCH_HOME="$(mktemp -d)" bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
+  mkdir -p $SMOKE_TMP/fmt/docs/llm-orchestrator
+  printf '{"enabled": true}\n' > $SMOKE_TMP/fmt/docs/llm-orchestrator/cadence.json
+  OUT=$(printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP/fmt" ORCH_HOME="$(mktemp -d)" bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
