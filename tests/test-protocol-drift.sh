@@ -98,7 +98,7 @@ mkdir -p "$TMP/legacy/docs/llm-orchestrator" "$TMP/x/hooks" "$TMP/x/lib"
 printf '{"enabled":true}\n' > "$TMP/legacy/docs/llm-orchestrator/cadence.json"
 export CLAUDE_PROJECT_DIR="$TMP/legacy"
 cp "${ROOT}/scripts/hooks/user-prompt-submit.sh" "$TMP/x/hooks/"
-cp "${ROOT}/scripts/lib/orch-protocol.sh" "$TMP/x/lib/"
+cp "${ROOT}/scripts/lib/orch-protocol.sh" "${ROOT}/scripts/lib/orch-project.sh" "$TMP/x/lib/"
 LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 FALLBACK=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
 if [[ -n "$LIVE" && "$LIVE" == "$FALLBACK" ]]; then
@@ -123,8 +123,8 @@ done
 mkdir -p "$TMP/project/docs/llm-orchestrator"
 printf '{"enabled":true,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$TMP/project")
-PLIVE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-PFALLBACK=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
+PLIVE=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
+PFALLBACK=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
 [[ "$PLIVE" == "$PNUDGE" && "$PFALLBACK" == "$PNUDGE" ]] && ok "proportional live and installed fallback reminders match canonical" || fail "proportional reminder drift" "$PLIVE / $PFALLBACK"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":"compact"}))' "$TMP/project")
 PCOMPACT=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')
@@ -186,6 +186,40 @@ ENABLED2="$TMP/enabled2"; mkdir -p "$ENABLED2/docs/llm-orchestrator"
 printf '{"enabled": true, "workflow": "proportional"}\n' > "$ENABLED2/docs/llm-orchestrator/cadence.json"
 both_hooks "python3 missing, enabled project" "$ENABLED2" on "$NOPY"
 both_hooks "python3 missing, plain project" "$TMP/plain" off "$NOPY"
+
+printf '\n%s== every hook finds the same cadence ==%s\n' "$DIM" "$RESET"
+# One rule decides where the cadence lives (orch_cadence_find). Session start,
+# the per-turn hook, both cadence guards and the cadence stop hook must all see
+# the cadence on, or all see it off, for the same CLAUDE_PROJECT_DIR.
+every_hook() { # <label> <CLAUDE_PROJECT_DIR> <expect on|off>
+  local label="$1" dir="$2" want="$3" got="" h rc out
+  out=$(printf '{"prompt":"x"}' | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" ))
+  [[ -n "$out" ]] && got="${got} turn=on" || got="${got} turn=off"
+  out=$(printf '{"source":"startup"}' | ( cd "$dir" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" ) | extract_ctx)
+  case "$out" in *"$FORMAT_MARK"*) got="${got} start=on" ;; *) got="${got} start=off" ;; esac
+  rc=0; printf '{"tool_name":"Bash","tool_input":{"command":"echo $ORCH_HOOK_PROFILE"}}' \
+    | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" bash "${ROOT}/scripts/hooks/guard-cadence-unlock.sh" ) >/dev/null 2>&1 || rc=$?
+  [[ "$rc" == "2" ]] && got="${got} unlock-guard=on" || got="${got} unlock-guard=off"
+  rc=0; printf '{"tool_name":"Agent","tool_input":{"description":"x","prompt":"y"}}' \
+    | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" HOME="$TMP/home" bash "${ROOT}/scripts/hooks/guard-dispatch-model.sh" ) >/dev/null 2>&1 || rc=$?
+  [[ "$rc" == "2" ]] && got="${got} model-guard=on" || got="${got} model-guard=off"
+  out=$(printf '{"session_id":"s"}' | ( cd "$dir" && CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/orch-cadence-stop.sh" 2>/dev/null ))
+  [[ -n "$out" ]] && got="${got} stop=on" || got="${got} stop=off"
+  if [[ "$got" == " turn=${want} start=${want} unlock-guard=${want} model-guard=${want} stop=${want}" ]]; then
+    ok "${label}: every hook sees the cadence ${want}"
+  else
+    fail "${label}: every hook agrees (${want})" "$got"
+  fi
+}
+MONO="$TMP/mono"; mkdir -p "$MONO/app/docs/llm-orchestrator" "$MONO/app/src" "$MONO/other"
+git -C "$MONO" init -q
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$MONO/app/docs/llm-orchestrator/cadence.json"
+every_hook "monorepo, cadence project nested at app/" "$MONO/app" on
+every_hook "monorepo, launched from app/src" "$MONO/app/src" on
+every_hook "monorepo, a sibling project without a cadence" "$MONO/other" off
+every_hook "monorepo top level (the cadence is below it)" "$MONO" off
+every_hook "repository launched from a subdirectory" "$REPO/sub/dir" on
+every_hook "repository top level" "$REPO" on
 
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")

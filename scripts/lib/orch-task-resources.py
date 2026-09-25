@@ -554,7 +554,8 @@ def hook_retry(state_dir=None, payload=None):
             payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise Unsafe("hook payload must be an object")
-        cwd = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        # The same starting point as orch_cadence_find in scripts/lib/orch-project.sh.
+        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
         if not isinstance(cwd, str):
             raise Unsafe("hook cwd must be a path")
         resolved_cwd = canonical(cwd)
@@ -568,8 +569,13 @@ def hook_retry(state_dir=None, payload=None):
                 return  # A normal Stop outside a repository is not an error.
             raise Unsafe(f"cannot locate hook project: {probe.stderr.strip()}")
         project = canonical(probe.stdout.strip())
-        config_path = project / "docs/llm-orchestrator/cadence.json"
-        if not config_path.exists():
+        # The nearest cadence.json from the start up to the Git root, as
+        # orch_cadence_find decides it; tasks stay keyed by the Git root.
+        config_path = next((d / "docs/llm-orchestrator/cadence.json"
+                            for d in [resolved_cwd, *resolved_cwd.parents]
+                            if nested(d, project)
+                            if (d / "docs/llm-orchestrator/cadence.json").exists()), None)
+        if config_path is None:
             return
         config = json.loads(config_path.read_text())
         if not isinstance(config, dict) or type(config.get("enabled")) is not bool:

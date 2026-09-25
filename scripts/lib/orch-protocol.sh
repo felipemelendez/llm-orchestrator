@@ -23,22 +23,11 @@
 ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 
 # Resolve policy from the actual project, never from an agent's claimed path
-# selection. Every hook that asks "is the cadence on here?" uses these two
-# functions, so they all answer the same way.
-#
-# orch_cadence_root [hook-input-json]: the project root. The hook event's cwd
-# wins, then CLAUDE_PROJECT_DIR, then the current directory; a directory inside
-# a git repository resolves to the repository's top level, so a session
-# launched from a subdirectory finds the root's cadence.json.
-orch_cadence_root() { # [hook-input-json]
-  local dir root
-  dir=$(printf '%s' "${1:-}" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' | head -1 \
-        | sed -E 's/^"cwd"[[:space:]]*:[[:space:]]*"//; s/"$//; s/\\(["\\])/\1/g')
-  [[ -n "${dir}" ]] || dir="${CLAUDE_PROJECT_DIR:-${PWD}}"
-  root=$(git -C "${dir}" rev-parse --show-toplevel 2>/dev/null) || root=""
-  [[ -n "${root}" ]] || root="${dir}"
-  printf '%s' "${root%/}"
-}
+# selection. Where the cadence lives is decided by orch_cadence_find
+# (scripts/lib/orch-project.sh), the one rule every hook shares.
+_ORCH_PROTOCOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/orch-project.sh
+[[ -f "${_ORCH_PROTOCOL_DIR}/orch-project.sh" ]] && source "${_ORCH_PROTOCOL_DIR}/orch-project.sh"
 
 # orch_protocol_workflow [hook-input-json]: prints "proportional" or "legacy"
 # for a project whose cadence.json has enabled: true, "error" when the file
@@ -50,7 +39,9 @@ orch_cadence_root() { # [hook-input-json]
 # "workflow": "proportional".
 orch_protocol_workflow() { # [hook-input-json]
   local cfg
-  cfg="$(orch_cadence_root "${1:-}")/docs/llm-orchestrator/cadence.json"
+  declare -f orch_cadence_find >/dev/null 2>&1 || return 0
+  orch_cadence_find "${1:-}"
+  cfg="${ORCH_CADENCE_ROOT%/}/docs/llm-orchestrator/cadence.json"
   [[ -f "${cfg}" ]] || return 0
   if command -v python3 >/dev/null 2>&1; then
     python3 - "${cfg}" <<'PYEOF' 2>/dev/null
