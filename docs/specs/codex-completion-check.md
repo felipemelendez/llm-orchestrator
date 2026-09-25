@@ -125,5 +125,6 @@ harness record behind them, and the honest shapes (`2>&1`, a quoted `&`, a
 here-string, a multi-line quoted argument) that must stay silent, and asserts
 the invariants (exit 0, no `systemMessage`, no stderr).
 `bash tests/test-install-global.sh` G16 runs the command exactly as
-`~/.codex/hooks.json` registers it. Live Codex: unverified in tests; one turn
+`.codex-plugin/plugin.json` registers it, and G17 (with `CODEX_BIN` set)
+lists the hooks through a real Codex app server after a plugin install. Live Codex: unverified in tests; one turn
 after `/hooks` trust shows it.
