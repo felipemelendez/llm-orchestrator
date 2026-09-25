@@ -112,7 +112,8 @@ print(json.dumps({"session_id":"s","turn_id":sys.argv[3],"transcript_path":t,"cw
   "hook_event_name":"Stop","model":"m","permission_mode":"default",
   "stop_hook_active": sys.argv[4] == "true","last_assistant_message": (None if sys.argv[1] == "null" else sys.argv[1])}))' \
     "$1" "$2" "${3:-t1}" "${4:-false}" > "$TMP/in"
-  bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
+  # The project whose cadence.json may name a test_cmd; none unless PROJ_DIR is set.
+  CODEX_PROJECT_DIR="${PROJ_DIR:-$TMP/no-project}" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
   OUT=$(cat "$TMP/out"); ERR=$(cat "$TMP/err")
   [[ $RC -ne 0 ]] && ANY_RC=1
   grep -q 'systemMessage' "$TMP/out" && ANY_PERSON=1
@@ -278,6 +279,67 @@ fire "$CLAIM" "$R"
 { [[ $RC -eq 0 ]] && silent; } \
   && ok "(e7) malformed rows beside a passing check → silent" \
   || fail "(e7) malformed rows, passing" "rc=$RC out=$OUT"
+
+printf '\n%s== real test commands count; printing does not ==%s\n' "$DIM" "$RESET"
+
+# counts <label> <command>: a record of <command> at exit 0 satisfies PASS.
+counts() {
+  local R; R=$(mk 'turn:t1' "ran:0:$2")
+  fire "$CLAIM" "$R"
+  { [[ $RC -eq 0 ]] && silent; } && ok "$1: $2 → silent" \
+    || fail "$1: $2 should count as a check" "rc=$RC out=$OUT"
+}
+# ignored <label> <command>: a record of <command> at exit 0 is not a check.
+ignored() {
+  local R; R=$(mk 'turn:t1' "ran:0:$2")
+  fire "$CLAIM" "$R"
+  { [[ $RC -eq 0 ]] && sent_back; } && ok "$1: $2 → sent back" \
+    || fail "$1: $2 should not count as a check" "rc=$RC out=$OUT"
+}
+
+counts  "(k1) a runner named by a path" '.ve/bin/pytest zapgram/src/zg/test/unit'
+counts  "(k1)" './node_modules/.bin/vitest run'
+counts  "(k1)" 'venv/bin/pytest -q'
+counts  "(k1)" '.ve/bin/python -m pytest -q'
+counts  "(k2) a path-named runner after cd" 'cd zapgram && .ve/bin/pytest src/zg/test/unit'
+counts  "(k3) a runner after a wrapper that ends its options with --" \
+        'aws-vault exec --prompt=osascript testing-felipe -- .ve/bin/pytest src/zg/test/unit'
+counts  "(k4) a runner through the package manager" 'pnpm vitest run'
+counts  "(k4)" 'pnpm jest'
+counts  "(k4)" 'yarn vitest run'
+counts  "(k4)" 'yarn jest --ci'
+counts  "(k4)" 'npx vitest run'
+counts  "(k4)" 'npx jest'
+ignored "(k5) a command that only prints" 'echo pytest'
+ignored "(k5)" 'echo .ve/bin/pytest'
+ignored "(k5) a runner's version, behind a wrapper" 'aws-vault exec testing-felipe -- .ve/bin/pytest --version'
+ignored "(k5) a path after git's --" 'git diff -- tests/test-codex-verify-gate.sh'
+ignored "(k5) installing a runner" 'pnpm add -D vitest'
+R=$(mk 'turn:t1' 'ran:1:aws-vault exec testing-felipe -- .ve/bin/pytest -q')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } && ok "(k6) a wrapped runner the harness recorded at exit 1 → sent back" \
+  || fail "(k6) failed wrapped runner counted" "rc=$RC out=$OUT"
+
+printf '\n%s== the project'"'"'s own test_cmd counts ==%s\n' "$DIM" "$RESET"
+
+PROJ="$TMP/project"; mkdir -p "$PROJ/docs/llm-orchestrator"
+printf '{ "schema": 1, "enabled": true,\n  "runner": { "profile": "custom", "test_cmd": "bin/suite --fast" } }\n' \
+  > "$PROJ/docs/llm-orchestrator/cadence.json"
+ignored "(l1) no cadence.json: a command the pattern does not know" 'bin/suite --fast unit'
+PROJ_DIR="$PROJ" counts  "(l2) it starts with runner.test_cmd" 'bin/suite --fast unit'
+PROJ_DIR="$PROJ" counts  "(l2) after cd" 'cd sub && bin/suite --fast'
+PROJ_DIR="$PROJ" ignored "(l3) the same text continuing into another word" 'bin/suite --fastest'
+PROJ_DIR="$PROJ" ignored "(l3) the text in the middle of a command" 'echo bin/suite --fast'
+R=$(mk 'turn:t1' 'ran:1:bin/suite --fast')
+PROJ_DIR="$PROJ" fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } && ok "(l4) test_cmd recorded at exit 1 does not count → sent back" \
+  || fail "(l4) failed test_cmd counted" "rc=$RC out=$OUT"
+R=$(mk 'turn:t1' 'ranv:0:bin/suite --fast')
+PROJ_DIR="$PROJ" fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && silent; } && ok "(l5) test_cmd as a raw argv record → silent" \
+  || fail "(l5) raw argv test_cmd" "rc=$RC out=$OUT"
+printf '{ not json' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(l6) a cadence.json that is not JSON: as if there were none" 'bin/suite --fast'
 
 printf '\n%s== the turn boundary is this turn ==%s\n' "$DIM" "$RESET"
 

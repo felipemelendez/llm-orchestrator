@@ -83,7 +83,8 @@ fire() { # fire <last_assistant_message> <transcript> → sets RC and ERR
   python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop",
 "session_id":"vg","last_assistant_message":sys.argv[1],"transcript_path":sys.argv[2]}))' \
     "$1" "$2" > "$TMP/in"
-  bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
+  # The project whose cadence.json may name a test_cmd; none unless PROJ_DIR is set.
+  CLAUDE_PROJECT_DIR="${PROJ_DIR:-$TMP/no-project}" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
   ERR=$(cat "$TMP/err")
   [[ -n "$ERR" ]] && ANY_STDERR=1
   [[ $RC -ne 0 ]] && ANY_RC=1
@@ -218,6 +219,74 @@ fire "$CLAIM" "$T"
 { [[ $RC -eq 0 ]] && warned; } \
   && ok "(f) a check from a PREVIOUS turn does not satisfy this turn's PASS" \
   || fail "(f) stale check counted" "rc=$RC err=$ERR"
+
+printf '\n%s== real test commands count; printing does not ==%s\n' "$DIM" "$RESET"
+
+# counts <label> <command>: a finished, passing run of <command> satisfies PASS.
+counts() {
+  local T; T=$(mk 'user:fix the gate' "bash:t1:$2" 'result:t1:ok')
+  fire "$CLAIM" "$T"
+  { [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } && ok "$1: $2 → silent" \
+    || fail "$1: $2 should count as a check" "rc=$RC out=$(cat "$TMP/out")"
+}
+# ignored <label> <command>: a passing run of <command> is not a check.
+ignored() {
+  local T; T=$(mk 'user:fix the gate' "bash:t1:$2" 'result:t1:ok')
+  fire "$CLAIM" "$T"
+  { [[ $RC -eq 0 ]] && warned; } && ok "$1: $2 → note" \
+    || fail "$1: $2 should not count as a check" "rc=$RC out=$(cat "$TMP/out")"
+}
+
+counts  "(k1) a runner named by a path" '.ve/bin/pytest zapgram/src/zg/test/unit'
+counts  "(k1)" './node_modules/.bin/vitest run'
+counts  "(k1)" 'venv/bin/pytest -q'
+counts  "(k1)" '.ve/bin/python -m pytest -q'
+counts  "(k2) a path-named runner after cd" 'cd zapgram && .ve/bin/pytest src/zg/test/unit'
+counts  "(k3) a runner after a wrapper that ends its options with --" \
+        'aws-vault exec --prompt=osascript testing-felipe -- .ve/bin/pytest src/zg/test/unit'
+counts  "(k3)" 'cd zapgram && aws-vault exec --prompt=osascript testing-felipe -- pytest -q'
+counts  "(k4) a runner through the package manager" 'pnpm vitest run'
+counts  "(k4)" 'pnpm jest'
+counts  "(k4)" 'yarn vitest run'
+counts  "(k4)" 'yarn jest --ci'
+counts  "(k4)" 'npx vitest run'
+counts  "(k4)" 'npx jest'
+ignored "(k5) a command that only prints" 'echo pytest'
+ignored "(k5)" 'echo .ve/bin/pytest'
+ignored "(k5) a runner's version, behind a wrapper" 'aws-vault exec testing-felipe -- .ve/bin/pytest --version'
+ignored "(k5) a path after git's --" 'git diff -- tests/test-verify-gate.sh'
+ignored "(k5) a config file after git's --" 'git diff -- pytest.ini'
+ignored "(k5) installing a runner" 'pnpm add -D vitest'
+
+printf '\n%s== the project'"'"'s own test_cmd counts ==%s\n' "$DIM" "$RESET"
+
+# A project whose cadence.json names a test command the shared pattern does
+# not know.
+PROJ="$TMP/project"; mkdir -p "$PROJ/docs/llm-orchestrator"
+printf '{ "schema": 1, "enabled": true,\n  "runner": { "profile": "custom", "test_cmd": "bin/suite --fast" } }\n' \
+  > "$PROJ/docs/llm-orchestrator/cadence.json"
+ignored "(l1) no cadence.json: a command the pattern does not know" 'bin/suite --fast unit'
+PROJ_DIR="$PROJ" counts  "(l2) it starts with runner.test_cmd" 'bin/suite --fast unit'
+PROJ_DIR="$PROJ" counts  "(l2)" 'bin/suite --fast'
+PROJ_DIR="$PROJ" counts  "(l2) after cd" 'cd sub && bin/suite --fast'
+PROJ_DIR="$PROJ" ignored "(l3) the same text continuing into another word" 'bin/suite --fastest'
+PROJ_DIR="$PROJ" ignored "(l3) the text in the middle of a command" 'echo bin/suite --fast'
+PROJ_DIR="$PROJ" ignored "(l3) test_cmd asked only for its help" 'bin/suite --fast --help'
+T=$(mk 'user:fix the gate' 'bash:t1:bin/suite --fast' 'result:t1:error')
+PROJ_DIR="$PROJ" fire "$CLAIM" "$T"
+{ [[ $RC -eq 0 ]] && warned; } && ok "(l4) test_cmd that FAILED does not count" \
+  || fail "(l4) failed test_cmd counted" "rc=$RC out=$(cat "$TMP/out")"
+T=$(mk 'user:fix the gate' 'bgbash:t1:bin/suite --fast' 'result:t1:ok')
+PROJ_DIR="$PROJ" fire "$CLAIM" "$T"
+{ [[ $RC -eq 0 ]] && warned; } && ok "(l4) test_cmd launched in the background does not count" \
+  || fail "(l4) background test_cmd counted" "rc=$RC out=$(cat "$TMP/out")"
+# A test_cmd that holds its own operators is matched against the whole command.
+printf '{ "runner": { "test_cmd": "cd app && ./check" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts  "(l5) a test_cmd with && in it" 'cd app && ./check -q'
+# An unreadable cadence.json is the same as none.
+printf '{ not json' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(l6) a cadence.json that is not JSON: as if there were none" 'bin/suite --fast'
+PROJ_DIR="$PROJ" counts  "(l6)" 'pytest -q'
 
 printf '\n%s== it warns; it never blocks ==%s\n' "$DIM" "$RESET"
 (( ANY_RC == 0 ))    && ok "no fixture made the hook exit non-zero" \
