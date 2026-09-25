@@ -429,12 +429,12 @@ for c in 'npm exec -p /bin/echo jest' 'make test -n' 'make -n test' 'cargo test 
   ignored "(p1) not a run" "$c"
 done
 for c in '2>/dev/null pytest' 'make 2>/dev/null test' 'time -p pytest' 'env -i pytest' 'env -u X pytest' \
-         'timeout -k 5 300 pytest' 'timeout --signal=KILL 300 pytest' 'npx -c "vitest run"' \
+         'timeout -k 5 300 pytest' 'timeout --signal=KILL 300 pytest' \
          $'cat <<EOF\nnotes\nEOF\npytest -q'; do
   counts "(p2) a real run" "$c"
 done
-# Guard: the command -c names is judged, and this one is not a check.
-ignored "(p2) guard" "npx -c 'echo hi'"
+# The command -c names is not read, so it is never a check.
+ignored "(p2) npx -c" 'npx -c "vitest run"'
 printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" counts "(p3) test_cmd behind a named wrapper" 'aws-vault exec p -- bin/suite --fast'
 PROJ_DIR="$PROJ" counts "(p3) test_cmd with a redirection between its words" 'bin/suite 2>/dev/null --fast'

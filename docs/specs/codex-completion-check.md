@@ -59,11 +59,13 @@ Rules:
   compaction is not a new turn.
 - A check passes when a record in this turn has exit code 0, status
   `completed`, and a command that passes `ran_a_check`. The lists it uses
-  (runners, wrappers, package managers and their options) are data in one
-  block of `orch-completion-check.py`; both harnesses use them. The command
-  is read in linear passes, never with a backtracking pattern:
-  1. **Words.** Quoted text and backslash escapes join the word they are
-     in. Outside quotes:
+  (runners, targets, non-run options, prefixes, wrappers, package managers
+  and their options) are data in one block of `orch-completion-check.py`;
+  both harnesses use them. The command is split into words in one linear
+  pass, cut into segments, and each segment is read from the left:
+  1. **Words.** Any whitespace (including U+00A0, U+2028, U+3000, `\v` and
+     `\f`) separates words. Quoted text and backslash escapes join the word
+     they are in. Outside quotes:
      - `;`, `&`, `&&`, `|`, `||`, `(`, `)` and newlines end a segment.
      - A redirection ends the word before it and is dropped together with
        its target word: `<`, `>`, `>>`, `<>`, `>|`, `<&`, `>&`, `&>`,
@@ -71,35 +73,29 @@ Rules:
        `2>&1`, `0<`). So `2>/dev/null pytest` reads as `pytest`.
      - `<<WORD`, `<<'WORD'` and `<<-WORD` start a heredoc: its body, from
        the next line up to the line that is exactly `WORD` (after leading
-       tabs for `<<-`), is skipped, so a body line is never read as a
-       command. With no such line the rest of the command is skipped.
+       tabs for `<<-`), is skipped. With no such line the rest is skipped.
      - A `#` that starts a word starts a comment, which runs to the end of
        the line.
-     If a quote is left open, every quote is read as an ordinary character.
-  2. **Prefixes.** Leading `VAR=value` words are skipped, and so are these
-     programs with the options listed for each and their plain arguments:
-     `env` (`-i`, `-u NAME`, `-C DIR`, `-0`, `-v`), `time` (`-p`),
-     `timeout DURATION` (`-k N`, `-s SIG`, `--signal=SIG`,
-     `--preserve-status`, `--foreground`, `-v`) and `cd DIR` (`-L`, `-P`).
-     An option not listed stops the skipping, so the segment is not read as
-     a check.
-  3. **Wrapper.** If the segment starts with `aws-vault exec`, `doppler run`,
-     `op run`, `dotenvx run`, `infisical run` or `mise exec`, everything up
-     to and including its first `--` is skipped, and prefixes again. With no
-     `--` it is not a check. No other program is a wrapper, because after
-     `--` programs such as git, rm and ls take file names. A project with
-     another wrapper puts its full command in `runner.test_cmd`.
-  4. **Front.** `npx`, `bunx`, `npm exec`, `pnpm exec`, `pnpm dlx`,
+
+     A command with a quote left open is not a check.
+  2. **Options.** Every list of options below names only the options that
+     take a value. Any other word starting with `-` is read as an option
+     with no value, and `--` ends the options.
+  3. **Prefixes.** Leading `VAR=value` words are skipped, and so are these
+     programs (by the last part of their path, so `/usr/bin/env` too) with
+     their options and plain arguments: `env` (value options `-u`,
+     `--unset`, `-C`, `--chdir`), `time`, `timeout DURATION` (value options
+     `-k`, `--kill-after`, `-s`, `--signal`) and `cd DIR`.
+  4. **Wrapper.** If the segment then starts with `aws-vault exec`,
+     `doppler run`, `op run`, `dotenvx run`, `infisical run` or `mise exec`,
+     everything up to and including its first `--` is skipped, and prefixes
+     again. With no `--` it is not a check. No other program is a wrapper,
+     because after `--` programs such as git, rm and ls take file names. A
+     project with another wrapper puts its full command in `runner.test_cmd`.
+  5. **Front.** `npx`, `bunx`, `npm exec`, `pnpm exec`, `pnpm dlx`,
      `yarn exec`, `yarn dlx`, `uv run`, `poetry run`, `pipenv run`,
-     `hatch run`, `rye run` and `bundle exec` are skipped with the options
-     listed for each (and the value of each option that takes one), then an
-     optional `--`. An option not on the list means the segment is not a
-     check. For `npx` and `npm exec`, `-c CMD` / `--call CMD` names a
-     command, and that command is judged by these same rules (nested up to
-     three deep). The option lists come from npm 11's and uv's own help;
-     npx's `-p` is `--package`, while npm's `-p` is `--parseable` and is not
-     accepted after `npm exec`. The lists for pnpm, yarn and bun come from
-     their published documentation, not a local run. `npm`, `pnpm`, `yarn` and `bun` are read the same way; after
+     `hatch run`, `rye run` and `bundle exec` are skipped with their
+     options. `npm`, `pnpm`, `yarn` and `bun` are read the same way; after
      their options must come a check script (`test`, `t`, `tests`, `lint`,
      `typecheck`, `check`, or one of them followed by `:` or `-`, such as
      `test:unit`), `run <script>`, `exec`/`dlx` as above,
@@ -107,52 +103,66 @@ Rules:
      `yarn` only, a runner (`pnpm vitest`). Anything else is one of the
      manager's own commands (`add`, `remove`, `update`, `why`, ...), so
      `pnpm -w add -D vitest` and `pnpm --filter jest build` are not checks.
-  5. **Runner.** The next word, taken by its last path part so that any
+     The value options come from npm 11's and uv's own help; npx's `-p` is
+     `--package`, while npm's `-p` is `--parseable` and takes no value. The
+     lists for pnpm, yarn and bun come from their published documentation,
+     not a local run.
+  6. **Runner.** The next word, taken by its last path part so that any
      path works (`.ve/bin/pytest`, `/usr/bin/make`, `$HOME/.ve/bin/pytest`),
      must be a runner: `pytest`, `py.test`, `jest`, `vitest`, `mocha`,
      `rspec`, `tox`, `nox`, `phpunit`, `pest`, `tsc`, `ruff`, `eslint`,
      `biome`, `flake8`, `mypy`, `pyright`, `shellcheck`, `rubocop`,
-     `golangci-lint`, `ctest` or `bats`; or one that needs a second word
-     (`go test`/`vet`; `cargo test`/`check`/`clippy`/`nextest`; `mix test`;
-     `gradle` or `gradlew test`/`check`; `mvn test`/`verify` after its
-     options; `make`, `just` or `task` with `test`, `tests`, `check`,
-     `lint`, `typecheck`, `ci` or `verify`; `dotnet`, `swift` and
-     `bazel test`; `deno test`/`check`/`lint`); or `python -m` with
-     `pytest`, `unittest`, `tox`, `mypy`, `ruff` or `flake8`; or a test
-     script run directly or by `bash`, `sh` or `python`
-     (`tests/x.sh`, `./tests/x.py`, `./run-tests.sh`). The name must be the
-     whole word, so `tsc-watch`, `ruff-lsp`, `pytest.ini` and
-     `scripts/eslint/build-rules.sh` are not runners (`tsc-watch` and
-     `ruff-lsp` counted under an earlier rule). A runner with options before
-     its target (`make -j4 test`) is not recognised.
-  6. **Printing only.** A segment with `--version`, `--help`, `-h`, `-V`,
+     `golangci-lint`, `ctest` or `bats`; or `python -m` with `pytest`,
+     `unittest`, `tox`, `mypy`, `ruff` or `flake8`; or a test script run
+     directly or by `bash`, `sh` or `python` (`tests/x.sh`, `./tests/x.py`,
+     `./run-tests.sh`); or a runner with one of its targets among its later
+     words before any `--`: `go test`/`vet`; `cargo test`/`check`/`clippy`/
+     `nextest`; `mix test`; `gradle` or `gradlew test`/`check`, also as a
+     task path (`:app:test`); `mvn test`/`verify`; `make`, `just` or `task`
+     with `test`, `tests`, `check`, `lint`, `typecheck`, `ci` or `verify`;
+     `dotnet`, `swift` and `bazel test`; `deno test`/`check`/`lint`. So
+     `mvn clean test`, `./gradlew clean test` and `make -C app test` count.
+     The name must be the whole word, so `tsc-watch`, `ruff-lsp`,
+     `pytest.ini` and `scripts/eslint/build-rules.sh` are not runners
+     (`tsc-watch` and `ruff-lsp` counted under an earlier rule).
+  7. **Not a run.** A segment is not a check when it has an option that
+     makes any runner only print (`--version`, `--help`, `-h`, `-V`,
      `--collect-only`, `--dry-run`, `--list-tests`, `--list`,
-     `--show-config`, `--co`, `--print-config` or `--why` is not a check.
-     Nor is a runner given one of its own dry-run or skip options:
-     `make` with `-n`, `--just-print`, `--recon`, `-q` or `--question`;
-     `just -n`; `cargo --no-run`; `gradle`/`gradlew -m`; `mvn -DskipTests`
-     or `-Dmaven.test.skip` (bare or `=true`). An option combined with
-     others (`make -kn test`) is not recognised.
+     `--show-config`, `--co`, `--print-config`, `--why`), or an option that
+     makes a runner named earlier in it plan, list or skip:
+     `make` `-n`, `--just-print`, `--dry-run`, `--recon`, `-q`, `--question`;
+     `just` `-n`, `--dry-run`; `cargo` `--no-run`; `gradle`/`gradlew` `-m`,
+     `--dry-run`; `mvn` `-DskipTests`, `-Dmaven.test.skip` (bare or
+     `=true`); `pytest` `--markers`, `--fixtures`, `--fixtures-per-test`,
+     `--collect-only`, `--co`, `--setup-plan`; `jest` `--clearCache`,
+     `--listTests`, `--showConfig`. `ruff rule`, `ruff config`,
+     `ruff format` (without `--check`), `ruff linter`, `ruff version`,
+     `ruff clean`, `ruff server` and `ruff analyze` inspect rather than
+     check. An option combined with others (`make -kn test`) is not
+     recognised.
 - When the project's `docs/llm-orchestrator/cadence.json` sets
   `runner.test_cmd`, a command also passes when the words and operators of
-  `test_cmd`, read by step 1, appear in the command's, starting where a
-  segment's command may start: at the segment's first word or after any of
-  its prefixes or a named wrapper's `--` (steps 2 and 3). So `cd /repo &&
-  cd app && ./check -q` matches `cd app && ./check`, and
-  `aws-vault exec p -- bin/suite --fast` matches `bin/suite --fast`.
-  Redirections are dropped on both sides, so `bin/suite --fast</dev/null`
-  and `bin/suite 2>/dev/null --fast` match `bin/suite --fast`, and
-  `bin/suite --fastest` does not. A segment the match touches that asks
-  only to print (step 6) cancels it. The search is Knuth-Morris-Pratt over
-  the words, so it is linear however long both commands are. The project
-  is the payload's `cwd`, else `CODEX_PROJECT_DIR`, else the hook's working
-  directory; on Claude Code it is `CLAUDE_PROJECT_DIR`, else the working
-  directory. Unverified: that a live Codex sends the project root as `cwd`
-  (the recorded payload shape has the field; a session started in a
-  subdirectory would not find the file), and whether Codex sets
-  `CODEX_PROJECT_DIR` at all. A missing, unreadable or malformed
-  `cadence.json` (including one nested too deep to read), or an empty
-  `test_cmd`, leaves only the lists.
+  `test_cmd`, read by step 1 and with its own leading prefixes other than
+  `cd` removed, appear in the command's starting at one of two places in a
+  segment: after the segment's prefixes other than `cd`, or where its
+  command proper starts (after all prefixes and a named wrapper's `--`). So
+  `cd /repo && cd app && ./check -q` and `FOO=1 cd app && ./check` match
+  `cd app && ./check`, and `aws-vault exec p -- bin/suite --fast` matches
+  `bin/suite --fast`. Redirections are dropped on both sides, so
+  `bin/suite --fast</dev/null` and `bin/suite 2>/dev/null --fast` match
+  `bin/suite --fast`, and `bin/suite --fastest` does not. A segment the
+  match touches that is not a run by step 7 cancels it, so
+  `/usr/bin/make test -n` does not match `/usr/bin/make test`. The
+  comparison costs at most the command's length times `test_cmd`'s; the
+  command side is linear, and `test_cmd` is the project's own, set in a
+  protected file. The project is the payload's `cwd`, else
+  `CODEX_PROJECT_DIR`, else the hook's working directory; on Claude Code it
+  is `CLAUDE_PROJECT_DIR`, else the working directory. Unverified: that a
+  live Codex sends the project root as `cwd` (the recorded payload shape
+  has the field; a session started in a subdirectory would not find the
+  file), and whether Codex sets `CODEX_PROJECT_DIR` at all. A missing,
+  unreadable or malformed `cadence.json` (including one nested too deep to
+  read), or an empty `test_cmd`, leaves only the lists.
 - A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
   one program, so it is joined with `shlex.join`, which quotes each
@@ -186,8 +196,13 @@ stay out of scope on purpose:
   runner's name.
 - `echo $((pytest))`: text inside `$(( ))`, `$( )` or backticks is not
   told apart from a command.
-- A quote left open anywhere in the command: every quote is then read as
-  an ordinary character, so quoted text can be read as words.
+- A quote left open anywhere in the command: the command is not read as a
+  check, so an honest run with a stray quote sends the agent back once.
+- `npx -c "vitest run"` and `npm exec --call "..."`: the command an option
+  names is not read, so this honest run is not seen.
+- `go run . test` or `cargo run --bin x test`: a target word given to the
+  program as data still reads as a target, because targets are looked for
+  among all later words before `--`.
 - `bash <<EOF` with a check in the body: heredoc bodies are skipped, so
   this honest run is not seen and the agent is sent back once.
 - A line appended to the log by hand; the log is the harness's.
