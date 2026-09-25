@@ -62,7 +62,8 @@ implementation; invoking it does not satisfy or change this seat's dispatch rule
 
 ## Report
 
-`<SCRATCH>/<TICKET>_REFUTE_report.md`, printed as your final message: a
-`Status:` block of at most 20 lines — the stamps and the counts
-`promoted / dropped / unresolved` per rank — then a `---` line with the union
-draft below it.
+`<SCRATCH>/<TICKET>_REFUTE_report.md`, sent to your caller as your report (the
+`SubagentHandback` message when the harness offers that tool, as in Claude Code
+auto mode; otherwise your final message): a `Status:` block of at most 20 lines
+— the stamps and the counts `promoted / dropped / unresolved` per rank — then a
+`---` line with the union draft below it.

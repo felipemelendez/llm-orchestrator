@@ -50,9 +50,11 @@ reach `UNVERIFIED`.
 
 ## Report
 
-`<SCRATCH>/<TICKET>_BRIEFREV_report.md`, printed as your final message. It opens
-with a `Status:` block of at most 20 lines — `Started: <YYYY-MM-DD HH:MM:SS>`
-first, the verdict `BRIEF: READY | READY-WITH-CORRECTIONS | NOT-READY`, the
-class, the split, the skips, `Finished: <…>` last — then a `---` line with
-sections A–E below it. Write a progress line every 15 minutes. Keep it under
-about 250 lines; a longer report is not a better one.
+`<SCRATCH>/<TICKET>_BRIEFREV_report.md`, sent to your caller as your report (the
+`SubagentHandback` message when the harness offers that tool, as in Claude Code
+auto mode; otherwise your final message). It opens with a `Status:` block of at
+most 20 lines — `Started: <YYYY-MM-DD HH:MM:SS>` first, the verdict
+`BRIEF: READY | READY-WITH-CORRECTIONS | NOT-READY`, the class, the split, the skips,
+`Finished: <…>` last — then a `---` line with sections A–E below it. Write a
+progress line every 15 minutes. Keep it under about 250 lines; a longer report
+is not a better one.
