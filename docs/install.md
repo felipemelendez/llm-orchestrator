@@ -81,9 +81,8 @@ steps for the run it just made:
 
 1. Complete `LAWS.md` with your approved wording. Record the setup itself as
    the first ruling, number one, in the rulings list.
-2. Start a session with `ORCH_CADENCE_UNLOCK=1` set in your own shell, then run
-   the `--lock` command the initializer printed. This records the finished
-   rulebook and configuration in the lock.
+2. In your own terminal, run the `--lock` command the initializer printed. This
+   records the finished rulebook and configuration in the lock.
 3. Run `git config core.hooksPath .githooks` yourself, once per clone. The
    commit check works only after this.
 4. Commit the setup files with the commit command the initializer printed.
@@ -197,7 +196,7 @@ Two options:
 ```
 This uses the plugin schema directly; no settings.json edits needed.
 
-**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` — every command hook across six events, the cadence unlock guard included. (An earlier version of this section wired 7 of 15 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
+**B. Wire hooks manually in settings.json.** The example below mirrors `hooks/hooks.json` — every command hook across six events. (An earlier version of this section wired 7 of 15 and silently dropped, among others, the destructive-git guard and the verify gate; `tests/test-install.sh` now fails if a shipped hook script or event is missing here.) Add this to `.claude/settings.json`:
 ```jsonc
 {
   "env": { "ORCH_HOOK_PROFILE": "standard" },
@@ -216,7 +215,6 @@ This uses the plugin schema directly; no settings.json edits needed.
     "PreToolUse": [
       { "matcher": "Bash",
         "hooks": [
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-cadence-unlock.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-no-verify.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-destructive-git.sh" }
         ] }
@@ -308,7 +306,7 @@ export ORCH_DISABLED_HOOKS=orch-guard,orch-research-gate
 
 Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-research-gate`, `orch-handoff-nudge`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-task-cleanup`, `orch-stop`, `orch-cadence-stop`, `orch-verify-gate`, and on Codex `codex-verify-gate`.
 
-Two cadence hooks are exempt from this list on purpose, because a guard that can be talked off is not a guard: the unlock guard (`guard-cadence-unlock.sh`) and, on Codex, the file guard; the session unlock is their one way out. The other one that runs in cadence mode, the session-start line (`orch-session-start`), is nameable here, and it is inert in any project without a `docs/llm-orchestrator/cadence.json` that says `"enabled": true`, so there is nothing to disable until you opt in. `ORCH_CADENCE_UNLOCK=1` is not an off switch for it: it is the cadence's own unlock, described under "Escape hatches for the hard guards" below.
+One cadence hook is exempt from this list on purpose, because a guard that can be talked off is not a guard: on Codex, the file guard. The other one that runs in cadence mode, the session-start line (`orch-session-start`), is nameable here, and it is inert in any project without a `docs/llm-orchestrator/cadence.json` that says `"enabled": true`, so there is nothing to disable until you opt in.
 
 ## Escape hatches for the hard guards
 
@@ -320,19 +318,21 @@ export ORCH_ALLOW_DESTRUCTIVE_GIT=1
 
 An inline `ORCH_ALLOW_DESTRUCTIVE_GIT=1 git …` prefix in the command being run does **not** disarm the guard — that lands in the child shell's environment, not the hook's.
 
-`ORCH_CADENCE_UNLOCK=1` is not a hook hatch at all — it is the cadence's own unlock, and it belongs on this page because people look for it here. In a project that has opted in, the locked set is that project's laws (`docs/llm-orchestrator/LAWS.md`), its `cadence.json`, its `LOCK.sha256`, its `.claude/settings.json`, `.githooks/commit-msg` and `.githooks/orch-cadence-check.sh`, and the marked `ORCH:LAWS` section of `CLAUDE.md` and `AGENTS.md`. The `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json` hold the six *files*; the marked section is held by the alarm — the end-of-turn verdict, the session-start line and the `commit-msg` refusal — because an `Edit(path)` rule addresses a whole file and cannot address a section inside one. Either way an amendment has to be able to rewrite them on purpose. Three programs read the variable: `cadence-init`, which will otherwise keep a file it would have replaced; `orch-cadence-check.sh --lock`, which will otherwise refuse to overwrite an existing manifest; and on Codex the file guard, which stands down for the session. The rest of `CLAUDE.md` and `AGENTS.md` stays writable either way, so `/llm-orchestrator:remember`, `/llm-orchestrator:onboard` and `/llm-orchestrator:forget` keep working.
+### Changing the rules
 
-The unlock is one variable, and it is deliberately awkward to make permanent:
+In a project that has opted in, the locked set is that project's laws (`docs/llm-orchestrator/LAWS.md`), its `cadence.json`, its `LOCK.sha256`, its `.claude/settings.json`, `.githooks/commit-msg` and `.githooks/orch-cadence-check.sh`, and the marked `ORCH:LAWS` section of `CLAUDE.md` and `AGENTS.md`. The `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json` hold the six *files*; the marked section is held by the alarm — the end-of-turn verdict, the session-start line and the `commit-msg` refusal — because an `Edit(path)` rule addresses a whole file and cannot address a section inside one. The rest of `CLAUDE.md` and `AGENTS.md` stays writable, so `/llm-orchestrator:remember`, `/llm-orchestrator:onboard` and `/llm-orchestrator:forget` keep working.
+
+These files change only by a numbered ruling. When the assistant thinks a rule should change, it explains why and shows you the change as a patch file kept outside Git. If you agree, it gives you one command to run in your own terminal:
 
 ```
-ORCH_CADENCE_UNLOCK=1 claude
+bash <plugin>/skills/cadence/scripts/cadence-ruling.sh <patch-file> "<your wording>"
 ```
 
-Set it in the environment for the one session that needs it — **never in a settings file**. If `.claude/settings.json`, `.claude/settings.local.json` or `~/.claude/settings.json` contains the string `ORCH_CADENCE_UNLOCK`, the unlock is refused, the run names the file that refused it, and the lock stands: a persisted unlock is a disarmed lock in every future session, and it would be invisible from inside the sessions it disarmed. `orch-cadence-check.sh --lock` refuses on those terms, and it reads that same set of three files.
+The command works on a private copy of the patch and shows its sha256. It checks that every path the patch touches, renames and deletions included, is protected, that a change to `CLAUDE.md` or `AGENTS.md` stays inside the marked section, that the protected files match `HEAD`, that the patch still applies, and that it adds the next `Ruling <N>` to `LAWS.md`. It asks you to type `ruling <N>`, then applies the patch, re-records the lock with `--lock`, commits with the message `Ruling <N>: <your wording>` (the `commit-msg` hook checks it like any other commit), and runs `--audit HEAD` on the result. If any step fails or you interrupt it, it puts the files and `HEAD` back; if it cannot, it says so and names the files.
 
-One more hook belongs to the same rule, and it reads no variable: `guard-cadence-unlock.sh` refuses, in cadence mode, a Bash command whose own text *names* one of the four switches — whatever the verb, because it is a mention rule and not an assignment grammar. The switches are yours, set in your shell at launch; an assignment inside a command an agent runs would let the turn arrange the switch that binds it. The accepted cost is real and you will hit it: an agent cannot grep for, echo or write about those names inside a cadence project, so an edit to a file that mentions one goes through the Write tool rather than a command line.
+It refuses to run in an assistant's shell: when `CLAUDECODE` is set (Claude Code sets it), when `CODEX_THREAD_ID`, `CODEX_SANDBOX` or `CODEX_SANDBOX_NETWORK_DISABLED` is set (names found in the Codex binary, not yet observed in a live Codex shell), or when there is no terminal to read the confirmation from. `--lock` also rewrites an existing lock only when a terminal is attached, and `cadence-init` adds the deny rule `Bash(*cadence-ruling.sh*)`, so Claude Code refuses any command that names it (a test or file name containing that text is refused too). **The known limit.** An assistant that clears those variables and runs the command, or `--lock`, inside a pseudo-terminal (for example with `script` or Python's `pty` module) has a terminal, so these checks do not stop it. Nothing in the plugin prevents that; the commit it makes still appears in the history as a ruling you did not make.
 
-The amendment path, rather than the unlock alone, is a numbered ruling: make the change under the unlock, re-run `--lock` to re-record the manifest, and commit with `Ruling <N>` in the message so the git layer can see the amendment.
+**Upgrading a project set up with an older version.** An older project's `.githooks/orch-cadence-check.sh` still honours the removed `ORCH_CADENCE_UNLOCK` variable, so an assistant could set it and re-record the lock without a terminal. Re-run `/llm-orchestrator:cadence-init`. In an armed project it writes no protected file; it writes an upgrade ruling patch outside the project (the shipped `.githooks/` copies, the current marked block, the missing deny rules, and the next `Ruling <N>` line appended to `LAWS.md`) and prints the one `cadence-ruling.sh` command that applies it. Review the patch, then run that command in your own terminal.
 
 One accepted gap: these hooks resolve the project from `CLAUDE_PROJECT_DIR` (falling back to the working directory) *before* decoding anything, which is what keeps them free for everyone else. A cadence project edited from a session rooted somewhere else is therefore not covered by the hooks — the native deny rules and the git layer still cover it.
 
@@ -355,9 +355,9 @@ This was checked live, not only read; the method, date and results are in [`cade
 
 None of the four blocks a turn by default; set `ORCH_STRICT_CADENCE_LOCK=1` in the environment and the end-of-turn verdict may block once per session, and only for a path that changed after that session's opening snapshot.
 
-Two of the four are live only after a step the init prints rather than takes. The `commit-msg` refusal starts working once this clone's hooks are routed with the line the init prints, and the manifest everything here compares against is only true once the laws' placeholders are filled in and re-locked. The init's order is: fill the placeholders, re-lock under the unlock, route this clone's hooks (once per clone), commit.
+Two of the four are live only after a step the init prints rather than takes. The `commit-msg` refusal starts working once this clone's hooks are routed with the line the init prints, and the manifest everything here compares against is only true once the laws' placeholders are filled in and re-locked. The init's order is: fill the placeholders, re-lock in your own terminal, route this clone's hooks (once per clone), commit.
 
-The honest boundary is one sentence: a write the deny rules do not stop happens, is named at the end of that turn and at the next session start, and is refused at the commit.
+The honest boundary: the lock stops accidental edits and makes deliberate ones visible in the history. A write the deny rules do not stop happens, is named at the end of that turn and at the next session start, and a commit of it is refused unless it also re-records the lock and carries a numbered ruling. It cannot stop an agent determined to fake a ruling: a script the agent runs can rewrite `LAWS.md` and `LOCK.sha256` together and commit with a `Ruling <N>` message, and the `commit-msg` hook accepts that commit. The fake ruling then shows in the history, where you can see you did not make it.
 
 ### The CI step
 

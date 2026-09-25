@@ -41,7 +41,7 @@ the same class.
 
 Nothing else belongs here. The pair, never self-verify, the harm ranking, the
 stop rule, the lock's shape, every threshold and the refuter trigger change only
-by a numbered ruling in `LAWS.md`, under the unlock.
+by a numbered ruling in `LAWS.md`.
 
 ## Example
 
