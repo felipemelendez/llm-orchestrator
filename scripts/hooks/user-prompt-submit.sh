@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # LLM Orchestrator UserPromptSubmit hook.
-# Fires before Claude processes each user message. Injects a one-line nudge
-# toward the Concise Agent Protocol so the agent's reply lands in a named shape.
-# One line is the whole budget: this is the only surface billed on every turn.
+# Fires before Claude processes each user message. In a project whose
+# cadence.json is enabled, injects a one-line nudge toward the Concise Agent
+# Protocol so the agent's reply lands in a named shape. Everywhere else it
+# injects nothing. One line is the whole budget: this is billed on every turn.
 #
 # Gated by ORCH_HOOK_PROFILE: skipped under minimal.
 # Disabled if ORCH_DISABLED_HOOKS contains "orch-user-prompt-submit".
@@ -65,20 +66,24 @@ fi
 # with a short reminder near the end of the prompt".
 CANON="${HOOK_DIR}/../../concise-agent-protocol.md"
 REMINDER=""
-MARKER="orch-turn-nudge"
+WORKFLOW=""
 PROTOCOL_LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
 if [[ -f "$PROTOCOL_LIB" ]]; then
   source "$PROTOCOL_LIB"
-  orch_protocol_is_proportional "$INPUT" && MARKER="orch-proportional-nudge"
+  WORKFLOW=$(orch_protocol_workflow "$INPUT")
 fi
+# No enabled cadence (or no way to tell): no reply-format rule and no reminder.
+[[ -n "${WORKFLOW}" ]] || exit 0
+MARKER="orch-turn-nudge"
+[[ "${WORKFLOW}" == "proportional" ]] && MARKER="orch-proportional-nudge"
 if [[ -f "${CANON}" ]]; then
   REMINDER=$(awk -v s="<!-- $MARKER-start -->" -v e="<!-- $MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON}" 2>/dev/null)
 fi
 if [[ -z "${REMINDER}" ]]; then
   if [[ "$MARKER" == "orch-proportional-nudge" ]]; then
-    REMINDER='LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS; applicability never clears failed or required checks.'
+    REMINDER='LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS.'
   else
-    REMINDER='LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.'
+    REMINDER='LLM Orchestrator — open with one header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:", unless project instructions set a reply format. A "Changed:" block REQUIRES a "Verify:" line (real command + its output).'
   fi
 fi
 

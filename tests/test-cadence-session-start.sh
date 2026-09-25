@@ -12,10 +12,8 @@
 #      It also has to appear when the meta-skill body is empty, which is where
 #      the hook used to exit 0 without printing anything at all.
 #
-#   2. For everyone else the output must be byte-identical to what the hook
-#      printed before the cadence existed. That is pinned literally: the hook as
-#      of the commit before this change is fetched out of git and run on the
-#      same fixtures, and the two outputs are compared byte for byte.
+#   2. For everyone else the session opens with no verdict and no reply-format
+#      rule: only the short core that says when a skill applies.
 #
 # The verdict is a REPORT, never enforcement: this hook already exits early on
 # ORCH_DISABLED_HOOKS=orch-session-start, so nothing may depend on it.
@@ -28,7 +26,6 @@ unset ORCH_CADENCE_UNLOCK
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="${ROOT}/scripts/hooks/session-start.sh"
-BASE_REV="ee28065"
 
 if [[ -t 1 ]]; then GREEN=$'\033[32m'; RED=$'\033[31m'; DIM=$'\033[2m'; RESET=$'\033[0m'
 else GREEN=""; RED=""; DIM=""; RESET=""; fi
@@ -98,35 +95,35 @@ GUARD_HASH=$(cat "${ROOT}/scripts/hooks/"guard-*.sh 2>/dev/null | { \
   else openssl dgst -sha256 | awk '{print $NF}'; fi; } | cut -c1-8)
 
 # =============================================================================
-printf '%s== byte identity for a project that never opted in ==%s\n' "$DIM" "$RESET"
+printf '%s== a project that never opted in gets no reply-format rule ==%s\n' "$DIM" "$RESET"
 # =============================================================================
-OLD="$TMP/session-start.old.sh"
-if git -C "$ROOT" show "${BASE_REV}:scripts/hooks/session-start.sh" > "$OLD" 2>/dev/null \
-   && [[ -s "$OLD" ]]; then
-  for pair in "startup:$STARTUP" "compact:$COMPACT" "resume:$RESUME"; do
-    label="${pair%%:*}"; ev="${pair#*:}"
-    run_hook "$OLD" "$PLAIN" "$ev" >/dev/null; cp "$OUT" "$TMP/old.out"; cp "$ERRF" "$TMP/old.err"
-    run_hook "$HOOK" "$PLAIN" "$ev" >/dev/null
-    if cmp -s "$TMP/old.out" "$OUT" && cmp -s "$TMP/old.err" "$ERRF"; then
-      ok "source=${label}: output identical to ${BASE_REV}"
-    else
-      fail "source=${label}: output identical to ${BASE_REV}" \
-           "$(cmp "$TMP/old.out" "$OUT" 2>&1 | head -1)"
-    fi
-  done
-  for prof in minimal strict; do
-    run_hook "$OLD" "$PLAIN" "$COMPACT" ORCH_HOOK_PROFILE="$prof" >/dev/null; cp "$OUT" "$TMP/old.out"
-    run_hook "$HOOK" "$PLAIN" "$COMPACT" ORCH_HOOK_PROFILE="$prof" >/dev/null
-    cmp -s "$TMP/old.out" "$OUT" && ok "compact under ${prof}: output identical to ${BASE_REV}" \
-      || fail "compact under ${prof}: output identical to ${BASE_REV}" "outputs differ"
-  done
-  run_hook "$OLD" "$PLAIN" "$STARTUP" ORCH_HOOK_DRY_RUN=1 >/dev/null; cp "$ERRF" "$TMP/old.err"
-  run_hook "$HOOK" "$PLAIN" "$STARTUP" ORCH_HOOK_DRY_RUN=1 >/dev/null
-  cmp -s "$TMP/old.err" "$ERRF" && ok "dry-run: stderr identical to ${BASE_REV}" \
-    || fail "dry-run: stderr identical to ${BASE_REV}" "$(head -1 "$ERRF")"
-else
-  ok "SKIP byte-identity pin (${BASE_REV} not reachable from this checkout)"
-fi
+for pair in "startup:$STARTUP" "compact:$COMPACT" "resume:$RESUME"; do
+  label="${pair%%:*}"; ev="${pair#*:}"
+  rc=$(run_hook "$HOOK" "$PLAIN" "$ev")
+  C=$(ctx)
+  if [[ "$rc" == "0" && -n "$C" ]] && ! printf '%s' "$C" | grep -qE 'Changed:|Verification: PASS|shape header|cadence:'; then
+    ok "source=${label}: no verdict and no reply-format rule"
+  else
+    fail "source=${label}: no verdict and no reply-format rule" "exit $rc, context: $(printf '%s' "$C" | head -c 200)"
+  fi
+done
+run_hook "$HOOK" "$PLAIN" "$STARTUP" >/dev/null
+C=$(ctx)
+case "$C" in
+  *"need no skill"*) ok "startup still carries the rule for when a skill applies" ;;
+  *) fail "startup still carries the rule for when a skill applies" "context: $(printf '%s' "$C" | head -c 200)" ;;
+esac
+for prof in minimal strict; do
+  run_hook "$HOOK" "$PLAIN" "$COMPACT" ORCH_HOOK_PROFILE="$prof" >/dev/null
+  C=$(ctx)
+  printf '%s' "$C" | grep -qE 'Changed:|shape header' \
+    && fail "compact under ${prof}: no reply-format rule" "context: $(printf '%s' "$C" | head -c 200)" \
+    || ok "compact under ${prof}: no reply-format rule"
+done
+run_hook "$HOOK" "$PLAIN" "$STARTUP" ORCH_HOOK_DRY_RUN=1 >/dev/null
+[[ ! -s "$OUT" ]] && grep -q 'would inject using-orchestrator meta-skill bootstrap' "$ERRF" \
+  && ok "dry-run: says what it would inject and prints nothing on stdout" \
+  || fail "dry-run: says what it would inject and prints nothing on stdout" "$(head -1 "$ERRF")"
 
 # =============================================================================
 printf '%s== the verdict, in cadence mode ==%s\n' "$DIM" "$RESET"
@@ -145,6 +142,10 @@ esac
 case "$C" in
   *"You are running LLM Orchestrator"*) ok "the meta-skill preamble still follows it" ;;
   *) fail "the meta-skill preamble still follows it" "preamble missing" ;;
+esac
+case "$C" in
+  *"## Reply format in a cadence-enabled project"*'`Changed:`'*) ok "an enabled project gets the reply-format block" ;;
+  *) fail "an enabled project gets the reply-format block" "format block missing" ;;
 esac
 
 run_hook "$HOOK" "$PROJ" "$COMPACT" >/dev/null

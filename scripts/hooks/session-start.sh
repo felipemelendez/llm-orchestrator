@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # LLM Orchestrator SessionStart hook.
 #
-# Loads the using-orchestrator meta-skill (Concise Agent Protocol) as session
-# context. User-curated facts live in Claude Code's native CLAUDE.md; plugin
+# Loads the using-orchestrator meta-skill core (when a skill applies) as session
+# context, plus its reply-format block only in a project whose cadence.json is
+# enabled. User-curated facts live in Claude Code's native CLAUDE.md; plugin
 # state is loaded at trigger time by the gate hook, not ambient.
 #
 # The meta-skill bootstrap always loads. The post-compaction advisory is
@@ -66,19 +67,19 @@ strip_frontmatter() {
   ' "$1"
 }
 
-# Extract only the eager protocol core marked in the meta-skill, so SessionStart
-# injects ~400 tokens instead of the whole ~2,000-token body. The rest of the
-# file (routing table, red flags, dispatch detail) is loaded lazily when the
-# agent reads the skill. Prints nothing if the markers are absent — the caller
-# then falls back to the full body, so a custom meta-skill without markers keeps
-# working exactly as before.
-extract_eager() {
+# Extract one marked block of the meta-skill (<!-- ORCH:<NAME>:START/END -->),
+# so SessionStart injects the short core instead of the whole ~2,000-token body.
+# The rest of the file (routing table, dispatch detail) is loaded when the agent
+# reads the skill. Prints nothing if the markers are absent — for the EAGER
+# block the caller then falls back to the full body, so a custom meta-skill
+# without markers keeps working.
+extract_block() { # <file> <NAME>
   # Buffer the block and emit it only once a matching END marker is seen. A
-  # malformed START-without-END therefore prints nothing (fail closed) so the
-  # caller falls back to the full body rather than grabbing the file to EOF.
-  awk '
-    /<!-- ORCH:EAGER:START -->/ { grab=1; buf=""; next }
-    /<!-- ORCH:EAGER:END -->/   { if (grab) seen=1; grab=0; next }
+  # malformed START-without-END therefore prints nothing (fail closed) rather
+  # than grabbing the file to EOF.
+  awk -v s="<!-- ORCH:$2:START -->" -v e="<!-- ORCH:$2:END -->" '
+    $0 == s { grab=1; buf=""; next }
+    $0 == e { if (grab) seen=1; grab=0; next }
     grab { buf = buf $0 "\n" }
     END  { if (seen) printf "%s", buf }
   ' "$1"
@@ -114,9 +115,8 @@ truncate_at_line() {
 #
 # Stage 1 is the same opt-in test the cadence guards use — a file test and a
 # grep on docs/llm-orchestrator/cadence.json, no JSON decode and no fork — so a
-# project that never opted in pays nothing and its output stays byte-identical
-# to what this hook printed before the cadence existed (pinned in
-# tests/test-cadence-session-start.sh against the commit before this change).
+# project that never opted in pays nothing: no verdict and no reply-format rule
+# (tests/test-cadence-session-start.sh).
 #
 # The verdict is PREPENDED because truncation drops the TAIL: whatever else the
 # budget eats, the session opens knowing whether the lock still matches the tree.
@@ -188,8 +188,17 @@ META_BODY=""
 META_FILE="${ROOT}/skills/using-orchestrator/SKILL.md"
 if [[ -f "${META_FILE}" ]]; then
   # Prefer the lean eager core; fall back to the full body if unmarked.
-  META_BODY=$(extract_eager "${META_FILE}")
-  [[ -z "${META_BODY}" ]] && META_BODY=$(strip_frontmatter "${META_FILE}")
+  META_BODY=$(extract_block "${META_FILE}" EAGER)
+  if [[ -z "${META_BODY}" ]]; then
+    META_BODY=$(strip_frontmatter "${META_FILE}")
+  elif [[ -n "${CADENCE_PREFIX}" ]]; then
+    # The six reply headers are a cadence-project rule. Everywhere else the
+    # session gets no reply-format rule from this plugin.
+    FORMAT_BODY=$(extract_block "${META_FILE}" FORMAT)
+    [[ -n "${FORMAT_BODY}" ]] && META_BODY="${META_BODY}
+
+${FORMAT_BODY}"
+  fi
 fi
 
 # The post-compaction recovery note is the reactive half of the handoff feature.
@@ -199,10 +208,10 @@ if [[ ",${DISABLED}," == *",orch-handoff-nudge,"* ]] || [[ "${PROFILE}" == "mini
   PRESSURE_DISABLED=1
 fi
 
-# Compact path — emit the lean recovery note plus the canonical per-turn
-# protocol reminder (NOT the ~8K meta body, which would risk the 10,000-char
-# additionalContext cap). The reminder is included here so protocol survival
-# across compaction does not depend on the per-turn hook being enabled.
+# Compact path — emit the lean recovery note plus, in a cadence-enabled project,
+# the canonical protocol reminder (NOT the ~8K meta body, which would risk the
+# 10,000-char additionalContext cap). The reminder is included here so the
+# format survives compaction without depending on the per-turn hook.
 # The newest-handoff path is derived live (a pointer, never the artifact body).
 if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
   PROTOCOL_MARKER="orch-turn-reminder"
@@ -223,9 +232,10 @@ if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
   fi
 
   # Canonical protocol reminder (single source: concise-agent-protocol.md).
+  # It carries the reply-format rule, so only a cadence-enabled project gets it.
   CANON_FILE="${ROOT}/concise-agent-protocol.md"
   PROTOCOL_CORE=""
-  [[ -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk -v s="<!-- $PROTOCOL_MARKER-start -->" -v e="<!-- $PROTOCOL_MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON_FILE}" 2>/dev/null)
+  [[ -n "${CADENCE_PREFIX}" && -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk -v s="<!-- $PROTOCOL_MARKER-start -->" -v e="<!-- $PROTOCOL_MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON_FILE}" 2>/dev/null)
 
   if [[ "$PROTOCOL_MARKER" == "orch-proportional-reminder" ]]; then
     NOTE="
@@ -252,6 +262,7 @@ Before continuing or claiming any work done:
 ${PROTOCOL_CORE}"
   fi
 
+  [[ -z "${PROTOCOL_CORE}" ]] && NOTE="${NOTE%$'\n\n'}"
   NOTE="${CADENCE_PREFIX}${NOTE}"
 
   if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
@@ -294,7 +305,7 @@ fi
 # removed from the meta-skill and CLAUDE.md. The skill descriptions are already
 # in context and are the real trigger surface; a mandate on top of them buys
 # nothing and costs the model its own judgement about relevance.
-PREAMBLE="You are running LLM Orchestrator. Below is the protocol core of your 'using-orchestrator' meta-skill. The rest of the catalog loads through the 'Skill' tool — each skill's description says when it applies.
+PREAMBLE="You are running LLM Orchestrator. Below is the core of your 'using-orchestrator' meta-skill. The rest of the catalog loads through the 'Skill' tool — each skill's description says when it applies.
 
 ---
 "

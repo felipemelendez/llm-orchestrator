@@ -11,10 +11,12 @@
 #      per-turn hook's embedded fallback is byte-identical to its source:
 #        - orch-turn-reminder — SessionStart's post-compaction recovery core
 #        - orch-turn-nudge    — UserPromptSubmit's every-turn distillation,
-#                               capped at NUDGE_MAX bytes so it cannot re-bloat
+#                               capped at its byte ceiling so it cannot re-bloat
 #                               into a second copy of the recovery core
-#   3. the using-orchestrator EAGER core and output-styles/orchestrator.md
-#      carry the six headers and the Verify: hard rule
+#      Both are injected only in a project whose cadence.json is enabled.
+#   3. the using-orchestrator FORMAT block and output-styles/orchestrator.md
+#      carry the six headers and the Verify: hard rule; the always-injected
+#      EAGER core carries none of it
 #   4. the Status enum is consistent across grader, templates, and AGENTS.md
 #   5. CLAUDE.md references the canonical file instead of duplicating it
 #
@@ -58,7 +60,11 @@ grep -q 'PROTOCOL_MARKER="orch-turn-reminder"' "${ROOT}/scripts/hooks/session-st
   || fail "compact path wiring" "session-start.sh no longer extracts orch-turn-reminder"
 
 printf '\n%s== per-turn nudge is single-sourced and stays small ==%s\n' "$DIM" "$RESET"
-NUDGE_MAX=300
+# The ceilings are the nudges' sizes on 2026-09-25, before the "unless project
+# instructions set a reply format" clause was added: the clause may not make the
+# per-turn cost grow.
+NUDGE_MAX=233
+PNUDGE_MAX=273
 NUDGE=$(awk '/<!-- orch-turn-nudge-start -->/{f=1;next} /<!-- orch-turn-nudge-end -->/{f=0} f' "$CANON")
 [[ -n "$NUDGE" ]] && ok "canonical carries the marked turn-nudge block" || fail "nudge block" "markers missing or empty"
 for h in $HEADERS; do printf '%s' "$NUDGE" | grep -q "\"$h\"" || { fail "nudge headers" "nudge block missing \"$h\""; break; }; done
@@ -85,13 +91,16 @@ printf '%s' "$NUDGE" | grep -q 'systematic-debugging' \
 # must be identical — the embedded fallback may not drift from the source.
 extract_ctx() { python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-# The legacy nudge is the fixture here; select it from a disposable directory,
-# not from whatever cadence policy the launching checkout carries.
+# The legacy nudge is the fixture here; select it from a disposable project
+# with an enabled legacy cadence, not from whatever cadence policy the
+# launching checkout carries.
 cd "$TMP" || exit 1
-export CLAUDE_PROJECT_DIR="$TMP"
-LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-mkdir -p "$TMP/x/hooks"
+mkdir -p "$TMP/legacy/docs/llm-orchestrator" "$TMP/x/hooks" "$TMP/x/lib"
+printf '{"enabled":true}\n' > "$TMP/legacy/docs/llm-orchestrator/cadence.json"
+export CLAUDE_PROJECT_DIR="$TMP/legacy"
 cp "${ROOT}/scripts/hooks/user-prompt-submit.sh" "$TMP/x/hooks/"
+cp "${ROOT}/scripts/lib/orch-protocol.sh" "$TMP/x/lib/"
+LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 FALLBACK=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
 if [[ -n "$LIVE" && "$LIVE" == "$FALLBACK" ]]; then
   ok "hook fallback is byte-identical to the canonical block"
@@ -103,10 +112,13 @@ fi
 printf '\n%s== proportional reminders use actual project policy ==%s\n' "$DIM" "$RESET"
 PNUDGE=$(awk '/<!-- orch-proportional-nudge-start -->/{f=1;next} /<!-- orch-proportional-nudge-end -->/{f=0} f' "$CANON")
 PBYTES=$(printf '%s' "$PNUDGE" | wc -c | tr -d ' ')
-[[ -n "$PNUDGE" && "$PBYTES" -le "$NUDGE_MAX" ]] && ok "proportional nudge stays within 300 bytes" || fail "proportional nudge budget" "$PBYTES bytes"
-mkdir -p "$TMP/project/docs/llm-orchestrator" "$TMP/x/lib"
+[[ -n "$PNUDGE" && "$PBYTES" -le "$PNUDGE_MAX" ]] && ok "proportional nudge stays within ${PNUDGE_MAX} bytes (${PBYTES})" || fail "proportional nudge budget" "$PBYTES bytes"
+for n in "$NUDGE" "$PNUDGE"; do
+  printf '%s' "$n" | grep -q 'unless project instructions set a reply format' \
+    || { fail "nudge yields to the project's format" "a nudge lacks the project-format clause"; break; }
+done
+mkdir -p "$TMP/project/docs/llm-orchestrator"
 printf '{"enabled":true,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
-cp "${ROOT}/scripts/lib/orch-protocol.sh" "$TMP/x/lib/"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$TMP/project")
 PLIVE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 PFALLBACK=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
@@ -116,17 +128,42 @@ PCOMPACT=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TM
 if printf '%s' "$PCOMPACT" | grep -q 'Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE' && ! printf '%s' "$PCOMPACT" | grep -q 'REQUIRE a "Verify:"'; then
   ok "proportional compaction chooses the shared completion vocabulary"
 else fail "proportional compaction vocabulary" "$PCOMPACT"; fi
+
+printf '\n%s== a project without an enabled cadence gets no format rule ==%s\n' "$DIM" "$RESET"
+mkdir -p "$TMP/plain"
 printf '{"enabled":false,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
-DISABLED_NUDGE=$(printf '%s' "$PIN" | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-[[ "$DISABLED_NUDGE" == "$NUDGE" ]] && ok "disabled cadence retains legacy reminder" || fail "disabled reminder" "$DISABLED_NUDGE"
+for proj in "$TMP/project" "$TMP/plain"; do
+  label="disabled cadence"; [[ "$proj" == "$TMP/plain" ]] && label="no cadence.json"
+  PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$proj")
+  RAW=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$proj" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh")
+  [[ -z "$RAW" ]] && ok "${label}: the per-turn hook injects nothing" || fail "${label}: per-turn hook" "$RAW"
+  for src in startup compact; do
+    PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":sys.argv[2]}))' "$proj" "$src")
+    CTX=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$proj" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | extract_ctx)
+    if printf '%s' "$CTX" | grep -qE 'Changed:|Verification: PASS|shape header'; then
+      fail "${label}: session start (${src}) carries no reply-format rule" "$(printf '%s' "$CTX" | grep -m1 -E 'Changed:|Verification: PASS|shape header')"
+    else
+      ok "${label}: session start (${src}) carries no reply-format rule"
+    fi
+  done
+done
 
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
-for h in $HEADERS; do printf '%s' "$CORE" | grep -q "${h}" || { fail "skill core headers" "EAGER core missing ${h}"; break; }; done
+FORMAT=$(awk '/<!-- ORCH:FORMAT:START -->/{f=1;next} /<!-- ORCH:FORMAT:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
+for h in $HEADERS; do printf '%s' "$FORMAT" | grep -q "${h}" || { fail "skill format headers" "FORMAT block missing ${h}"; break; }; done
 # Match the HARD-RULE SENTENCE, not the bare token: `Verify:` also appears in
-# the eager core's sub-section list, so a token grep stayed green with the rule
-# deleted — verified by removing the sentence and watching the tick persist.
-printf '%s' "$CORE" | grep -q 'MUST include a `Verify:` line' && ok "using-orchestrator EAGER core carries the six headers + Verify rule" || fail "skill core Verify" "the Changed:-requires-Verify: hard-rule sentence is missing from the EAGER core"
+# the sub-section list, so a token grep stayed green with the rule deleted —
+# verified by removing the sentence and watching the tick persist.
+printf '%s' "$FORMAT" | grep -q 'MUST include a `Verify:` line' && ok "using-orchestrator FORMAT block carries the six headers + Verify rule" || fail "skill format Verify" "the Changed:-requires-Verify: hard-rule sentence is missing from the FORMAT block"
+printf '%s' "$FORMAT" | grep -q 'that format wins' && ok "FORMAT block says the project's own reply format wins" || fail "FORMAT project format" "missing"
+# The EAGER core is injected in every project, so it must carry no reply-format rule.
+printf '%s' "$CORE" | grep -qE '`(Changed|Found|Blocked|Issues|Plan):`' \
+  && fail "EAGER core format-free" "the always-injected core names a reply header" \
+  || ok "EAGER core (injected everywhere) names no reply header"
+printf '%s' "$CORE" | grep -q 'Ordinary questions, explanations and small edits need no skill' \
+  && ok "EAGER core says ordinary questions and small edits need no skill" \
+  || fail "EAGER core skill rule" "the no-skill-needed sentence is missing"
 # The precedence ordering left the per-turn hook; the eager block is now its only
 # eagerly-loaded home. If it is not here, it is nowhere until the skill is read.
 #
@@ -145,6 +182,9 @@ fi
 STYLE="${ROOT}/output-styles/orchestrator.md"
 for h in $HEADERS; do grep -q "\`${h}\`" "$STYLE" || { fail "output style headers" "missing \`${h}\`"; break; }; done
 grep -q 'Verify:' "$STYLE" && ok "output style carries the six headers + Verify rule" || fail "output style Verify" "missing"
+# Without this field, choosing the style drops Claude Code's own instructions
+# on scoping and verifying work.
+grep -qx 'keep-coding-instructions: true' "$STYLE" && ok "output style keeps Claude Code's coding instructions" || fail "output style keep-coding-instructions" "missing"
 
 printf '\n%s== Status enum consistent across consumers ==%s\n' "$DIM" "$RESET"
 grep -q 'PARTIAL' "${ROOT}/scripts/lib/orch-protocol.sh" && ok "grader accepts PARTIAL" || fail "grader PARTIAL" "orch-protocol.sh"

@@ -24,7 +24,9 @@ ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 
 # Resolve policy from the actual project, never from an agent's claimed path
 # selection. Hook cwd wins; CLI callers use their current project directory.
-orch_protocol_is_proportional() { # [hook-input-json]
+# Prints "proportional" or "legacy" for a project whose cadence.json has
+# enabled: true, and nothing when the cadence is absent, disabled or unreadable.
+orch_protocol_workflow() { # [hook-input-json]
   python3 - "${1:-}" <<'PYEOF' 2>/dev/null
 import json, os, pathlib, subprocess, sys
 try:
@@ -34,11 +36,15 @@ try:
                             capture_output=True, text=True, timeout=2)
     root = pathlib.Path(result.stdout.strip()) if result.returncode == 0 else cwd
     config = json.loads((root / "docs/llm-orchestrator/cadence.json").read_text())
-    active = isinstance(config, dict) and config.get("enabled") is True and config.get("workflow") == "proportional"
+    if isinstance(config, dict) and config.get("enabled") is True:
+        print("proportional" if config.get("workflow") == "proportional" else "legacy")
 except (OSError, ValueError, AttributeError, TypeError, subprocess.SubprocessError):
-    active = False
-sys.exit(0 if active else 1)
+    pass
 PYEOF
+}
+
+orch_protocol_is_proportional() { # [hook-input-json]
+  [[ "$(orch_protocol_workflow "${1:-}")" == "proportional" ]]
 }
 
 # This validates completion vocabulary only. In particular NOT APPLICABLE is
