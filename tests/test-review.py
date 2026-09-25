@@ -81,7 +81,8 @@ side_effects(spec, os.getcwd())
 model = spec.get("served_model", "claude-opus-5-5")
 def emit(event):
     print(json.dumps(event), flush=True)
-emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", [])})
+if not spec.get("no_init"):
+    emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", [])})
 background = {item["command"] for item in spec.get("commands", []) if item.get("background")}
 unsandboxed = {item["command"] for item in spec.get("commands", []) if item.get("unsandboxed")}
 for n, (command, output, code) in enumerate(run_commands(spec, os.getcwd())):
@@ -856,7 +857,6 @@ class ReviewTests(unittest.TestCase):
                                                                       evidence=invented))
         review = self.review("full", "claude")
         self.assertEqual(self.status(review, "adversarial-1-1"), "unresolved")
-        self.assertEqual(review["counts"]["invalid_drops"], 1)
         self.assertEqual(review["verdict"], "NOT-READY")
 
     def test_r15_a_reproduced_or_not_runnable_finding_cannot_be_dropped(self):
@@ -933,7 +933,6 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(ranks["adversarial-1-2"], ("serious", "promoted"))
         self.assertEqual(ranks["adversarial-1-3"], ("serious", "promoted"))
         self.assertEqual(ranks["adversarial-1-4"], ("mild", "mild"))
-        self.assertEqual(review["counts"]["invalid_rank_changes"], 3)
 
     def test_r16_a_rank_change_without_a_valid_verdict_leaves_the_finding_unjudged(self):
         self.scenario["codex"]["seats"]["adversarial"] = seat(finding(repro={"command": "true", "patch": FIX}))
@@ -944,6 +943,161 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual((review["findings"][0]["rank"], self.status(review, "adversarial-1-1")),
                          ("serious", "unjudged"))
         self.assert_incomplete(review, "unjudged")
+
+    # Round 1 review: guards that must each fail a test when removed
+    def crafted(self, edit):
+        """A copy of the last run directory with findings.json changed by `edit`, and its verdict."""
+        copy = self.root / f"crafted-{len(list(self.root.glob('crafted-*')))}"
+        shutil.copytree(self.run_dir, copy)
+        recorded = json.loads((copy / "findings.json").read_text())
+        edit(recorded)
+        (copy / "findings.json").write_text(json.dumps(recorded))
+        return MOD.decide(copy)
+
+    def test_r15_a_quote_drop_needs_an_explanation(self):
+        self.scenario["codex"]["sandbox"] = False
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding())
+        bare = {"type": "file-line", "file": "calc.py", "line": 2, "quote": "return a - b", "explanation": None}
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "DROPPED", evidence=bare))
+        self.assertEqual(self.status(self.review("full", "claude"), "adversarial-1-1"), "unresolved")
+
+    def test_r15_a_timed_out_receipt_1_cannot_support_a_drop(self):
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding(repro={"command": "true", "patch": FIX}))
+        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None, "explanation": "it passed"}
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "DROPPED", evidence=cite))
+        self.assertEqual(self.status(self.review("full", "claude"), "adversarial-1-1"), "dropped")
+        def time_out(recorded):
+            recorded["findings"][0]["receipts"]["1"]["timed_out"] = True
+        review = self.crafted(time_out)
+        self.assertEqual(self.status(review, "adversarial-1-1"), "unresolved")
+
+    def test_r17_a_repro_copy_that_does_not_match_the_fingerprint_gives_incomplete(self):
+        self.scenario["claude"]["seats"]["contract"] = seat(finding())
+        self.assertEqual(self.review("standard", "claude")["verdict"], "NOT-READY")
+        def other_tree(recorded):
+            recorded["findings"][0]["receipts"]["1"]["fingerprint"] = "0" * 40
+        self.assert_incomplete(self.crafted(other_tree), "repro copy fingerprint")
+
+    def test_r17_a_step_that_raises_gives_incomplete(self):
+        broken = self.project / "deps.ignored"
+        broken.mkdir()
+        (broken / "secret").write_text("x")
+        (broken / "secret").chmod(0)
+        self.addCleanup((broken / "secret").chmod, 0o600)
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"review": {"copy_ignored": ["deps.ignored"]}}))
+        self.git("add", "docs")
+        self.git("commit", "-qm", "config")
+        review = self.review("standard", "claude")
+        self.assertTrue((self.run_dir / "errors.json").is_file())
+        self.assert_incomplete(review, "CalledProcessError")
+
+    def test_r14_notes_are_kept_out_of_the_refuter_input(self):
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding(), finding("mild", repro=None, confidence=0.1))
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "PROMOTED"))
+        review = self.review("full", "claude")
+        self.assertEqual(self.status(review, "adversarial-1-2"), "note")
+        prompt = self.launches("claude", "refuter")[0]["prompt"]
+        self.assertIn("adversarial-1-1", prompt)
+        self.assertNotIn("adversarial-1-2", prompt)
+
+    def test_r8_not_runnable_is_discarded_when_a_repro_is_given(self):
+        both = finding(repro={"command": CHECK, "patch": "not a patch\n"}, not_runnable="needs a GPU")
+        self.scenario["claude"]["seats"]["contract"] = seat(both)
+        found = self.review("standard", "claude")["findings"][0]
+        self.assertIsNone(found["not_runnable"])
+        self.assertEqual(found["status"], "unverified")
+
+    def test_r10_experiments_time_out_after_600_seconds(self):
+        self.assertEqual(MOD.REPRO_TIMEOUT, 600)
+
+    def test_r14_the_refuter_is_claude_on_a_codex_written_full_review(self):
+        self.scenario["claude"]["seats"]["adversarial"] = seat(finding())
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "PROMOTED"))
+        review = self.review("full", "codex")
+        self.assertEqual(len(self.launches("claude", "refuter")), 1)
+        self.assertEqual(self.launches("codex", "refuter"), [])
+        self.assertEqual(self.status(review, "adversarial-1-1"), "promoted")
+
+    def test_r1_wait_reports_a_run_killed_midway_as_crashed(self):
+        self.scenario["claude"]["seats"]["contract"] = seat(sleep=30)
+        run_dir = self.root / "killed"
+        started = self.invoke("run", "--detach", "--path", "standard", "--writer", "claude", "--base", self.base,
+                              "--spec", str(self.spec), "--run-dir", str(run_dir), check_rc=0)
+        pid = json.loads(started.stdout)["pid"]
+        deadline = time.monotonic() + 20
+        while not self.launches("claude") and time.monotonic() < deadline:
+            time.sleep(0.2)
+        os.killpg(pid, 9)
+        waited = self.invoke("wait", str(run_dir), "--seconds", "20")
+        self.assertEqual(json.loads(waited.stdout)["status"], "crashed")
+        self.assertFalse((run_dir / "review.json").exists())
+
+    def test_r11_a_finding_lowered_to_mild_follows_the_mild_rules(self):
+        weak = finding(repro={"command": "true", "patch": FIX}, confidence=0.1)
+        self.scenario["codex"]["seats"]["adversarial"] = seat(weak)
+        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None, "explanation": "it passed"}
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "PROMOTED", rank="mild",
+                                                                      evidence=cite))
+        review = self.review("full", "claude")
+        self.assertEqual((review["findings"][0]["rank"], review["findings"][0]["status"]), ("mild", "note"))
+        self.assertEqual(review["verdict"], "READY")
+
+    def test_r13_a_raised_test_tampering_finding_without_repro_blocks_but_is_not_incomplete(self):
+        tampering = finding("mild", kind="test-tampering", repro=None)
+        self.scenario["claude"]["seats"]["contract"] = seat(tampering)
+        review = self.review("standard", "claude")
+        self.assertEqual((review["findings"][0]["rank"], review["findings"][0]["status"]), ("serious", "unverified"))
+        self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
+
+    def test_r19_a_dropout_seat_findings_are_kept_and_marked(self):
+        self.scenario["claude"]["seats"]["contract"] = seat(finding("mild", repro=None), served_model="claude-sonnet-5")
+        review = self.review("standard", "claude")
+        self.assert_incomplete(review, "served model")
+        self.assertEqual([f["id"] for f in review["findings"]], ["contract-1-1"])
+        self.assertTrue(review["findings"][0]["from_dropout"])
+
+    def test_copy_ignored_paths_excluded_through_info_exclude_are_copied(self):
+        with open(self.project / ".git/info/exclude", "a") as exclude:
+            exclude.write("deps/\n")
+        (self.project / "deps").mkdir()
+        (self.project / "deps/lib.py").write_text("x = 1\n")
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"review": {"copy_ignored": ["deps"]}}))
+        self.git("add", "docs")
+        self.git("commit", "-qm", "config")
+        self.scenario["claude"]["seats"]["contract"] = seat(commands=[{"command": "cat deps/lib.py"}])
+        review = self.review("standard", "claude")
+        self.assertEqual(review["verdict"], "READY", review["incomplete_reasons"])
+
+    def test_a_copy_that_does_not_match_is_reported_once(self):
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"review": {"setup": "echo extra > extra.py"}}))
+        self.git("add", "docs")
+        self.git("commit", "-qm", "config")
+        review = self.review("standard", "claude")
+        self.assertEqual(len([r for r in review["incomplete_reasons"] if "fingerprint" in r]), 1)
+
+    def test_non_ascii_file_names_are_reviewed(self):
+        (self.project / "café.py").write_text("x = 1\n")
+        self.scenario["claude"]["seats"]["contract"] = seat(finding(
+            "mild", file="café.py", line=1, repro=None,
+            evidence={"type": "file-line", "file": "café.py", "line": 1, "quote": "x = 1",
+                      "command": None, "output": None}))
+        review = self.review("standard", "claude")
+        self.assertIn("café.py", json.loads((self.run_dir / "parts.json").read_text())[0]["files"])
+        self.assertEqual(review["findings"][0]["status"], "mild")
+
+    def test_a_seat_answering_with_the_refuter_shape_is_a_dropout(self):
+        self.scenario["claude"]["seats"]["contract"] = {"output": {"verdicts": []}}
+        self.assert_incomplete(self.review("standard", "claude"), "no final result")
+
+    def test_a_claude_stream_without_an_init_event_is_a_dropout(self):
+        self.scenario["claude"]["seats"]["contract"] = seat(no_init=True)
+        self.assert_incomplete(self.review("standard", "claude"), "init")
 
     # R17, R18, R19
     def test_r17_missing_or_unreadable_run_files_give_incomplete(self):

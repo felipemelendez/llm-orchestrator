@@ -344,6 +344,11 @@ class Manager:
         if git(path, "rev-parse", "HEAD").strip() != head:
             git(path, "update-ref", "--no-deref", "HEAD", head)
         git(path, "remote", "remove", "origin")
+        # The project's own exclude rules, so its ignored files stay ignored in the clone.
+        common = Path(git(project, "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+        if (common / "info/exclude").is_file():
+            (path / ".git/info").mkdir(exist_ok=True)
+            shutil.copyfile(common / "info/exclude", path / ".git/info/exclude")
         git(path, "read-tree", "-u", "--reset", tree)
 
     def clone_safe(self, path, resource):

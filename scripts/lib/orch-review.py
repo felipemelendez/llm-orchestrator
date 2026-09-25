@@ -346,10 +346,10 @@ class Review:
         tree = resources.fingerprint(self.project)
         base = git(self.project, "merge-base", preflight["base"], "HEAD").strip()
         numstat = git(self.project, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
-                      "--numstat", base, tree)
+                      "--numstat", "-z", base, tree)
         files = []
-        for line in numstat.splitlines():
-            added, deleted, name = line.split("\t", 2)
+        for record in filter(None, numstat.split("\0")):
+            added, deleted, name = record.split("\t", 2)
             count = (int(added) if added.isdigit() else 0) + (int(deleted) if deleted.isdigit() else 0)
             files.append({"file": name, "lines": count})
         parts = []
@@ -366,11 +366,11 @@ class Review:
                           "lines": sum(item["lines"] for item in files)})
         for n, part in enumerate(parts, 1):
             part["number"] = n
-            part["diff"] = git(self.project, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
-                               base, tree, "--", *part["files"])
+            part["diff"] = git(self.project, "-c", "core.quotePath=false", "--literal-pathspecs", "diff",
+                               "--no-ext-diff", "--no-textconv", "--no-renames", base, tree, "--", *part["files"])
         full_diff = "".join(part["diff"] for part in parts)
-        submodules = [line.split("\t", 1)[1] for line in git(self.project, "ls-tree", "-r", tree).splitlines()
-                      if line.startswith("160000 ")]
+        submodules = [entry.split("\t", 1)[1] for entry in git(self.project, "ls-tree", "-r", "-z", tree).split("\0")
+                      if entry.startswith("160000 ")]
         state = {"tree": tree, "head": git(self.project, "rev-parse", "HEAD").strip(), "base": base,
                  "submodules": submodules,
                  "files": files, "diff_lines": sum(item["lines"] for item in files),
@@ -431,17 +431,18 @@ class Review:
                   "requested_model": preflight["providers"][provider].get("requested_model"),
                   "requested_effort": EFFORT, "served_model": [], "served_effort": [],
                   "started": now()}
+        role = "refuter" if brief == "refuter" else "seat"
         try:
             copy, fingerprint, problem = self.make_copy(preflight, launch_dir)
             record["copy_fingerprint"] = fingerprint
             if problem or fingerprint != self.tree:
                 record["reason"] = problem or "the copy does not match the fingerprint"
             elif provider == "claude":
-                record.update(run_claude(copy, prompt, schema, launch_dir, self.run_dir))
+                record.update(run_claude(copy, prompt, schema, launch_dir, self.run_dir, role))
             else:
                 codex = preflight["providers"]["codex"]
                 record.update(run_codex(copy, prompt, schema, launch_dir, codex.get("requested_model"),
-                                        codex.get("mcp_servers", [])))
+                                        codex.get("mcp_servers", []), role))
         except (resources.Unsafe, Failure, OSError) as error:
             record["reason"] = f"the launch could not start: {error}"
         record["finished"] = now()
@@ -480,12 +481,16 @@ class Review:
             found["not_runnable"] = (not_runnable if isinstance(not_runnable, str) and not_runnable.strip()
                                      and not found["repro"] else None)
             found["receipts"], found["reproduced"] = {}, False
+            found["from_dropout"] = launch["status"] != "complete"
+            # A finding the script raised to serious (R13) was not asked for a repro, so it stays
+            # unverified and blocking rather than making the review incomplete (R12).
             found["missing_repro"] = (found["rank"] != "mild" and not found["repro"]
-                                      and not found["not_runnable"])
+                                      and not found["not_runnable"] and not found["rank_raised"])
             findings.append(found)
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            list(pool.map(lambda f: self.experiment(f, preflight),
-                          [f for f in findings if f["rank"] != "mild" and f["repro"]]))
+        if launch["status"] == "complete":  # a dropout's findings are kept but not run
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(lambda f: self.experiment(f, preflight),
+                              [f for f in findings if f["rank"] != "mild" and f["repro"]]))
         not_checked = [dict(item, launch=launch["name"]) if isinstance(item, dict)
                        else {"launch": launch["name"], "category": None, "text": item}
                        for item in output["not_checked"]]
@@ -597,7 +602,8 @@ class Review:
                 schema, preflight)), jobs))
         findings, not_checked = [], []
         for (_, _, _, part), launch in launches:
-            if launch["status"] == "complete":
+            answer = read_json(self.run_dir / "launches" / launch["name"] / "output.json")
+            if launch["status"] == "complete" or answer_shape_valid(answer, "seat"):
                 found, missed = self.validate(launch, part["number"], preflight)
                 findings += found
                 not_checked += missed
@@ -746,7 +752,16 @@ def claude_sandbox(copy, run_dir):
         "network": {"allowedDomains": [], "strictAllowlist": True}}})
 
 
-def run_claude(copy, prompt, schema, launch_dir, run_dir):
+def finish_launch(fields, output, launch_dir):
+    """Keep whatever answer the launch gave, even from a dropout (R19); complete only without a reason."""
+    if isinstance(output, dict):
+        write_json(launch_dir / "output.json", output)
+    if not fields["reason"]:
+        fields["status"] = "complete"
+    return fields
+
+
+def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
     """R5. Returns the launch fields; a dropout (R7) keeps status "dropout" with a reason."""
     argv = ["claude", "-p", "--settings", claude_sandbox(copy, run_dir),
             "--output-format", "stream-json", "--verbose", "--model", CLAUDE_ALIAS,
@@ -757,10 +772,11 @@ def run_claude(copy, prompt, schema, launch_dir, run_dir):
     stream = launch_dir / "stream.jsonl"
     code = run_process(argv, copy, prompt, stream, launch_dir, reduced_env("claude"))
     events = stream_events(stream)
-    served, uses, results, commands, mcp, unsandboxed = [], {}, [], [], [], False
+    served, uses, results, commands, mcp, unsandboxed, initialized = [], {}, [], [], [], False, False
     for event in events:
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init":
+            initialized = True
             mcp = event.get("mcp_servers") or []
         message = event.get("message") if isinstance(event.get("message"), dict) else {}
         content = message.get("content") if isinstance(message.get("content"), list) else []
@@ -794,13 +810,12 @@ def run_claude(copy, prompt, schema, launch_dir, run_dir):
         if output is None and isinstance(results[-1].get("result"), str):
             output = parse_json_text(results[-1]["result"])
     fields["reason"] = dropout_reason(code, output, served, mcp,
-                                      [model for model in served if not claude_family(model)])
+                                      [model for model in served if not claude_family(model)], role)
+    if not fields["reason"] and not initialized:
+        fields["reason"] = "the stream has no system init event, so its MCP servers are unknown"
     if not fields["reason"] and unsandboxed:
         fields["reason"] = "a Bash call asked to run outside the sandbox"
-    if not fields["reason"]:
-        write_json(launch_dir / "output.json", output)
-        fields["status"] = "complete"
-    return fields
+    return finish_launch(fields, output, launch_dir)
 
 
 def codex_mcp_off(servers):
@@ -826,7 +841,7 @@ def codex_mcp_servers(path):
     return None
 
 
-def run_codex(copy, prompt, schema, launch_dir, requested, servers):
+def run_codex(copy, prompt, schema, launch_dir, requested, servers, role):
     """R6. Served model and effort come from the session rollout named by the thread id."""
     schema_path = launch_dir / "schema.json"
     schema_path.write_text(schema)
@@ -859,13 +874,10 @@ def run_codex(copy, prompt, schema, launch_dir, requested, servers):
               "thread_id": thread, "model_compared": requested is not None}
     mcp = codex_mcp_servers(launch_dir / "stderr.log")
     fields["mcp_servers"] = mcp
-    fields["reason"] = dropout_reason(code, output, served, mcp or [], mismatched)
+    fields["reason"] = dropout_reason(code, output, served, mcp or [], mismatched, role)
     if not fields["reason"] and mcp is None:
         fields["reason"] = "no MCP server list in the codex log, so an MCP server may have loaded"
-    if not fields["reason"]:
-        write_json(launch_dir / "output.json", output)
-        fields["status"] = "complete"
-    return fields
+    return finish_launch(fields, output, launch_dir)
 
 
 def rollout_models(thread):
@@ -892,17 +904,23 @@ def parse_json_text(text):
         return None
 
 
-def dropout_reason(code, output, served, mcp, mismatched):
-    """R7, plus the R5 rule that a launch with MCP servers is a dropout."""
+def answer_shape_valid(output, role):
+    if not isinstance(output, dict):
+        return False
+    if role == "refuter":
+        return isinstance(output.get("verdicts"), list)
+    return isinstance(output.get("findings"), list) and isinstance(output.get("not_checked"), list)
+
+
+def dropout_reason(code, output, served, mcp, mismatched, role):
+    """R7, plus the R5 and R6 rule that a launch with MCP servers is a dropout."""
     if code is None:
         return f"timed out after {SEAT_TIMEOUT} seconds"
     if code != 0:
         return f"exits nonzero ({code})"
     if mcp:
         return "loaded MCP servers"
-    if not isinstance(output, dict) or not (isinstance(output.get("findings"), list)
-                                            and isinstance(output.get("not_checked"), list)
-                                            or isinstance(output.get("verdicts"), list)):
+    if not answer_shape_valid(output, role):
         return "no final result"
     if not served:
         return "no served model"
@@ -979,8 +997,7 @@ def decide(run_dir):
                     findings, not_checked = [], []
     parts = parts or []
     counts = {"raw_findings": len(findings), "notes": 0, "invalid_evidence": 0, "below_floor": 0,
-              "raised_ranks": 0, "replaced_ranks": 0, "patches_not_applied": 0, "invalid_drops": 0,
-              "invalid_rank_changes": 0}
+              "raised_ranks": 0, "replaced_ranks": 0, "patches_not_applied": 0}
     tree = start["tree"] if start else None
     launches = []
     for brief, provider in run.get("seats", []):
@@ -993,9 +1010,6 @@ def decide(run_dir):
             elif launch["status"] != "complete":
                 reasons.append(f"{name}: dropout, {launch.get('reason')}")
             launches.append(launch)
-    for launch in launches:
-        if launch.get("copy_fingerprint") and launch["copy_fingerprint"] != tree:
-            reasons.append(f"{launch['name']}: the copy fingerprint differs from the reviewed state")
     for found in findings:
         counts["raised_ranks"] += found["rank_raised"]
         counts["replaced_ranks"] += found["rank_replaced"]
@@ -1023,7 +1037,7 @@ def decide(run_dir):
         launches.append(refuter)
         verdicts = read_json(run_dir / "refuter.json", []) if refuter["status"] != "complete" else \
             required("refuter.json", list) or []
-        adjudicate(findings, verdicts, counts)
+        adjudicate(findings, verdicts)
         unjudged = [f["id"] for f in findings if f["status"] == "unjudged"]
         if unjudged:
             reasons.append("unjudged by the refuter: " + ", ".join(unjudged))
@@ -1052,7 +1066,7 @@ def decide(run_dir):
             "cleanup": read_json(run_dir / "cleanup.json")}
 
 
-def adjudicate(findings, verdicts, counts):
+def adjudicate(findings, verdicts):
     """R14 to R16: apply the refuter's verdicts to the serious and catastrophic findings."""
     by_id = {}
     for verdict in verdicts:
@@ -1066,18 +1080,14 @@ def adjudicate(findings, verdicts, counts):
             lower = RANKS.index(verdict["rank"]) < RANKS.index(found["rank"])
             if lower and found["rank"] != "mild" and drop_allowed(found, verdict):
                 found["rank_before_refuter"], found["rank"] = found["rank"], verdict["rank"]
-            else:
-                counts["invalid_rank_changes"] += 1
         if found["status"] not in {"verified", "unverified"}:
             continue
         if found.get("rank_before_refuter") and found["rank"] == "mild":
-            found["status"] = "mild"
+            found["status"] = initial_status(found)
         elif not verdict or verdict.get("invalid"):
             found["status"] = "unjudged"
         elif verdict["verdict"] == "DROPPED":
-            allowed = drop_allowed(found, verdict)
-            counts["invalid_drops"] += not allowed
-            found["status"] = "dropped" if allowed else "unresolved"
+            found["status"] = "dropped" if drop_allowed(found, verdict) else "unresolved"
         else:
             found["status"] = verdict["verdict"].lower()
         if verdict:
