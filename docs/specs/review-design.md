@@ -129,6 +129,12 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
     and `network.allowedDomains: []` with `strictAllowlist`. A Bash call
     that asks for `dangerouslyDisableSandbox` makes the launch a dropout. If
     the sandbox cannot start, `claude` stops, and the launch is a dropout.
+  - The prompt starts with a sandbox check: the seat must first run
+    `touch <run dir>/launches/<launch>/sandbox-probe 2>&1 && echo
+    ORCH-SANDBOX-OFF || echo ORCH-SANDBOX-ON`. Unless its stream shows that
+    command with `ORCH-SANDBOX-ON` and no `ORCH-SANDBOX-OFF`, and the file
+    does not exist afterwards, the launch is a dropout. The result is
+    recorded as `sandbox_check`.
   - The served model is the assistant messages' `model` field. It must
     belong to the model family of the requested alias.
 - **Environment.** Every seat, the refuter and every fix experiment start
@@ -530,6 +536,13 @@ Verified on 2026-09-25:
   "Operation not permitted", and `curl https://example.com` failed with
   "CONNECT tunnel failed, response 403" and a `sandbox_violations` note
   ("host is not on the allow list").
+- A live Full review on 2026-09-25 with the Claude sandbox, the reduced
+  environment and the sandbox check, on a planted off-by-one defect: both
+  Claude launches (contract seat and refuter) ran the check and got
+  "Operation not permitted" and `ORCH-SANDBOX-ON`, served `claude-opus-5-5`;
+  the GPT seat served `gpt-6-astra` at `high`; all three serious findings
+  reproduced (receipt 1 exit 1, receipt 2 exit 0) and were promoted;
+  verdict `NOT-READY`, no incomplete reasons, clones removed.
 - `printf <patch> | codex sandbox -P :workspace -C <copy> -- git apply -`
   (0.157.0) applied the patch, so stdin reaches the sandboxed command.
 - `git clone --local --no-checkout`, followed by `git read-tree -u --reset
@@ -548,9 +561,7 @@ Not verified:
 - that the agent's shell on Codex allows a 540-second `wait`;
 - what Claude Code does when its Bash sandbox cannot start with
   `failIfUnavailable: true` (the docs say it stops; not tried), and whether
-  the sandbox limits a seat the same way on Linux;
-- a full live review with the Claude sandbox and the reduced environment
-  (the live Full review ran before both were added).
+  the sandbox limits a seat the same way on Linux.
 
 ## Decided (pending Felipe's confirmation)
 
