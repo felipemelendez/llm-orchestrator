@@ -118,7 +118,7 @@ Verify:
 - pnpm test → 142 passed (was 141 + 1 failing)
 ```
 
-The sharp question for any completion check is: **does the model sit between the check and the verdict?** Here it does not. One hook, `scripts/hooks/orch-verify-gate.sh` (on `Stop` and `SubagentStop`), reads the transcript the harness already writes and asks one thing: the reply is labelled `Verification: PASS` — did a check actually run and succeed in this turn? On `SubagentStop` the reply is the report the subagent sent its caller, read by `scripts/lib/orch-subagent-report.py` (in auto mode the `SubagentHandback` message), and the commands are read from the subagent's own transcript. If not, it hands the model one note as `additionalContext`; nothing is printed for the person. Nothing is cited by the model, nothing is appended to its tool output, and a passing run from an earlier turn does not carry over.
+The sharp question for any completion check is: **does the model sit between the check and the verdict?** Here it does not. One hook, `scripts/hooks/orch-verify-gate.sh` (on `Stop` and `SubagentStop`), reads the transcript the harness already writes and asks one thing: the reply is labelled `Verification: PASS` — did a check actually run and succeed in this turn? If not, it hands the model one note as `additionalContext`; nothing is printed for the person. On `SubagentStop` the reply is the report the subagent sent its caller, read by `scripts/lib/orch-subagent-report.py` (in auto mode the `SubagentHandback` message), and the commands are read from the subagent's own transcript. Nothing is cited by the model, nothing is appended to its tool output, and a passing run from an earlier turn does not carry over.
 
 Two rules shape it, both learned the hard way:
 
