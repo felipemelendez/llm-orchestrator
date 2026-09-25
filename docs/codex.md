@@ -149,9 +149,9 @@ project it does nothing. It has no off switch. The only way past it is to start
 the session unlocked, as described under
 [Escape hatches](install.md#escape-hatches-for-the-hard-guards).
 
-**The completion check** runs when the assistant stops. It reads only the log
-Codex writes for every command it runs, with the exact command and exit code.
-Nothing the assistant wrote or printed counts. If the reply says PASS and no
+**The completion check** runs when the assistant stops. It reads only the
+records Codex writes when a command finishes, with the exact command and exit
+code. Nothing the assistant wrote or printed counts. If the reply says PASS and no
 test command finished with exit code 0 in this turn, the assistant is sent back
 once with a short note. On that second stop the check stays quiet, so it can
 never loop. It never blocks you, never hashes files and never prints for you.
@@ -171,6 +171,11 @@ Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or
 - It reads Codex's session log, which Codex says is not a stable format. If a
   future Codex stops writing command records, every PASS will be sent back once
   until the check is updated. That is the safe direction.
+- A thread whose session log says `"history_mode": "legacy"` records no
+  command that a code-mode `exec` script runs (seen in Codex Desktop
+  0.154.0-alpha threads). In such a turn the check says nothing, so a false
+  PASS there is not caught. Commands run directly through `exec_command` are
+  still read in every thread.
 - It was run over every session log on the machine it was built on (348 files)
   without a crash, but the test suite drives it with recorded log shapes, not a
   live session. One Codex turn that ends in PASS with no check is enough to see

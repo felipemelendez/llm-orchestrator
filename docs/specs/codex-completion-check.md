@@ -1,6 +1,6 @@
 # Spec: the Codex completion check
 
-Status: implemented 2026-09-22. Maintained alongside `scripts/lib/codex-completion-check.py`.
+Status: implemented 2026-09-22; record kinds revised 2026-09-25. Maintained alongside `scripts/lib/codex-completion-check.py`.
 
 ## Goal
 
@@ -37,18 +37,37 @@ check, so the note goes to the agent through the continuation.
 
 ## Reading the log
 
-`transcript_path` is the session rollout (JSONL). The check reads exactly one
-kind of entry: the record Codex itself writes when a command it ran has
-finished.
+`transcript_path` is the session rollout (JSONL). The check reads only the
+records Codex itself writes when a command it ran has finished. Which records
+a rollout holds depends on the build and on the thread's history mode, which
+the rollout's `session_meta` names as `history_mode`:
+
+| Build and mode | What a finished command leaves |
+|---|---|
+| 0.147.0 and later, paginated history (the default for a new thread with a local state database) | A command record for every command, whether a direct `exec_command` call or a command a code-mode `exec` script ran. A direct call also leaves the function-call pair below. |
+| Any build, legacy history (for example 0.154.0-alpha.6.2 Desktop threads on this machine, and their subagents) | No command record. A direct `exec_command` call leaves the function-call pair. A command a code-mode `exec` script ran leaves nothing Codex wrote; only the text the script chose to print. |
+| 0.146.0 and earlier | No command record in either mode; the function-call pair. |
+
+Sources: `codex-rs/rollout/src/policy.rs` at `rust-v0.157.0`
+(`should_persist_event_msg`: `ItemCompleted` is kept only in paginated
+history, `ExecCommandEnd` never); `codex-rs/app-server/src/request_processors/thread_processor.rs`
+(a new thread is paginated unless the client asks otherwise, the thread is
+ephemeral, or there is no state database); `codex-rs/core/src/tools/context.rs`
+(`response_header`, the output header); and local session logs, in which
+every paginated rollout that ran a command on 0.147.0 or later has command
+records, and legacy and 0.146.0 rollouts have none. Why some 0.154 Desktop
+threads are legacy is unverified.
 
 | Entry | Shape |
 |---|---|
-| Command record | `event_msg` whose payload is `item_completed` with `turn_id` and an `item` of type `CommandExecution`, carrying `command` (an argv list, usually `["/bin/zsh","-lc","<the command>"]`), `exit_code` (an integer) and `status` (`completed` for 0, `failed` otherwise). Present in every rollout since Codex started writing them (August 2026; every command in the 300 such rollouts on this machine has one). |
+| Command record | `event_msg` whose payload is `item_completed` with `turn_id` and an `item` of type `CommandExecution`, carrying `command` (an argv list, usually `["/bin/zsh","-lc","<the command>"]`), `exit_code` (an integer) and `status` (`completed` for 0, `failed` otherwise). |
+| Function-call pair | `response_item` / `function_call` named `exec_command` (no `namespace`), whose `arguments` JSON has `cmd`, and whose `internal_chat_message_metadata_passthrough.turn_id` names the turn; then the `function_call_output` with the same `call_id`, a string that starts with Codex's header: lines `Chunk ID: …`, `Wall time: …`, `Process exited with code N` or `Process running with session ID N`, `Original token count: …`, then `Output:`. A command still running is finished by a later `write_stdin` call with that `session_id`, whose output header carries the exit code. |
 | Turn start | `event_msg` / `task_started` with `turn_id`; also `turn_context` with `turn_id`. Used only as a fallback. |
 
-Nothing the agent wrote is read: not the JavaScript it sent to the exec tool,
-not the text it chose to print from a result. An earlier version parsed those,
-and every one of its false passes came from there.
+Nothing the agent wrote is read beyond the command it asked for: not the
+JavaScript it sent to the exec tool, not the text it chose to print from a
+result, not the program's output below the `Output:` line. An earlier version
+parsed those, and every one of its false passes came from there.
 
 Rules:
 
@@ -57,8 +76,13 @@ Rules:
   differently), the turn is the slice after the last marker where the
   `turn_id` changed; a marker Codex re-emits for the same turn after a
   compaction is not a new turn.
-- A check passes when a record in this turn has exit code 0, status
-  `completed`, and a command that passes `ran_a_check`. The lists it uses
+- When the log has no command record and this turn has a code-mode `exec`
+  call, the turn's commands cannot be read (legacy history): print nothing.
+  A turn with no `exec` call is still judged by its function-call pairs.
+- A check passes when a record in this turn has exit code 0 (and, for a
+  command record, status `completed`), and a command that passes
+  `ran_a_check`. A function-call pair's command is its `cmd`, judged as a
+  shell script. The lists it uses
   (runners, targets, non-run options, prefixes, wrappers, package managers
   and their options) are data in one block of `orch-completion-check.py`;
   both harnesses use them. The command is split into words in one linear
@@ -199,9 +223,13 @@ Rules:
   the check tells them apart from the record alone: a Bash call made with
   `run_in_background`, or whose result is the launch acknowledgement
   (`Command running in background with ID:`), is a launch, not a finish.
-  Codex writes one record per finished command, so there is nothing to tell
-  apart.
-- A record missing its command or its integer exit code is not a record. A
+  On Codex a command record is written only when a command finishes, and a
+  function-call output that says `Process running with session ID N` is a
+  launch; only the exit code in its header, or in the header of the
+  `write_stdin` poll that ends it, is a finish.
+- A record missing its command or its integer exit code is not a record;
+  a function-call output whose header has any other line, or no `Output:`
+  line, is not one either. A
   command the agent asked for that has no record (interrupted, still running,
   never started) does not count. A row that is not a JSON object, or whose
   payload is not, is skipped and the rest of the log is still read.
@@ -245,8 +273,10 @@ mis-judged an honest command somewhere else: `2>&1` read as a background
 wrong gets ignored, which is worse than no note. Do not add those rules;
 `orch-completion-check.py`'s docstring says the same.
 
-A Codex build from before these records existed (July 2026 and earlier)
-writes none, so on such a build every PASS is sent back once.
+In a legacy-history thread that uses code-mode `exec`, the check says
+nothing, so a false PASS there is not caught. It also says nothing on a
+paginated thread whose only `exec` scripts so far ran no command, since that
+log looks the same.
 
 ## Not in scope
 
@@ -258,8 +288,9 @@ that file's docstring.
 
 ## Verification
 
-`bash tests/test-codex-verify-gate.sh` drives the hook with fixtures in the
-shape above, including a decoy script and an agent-printed result with no
+`bash tests/test-codex-verify-gate.sh` runs the hook on scrubbed real lines
+of each kind of log in the table above (`tests/fixtures/codex-rollouts/`) and
+on generated fixtures in the same shapes, including a decoy script and an agent-printed result with no
 harness record behind them, runners named by a path, behind a named wrapper or
 through `pnpm`/`yarn`/`npx`, a project's `runner.test_cmd`, and the honest shapes (`2>&1`, a quoted `&`, a
 here-string, a multi-line quoted argument) that must stay silent, and asserts
