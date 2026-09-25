@@ -585,6 +585,27 @@ out=$(cap_fire default)
 if [[ "${out%%|*}" == "0" && "$out" == *"returns the sum"* ]]; then
   ok "default mode (no handback) → last_assistant_message is graded"
 else fail "captured default payload" "out='$out'"; fi
+out=$(cap_fire auto --append '"str"' --append '[1,2]')
+if [[ "$out" == "0|" ]]; then ok "transcript lines that are JSON but not objects are skipped"
+else fail "captured auto payload, non-object lines" "out='$out'"; fi
+out=$(cap_fire auto --handback-input '[1,2]')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "SubagentHandback input that is not an object → falls back to last_assistant_message"
+else fail "captured auto payload, non-object handback input" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>\nnote\n</system-reminder>"}}')
+if [[ "$out" == "0|" ]]; then ok "harness-injected isMeta entry after the handback keeps the handback"
+else fail "captured auto payload, isMeta after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<task-notification>done</task-notification>"}]}}')
+if [[ "$out" == "0|" ]]; then ok "<task-notification> entry after the handback keeps the handback"
+else fail "captured auto payload, task-notification after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":"Please also check sub.py"}}')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a person's prompt after the handback discards it (resumed agent)"
+else fail "captured auto payload, prompt after handback" "out='$out'"; fi
+out=$(cap_fire auto --handback-error)
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a SubagentHandback call answered by an error does not count"
+else fail "captured auto payload, handback error" "out='$out'"; fi
 
 TOTAL=$((PASS + FAIL))
 printf '\n'

@@ -92,10 +92,10 @@ if orch_protocol_is_proportional "$INPUT"; then
   VERIFY_GUIDANCE='Verification: uses PASS, PENDING, BLOCKED or NOT APPLICABLE, followed by an em dash and explanation. The evidence gate validates truth; NOT APPLICABLE is not an executed pass and cannot clear failed, unknown or required validation.'
 fi
 
-# Fallback for harnesses that predate last_assistant_message: the transcript.
-# Only when the field was ABSENT — when it exists but is empty, reading the
-# transcript would grade the MAIN conversation's last message, not the
-# subagent's (transcript_path points at the main transcript on SubagentStop).
+# Fallback for old harnesses that send neither a SubagentHandback report nor
+# last_assistant_message: the transcript. When a source exists but is empty,
+# reading the transcript would grade the MAIN conversation's last message, not
+# the subagent's (transcript_path points at the main transcript on SubagentStop).
 if [[ "${HAS_LAM}" != "1" && -z "${ASSISTANT_TEXT}" ]]; then
   TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
   if [[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]]; then

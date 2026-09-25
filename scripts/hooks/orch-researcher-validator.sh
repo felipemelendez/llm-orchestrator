@@ -89,12 +89,13 @@ if command -v python3 >/dev/null 2>&1 && [[ -f "${PROTO_LIB}" ]]; then
 fi
 
 if [[ "${HAS_LAM}" == "1" ]]; then
-  # Present but empty: the researcher ended with no final text. That is the
+  # A report source existed but the report is empty. That is the
   # SubagentStop general hook's finding; grading the MAIN transcript here
   # would judge the controller's conversation instead. Nothing to validate.
   [[ -n "${TAIL}" ]] || exit 0
 else
-  # Old harness without the field: locate the transcript file.
+  # Neither a SubagentHandback report nor last_assistant_message (an old
+  # harness): locate the transcript file.
   TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' \
                | sed -E 's/.*"([^"]+)"$/\1/' | head -1)
 

@@ -133,8 +133,10 @@ PYEOF
 # In auto mode a subagent sends its report as the SubagentHandback tool's
 # `message`, and last_assistant_message holds only its closing text ("Report
 # delivered to caller." in a captured payload). So the last SubagentHandback
-# call in the subagent's own transcript wins; a user prompt after it (a resumed
-# agent) discards it. Without one, last_assistant_message is the report.
+# call in the subagent's own transcript wins, unless its tool result was an
+# error. A later prompt from a person (a resumed agent) discards it; entries
+# the harness injects (isMeta, tool results, <task-notification> and similar
+# tagged text) do not. Without one, last_assistant_message is the report.
 orch_subagent_report() {
   python3 - "${1:-}" <<'PYEOF' 2>/dev/null || printf '0'
 import json, os, sys
@@ -143,14 +145,37 @@ try:
     with open(sys.argv[1]) as f:
         data = json.load(f)
 except Exception:
+    data = None
+if not isinstance(data, dict):
     sys.stdout.write("0")
     sys.exit(0)
 
+
+def person_prompt(obj, content):
+    """True when a user entry is a prompt typed by a person or a caller."""
+    if obj.get("isMeta"):
+        return False
+    if isinstance(content, str):
+        texts = [content]
+    elif isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return False
+        texts = [b.get("text") or "" for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
+    else:
+        return False
+    text = "".join(texts).lstrip()
+    return bool(text) and not text.startswith("<")
+
+
 path = data.get("agent_transcript_path") or ""
 main = data.get("transcript_path") or ""
+if not isinstance(path, str) or not isinstance(main, str):
+    path, main = "", ""
 if not path and main.endswith(".jsonl") and data.get("agent_id"):
     path = "%s/subagents/agent-%s.jsonl" % (main[:-len(".jsonl")], data["agent_id"])
-report = None
+report = None   # the last handback not answered by an error
+pending = {}    # tool_use id -> (message, report before that call)
 if path and os.path.isfile(path):
     try:
         with open(path, errors="replace") as f:
@@ -159,27 +184,34 @@ if path and os.path.isfile(path):
                     obj = json.loads(line)
                 except ValueError:
                     continue
-                msg = obj.get("message")
-                if not isinstance(msg, dict):
+                if not isinstance(obj, dict) or not isinstance(obj.get("message"), dict):
                     continue
-                content = msg.get("content")
-                blocks = content if isinstance(content, list) else [{"type": "text"}]
+                content = obj["message"].get("content")
                 if obj.get("type") == "user":
-                    if any(isinstance(b, dict) and b.get("type") != "tool_result" for b in blocks):
-                        report = None
-                elif obj.get("type") == "assistant":
-                    for b in blocks:
-                        if (isinstance(b, dict) and b.get("type") == "tool_use"
-                                and b.get("name") == "SubagentHandback"
-                                and isinstance((b.get("input") or {}).get("message"), str)):
-                            report = b["input"]["message"]
+                    if person_prompt(obj, content):
+                        report, pending = None, {}
+                        continue
+                    for b in content if isinstance(content, list) else []:
+                        if (isinstance(b, dict) and b.get("type") == "tool_result"
+                                and b.get("is_error") and b.get("tool_use_id") in pending):
+                            report = pending.pop(b["tool_use_id"])[1]
+                elif obj.get("type") == "assistant" and isinstance(content, list):
+                    for b in content:
+                        if not (isinstance(b, dict) and b.get("type") == "tool_use"
+                                and b.get("name") == "SubagentHandback"):
+                            continue
+                        inp = b.get("input")
+                        if isinstance(inp, dict) and isinstance(inp.get("message"), str):
+                            pending[b.get("id")] = (inp["message"], report)
+                            report = inp["message"]
     except OSError:
         report = None
 
 if report is not None:
     sys.stdout.write("1" + report)
 elif "last_assistant_message" in data:
-    sys.stdout.write("1" + (data.get("last_assistant_message") or ""))
+    lam = data.get("last_assistant_message")
+    sys.stdout.write("1" + (lam if isinstance(lam, str) else ""))
 else:
     sys.stdout.write("0")
 PYEOF
