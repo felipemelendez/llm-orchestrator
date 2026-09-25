@@ -385,7 +385,7 @@ case "${cmd}" in
     for dependency in scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
                       scripts/hooks/orch-task-cleanup.sh scripts/lib/codex-cadence-read-command.py \
                       scripts/lib/codex-completion-check.py scripts/lib/orch-completion-check.py \
-                      scripts/lib/orch-signals.sh scripts/lib/orch-task-resources.py; do
+                      scripts/lib/orch-task-resources.py; do
       [[ -f "${ROOT}/${dependency}" ]] || codex_refuse \
         "${ROOT}/${dependency} is missing — nothing was changed."
     done
