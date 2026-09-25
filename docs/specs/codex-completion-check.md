@@ -113,15 +113,36 @@ Rules:
      `rspec`, `tox`, `nox`, `phpunit`, `pest`, `tsc`, `ruff`, `eslint`,
      `biome`, `flake8`, `mypy`, `pyright`, `shellcheck`, `rubocop`,
      `golangci-lint`, `ctest` or `bats`; or `python -m` with `pytest`,
-     `unittest`, `tox`, `mypy`, `ruff` or `flake8`; or a test script run
-     directly or by `bash`, `sh` or `python` (`tests/x.sh`, `./tests/x.py`,
-     `./run-tests.sh`); or a runner with one of its targets among its later
-     words before any `--`: `go test`/`vet`; `cargo test`/`check`/`clippy`/
-     `nextest`; `mix test`; `gradle` or `gradlew test`/`check`, also as a
-     task path (`:app:test`); `mvn test`/`verify`; `make`, `just` or `task`
-     with `test`, `tests`, `check`, `lint`, `typecheck`, `ci` or `verify`;
-     `dotnet`, `swift` and `bazel test`; `deno test`/`check`/`lint`. So
-     `mvn clean test`, `./gradlew clean test` and `make -C app test` count.
+     `unittest`, `tox`, `mypy`, `ruff` or `flake8` (the module is then
+     judged as that runner, so step 7 applies to `python -m ruff rule`); or
+     a test script run directly or by `bash`, `sh` or `python`
+     (`tests/x.sh`, `./tests/x.py`, `./run-tests.sh`). The interpreter's own
+     options before `-m` or the script are skipped (`python3 -u -m pytest`,
+     `bash -e tests/x.sh`); of those, python's `-X` and `-W`, bash's `-o`
+     and `-O`, and sh's `-o` take a value.
+
+     Two kinds of runner need a target word:
+     - Tools whose subcommand comes first: the first word after their own
+       options must be the target. `go test`/`vet` (value option `-C`);
+       `cargo test`/`check`/`clippy`/`nextest` (after an optional
+       `+toolchain`; value options `-C`, `-Z`, `--config`); `mix test`;
+       `dotnet`, `swift` and `bazel test`; `deno test`/`check`/`lint`. So
+       `go build -o test`, `cargo run --bin check`, `bazel build //app:test`
+       and `go mod why test` are not checks.
+     - Tools that take a list of targets: any later plain word before `--`
+       counts, but never the value of one of their value options. `make`,
+       `just` and `task` with `test`, `tests`, `check`, `lint`,
+       `typecheck`, `ci` or `verify`; `gradle`/`gradlew` with `test` or
+       `check`, also as a task path (`:app:test`); `mvn` with `test` or
+       `verify`. The value options: make `-C`, `-f`, `-I`, `-o`, `-W` and
+       their long forms; gradle `-x`/`--exclude-task`, `-p`, `-b`, `-c`,
+       `-g`, `-I` and their long forms; mvn `-pl`, `-f`, `-s`, `-gs`, `-P`,
+       `-rf`, `-t` and their long forms; just `-f`/`--justfile`,
+       `-d`/`--working-directory`, `--shell`, `--dotenv-filename`,
+       `--dotenv-path`; task `-d`/`--dir`, `-t`/`--taskfile`,
+       `-o`/`--output`. So `mvn clean test`, `./gradlew clean test` and
+       `make -C app test` count, and `gradle build -x test`,
+       `make -C test build` and `task -d test build` do not.
      The name must be the whole word, so `tsc-watch`, `ruff-lsp`,
      `pytest.ini` and `scripts/eslint/build-rules.sh` are not runners
      (`tsc-watch` and `ruff-lsp` counted under an earlier rule).
@@ -135,7 +156,8 @@ Rules:
      `--dry-run`; `mvn` `-DskipTests`, `-Dmaven.test.skip` (bare or
      `=true`); `pytest` `--markers`, `--fixtures`, `--fixtures-per-test`,
      `--collect-only`, `--co`, `--setup-plan`; `jest` `--clearCache`,
-     `--listTests`, `--showConfig`. `ruff rule`, `ruff config`,
+     `--listTests`, `--showConfig`; `ruff` `--show-files`, `--show-settings`.
+     `ruff rule`, `ruff config`,
      `ruff format` (without `--check`), `ruff linter`, `ruff version`,
      `ruff clean`, `ruff server` and `ruff analyze` inspect rather than
      check. An option combined with others (`make -kn test`) is not
@@ -200,9 +222,9 @@ stay out of scope on purpose:
   check, so an honest run with a stray quote sends the agent back once.
 - `npx -c "vitest run"` and `npm exec --call "..."`: the command an option
   names is not read, so this honest run is not seen.
-- `go run . test` or `cargo run --bin x test`: a target word given to the
-  program as data still reads as a target, because targets are looked for
-  among all later words before `--`.
+- `just run test`: for make, gradle, mvn, just and task every later plain
+  word is read as a target, so `test` given to the `run` recipe as an
+  argument reads as the `test` target.
 - `bash <<EOF` with a check in the body: heredoc bodies are skipped, so
   this honest run is not seen and the agent is sent back once.
 - A line appended to the log by hand; the log is the harness's.

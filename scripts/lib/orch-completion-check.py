@@ -111,16 +111,36 @@ TOOLS = frozenset((
     "pytest", "py.test", "jest", "vitest", "mocha", "rspec", "tox", "nox", "phpunit",
     "pest", "tsc", "ruff", "eslint", "biome", "flake8", "mypy", "pyright", "shellcheck",
     "rubocop", "golangci-lint", "ctest", "bats"))
-# Runners that are a check only with one of these targets among their later
-# words, before any `--`: `go test`, `mvn clean test`, `./gradlew :app:test`.
-TARGETS = {
-    "go": ("test", "vet"), "cargo": ("test", "check", "clippy", "nextest"),
-    "mix": ("test",), "gradle": ("test", "check"), "gradlew": ("test", "check"),
-    "mvn": ("test", "verify"), "make": ("test", "tests", "check", "lint", "typecheck", "ci", "verify"),
-    "just": ("test", "tests", "check", "lint", "typecheck", "ci", "verify"),
-    "task": ("test", "tests", "check", "lint", "typecheck", "ci", "verify"),
-    "dotnet": ("test",), "swift": ("test",), "bazel": ("test",), "deno": ("test", "check", "lint"),
+# Runners whose subcommand is the first word after their own options: a
+# check only when that word is one of these (`go test`, not `go build -o test`).
+# With each: its options that take a value before the subcommand.
+SUBCOMMANDS = {
+    "go": (("test", "vet"), {"-C"}),
+    "cargo": (("test", "check", "clippy", "nextest"), {"-C", "-Z", "--config"}),
+    "mix": (("test",), set()), "dotnet": (("test",), set()), "swift": (("test",), set()),
+    "bazel": (("test",), set()), "deno": (("test", "check", "lint"), set()),
 }
+# Runners that take a list of targets: a check when any later plain word
+# before `--` is one of these (`mvn clean test`, `./gradlew :app:test`). The
+# value of one of their options is never a target (`gradle build -x test`).
+_MAKE_TARGETS = ("test", "tests", "check", "lint", "typecheck", "ci", "verify")
+_GRADLE_VALUES = {"-x", "--exclude-task", "-p", "--project-dir", "-b", "--build-file", "-c",
+                  "--settings-file", "-g", "--gradle-user-home", "-I", "--init-script"}
+TARGETS = {
+    "make": (_MAKE_TARGETS, {"-C", "-f", "-I", "-o", "-W", "--directory", "--file", "--makefile",
+                             "--include-dir", "--old-file", "--assume-old", "--what-if", "--new-file",
+                             "--assume-new"}),
+    "gradle": (("test", "check"), _GRADLE_VALUES), "gradlew": (("test", "check"), _GRADLE_VALUES),
+    "mvn": (("test", "verify"), {"-pl", "--projects", "-f", "--file", "-s", "--settings", "-gs",
+                                 "--global-settings", "-P", "--activate-profiles", "-rf", "--resume-from",
+                                 "-t", "--toolchains"}),
+    "just": (_MAKE_TARGETS, {"-f", "--justfile", "-d", "--working-directory", "--shell",
+                             "--dotenv-filename", "--dotenv-path"}),
+    "task": (_MAKE_TARGETS, {"-d", "--dir", "-t", "--taskfile", "-o", "--output"}),
+}
+# Interpreter options that come before `-m` or the script, and those of them
+# that take a value: `python3 -u -m pytest`, `bash -e tests/x.sh`.
+INTERPRETERS = {"python": {"-X", "-W"}, "bash": {"-o", "-O"}, "sh": {"-o"}}
 # Options that make a runner plan, list or skip instead of running:
 # `make -n test`, `cargo test --no-run`, `pytest --markers`. For the `-D`
 # options a value of `true` counts the same as none.
@@ -133,6 +153,7 @@ NON_RUNS = {
     "pytest": ("--markers", "--fixtures", "--fixtures-per-test", "--collect-only", "--co", "--setup-plan"),
     "py.test": ("--markers", "--fixtures", "--fixtures-per-test", "--collect-only", "--co", "--setup-plan"),
     "jest": ("--clearCache", "--listTests", "--showConfig"),
+    "ruff": ("--show-files", "--show-settings"),
 }
 # Subcommands that inspect instead of checking: `ruff rule F401`. `ruff format`
 # is a check only with `--check`.
@@ -375,14 +396,36 @@ def is_runner(words, i):
             return False
     if name in TOOLS or TEST_SCRIPT.fullmatch(words[i]):
         return True
+    if name in SUBCOMMANDS:
+        targets, valued = SUBCOMMANDS[name]
+        j = 1 if name == "cargo" and rest[:1] and rest[0][:1] == "+" else 0     # `cargo +nightly test`
+        j = skip_options(rest, j, valued)
+        return j < len(rest) and rest[j] in targets
     if name in TARGETS:
-        before = rest[:rest.index("--")] if "--" in rest else rest
-        return any(w.rsplit(":", 1)[-1] in TARGETS[name] for w in before)
-    if PYTHON.fullmatch(name):
-        return bool(rest) and (rest[0] == "-m" and rest[1:2] and rest[1] in PY_MODULES
-                               or bool(TEST_SCRIPT.fullmatch(rest[0])))
-    if name in ("bash", "sh"):
-        return bool(rest) and bool(TEST_SCRIPT.fullmatch(rest[0]))
+        targets, valued = TARGETS[name]
+        j = 0
+        while j < len(rest) and rest[j] != "--":
+            w = rest[j]
+            if w[:1] == "-":
+                j += 2 if w in valued else 1
+                continue
+            if (w.rsplit(":", 1)[-1] if name in ("gradle", "gradlew") else w) in targets:
+                return True
+            j += 1
+        return False
+    interpreter = "python" if PYTHON.fullmatch(name) else name
+    if interpreter in INTERPRETERS:
+        j = 0           # the interpreter's own options, up to -m, -c or the script
+        while j < len(rest) and rest[j][:1] == "-" and rest[j] not in ("-m", "-c", "--"):
+            j += 2 if rest[j] in INTERPRETERS[interpreter] else 1
+        if j < len(rest) and rest[j] == "--":
+            j += 1
+        if interpreter == "python" and rest[j:j + 1] == ["-m"]:
+            module = rest[j + 1:j + 2]
+            # The module is judged as the runner it names, inspection modes included.
+            return bool(module) and module[0] in PY_MODULES and (
+                module[0] == "unittest" or is_runner(rest, j + 1))
+        return j < len(rest) and bool(TEST_SCRIPT.fullmatch(rest[j]))
     return False
 
 
