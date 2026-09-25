@@ -433,6 +433,55 @@ done
 printf '{ "runner": { "test_cmd": "/usr/bin/make test" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ignored "(q4) test_cmd with a dry-run option" '/usr/bin/make test -n -f /dev/stdin'
 
+printf '\n%s== SubagentStop reads the report the subagent sent its caller ==%s\n' "$DIM" "$RESET"
+# Captured Claude Code 2.1.282 payloads. In auto mode the report is the
+# SubagentHandback message and last_assistant_message is "Report delivered to
+# caller."; in default mode the report is last_assistant_message. The captured
+# subagent ran only find, grep and Read, none of which is a check.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+fire_captured() { # fire_captured <materialize args...> → sets RC and ERR
+  local dir; dir=$(mktemp -d "$TMP/cap.XXXXXX")
+  python3 "$MAT" "$@" "$dir" > "$TMP/in"
+  CLAUDE_PROJECT_DIR="$TMP/no-project" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
+  ERR=$(cat "$TMP/err")
+  [[ -n "$ERR" ]] && ANY_STDERR=1
+  [[ $RC -ne 0 ]] && ANY_RC=1
+  grep -q '"decision"' "$TMP/out" && ANY_BLOCK=1
+  return 0
+}
+CHECK_USE='{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_check","name":"Bash","input":{"command":"bash tests/test-verify-gate.sh"}}]}}'
+CHECK_OK='{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_check","is_error":false,"content":"PASS"}]}}'
+
+fire_captured auto --report "$CLAIM"
+{ [[ $RC -eq 0 ]] && warned && grep -q '"hookEventName": "SubagentStop"' "$TMP/out"; } \
+  && ok "(s1) auto mode: PASS in the SubagentHandback report with no check → note" \
+  || fail "(s1) auto-mode handback report not checked" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured auto --report "$CLAIM" --append "$CHECK_USE" --append "$CHECK_OK"
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s2) auto mode: PASS in the report and a check passed in the subagent's transcript → silent" \
+  || fail "(s2) auto mode with a passing check" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured auto
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s3) auto mode: a report with no Verification label → silent" \
+  || fail "(s3) auto mode without a label" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured auto --report "$CLAIM" --handback-error
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s4) auto mode: a SubagentHandback answered by an error is not the report" \
+  || fail "(s4) errored handback read as the report" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured default --report "$CLAIM"
+{ [[ $RC -eq 0 ]] && warned; } \
+  && ok "(s5) default mode: PASS in last_assistant_message with no check → note" \
+  || fail "(s5) default-mode report not checked" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured default --report "$CLAIM" --append "$CHECK_USE" --append "$CHECK_OK"
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s6) default mode: PASS with a passing check in the subagent's transcript → silent" \
+  || fail "(s6) default mode with a passing check" "rc=$RC out=$(cat "$TMP/out")"
+
 printf '\n%s== it warns; it never blocks ==%s\n' "$DIM" "$RESET"
 (( ANY_RC == 0 ))    && ok "no fixture made the hook exit non-zero" \
   || fail "the hook exited non-zero" "a warn-only gate must always exit 0"

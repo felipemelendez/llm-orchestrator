@@ -18,7 +18,7 @@
 #      success" alone was not enough: the polite losing form `mkdir X || echo
 #      BLOCKED` exits 0 for the LOSER, and recording it had this reaper
 #      releasing a mutex a live sibling held.)
-#   2. A `.worktrees/<slug>` path named in the agent's final message, ONLY
+#   2. A `.worktrees/<slug>` path named in the agent's report, ONLY
 #      when that message is a success-shaped Status (DONE / DONE_WITH_CONCERNS
 #      / PARTIAL) — i.e. the agent reports having worked there and stopped
 #      without releasing. Never on BLOCKED/NEEDS_CONTEXT: a BLOCKED return
@@ -131,19 +131,19 @@ if [[ -n "${AGENT_ID}" && -n "${SESSION_ID}" ]]; then
 fi
 
 # --- 2. worktree named in a SUCCESS-shaped final message --------------------
+# The message is the report the agent sent its caller (orch_subagent_report):
+# in auto mode a SubagentHandback message, since last_assistant_message then
+# holds only the closing text.
+PROTO_LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
+# shellcheck source=scripts/lib/orch-protocol.sh
+[[ -f "${PROTO_LIB}" ]] && source "${PROTO_LIB}"
 IN_FILE=$(mktemp) || exit 0
 # trap, not just a trailing rm: killed at the hook timeout, a plain rm never runs.
 trap 'rm -f "${IN_FILE}" 2>/dev/null' EXIT
 printf '%s' "${INPUT}" > "${IN_FILE}"
-LAM=$(python3 - "${IN_FILE}" <<'PYEOF' 2>/dev/null || true
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        print(json.load(f).get("last_assistant_message") or "", end="")
-except Exception:
-    pass
-PYEOF
-)
+LAM=""
+declare -f orch_subagent_report >/dev/null 2>&1 && LAM=$(orch_subagent_report "${IN_FILE}")
+LAM="${LAM:1}"
 rm -f "${IN_FILE}" 2>/dev/null
 # A path MENTIONED in a message is not a path the agent HELD. This used to reap
 # every `.worktrees/<slug>` appearing anywhere in a success-shaped return, so a
