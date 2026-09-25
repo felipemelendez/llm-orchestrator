@@ -582,11 +582,9 @@ def hook_retry(state_dir=None, payload=None):
             raise Unsafe("invalid cadence enabled setting")
         if not config["enabled"]:
             return
-        workflow = config.get("workflow", "legacy")
-        if workflow not in {"legacy", "proportional"}:
-            raise Unsafe("invalid cadence workflow setting")
-        if workflow != "proportional":
-            return
+        if config.get("workflow") != "proportional":
+            raise Unsafe('docs/llm-orchestrator/cadence.json needs "workflow": "proportional" '
+                         '(the legacy workflow was removed); add or fix that one line')
         if not canonical(state_dir or Manager.default_base()).exists():
             return
         manager = Manager(state_dir)

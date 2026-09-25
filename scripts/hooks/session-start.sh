@@ -140,7 +140,7 @@ fi
 CADENCE_PROJ="${CADENCE_PROJ%/}"
 # The reply-format rule and the recovery reminder need the cadence on.
 CADENCE_ON=""
-[[ "${CADENCE_STATE}" == "proportional" || "${CADENCE_STATE}" == "legacy" ]] && CADENCE_ON=1
+[[ "${CADENCE_STATE}" == "proportional" ]] && CADENCE_ON=1
 if [[ -n "${CADENCE_STATE}" ]]; then
   _orch_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
@@ -246,11 +246,10 @@ fi
 # format survives compaction without depending on the per-turn hook.
 # The newest-handoff path is derived live (a pointer, never the artifact body).
 if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
-  PROTOCOL_MARKER="orch-turn-reminder"
-  [[ "${CADENCE_STATE}" == "proportional" ]] && PROTOCOL_MARKER="orch-proportional-reminder"
+  PROTOCOL_MARKER="orch-proportional-reminder"
   HANDOFF_DIR="${CADENCE_PROJ}/docs/llm-orchestrator/handoffs"
   NEWEST="none"
-  if [[ "$PROTOCOL_MARKER" == "orch-turn-reminder" && -d "${HANDOFF_DIR}" ]]; then
+  if [[ -z "${CADENCE_ON}" && -d "${HANDOFF_DIR}" ]]; then
     # Newest by modification time (robust to regeneration in place). The note
     # also tells the next turn the plan file is authoritative over the artifact,
     # so a wrong pick self-corrects, but mtime is the right primary signal.
@@ -266,7 +265,7 @@ if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
   PROTOCOL_CORE=""
   [[ -n "${CADENCE_ON}" && -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk -v s="<!-- $PROTOCOL_MARKER-start -->" -v e="<!-- $PROTOCOL_MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON_FILE}" 2>/dev/null)
 
-  if [[ "$PROTOCOL_MARKER" == "orch-proportional-reminder" ]]; then
+  if [[ -n "${CADENCE_ON}" ]]; then
     NOTE="
 
 ---
