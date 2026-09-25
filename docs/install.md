@@ -17,26 +17,29 @@ framework does not turn it on in every repository.
 
 ## Codex setup
 
-In your terminal, clone the framework into a folder you plan to keep:
+In your terminal, clone the framework into a folder you plan to keep, add it
+to Codex as a plugin, and add the instructions block:
 
 ```sh
 git clone https://github.com/felipemelendez/llm-orchestrator.git
 cd llm-orchestrator
+codex plugin marketplace add "$PWD"
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
-Open a new Codex session and run `/hooks`. Review the three hooks and trust
-them. Codex only runs a hook you have trusted, and the installer cannot do that
-step for you. Keep the framework folder in place, because the hooks point at
-scripts inside it.
+The plugin installs the cadence skill and the three hooks. The installer adds
+the instructions block to `~/.codex/AGENTS.md` and nothing else. Open a new
+Codex session and run `/hooks`. Review the three hooks and trust them. Codex
+only runs a hook you have trusted, and neither command can do that step for
+you.
 
 In short, the three hooks are: one that stops the assistant editing a
 project's rulebook, one that sends the assistant back once when a reply claims
 tests passed and none ran, and one that cleans up temporary files from
 finished tasks. None of them prints a message for you. The full picture is on
 the [Codex page](codex.md), including how project trust and
-`~/.codex/AGENTS.override.md` change what Codex reads, and what happens if you
-add this repository as a Codex plugin.
+`~/.codex/AGENTS.override.md` change what Codex reads.
 
 ## Enable cadence in a project
 
@@ -51,8 +54,8 @@ project, and a lock that keeps both from changing quietly.
 ```
 
 (The procedure is written out in [the command](../commands/cadence-init.md).)
-With Codex, ask the assistant to enable cadence using the scripts in
-`~/.agents/skills/cadence/scripts/`, following that same procedure; it
+With Codex, ask the assistant to enable cadence using the scripts in the
+cadence skill's `scripts/` folder, following that same procedure; it
 proposes the configuration and drafts rulebook text for your approval.
 
 **Step 2 — confirm the config.** The assistant shows you a proposed
@@ -122,14 +125,17 @@ In your framework checkout, on `main` with your local work saved, run:
 
 ```sh
 git pull --ff-only
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
-The skill is a copy, so it only changes when you rerun the installer. Then
-check `/hooks` in a new session: a hook whose definition changed needs your
-trust again. If you installed the Codex layer from v0.8 or v0.9, this run also
-removes old hook entries that pointed at deleted files and made every command
-fail.
+Codex runs the plugin from its own copy, and `codex plugin add` refreshes it.
+Then check `/hooks` in a new session: a hook whose definition changed needs
+your trust again. If you installed the Codex layer with an earlier
+`install.sh --codex`, add the plugin as in [Codex setup](#codex-setup) first;
+without it, this run removes nothing. With it, the run removes the skill copy and the hook entries that earlier install
+wrote, so each hook runs once. See
+[Upgrading from an older install](codex.md#upgrading-from-an-older-install).
 
 The remaining sections cover alternative Claude installations and detailed
 settings.
@@ -212,13 +218,8 @@ This uses the plugin schema directly; no settings.json edits needed.
         "hooks": [
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-cadence-unlock.sh" },
           { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-no-verify.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-destructive-git.sh" },
-          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" }
-        ] },
-      { "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-config-protection.sh" }] },
-      { "matcher": "Agent|Task",
-        "hooks": [{ "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-dispatch-model.sh" }] }
+          { "type": "command", "command": "bash /full/path/to/.claude/scripts/hooks/guard-destructive-git.sh" }
+        ] }
     ],
     "PostToolUse": [
       { "matcher": "Skill",
@@ -288,7 +289,7 @@ export ORCH_HOOK_PROFILE=standard   # default — everything active
 export ORCH_HOOK_PROFILE=strict     # everything active AND blocking
 ```
 
-- `minimal` — these hooks exit without acting: protocol reminders (`user-prompt-submit`), research gate, handoff nudge, the `--no-verify` guard, config-protection guard, retry cap, Status validators (`subagent-stop`, researcher validator), worktree reaper. SessionStart still loads the `using-orchestrator` core (and the reply format in a cadence-enabled project).
+- `minimal` — these hooks exit without acting: protocol reminders (`user-prompt-submit`), research gate, handoff nudge, the `--no-verify` guard, retry cap, Status validators (`subagent-stop`, researcher validator), worktree reaper. SessionStart still loads the `using-orchestrator` core (and the reply format in a cadence-enabled project).
 - `standard` (default) — all of the above are active.
 - `strict` — everything in `standard`, and the two gradeable checks **block** instead of warning: it implies `ORCH_STRICT_STATUS` and `ORCH_STRICT_RETRY`. To keep one check non-blocking under this profile, set that knob to `0` explicitly — an explicit value always wins over the profile. (Before 2026-08-03 no script branched on the profile at all, so `strict` was accepted and behaved exactly like `standard`.)
 
@@ -305,9 +306,9 @@ Disable individual hooks without changing profile (comma-separated):
 export ORCH_DISABLED_HOOKS=orch-guard,orch-research-gate
 ```
 
-Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-config-protection`, `orch-research-gate`, `orch-handoff-nudge`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-task-cleanup`, `orch-stop`, `orch-dispatch-model`, `orch-cadence-stop`, `orch-verify-gate`, and on Codex `codex-verify-gate`.
+Recognized names: `orch-session-start`, `orch-user-prompt-submit`, `orch-guard` (the `--no-verify` guard), `orch-research-gate`, `orch-handoff-nudge`, `orch-skill-telemetry`, `orch-subagent-stop`, `orch-researcher-validator`, `orch-retry-cap`, `orch-worktree-reaper`, `orch-task-cleanup`, `orch-stop`, `orch-cadence-stop`, `orch-verify-gate`, and on Codex `codex-verify-gate`.
 
-Two cadence hooks are exempt from this list on purpose, because a guard that can be talked off is not a guard: the unlock guard (`guard-cadence-unlock.sh`) and, on Codex, the file guard; the session unlock is their one way out. The other two that run in cadence mode — the session-start line (`orch-session-start`) and the dispatch-model guard (`orch-dispatch-model`) — are each nameable here, and each is inert in any project without a `docs/llm-orchestrator/cadence.json` that says `"enabled": true`, so there is nothing to disable until you opt in. `ORCH_CADENCE_UNLOCK=1` is not an off switch for them: it is the cadence's own unlock, described under "Escape hatches for the hard guards" below.
+Two cadence hooks are exempt from this list on purpose, because a guard that can be talked off is not a guard: the unlock guard (`guard-cadence-unlock.sh`) and, on Codex, the file guard; the session unlock is their one way out. The other one that runs in cadence mode, the session-start line (`orch-session-start`), is nameable here, and it is inert in any project without a `docs/llm-orchestrator/cadence.json` that says `"enabled": true`, so there is nothing to disable until you opt in. `ORCH_CADENCE_UNLOCK=1` is not an off switch for it: it is the cadence's own unlock, described under "Escape hatches for the hard guards" below.
 
 ## Escape hatches for the hard guards
 
@@ -319,13 +320,7 @@ export ORCH_ALLOW_DESTRUCTIVE_GIT=1
 
 An inline `ORCH_ALLOW_DESTRUCTIVE_GIT=1 git …` prefix in the command being run does **not** disarm the guard — that lands in the child shell's environment, not the hook's.
 
-`guard-config-protection.sh` (blocks edits to an existing checker configuration such as a linter or type-checker config) honours `ORCH_HOOK_PROFILE=minimal` and `ORCH_DISABLED_HOOKS=orch-config-protection`, and has its own explicit hatch:
-
-```
-export ORCH_ALLOW_CONFIG_EDIT=1
-```
-
-`ORCH_CADENCE_UNLOCK=1` is not a hook hatch at all — it is the cadence's own unlock, and it belongs on this page because people look for it here. In a project that has opted in, the locked set is that project's laws (`docs/llm-orchestrator/LAWS.md`), its `cadence.json`, its `LOCK.sha256`, its `.claude/settings.json`, `.githooks/commit-msg` and `.githooks/orch-cadence-check.sh`, and the marked `ORCH:LAWS` section of `CLAUDE.md` and `AGENTS.md`. The `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json` hold the six *files*; the marked section is held by the alarm — the end-of-turn verdict, the session-start line and the `commit-msg` refusal — because an `Edit(path)` rule addresses a whole file and cannot address a section inside one. Either way an amendment has to be able to rewrite them on purpose. Four programs read the variable: `cadence-init`, which will otherwise keep a file it would have replaced; `orch-cadence-check.sh --lock`, which will otherwise refuse to overwrite an existing manifest; the dispatch-model guard, which stands down for the session; and on Codex the file guard, which does the same. The rest of `CLAUDE.md` and `AGENTS.md` stays writable either way, so `/llm-orchestrator:remember`, `/llm-orchestrator:onboard` and `/llm-orchestrator:forget` keep working.
+`ORCH_CADENCE_UNLOCK=1` is not a hook hatch at all — it is the cadence's own unlock, and it belongs on this page because people look for it here. In a project that has opted in, the locked set is that project's laws (`docs/llm-orchestrator/LAWS.md`), its `cadence.json`, its `LOCK.sha256`, its `.claude/settings.json`, `.githooks/commit-msg` and `.githooks/orch-cadence-check.sh`, and the marked `ORCH:LAWS` section of `CLAUDE.md` and `AGENTS.md`. The `Edit(...)` deny rules `cadence-init` writes into `.claude/settings.json` hold the six *files*; the marked section is held by the alarm — the end-of-turn verdict, the session-start line and the `commit-msg` refusal — because an `Edit(path)` rule addresses a whole file and cannot address a section inside one. Either way an amendment has to be able to rewrite them on purpose. Three programs read the variable: `cadence-init`, which will otherwise keep a file it would have replaced; `orch-cadence-check.sh --lock`, which will otherwise refuse to overwrite an existing manifest; and on Codex the file guard, which stands down for the session. The rest of `CLAUDE.md` and `AGENTS.md` stays writable either way, so `/llm-orchestrator:remember`, `/llm-orchestrator:onboard` and `/llm-orchestrator:forget` keep working.
 
 The unlock is one variable, and it is deliberately awkward to make permanent:
 
@@ -333,7 +328,7 @@ The unlock is one variable, and it is deliberately awkward to make permanent:
 ORCH_CADENCE_UNLOCK=1 claude
 ```
 
-Set it in the environment for the one session that needs it — **never in a settings file**. If `.claude/settings.json`, `.claude/settings.local.json` or `~/.claude/settings.json` contains the string `ORCH_CADENCE_UNLOCK`, the unlock is refused, the run names the file that refused it, and the lock stands: a persisted unlock is a disarmed lock in every future session, and it would be invisible from inside the sessions it disarmed. `orch-cadence-check.sh --lock` and the dispatch-model guard both refuse on those terms, and they read that same set of three files.
+Set it in the environment for the one session that needs it — **never in a settings file**. If `.claude/settings.json`, `.claude/settings.local.json` or `~/.claude/settings.json` contains the string `ORCH_CADENCE_UNLOCK`, the unlock is refused, the run names the file that refused it, and the lock stands: a persisted unlock is a disarmed lock in every future session, and it would be invisible from inside the sessions it disarmed. `orch-cadence-check.sh --lock` refuses on those terms, and it reads that same set of three files.
 
 One more hook belongs to the same rule, and it reads no variable: `guard-cadence-unlock.sh` refuses, in cadence mode, a Bash command whose own text *names* one of the four switches — whatever the verb, because it is a mention rule and not an assignment grammar. The switches are yours, set in your shell at launch; an assignment inside a command an agent runs would let the turn arrange the switch that binds it. The accepted cost is real and you will hit it: an agent cannot grep for, echo or write about those names inside a cadence project, so an edit to a file that mentions one goes through the Write tool rather than a command line.
 
@@ -448,7 +443,7 @@ One seam between the installer and the init is worth knowing before you hit it: 
 
 ## Cross-harness
 
-Claude Code is supported first-class. Codex has an installer (`./scripts/install.sh --codex`) that ships the cadence skill, the shared instructions and three small hooks. What they do is on the [Codex page](codex.md).
+Claude Code is supported first-class. Codex gets the cadence skill and three small hooks from a Codex plugin (`codex plugin add`), and the shared instructions from `./scripts/install.sh --codex`. What they do is on the [Codex page](codex.md).
 
 The skills, commands and agent prompts are plain markdown, so they work as written instructions anywhere a tool will read them. For Gemini, Copilot or any other harness, copy `skills/`, `commands/` and `templates/` into its config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`. What you do not get is the enforcement: the hooks and the guards are Claude Code's, and Codex gets the file guard, the completion check and the scratch cleanup only.
 

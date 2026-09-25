@@ -284,7 +284,7 @@ ${PROTOCOL_CORE}"
 **Post-compaction recovery.** This session resumed immediately after native context compaction. The narrative above the boundary is a lossy summary — treat in-flight details (file:line refs, test counts, what was just edited) as unverified.
 
 Before continuing or claiming any work done:
-- If a plan file exists, reconcile against its checkboxes and TaskList — they are authoritative over any handoff artifact. Re-run the verification baseline if it looks stale.
+- If a plan file exists, reconcile against its checkboxes — they are authoritative over any handoff artifact. Re-run the verification baseline if it looks stale.
 - If a handoff file exists${HANDOFF_HINT}, check that its frontmatter slug matches the active plan; if not, discard it and rebuild from the plan file and git history.
 - If every task in the plan is checked, stop and report — do not invent work.
 
