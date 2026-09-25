@@ -602,6 +602,10 @@ out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":
 if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
   ok "a person's prompt after the handback discards it (resumed agent)"
 else fail "captured auto payload, prompt after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":"<div> in header.vue is misaligned"}}')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a person's prompt that starts with a tag still discards it"
+else fail "captured auto payload, tag-led prompt after handback" "out='$out'"; fi
 out=$(cap_fire auto --handback-error)
 if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
   ok "a SubagentHandback call answered by an error does not count"

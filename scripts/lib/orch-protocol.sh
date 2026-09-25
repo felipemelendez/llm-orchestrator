@@ -151,6 +151,11 @@ if not isinstance(data, dict):
     sys.exit(0)
 
 
+# Tags the harness puts at the start of text it injects; the same list as
+# MACHINE in orch-completion-check.py.
+MACHINE = ("<task-notification>", "<local-command-", "<bash-", "<command-name>", "<system-reminder>")
+
+
 def person_prompt(obj, content):
     """True when a user entry is a prompt typed by a person or a caller."""
     if obj.get("isMeta"):
@@ -165,7 +170,7 @@ def person_prompt(obj, content):
     else:
         return False
     text = "".join(texts).lstrip()
-    return bool(text) and not text.startswith("<")
+    return bool(text) and not text.startswith(MACHINE)
 
 
 path = data.get("agent_transcript_path") or ""
