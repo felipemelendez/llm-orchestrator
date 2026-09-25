@@ -70,29 +70,23 @@ the agent may have pushed more after this file was written):
   needs Bedrock/Vertex credentials drops out. Ruling 4 text (remove
   `workflows/` from LAWS and cadence.json) must go into the combined ruling
   (section 7). `skills/cadence/references/refuter.md:59` is left for T6.
-- **T20, the rule-change command** (`refine/t20-ruling-command`).
-  `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by Felipe
-  in his terminal. Fix list sent to the builder (GPT review in
-  `reviews/t20-adversarial-report.md`):
-  1. Copy the patch to a private temp file before validating; apply only that
-     copy; show its hash in the prompt.
-  2. Check rename sources and deletes, not only destinations.
-  3. Trap INT/TERM/EXIT to undo; if undo fails, say so and name the files.
-  4. Resolve `--root` to an absolute path once.
-  5. Refuse when a protected file differs from the index; run `--audit HEAD`
-     after committing and undo on mismatch.
-  6. Allow protected paths not yet in the lock (defined by cadence.json/deny
-     rules).
-  7. Old projects keep old `.githooks` copies that honour
-     `ORCH_CADENCE_UNLOCK`: cadence-init must write a ready-made upgrade
-     ruling patch and print the one command; document the upgrade.
-  8. Test undo after the lock is written.
-  9. Only the marked section of AGENTS.md/CLAUDE.md is protected.
-  10. Refuse when `CLAUDECODE=1` or a Codex session variable is set; add a
-      `Bash(*cadence-ruling.sh*)` deny rule in cadence-init.
-  11. Docs must say plainly: the lock stops accidental edits and makes
-      deliberate ones visible; it cannot stop an agent determined to fake a
-      ruling.
+- **T20, the rule-change command** (`refine/t20-ruling-command`, head
+  `ab0f30b` or later). `skills/cadence/scripts/cadence-ruling.sh <patch>
+  "<wording>"`, run by Felipe in his own terminal. Round 1 of the Full review
+  (GPT report in `reviews/t20-adversarial-report.md`, plus Opus) found 11
+  issues; **all are fixed** (`run-all.sh`: 45 suites pass). Highlights: it
+  applies a private copy of the patch and shows its hash; rename/copy headers
+  and changes outside the protected set are refused; any failure or
+  interruption undoes everything, including a landed commit; it runs
+  `--audit HEAD` after committing; old projects get a ready-made upgrade
+  ruling patch from cadence-init; it refuses inside Claude Code or Codex
+  sessions (the Codex variable names are unverified); cadence-init writes a
+  `Bash(*cadence-ruling.sh*)` deny rule; the docs say plainly what the lock
+  cannot stop. The test file is now `tests/test-ruling-command.sh`.
+  Next: round 2 of the Full review (fresh Opus contract + GPT adversarial,
+  scoped to the fixes and realistic cases), then PR and merge.
+  The regenerated protected-file patch is `reviews/t20-ruling-4.patch`; fold
+  it into the combined ruling (section 7).
   - **Decided (Felipe, 2026-09-25): no signing.** The plugin is for everyone
     and must not depend on any one person's tools. The lock stops accidental
     rule changes, every change shows in the history, and the docs say plainly
