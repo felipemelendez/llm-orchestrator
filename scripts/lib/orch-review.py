@@ -20,6 +20,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 import uuid
@@ -177,6 +178,9 @@ def command_variants(command):
     return variants
 
 
+BACKGROUND_ACK = re.compile(r"^Command running in background with ID:", re.M)
+
+
 def test_run_valid(commands, evidence):
     """R9: the seat's own stream shows exactly that command, and every output line appears in its output."""
     command, output = evidence.get("command"), evidence.get("output")
@@ -186,6 +190,8 @@ def test_run_valid(commands, evidence):
     if not wanted:
         return False, "test-run evidence has no output line"
     for run in commands:
+        if run.get("background") or BACKGROUND_ACK.search(run["output"]):
+            continue  # a background launch returns before the command finishes
         if command.strip() in command_variants(run["command"]):
             seen = {line.rstrip() for line in run["output"].splitlines()}
             if all(line in seen for line in wanted):
@@ -321,7 +327,7 @@ class Review:
         probe = self.run_dir / "sandbox-probe"
         probe.mkdir()
         try:
-            return subprocess.run(sandboxed(probe, ["true"]), stdin=subprocess.DEVNULL, capture_output=True,
+            return subprocess.run(sandboxed(probe, ["true"]), stdin=subprocess.DEVNULL, capture_output=True, env=reduced_env(),
                                   timeout=60).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False
@@ -363,7 +369,10 @@ class Review:
             part["diff"] = git(self.project, "diff", "--no-ext-diff", "--no-textconv", "--no-renames",
                                base, tree, "--", *part["files"])
         full_diff = "".join(part["diff"] for part in parts)
+        submodules = [line.split("\t", 1)[1] for line in git(self.project, "ls-tree", "-r", tree).splitlines()
+                      if line.startswith("160000 ")]
         state = {"tree": tree, "head": git(self.project, "rev-parse", "HEAD").strip(), "base": base,
+                 "submodules": submodules,
                  "files": files, "diff_lines": sum(item["lines"] for item in files),
                  "security": bool(security_pattern().search(full_diff))}
         write_json(self.run_dir / "parts.json", parts)
@@ -428,7 +437,7 @@ class Review:
             if problem or fingerprint != self.tree:
                 record["reason"] = problem or "the copy does not match the fingerprint"
             elif provider == "claude":
-                record.update(run_claude(copy, prompt, schema, launch_dir))
+                record.update(run_claude(copy, prompt, schema, launch_dir, self.run_dir))
             else:
                 codex = preflight["providers"]["codex"]
                 record.update(run_codex(copy, prompt, schema, launch_dir, codex.get("requested_model"),
@@ -572,7 +581,9 @@ class Review:
     def run_steps(self, preflight):
         state, parts = self.start_state(preflight)
         self.tree = state["tree"]
-        if not parts:
+        if not parts or state["submodules"]:
+            # Copies hold no submodule contents; filling them would need the network or the real
+            # module store, so a change with submodules is not reviewed (decide() says why).
             return
         self.manager = resources.Manager()
         self.task = self.manager.start(self.project, f"review {self.run_dir.name}")
@@ -636,38 +647,71 @@ def sandboxed(copy, argv):
     return ["codex", "sandbox", "-P", ":workspace", "-C", str(copy), "--", *argv]
 
 
+BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
+            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")
+PROVIDER_ENV = {
+    "claude": ("CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+               "CLAUDE_CODE_OAUTH_TOKEN"),
+    "codex": ("CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"),
+}
+
+
+def reduced_env(provider=None, **extra):
+    """The environment for a seat or an experiment: the basics, plus only the variables the
+    provider's CLI uses to reach its model. Cloud credentials and tokens (AWS_*, GITHUB_TOKEN and
+    the like) are left out, so a seat cannot use the person's other accounts."""
+    keep = BASE_ENV + PROVIDER_ENV.get(provider, ())
+    return {**{key: os.environ[key] for key in keep if key in os.environ}, **extra}
+
+
+def kill_group(process):
+    """Stop the process and every child it started (they share its session and process group)."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    process.wait()
+
+
 def receipt(copy, argv, command, fingerprint, stdin=None):
     started = time.monotonic()
     record = {"ran": True, "command": command, "argv": sandboxed(copy, argv), "fingerprint": fingerprint,
               "timed_out": False}
-    try:
-        # Python checks a cached .pyc by source mtime in whole seconds and size, so a patch applied
-        # within a second of receipt 1 could run the unpatched code; no bytecode is written instead.
-        done = subprocess.run(record["argv"], cwd=copy, input=stdin if stdin is not None else "",
-                              capture_output=True, text=True, timeout=REPRO_TIMEOUT, start_new_session=True,
-                              env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
-        record.update(exit_code=done.returncode, output=clip(done.stdout + done.stderr))
-    except subprocess.TimeoutExpired as error:
-        output = (error.stdout or b"") + (error.stderr or b"")
-        record.update(exit_code=None, timed_out=True,
-                      output=clip(output.decode(errors="replace") if isinstance(output, bytes) else output),
-                      reason=f"ran longer than {REPRO_TIMEOUT} seconds")
-    except OSError as error:
-        record.update(ran=False, exit_code=None, output="", reason=f"could not start: {error}")
+    # Output goes to an unnamed file, not a pipe, so a child left in the background cannot hold
+    # the receipt open. The whole process group is killed when the command ends or times out.
+    with tempfile.TemporaryFile() as output:
+        try:
+            # Python checks a cached .pyc by source mtime in whole seconds and size, so a patch applied
+            # within a second of receipt 1 could run the unpatched code; no bytecode is written instead.
+            process = subprocess.Popen(record["argv"], cwd=copy, stdin=subprocess.PIPE, stdout=output,
+                                       stderr=subprocess.STDOUT, start_new_session=True,
+                                       env=reduced_env(PYTHONDONTWRITEBYTECODE="1"))
+        except OSError as error:
+            record.update(ran=False, exit_code=None, output="", reason=f"could not start: {error}")
+        else:
+            try:
+                process.communicate((stdin or "").encode(), timeout=REPRO_TIMEOUT)
+                record["exit_code"] = process.returncode
+            except subprocess.TimeoutExpired:
+                record.update(exit_code=None, timed_out=True, reason=f"ran longer than {REPRO_TIMEOUT} seconds")
+            finally:
+                kill_group(process)
+            output.seek(0)
+            record["output"] = clip(output.read().decode(errors="replace"))
     record["duration_s"] = round(time.monotonic() - started, 2)
     return record
 
 
-def run_process(argv, cwd, prompt, stream_path, launch_dir, env=None):
+def run_process(argv, cwd, prompt, stream_path, launch_dir, env):
     with open(stream_path, "wb") as stream, open(launch_dir / "stderr.log", "wb") as errors:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=stream, stderr=errors,
                                    start_new_session=True, env=env)
         try:
             process.communicate(prompt.encode(), timeout=SEAT_TIMEOUT)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
+            kill_group(process)
             return None
+        kill_group(process)
     return process.returncode
 
 
@@ -688,17 +732,32 @@ def claude_family(served):
     return bool(re.fullmatch(rf"claude-{CLAUDE_ALIAS}(?:-[a-zA-Z0-9.]+)+(?:\[[a-z0-9]+\])?", served))
 
 
-def run_claude(copy, prompt, schema, launch_dir):
+CREDENTIAL_DIRS = ("~/.aws", "~/.ssh", "~/.gnupg", "~/.config/gh", "~/.config/gcloud", "~/.azure", "~/.kube",
+                   "~/.docker", "~/.netrc", "~/.codex", "~/.claude")
+
+
+def claude_sandbox(copy, run_dir):
+    """Claude Code's Bash sandbox for a seat: writes only in its copy, no network, no reading the
+    run directory or credential folders, and no fallback to running a command outside the sandbox."""
+    return json.dumps({"sandbox": {
+        "enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
+        "autoAllowBashIfSandboxed": True, "excludedCommands": [],
+        "filesystem": {"allowWrite": [str(copy)], "denyRead": [str(run_dir), *CREDENTIAL_DIRS]},
+        "network": {"allowedDomains": [], "strictAllowlist": True}}})
+
+
+def run_claude(copy, prompt, schema, launch_dir, run_dir):
     """R5. Returns the launch fields; a dropout (R7) keeps status "dropout" with a reason."""
-    argv = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--model", CLAUDE_ALIAS,
+    argv = ["claude", "-p", "--settings", claude_sandbox(copy, run_dir),
+            "--output-format", "stream-json", "--verbose", "--model", CLAUDE_ALIAS,
             "--effort", EFFORT, "--json-schema", schema, "--safe-mode", "--restricted",
             "--tools", "Read,Grep,Glob,Bash", "--allowedTools", "Read,Grep,Glob,Bash",
             "--permission-mode", "dontAsk", "--permission-prompts", "none", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence"]
     stream = launch_dir / "stream.jsonl"
-    code = run_process(argv, copy, prompt, stream, launch_dir)
+    code = run_process(argv, copy, prompt, stream, launch_dir, reduced_env("claude"))
     events = stream_events(stream)
-    served, uses, results, commands, mcp = [], {}, [], [], []
+    served, uses, results, commands, mcp, unsandboxed = [], {}, [], [], [], False
     for event in events:
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init":
@@ -710,16 +769,19 @@ def run_claude(copy, prompt, schema, launch_dir):
                 served.append(message["model"])
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == "Bash":
-                    uses[block.get("id")] = (block.get("input") or {}).get("command")
+                    request = block.get("input") if isinstance(block.get("input"), dict) else {}
+                    unsandboxed |= request.get("dangerouslyDisableSandbox") is True
+                    uses[block.get("id")] = (request.get("command"),
+                                             request.get("run_in_background") is True)
         if kind == "user":
             for block in content:
                 if isinstance(block, dict) and block.get("type") == "tool_result" and block.get("tool_use_id") in uses:
                     text = block.get("content")
                     if isinstance(text, list):
                         text = "\n".join(part.get("text", "") for part in text if isinstance(part, dict))
-                    command = uses[block["tool_use_id"]]
+                    command, background = uses[block["tool_use_id"]]
                     if isinstance(command, str) and isinstance(text, str):
-                        commands.append({"command": command, "output": text,
+                        commands.append({"command": command, "output": text, "background": background,
                                          "failed": block.get("is_error") is True})
         if kind == "result":
             results.append(event)
@@ -733,6 +795,8 @@ def run_claude(copy, prompt, schema, launch_dir):
             output = parse_json_text(results[-1]["result"])
     fields["reason"] = dropout_reason(code, output, served, mcp,
                                       [model for model in served if not claude_family(model)])
+    if not fields["reason"] and unsandboxed:
+        fields["reason"] = "a Bash call asked to run outside the sandbox"
     if not fields["reason"]:
         write_json(launch_dir / "output.json", output)
         fields["status"] = "complete"
@@ -773,7 +837,7 @@ def run_codex(copy, prompt, schema, launch_dir, requested, servers):
     stream = launch_dir / "stream.jsonl"
     # At codex_otel=info, codex logs the MCP servers it started; R6 reads that line.
     code = run_process(argv, copy, prompt, stream, launch_dir,
-                       env={**os.environ, "RUST_LOG": "warn,codex_otel=info"})
+                       reduced_env("codex", RUST_LOG="warn,codex_otel=info"))
     thread, commands, usage = None, [], {}
     for event in stream_events(stream):
         if event.get("type") == "thread.started":
@@ -858,38 +922,65 @@ def initial_status(found):
 
 
 def drop_allowed(found, verdict):
-    """R15: which evidence may drop a finding, or lower its rank (R16)."""
+    """R15: which evidence may drop a finding, or lower its rank (R16).
+
+    A passing receipt 1 may drop a finding whose experiment ran. A quoted line may drop only a
+    finding whose experiment did not run, and only a line in the file and at the line the
+    finding names."""
     if found["reproduced"] or found["not_runnable"] or not verdict["evidence_valid"]:
         return False
-    if verdict["evidence"].get("type") == "receipt-1":
+    evidence = verdict["evidence"]
+    if evidence.get("type") == "receipt-1":
         first = found["receipts"].get("1", {})
         return bool(found["repro"] and first.get("ran") and not first.get("timed_out")
                     and first.get("exit_code") == 0)
-    return verdict["evidence"].get("type") == "file-line"
+    if evidence.get("type") != "file-line" or any(r.get("ran") for r in found["receipts"].values()):
+        return False
+    named = found["evidence"] if isinstance(found["evidence"], dict) else {}
+    lines = {found["line"], named.get("line") if named.get("type") == "file-line" else None} - {None}
+    same_file = str(evidence.get("file", "")).removeprefix("./") == str(found["file"] or "").removeprefix("./")
+    return same_file and evidence.get("line") in lines
 
 
 def decide(run_dir):
     """R17 to R19: the verdict, from the files in the run directory only."""
-    run = read_json(run_dir / "run.json", {})
-    preflight = read_json(run_dir / "preflight.json")
-    start = read_json(run_dir / "fingerprint-start.json")
-    end = read_json(run_dir / "fingerprint-end.json")
-    parts = read_json(run_dir / "parts.json", [])
-    recorded = read_json(run_dir / "findings.json", {"findings": [], "not_checked": []})
-    findings, not_checked = recorded["findings"], recorded["not_checked"]
-    reasons = list(read_json(run_dir / "errors.json", []))
+    reasons = []
+
+    def required(name, kind):
+        value = read_json(run_dir / name)
+        if not isinstance(value, kind):
+            reasons.append(f"{name} is missing or unreadable")
+            return None
+        return value
+
+    run = required("run.json", dict) or {}
+    preflight = required("preflight.json", dict)
+    errors = read_json(run_dir / "errors.json", [])
+    reasons += errors if isinstance(errors, list) else ["errors.json is unreadable"]
+    start = parts = end = None
+    findings, not_checked = [], []
+    if preflight and not preflight.get("ok"):
+        reasons += preflight.get("reasons") or ["the preflight failed"]
+    elif preflight:
+        start = required("fingerprint-start.json", dict)
+        parts = required("parts.json", list)
+        end = required("fingerprint-end.json", dict)
+        if parts == []:
+            reasons.append("the change is empty: nothing was reviewed")
+        if start and start.get("submodules"):
+            reasons.append("the change has submodules (" + ", ".join(start["submodules"])
+                           + "); review copies cannot hold them, so nothing was reviewed")
+        elif parts:
+            recorded = required("findings.json", dict)
+            if recorded is not None:
+                findings, not_checked = recorded.get("findings"), recorded.get("not_checked")
+                if not isinstance(findings, list) or not isinstance(not_checked, list):
+                    reasons.append("findings.json is missing or unreadable")
+                    findings, not_checked = [], []
+    parts = parts or []
     counts = {"raw_findings": len(findings), "notes": 0, "invalid_evidence": 0, "below_floor": 0,
               "raised_ranks": 0, "replaced_ranks": 0, "patches_not_applied": 0, "invalid_drops": 0,
               "invalid_rank_changes": 0}
-    if not preflight:
-        reasons.append("the preflight did not run")
-    elif not preflight["ok"]:
-        reasons += preflight["reasons"]
-    if preflight and preflight["ok"]:
-        if not start:
-            reasons.append("the start fingerprint is missing")
-        elif not parts:
-            reasons.append("the change is empty: nothing was reviewed")
     tree = start["tree"] if start else None
     launches = []
     for brief, provider in run.get("seats", []):
@@ -930,18 +1021,16 @@ def decide(run_dir):
             refuter = refuter or {"name": "refuter", "provider": "claude", "brief": "refuter",
                                   "status": "missing"}
         launches.append(refuter)
-        verdicts = read_json(run_dir / "refuter.json", [])
+        verdicts = read_json(run_dir / "refuter.json", []) if refuter["status"] != "complete" else \
+            required("refuter.json", list) or []
         adjudicate(findings, verdicts, counts)
         unjudged = [f["id"] for f in findings if f["status"] == "unjudged"]
         if unjudged:
             reasons.append("unjudged by the refuter: " + ", ".join(unjudged))
-    if end is None:
-        if start:
-            reasons.append("the end fingerprint is missing")
-    else:
-        if end["tree"] != tree:
+    if end is not None:
+        if end.get("tree") != tree:
             reasons.append("the real checkout changed during the review")
-        if end["submodules"]:
+        if end.get("submodules"):
             reasons.append(f"at the end of the review, {end['submodules']}")
     counts["notes"] = sum(f["status"] == "note" for f in findings)
     if reasons:
@@ -971,6 +1060,8 @@ def adjudicate(findings, verdicts, counts):
             by_id.setdefault(verdict["id"], verdict)
     for found in findings:
         verdict = by_id.get(found["id"])
+        if verdict and verdict.get("verdict") not in {"PROMOTED", "DROPPED", "UNRESOLVED"}:
+            verdict = dict(verdict, rank=None, invalid=True)  # no rank change without a valid verdict
         if verdict and verdict.get("rank") in RANKS and verdict["rank"] != found["rank"]:
             lower = RANKS.index(verdict["rank"]) < RANKS.index(found["rank"])
             if lower and found["rank"] != "mild" and drop_allowed(found, verdict):
@@ -981,7 +1072,7 @@ def adjudicate(findings, verdicts, counts):
             continue
         if found.get("rank_before_refuter") and found["rank"] == "mild":
             found["status"] = "mild"
-        elif not verdict or verdict.get("verdict") not in {"PROMOTED", "DROPPED", "UNRESOLVED"}:
+        elif not verdict or verdict.get("invalid"):
             found["status"] = "unjudged"
         elif verdict["verdict"] == "DROPPED":
             allowed = drop_allowed(found, verdict)
@@ -1041,8 +1132,13 @@ def command_run(args):
         if run_dir.exists() or run_dir.is_symlink():
             print(f"orch-review: the run directory already exists: {run_dir}", file=sys.stderr)
             return 2
-        if nested(run_dir.resolve() if run_dir.parent.exists() else run_dir, project):
+        resolved = run_dir.resolve()
+        if nested(resolved, project):
             print("orch-review: the run directory must be outside the repository", file=sys.stderr)
+            return 2
+        if any(nested(resolved, root) for root in temporary_roots()):
+            print("orch-review: the run directory must be outside every temporary directory, because the "
+                  "sandboxes let seats and fix experiments write there", file=sys.stderr)
             return 2
         run_dir.mkdir(parents=True, mode=0o700)
         other = {"claude": "codex", "codex": "claude"}
@@ -1068,6 +1164,16 @@ def command_run(args):
     review = Review(project, run_dir, options).execute()
     print(json.dumps(summary(run_dir, review)))
     return 0
+
+
+def temporary_roots():
+    """Directories the Codex and Claude sandboxes leave writable besides the copy."""
+    roots = [os.environ.get("TMPDIR"), tempfile.gettempdir(), "/tmp", "/var/tmp"]
+    if sys.platform == "darwin":
+        found = subprocess.run(["getconf", "DARWIN_USER_TEMP_DIR"], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL)
+        roots.append(found.stdout.strip() if found.returncode == 0 else None)
+    return {Path(root).resolve() for root in roots if root}
 
 
 def summary(run_dir, review):

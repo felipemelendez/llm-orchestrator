@@ -180,6 +180,13 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(MOD.fingerprint(clone), MOD.fingerprint(self.project))
         self.assertEqual(self.git("remote", cwd=clone).strip(), "")
 
+    def test_clone_shares_no_object_file_with_the_real_repository(self):
+        (self.project / "new.py").write_text("new\n")
+        clone = self.clone()
+        def inodes(root):
+            return {(path.stat().st_dev, path.stat().st_ino) for path in root.rglob("*") if path.is_file()}
+        self.assertEqual(inodes(self.project / ".git/objects") & inodes(clone / ".git/objects"), set())
+
     def test_clone_at_detached_head_matches_real_head(self):
         self.git("checkout", "-q", "--detach")
         clone = self.clone()

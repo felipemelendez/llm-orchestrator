@@ -1,26 +1,45 @@
 #!/usr/bin/env python3
 """Rule-by-rule tests for scripts/lib/orch-review.py, run with fake claude and codex programs."""
+import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/lib/orch-review.py"
+_SPEC = importlib.util.spec_from_file_location("orch_review", SCRIPT)
+MOD = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(MOD)
 
-# The fakes read the scenario file named by FAKE_SCENARIO. A prompt names its
+
+def scratch_parent():
+    """A parent for test directories outside every temporary directory a sandbox may write."""
+    if sys.platform == "darwin":
+        return subprocess.run(["getconf", "DARWIN_USER_CACHE_DIR"], capture_output=True, text=True,
+                              check=True).stdout.strip()
+    parent = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+    parent.mkdir(parents=True, exist_ok=True)
+    return str(parent)
+
+# The fakes find the test root from their own path (the review strips unknown
+# environment variables): scenario.json, fake.log and project/ sit beside bin/.
+# A prompt names its
 # brief on a "Brief: <name>" line and its part on a "Part: <n> of <m>" line;
 # the fake looks up "<brief>-<part>", then "<brief>", in the scenario.
 FAKE_COMMON = r'''
 import json, os, re, subprocess, sys, time, uuid
 from pathlib import Path
-scenario = json.loads(Path(os.environ["FAKE_SCENARIO"]).read_text())
+FAKE_ROOT = Path(sys.argv[0]).resolve().parent.parent
+scenario = json.loads((FAKE_ROOT / "scenario.json").read_text())
 def log(entry):
-    with open(os.environ["FAKE_LOG"], "a") as stream:
+    with open(FAKE_ROOT / "fake.log", "a") as stream:
         stream.write(json.dumps(entry) + "\n")
 def role(prompt):
     brief = re.search(r"^Brief: (\S+)", prompt, re.M).group(1)
@@ -32,14 +51,16 @@ def behavior(section, prompt):
     return brief, seats.get(f"{brief}-{part}", seats.get(brief, {"output": {"findings": [], "not_checked": []}}))
 def side_effects(spec, cwd):
     for name in spec.get("write_real", []):
-        Path(os.environ["FAKE_PROJECT"], name).write_text("written by a reviewer\n")
+        Path(FAKE_ROOT, "project", name).write_text("written by a reviewer\n")
     for name in spec.get("write_copy", []):
         Path(cwd, name).write_text("probe\n")
     time.sleep(spec.get("sleep", 0))
 def run_commands(spec, cwd):
     runs = []
     for item in spec.get("commands", []):
-        if "output" in item:
+        if item.get("background"):
+            runs.append((item["command"], "Command running in background with ID: b1", 0))
+        elif "output" in item:
             runs.append((item["command"], item["output"], item.get("exit", 0)))
         else:
             done = subprocess.run(item["command"], shell=True, cwd=cwd, capture_output=True, text=True)
@@ -54,15 +75,20 @@ if sys.argv[1:3] == ["auth", "status"]:
     sys.exit(0 if ok else 1)
 prompt = sys.stdin.read()
 brief, spec = behavior("claude", prompt)
-log({"program": "claude", "brief": brief, "argv": sys.argv[1:], "cwd": os.getcwd(), "prompt": prompt})
+log({"program": "claude", "brief": brief, "argv": sys.argv[1:], "cwd": os.getcwd(), "prompt": prompt,
+     "env": sorted(os.environ)})
 side_effects(spec, os.getcwd())
 model = spec.get("served_model", "claude-opus-5-5")
 def emit(event):
     print(json.dumps(event), flush=True)
 emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", [])})
+background = {item["command"] for item in spec.get("commands", []) if item.get("background")}
+unsandboxed = {item["command"] for item in spec.get("commands", []) if item.get("unsandboxed")}
 for n, (command, output, code) in enumerate(run_commands(spec, os.getcwd())):
     emit({"type": "assistant", "message": {"model": model, "content": [
-        {"type": "tool_use", "id": f"tool{n}", "name": "Bash", "input": {"command": command}}]}})
+        {"type": "tool_use", "id": f"tool{n}", "name": "Bash",
+         "input": dict({"command": command}, **({"run_in_background": True} if command in background else {}),
+                       **({"dangerouslyDisableSandbox": True} if command in unsandboxed else {}))}]}})
     emit({"type": "user", "message": {"content": [
         {"type": "tool_result", "tool_use_id": f"tool{n}", "content": output, "is_error": code != 0}]}})
 emit({"type": "assistant", "message": {"model": model, "content": [{"type": "text", "text": "done"}]}})
@@ -81,7 +107,7 @@ if args[:2] == ["login", "status"]:
     print("Logged in using ChatGPT" if ok else "Not logged in")
     sys.exit(0 if ok else 1)
 if args[:1] == ["sandbox"]:
-    log({"program": "codex", "brief": "sandbox", "argv": args})
+    log({"program": "codex", "brief": "sandbox", "argv": args, "env": sorted(os.environ)})
     if not config.get("sandbox", True) or args[1:3] != ["-P", ":workspace"] or args[3] != "-C" or args[5] != "--":
         print("sandbox refused to start", file=sys.stderr)
         sys.exit(71)
@@ -92,7 +118,7 @@ prompt = sys.stdin.read()
 brief, spec = behavior("codex", prompt)
 cwd = args[args.index("-C") + 1]
 log({"program": "codex", "brief": brief, "argv": args, "cwd": os.getcwd(), "prompt": prompt,
-     "rust_log": os.environ.get("RUST_LOG")})
+     "rust_log": os.environ.get("RUST_LOG"), "env": sorted(os.environ)})
 if not spec.get("no_mcp_log"):
     # The line codex 0.157.0 writes at RUST_LOG=codex_otel=info when a session starts.
     print('2026-09-25T00:00:00Z  INFO session_init: codex_otel.log_only: event.name="codex.conversation_starts" '
@@ -157,10 +183,12 @@ def refuter(*verdicts, **extra):
 
 class ReviewTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(prefix="orch review tests ")
+        self.tmp = tempfile.TemporaryDirectory(prefix="orch review tests ", dir=scratch_parent())
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
         self.log = self.root / "fake.log"
+        self.tmpdir = self.root / "tmp"
+        self.tmpdir.mkdir()
         self.home = self.root / "home"
         self.home.mkdir()
         self.codex_home = self.home / ".codex"
@@ -198,9 +226,10 @@ class ReviewTests(unittest.TestCase):
     def env(self, path_bin=None):
         return {"PATH": f"{path_bin or self.bin}:{self.tools}:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(self.home),
                 "CODEX_HOME": str(self.codex_home), "XDG_STATE_HOME": str(self.home / "state"),
-                "FAKE_SCENARIO": str(self.root / "scenario.json"), "FAKE_LOG": str(self.log),
-                "FAKE_PROJECT": str(self.project), "GIT_AUTHOR_NAME": "F", "GIT_AUTHOR_EMAIL": "f@x.invalid",
-                "GIT_COMMITTER_NAME": "F", "GIT_COMMITTER_EMAIL": "f@x.invalid", "TMPDIR": str(self.root)}
+                "GIT_AUTHOR_NAME": "F", "GIT_AUTHOR_EMAIL": "f@x.invalid",
+                "GIT_COMMITTER_NAME": "F", "GIT_COMMITTER_EMAIL": "f@x.invalid", "TMPDIR": str(self.tmpdir),
+                "AWS_SECRET_ACCESS_KEY": "aws-secret", "GITHUB_TOKEN": "gh-token",
+                "ANTHROPIC_API_KEY": "anthropic-key", "OPENAI_API_KEY": "openai-key"}
 
     def invoke(self, *args, path_bin=None, check_rc=None):
         (self.root / "scenario.json").write_text(json.dumps(self.scenario))
@@ -326,6 +355,43 @@ class ReviewTests(unittest.TestCase):
         for cwd in cwds:
             self.assertNotIn(str(self.project), cwd)
 
+    def test_seats_and_experiments_get_a_reduced_environment(self):
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding())
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "PROMOTED"))
+        self.review("full", "claude")
+        rows = self.launches()
+        self.assertTrue(rows)
+        for row in rows:
+            with self.subTest(program=row["program"], brief=row["brief"]):
+                self.assertNotIn("AWS_SECRET_ACCESS_KEY", row["env"])
+                self.assertNotIn("GITHUB_TOKEN", row["env"])
+                keep = {"claude": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}[row["program"]]
+                drop = {"claude": "OPENAI_API_KEY", "codex": "ANTHROPIC_API_KEY"}[row["program"]]
+                self.assertNotIn(drop, row["env"])
+                if row["brief"] == "sandbox":
+                    self.assertNotIn(keep, row["env"])
+                else:
+                    self.assertIn(keep, row["env"])
+
+    def test_r10_a_receipt_kills_the_whole_process_group(self):
+        copy = self.root / "copy"
+        copy.mkdir()
+        original = (MOD.sandboxed, MOD.REPRO_TIMEOUT)
+        self.addCleanup(lambda: (setattr(MOD, "sandboxed", original[0]), setattr(MOD, "REPRO_TIMEOUT", original[1])))
+        MOD.sandboxed = lambda path, argv: argv
+        MOD.REPRO_TIMEOUT = 2
+        for name, script in (("timed out", "sleep 60 & echo $! > child.pid; sleep 60"),
+                             ("exited", "sleep 60 & echo $! > child.pid")):
+            with self.subTest(name):
+                record = MOD.receipt(copy, ["sh", "-c", script], script, None)
+                self.assertLess(record["duration_s"], 10)
+                self.assertEqual(record["timed_out"], name == "timed out")
+                child = int((copy / "child.pid").read_text())
+                deadline = time.monotonic() + 5
+                while MOD.alive(child) and time.monotonic() < deadline:
+                    time.sleep(0.1)
+                self.assertFalse(MOD.alive(child), f"{name}: a child of the experiment is still running")
+
     # R5
     def test_r5_claude_launch_uses_the_fixed_flags_and_no_mcp(self):
         self.review("standard", "claude")
@@ -343,6 +409,19 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(pairs["--permission-prompts"], "none")
         self.assertEqual(json.loads(pairs["--mcp-config"]), {"mcpServers": {}})
         self.assertIn("findings", json.loads(pairs["--json-schema"])["properties"])
+        sandbox = json.loads(pairs["--settings"])["sandbox"]
+        cwd = self.launches("claude")[0]["cwd"]
+        self.assertEqual((sandbox["enabled"], sandbox["failIfUnavailable"], sandbox["allowUnsandboxedCommands"]),
+                         (True, True, False))
+        self.assertEqual(sandbox["excludedCommands"], [])
+        self.assertEqual(sandbox["filesystem"]["allowWrite"], [cwd])
+        self.assertIn(str(self.run_dir), sandbox["filesystem"]["denyRead"])
+        self.assertEqual(sandbox["network"]["allowedDomains"], [])
+
+    def test_r5_a_claude_bash_call_outside_the_sandbox_is_a_dropout(self):
+        self.scenario["claude"]["seats"]["contract"] = seat(commands=[{"command": "ls", "output": "x",
+                                                                       "unsandboxed": True}])
+        self.assert_incomplete(self.review("standard", "claude"), "sandbox")
 
     def test_r5_a_claude_launch_that_loads_mcp_servers_is_a_dropout(self):
         self.scenario["claude"]["seats"]["contract"] = seat(mcp_servers=[{"name": "slack"}])
@@ -480,6 +559,15 @@ class ReviewTests(unittest.TestCase):
         self.assert_incomplete(review, "submodule")
         self.assertEqual(self.launches("claude"), [])
 
+    def test_a_clean_submodule_gives_incomplete_before_any_seat(self):
+        external = self.root / "external"
+        subprocess.run(["git", "clone", "-q", str(self.project), str(external)], check=True, env=self.env())
+        self.git("-c", "protocol.file.allow=always", "submodule", "add", "-q", str(external), "sub")
+        self.git("commit", "-qm", "submodule")
+        review = self.review("standard", "claude")
+        self.assert_incomplete(review, "submodule")
+        self.assertEqual(self.launches("claude"), [])
+
     def test_preflight_empty_change_is_incomplete(self):
         self.git("checkout", "--", "calc.py")
         self.assert_incomplete(self.review("standard", "claude"), "empty")
@@ -594,6 +682,14 @@ class ReviewTests(unittest.TestCase):
                         finding("mild", repro=None, evidence=evidence), commands=commands)
                     review = self.review("standard", writer)
                     self.assertEqual(review["findings"][0]["status"], expected)
+
+    def test_r9_a_background_launch_is_not_test_run_evidence(self):
+        ran = {"type": "test-run", "command": CHECK, "output": "Command running in background with ID: b1",
+               "file": None, "line": None, "quote": None}
+        self.scenario["claude"]["seats"]["contract"] = seat(
+            finding("mild", repro=None, evidence=ran), commands=[{"command": CHECK, "background": True}])
+        review = self.review("standard", "claude")
+        self.assertEqual(review["findings"][0]["status"], "note")
 
     def test_r8_findings_get_seat_part_number_ids(self):
         self.scenario["claude"]["seats"]["contract"] = seat(finding("mild", repro=None),
@@ -789,7 +885,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(self.status(review, "adversarial-1-2"), "unresolved")
         self.assertEqual(review["verdict"], "NOT-READY")
 
-    def test_r15_a_drop_with_a_valid_quote_and_reason_is_accepted(self):
+    def test_r15_a_quote_cannot_drop_a_finding_whose_experiment_ran(self):
         self.scenario["codex"]["seats"]["adversarial"] = seat(
             finding(repro={"command": CHECK, "patch": "not a patch\n"}))
         quote = {"type": "file-line", "file": "check.py", "line": 3,
@@ -797,19 +893,37 @@ class ReviewTests(unittest.TestCase):
         self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "DROPPED",
                                                                       evidence=quote))
         review = self.review("full", "claude")
-        self.assertEqual(self.status(review, "adversarial-1-1"), "dropped")
-        self.assertEqual(review["verdict"], "READY")
+        self.assertEqual(self.status(review, "adversarial-1-1"), "unresolved")
+        self.assertEqual(review["verdict"], "NOT-READY")
         self.assertEqual(review["findings"][0]["refuter"]["evidence"], quote)
+
+    def test_r15_a_quote_drops_only_an_unrun_finding_and_only_on_its_own_line(self):
+        self.scenario["codex"]["sandbox"] = False
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding(), finding())
+        own = {"type": "file-line", "file": "calc.py", "line": 2, "quote": "return a - b",
+               "explanation": "the spec asks for the difference"}
+        other = {"type": "file-line", "file": "check.py", "line": 3,
+                 "quote": "sys.exit(0 if calc.add(2, 2) == 4 else 1)", "explanation": "the check expects 4"}
+        self.scenario["claude"]["seats"]["refuter"] = refuter(
+            verdict("adversarial-1-1", "DROPPED", evidence=own),
+            verdict("adversarial-1-2", "DROPPED", evidence=other))
+        review = self.review("full", "claude")
+        self.assertEqual(self.status(review, "adversarial-1-1"), "dropped")
+        self.assertEqual(self.status(review, "adversarial-1-2"), "unresolved")
+        self.assertEqual(review["verdict"], "NOT-READY")
 
     # R16
     def test_r16_rank_changes_follow_the_drop_rule_and_never_go_up(self):
         not_applied = {"command": CHECK, "patch": "not a patch\n"}
         quote = {"type": "file-line", "file": "calc.py", "line": 1, "quote": "def add(a, b):",
                  "explanation": "only a naming concern"}
+        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None,
+                "explanation": "the command passed without the fix"}
         self.scenario["codex"]["seats"]["adversarial"] = seat(
-            finding(repro=not_applied), finding(repro=not_applied), finding(), finding("mild", repro=None))
+            finding(repro={"command": "true", "patch": FIX}), finding(repro=not_applied), finding(),
+            finding("mild", repro=None))
         self.scenario["claude"]["seats"]["refuter"] = refuter(
-            verdict("adversarial-1-1", "PROMOTED", rank="mild", evidence=quote),
+            verdict("adversarial-1-1", "PROMOTED", rank="mild", evidence=cite),
             verdict("adversarial-1-2", "PROMOTED", rank="mild"),
             verdict("adversarial-1-3", "PROMOTED", rank="mild", evidence=quote),
             verdict("adversarial-1-4", "PROMOTED", rank="catastrophic", evidence=quote))
@@ -821,7 +935,39 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(ranks["adversarial-1-4"], ("mild", "mild"))
         self.assertEqual(review["counts"]["invalid_rank_changes"], 3)
 
+    def test_r16_a_rank_change_without_a_valid_verdict_leaves_the_finding_unjudged(self):
+        self.scenario["codex"]["seats"]["adversarial"] = seat(finding(repro={"command": "true", "patch": FIX}))
+        cite = {"type": "receipt-1", "file": None, "line": None, "quote": None, "explanation": "passed"}
+        self.scenario["claude"]["seats"]["refuter"] = refuter(verdict("adversarial-1-1", "MAYBE", rank="mild",
+                                                                      evidence=cite))
+        review = self.review("full", "claude")
+        self.assertEqual((review["findings"][0]["rank"], self.status(review, "adversarial-1-1")),
+                         ("serious", "unjudged"))
+        self.assert_incomplete(review, "unjudged")
+
     # R17, R18, R19
+    def test_r17_missing_or_unreadable_run_files_give_incomplete(self):
+        self.assertEqual(self.review("standard", "claude")["verdict"], "READY")
+        for name in ("findings.json", "run.json", "parts.json", "fingerprint-start.json", "preflight.json"):
+            for broken in ("missing", "unreadable"):
+                with self.subTest(name=name, broken=broken):
+                    copy = self.root / f"decide-{name}-{broken}"
+                    shutil.copytree(self.run_dir, copy)
+                    if broken == "missing":
+                        (copy / name).unlink()
+                    else:
+                        (copy / name).write_text("{not json")
+                    self.assertEqual(MOD.decide(copy)["verdict"], "INCOMPLETE")
+
+    def test_r17_a_run_directory_inside_a_temporary_directory_is_refused(self):
+        for parent in (self.tmpdir, Path("/tmp")):
+            with self.subTest(parent=str(parent)):
+                result = self.invoke("run", "--path", "standard", "--writer", "claude", "--base", self.base,
+                                     "--spec", str(self.spec), "--run-dir", str(parent / f"orch-run-{os.getpid()}"))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("temporary", result.stderr)
+        self.assertEqual(self.launches(), [])
+
     def test_r17_no_findings_on_complete_seats_is_ready(self):
         review = self.review("full", "claude")
         self.assertEqual(review["verdict"], "READY")

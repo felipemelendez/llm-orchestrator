@@ -335,10 +335,11 @@ class Manager:
 
     @staticmethod
     def clone(project, path, tree):
-        # A disposable clone with its own .git, HEAD at the real HEAD, and the
+        # A disposable clone with its own .git (objects copied, never hardlinked, so
+        # nothing in the clone can change the real object files), HEAD at the real HEAD, and the
         # fingerprinted tree (committed plus uncommitted files) checked out.
         # The remote is removed so nothing in the clone can push to the project.
-        git(project, "clone", "--quiet", "--local", "--no-checkout", str(project), str(path))
+        git(project, "clone", "--quiet", "--local", "--no-hardlinks", "--no-checkout", str(project), str(path))
         head = git(project, "rev-parse", "HEAD").strip()
         if git(path, "rev-parse", "HEAD").strip() != head:
             git(path, "update-ref", "--no-deref", "HEAD", head)
