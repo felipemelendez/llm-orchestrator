@@ -543,9 +543,9 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
     config.unlink()
     both("Verification: PASS — workflow proportional claimed in prose", 2)
     both("Verify: tests passed")
-print("proportional and legacy hook fixtures passed")
+print("proportional and non-cadence hook fixtures passed")
 PY
-then ok "shared completion vocabulary is selected by project config, with legacy behavior preserved"
+then ok "shared completion vocabulary is selected by project config; any other config keeps the Verify: format"
 else fail "proportional protocol hooks" "config-backed end-to-end fixture failed"; fi
 
 printf '\n%s== Captured SubagentStop payloads (SubagentHandback) ==%s\n' "$DIM" "$RESET"
