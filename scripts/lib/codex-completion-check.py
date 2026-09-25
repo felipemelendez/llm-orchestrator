@@ -236,7 +236,7 @@ def main():
         # A legacy-history thread: this turn's code-mode commands left no
         # record, so whether a check ran cannot be read. Say nothing.
         return 0
-    found = sorted(recorded + exec_call_records(entries))
+    found = recorded + exec_call_records(entries)
     for _, _, command, code in this_turn(entries, found, turn_id):
         if code == 0 and shared_check.ran_a_check(command, test_cmd):
             return 0

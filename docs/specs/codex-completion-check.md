@@ -54,9 +54,10 @@ history, `ExecCommandEnd` never); `codex-rs/app-server/src/request_processors/th
 (a new thread is paginated unless the client asks otherwise, the thread is
 ephemeral, or there is no state database); `codex-rs/core/src/tools/context.rs`
 (`response_header`, the output header); and the 82 rollouts in
-`~/.codex/sessions` on 2026-09-25: every paginated 0.147.0 and 0.157.0 rollout
-has command records, the two legacy 0.154.0-alpha.6.2 rollouts and the four
-0.146.0 rollouts have none. Why those two Desktop threads were legacy is
+`~/.codex/sessions` on 2026-09-25: every paginated rollout that ran a command
+on 0.147.0 or later has command records; the 31 legacy rollouts and the four
+0.146.0 rollouts have none. Two of the legacy rollouts, both 0.154.0-alpha.6.2
+Desktop threads, used code-mode `exec`. Why those threads were legacy is
 unverified.
 
 | Entry | Shape |

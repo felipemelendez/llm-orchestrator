@@ -270,22 +270,22 @@ fire "$CLAIM" "$R"
 FIX="$ROOT/tests/fixtures/codex-rollouts"
 printf '\n%s== each kind of log Codex writes (real session lines, scrubbed) ==%s\n' "$DIM" "$RESET"
 
-fire "$CLAIM" "$FIX/0.157.0-exec-paginated-code-mode.jsonl" 01a0d9c6-2176-74f1-8066-0556d8037c61
+fire "$CLAIM" "$FIX/0.157.0-exec-paginated-code-mode.jsonl" 00000000-0000-7000-8000-00000000157a
 { [[ $RC -eq 0 ]] && silent; } \
   && ok "(m0) 0.157.0, paginated history: the CommandExecution record of a code-mode command is read → silent" \
   || fail "(m0) CommandExecution record" "rc=$RC out=$OUT"
 
-fire "$CLAIM" "$FIX/0.146.0-tui-exec-command.jsonl" 019fce4c-38cf-71b2-81bb-a3fbaa3def8a
+fire "$CLAIM" "$FIX/0.146.0-tui-exec-command.jsonl" 00000000-0000-7000-8000-00000000146a
 { [[ $RC -eq 0 ]] && silent; } \
   && ok "(m2) 0.146.0: the exit code Codex writes in an exec_command output's header is read → silent" \
   || fail "(m2) exec_command output header" "rc=$RC out=$OUT"
 
-fire "$CLAIM" "$FIX/0.146.0-tui-write-stdin.jsonl" 019fce4c-38cf-71b2-81bb-a3fbaa3def8a
+fire "$CLAIM" "$FIX/0.146.0-tui-write-stdin.jsonl" 00000000-0000-7000-8000-00000000146a
 { [[ $RC -eq 0 ]] && silent; } \
   && ok "(m3) a command that finished in a later write_stdin poll counts as the command it polled → silent" \
   || fail "(m3) write_stdin finish" "rc=$RC out=$OUT"
 
-fire "$CLAIM" "$FIX/0.154.0-desktop-legacy-code-mode.jsonl" 01a0cfe8-088b-77e1-a805-73da6417dae3
+fire "$CLAIM" "$FIX/0.154.0-desktop-legacy-code-mode.jsonl" 00000000-0000-7000-8000-00000000154a
 { [[ $RC -eq 0 ]] && silent; } \
   && ok "(m1) legacy history, code-mode exec, no command record in the log: unreadable → silent, not sent back" \
   || fail "(m1) unreadable log sent the agent back" "rc=$RC out=$OUT"
