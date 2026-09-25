@@ -1,6 +1,6 @@
 ---
 name: receiving-code-review
-description: Use when responding to code review feedback — from a human, from another agent, or from the two-stage review flow. Resists performative agreement and blind implementation.
+description: Use when responding to code review feedback from a person or an agent. Check each point before changing code; no performative agreement.
 ---
 
 # Receiving code review

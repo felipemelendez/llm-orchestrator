@@ -1,5 +1,5 @@
 ---
-description: Turn the cadence on for this project — the laws, the lock, the native deny rules and the git layer. Detects the toolchain, proposes a cadence.json for the user to confirm, then writes and arms.
+description: Turn the cadence on for this project — laws, lock, deny rules and git hooks. Proposes a cadence.json for you to confirm first.
 argument-hint: "[--adopt] [--dry-run]"
 ---
 

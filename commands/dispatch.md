@@ -1,5 +1,5 @@
 ---
-description: Execute one or more tasks from the current plan. Routes to sequential per-task-review or parallel fan-out based on task independence.
+description: Run tasks from the current plan, one at a time or in parallel.
 ---
 
 You are running `/llm-orchestrator:dispatch`.

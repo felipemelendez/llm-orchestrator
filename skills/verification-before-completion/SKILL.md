@@ -1,6 +1,6 @@
 ---
 name: verification-before-completion
-description: Use when about to claim work is done, fixed, passing, or ready to merge — it forces a real run of the verifying command first. Not for reporting a failure honestly, which needs no gate. Runs last, after any review skill.
+description: Use when about to claim work is done, fixed or passing — run the command that proves it first. Runs last, after any review.
 ---
 
 # Verification before completion
