@@ -365,6 +365,27 @@ budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 2
 budget_case "repeated option values" '"pnpm " + "--filter a " * 20000'
 budget_case "repeated path parts" '"a/" * 100000'
 
+printf '\n%s== round 3: comments, heredocs, descriptors, prefixes, dry runs ==%s\n' "$DIM" "$RESET"
+
+for c in 'npm exec -p /bin/echo jest' 'make test -n' 'make -n test' 'cargo test --no-run' \
+         'mvn -DskipTests test' 'mvn -Dmaven.test.skip=true test' 'echo done # ; pytest' \
+         $'cat <<EOF\npytest\nEOF' $'cat <<\'EOF\'\npytest -q\nEOF' $'cat <<-EOF\n\tpytest\n\tEOF'; do
+  ignored "(p1) not a run" "$c"
+done
+for c in '2>/dev/null pytest' 'make 2>/dev/null test' 'time -p pytest' 'env -i pytest' 'env -u X pytest' \
+         'timeout -k 5 300 pytest' 'timeout --signal=KILL 300 pytest' 'npx -c "vitest run"' \
+         $'cat <<EOF\nnotes\nEOF\npytest -q'; do
+  counts "(p2) a real run" "$c"
+done
+# Guard: the command -c names is judged, and this one is not a check.
+ignored "(p2) guard" "npx -c 'echo hi'"
+printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(p3) test_cmd behind a named wrapper" 'aws-vault exec p -- bin/suite --fast'
+PROJ_DIR="$PROJ" counts "(p3) test_cmd with a redirection between its words" 'bin/suite 2>/dev/null --fast'
+python3 -c 'import json; print(json.dumps({"runner": {"test_cmd": "a= " * 32500 + "bin/suite"}}))' \
+  > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" budget_case "a long test_cmd against a long command" '"a= " * 65000 + "true"'
+
 printf '\n%s== it warns; it never blocks ==%s\n' "$DIM" "$RESET"
 (( ANY_RC == 0 ))    && ok "no fixture made the hook exit non-zero" \
   || fail "the hook exited non-zero" "a warn-only gate must always exit 0"
