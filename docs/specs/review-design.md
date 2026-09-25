@@ -92,7 +92,11 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   --model opus --effort high --json-schema <schema> --safe-mode --restricted
   --tools Read,Grep,Glob,Bash --allowedTools Read,Grep,Glob,Bash
   --permission-mode dontAsk --permission-prompts none --strict-mcp-config
-  --no-session-persistence`. It runs in the copy, with the prompt on stdin.
+  --mcp-config '{"mcpServers":{}}' --no-session-persistence`. It runs in the
+  copy, with the prompt on stdin. It starts with no MCP servers, so the
+  person's connectors (for example claude.ai Slack or Gmail) are neither
+  visible nor usable. If the stream's `system` `init` event lists any MCP
+  server, the launch is a dropout (R7).
   The served model is the assistant messages' `model` field. It must belong
   to the model family of the requested alias.
 - **R6.** GPT launch: `codex exec --json -s workspace-write -C <copy>
@@ -376,8 +380,6 @@ still list `workflows/`. Felipe applies this text:
 
 `Ruling 4 (<date>, Felipe): the plugin ships no Workflow scripts. In LAWS.md section 2, "agents/, commands/, templates/, workflows/ and output-styles/" becomes "agents/, commands/, templates/ and output-styles/". In docs/llm-orchestrator/cadence.json, "workflows" is removed from src_roots and "workflows/**" from prod_globs. LOCK.sha256 is rewritten under ORCH_CADENCE_UNLOCK=1.`
 
-**Stop and report** if a Claude stream-json event stream does not show
-command text and output as R9 needs (the Codex stream does; see below).
 
 ## What T10 measures
 
@@ -411,6 +413,10 @@ Verified on 2026-09-25:
   --tools Bash --permission-mode dontAsk --output-format json` ran a Bash
   command with no prompt, returned `modelUsage` naming `claude-opus-5-5`,
   and reported no permission denials.
+- `claude -p ... --output-format stream-json --verbose` shows each Bash call
+  as an assistant `tool_use` block with `input.command`, and its result as a
+  user `tool_result` block with the output text and `is_error`. The final
+  `result` event carries `modelUsage` with the served model. R9 reads these.
 - `codex exec --json -s read-only --skip-git-repo-check` (0.157.0) emits
   `item.completed` events of type `command_execution` with the fields
   `command`, `aggregated_output`, `exit_code` and `status`. R9 reads these.
@@ -422,10 +428,11 @@ Verified on 2026-09-25:
 Not verified:
 
 - the full R5 flag set together (`--safe-mode`, `--restricted`,
-  `--json-schema`, `--allowedTools`, `stream-json`); the check above used a
-  smaller set;
-- that the Claude `stream-json` events carry command text and output as R9
-  needs;
+  `--json-schema`, `--allowedTools`); the checks above used a smaller set;
+- that `--strict-mcp-config` with an empty `--mcp-config` also removes
+  claude.ai connectors (a nested `claude -p` without these flags loaded the
+  person's connectors), and the name of the `init` field that lists MCP
+  servers;
 - what `workspace-write` allows outside `-C`;
 - that the agent's shell on Codex allows a 540-second `wait`.
 
