@@ -400,22 +400,31 @@ be made tight, and the alarm already named what it caught.
 
 An amendment is a commit that satisfies all three: its message carries
 `Ruling <N>`, greater than the highest ruling number in the laws; the staged
-`LAWS.md` records that ruling; and `LOCK.sha256` was rewritten under
-`ORCH_CADENCE_UNLOCK=1`. Any one alone is text the agent wrote about itself.
+`LAWS.md` records that ruling; and `LOCK.sha256` matches what is committed. The
+person makes it with one command, `scripts/cadence-ruling.sh`, in their own
+terminal.
 
-`ORCH_CADENCE_UNLOCK=1` is set by the person, in their own shell, at launch —
-never in a settings file, never inside a command an agent runs, because the unlock
-guard refuses any command naming it. The re-lock and the ruling commit happen
-inside that session. Three things hold that shape: the unlock is honoured only when
-no settings file in scope names it; in cadence mode a command whose text contains
-`ORCH_CADENCE_UNLOCK`, `ORCH_DISABLED_HOOKS`, `ORCH_HOOK_PROFILE` or `ORCH_ALLOW_`
-is refused whatever the verb — not to set one, not to read one, not to search for
-one, a cost the refusal states as it sends the work to the person's own shell; and
-a session holding the unlock prints `UNLOCKED` in its verdict line. That guard
-knows four names and no grammar: a name assembled at runtime is the residual.
+**Proposing a change.** A seat that believes a protected rule is wrong keeps
+working under it as written and explains why, in plain language. It writes the
+change as a patch file outside Git (`git diff` of protected files only, adding
+`Ruling <N>` to `LAWS.md`, where N is one more than the highest ruling there),
+and shows the person the reason and the diff. If the person agrees, it gives
+them the command, with this skill's absolute path:
 
-A seat that believes a law is wrong writes a proposed amendment into the handoff
-and keeps working under the law as written.
+```bash
+bash <skill>/scripts/cadence-ruling.sh <patch-file> "<the person's wording>"
+```
+
+The command refuses a patch that touches a file outside the lock set, that no
+longer applies, or that does not add `Ruling <N>` to `LAWS.md`. It asks the
+person to type `ruling <N>`, applies the patch, re-records the lock with
+`--lock`, and commits `Ruling <N>: <wording>`; on any failure it undoes the
+patch. It reads the confirmation from `/dev/tty`, and `--lock` rewrites an
+existing lock only when a terminal is attached. An agent's shell has no
+terminal, so both refuse there. The residual: a command run inside a
+pseudo-terminal (`script`, Python's `pty`) has one, so an agent that wraps it
+that way on purpose gets past both; the commit it makes still shows in the log
+as a ruling the person did not make.
 
 ## The amendment mechanism
 
@@ -443,7 +452,7 @@ skip's own passes. The brief-review seat reports which are active and whether ea
 still qualifies. Everything else — the pair, never self-verify, the harm ranking,
 the stop rule, the lock's shape, every threshold and the refuter trigger — changes
 only by
-a numbered ruling under the unlock.
+a numbered ruling.
 
 Template: [references/cadence-state.md](references/cadence-state.md).
 
@@ -458,8 +467,8 @@ fourth file is the controller's adjudication; where no gate seat ran, the fifth 
 gate script's complete output; each says so in its first line.
 
 `orch-cadence-check.sh` carries the modes `--verdict` (the session-start line),
-`--lock` (rewrite `LOCK.sha256`; the only writer, and it refuses to run over an
-existing lock without `ORCH_CADENCE_UNLOCK=1`), `--landing <ticket>`,
+`--lock` (rewrite `LOCK.sha256`; the only writer, and it rewrites an existing
+lock only when a terminal is attached), `--landing <ticket>`,
 `--commit-msg <msgfile>` (what the git hook calls: it runs `--landing <ticket>` too
 whenever the commit subject matches the `ticket_re` from `cadence.json`), `--audit
 <rev>` (the same check in CI, against a commit) and `--version`. `--landing
@@ -470,8 +479,7 @@ the second.
 **The verdict line** is what `--verdict` prints at session start, always beginning
 `cadence:` — for example `cadence: LAWS.md (ruling <N>) · lock OK`. A project with
 `LAWS.md` and no `cadence.json` sees `cadence: LAWS.md present, cadence.json
-absent — run /llm-orchestrator:cadence-init`. A session holding the unlock sees
-` · UNLOCKED` appended. Where a `CADENCE_STATE.md` exists the line ends with
+absent — run /llm-orchestrator:cadence-init`. Where a `CADENCE_STATE.md` exists the line ends with
 ` · skips: <n>`, counted as the amendment mechanism defines; with no state file
 that suffix is absent rather than zero. If a session printed no such line, the
 enforcement layer did not load, and a seat says so before anything else.

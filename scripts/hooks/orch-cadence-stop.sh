@@ -125,7 +125,7 @@ if [[ -n "$CHANGED" && -n "$SNAP" && -f "$SNAP" ]]; then
 fi
 NEW="${NEW% }"
 
-MSG="${VERDICT} — the lock no longer matches the tree. Re-record it with ${CHECK} --lock (which needs ORCH_CADENCE_UNLOCK=1 in the environment when a lock already exists), or restore the files it names. An amendment to the laws is a numbered ruling: commit with \"Ruling <N>\" in the message so the git layer can see it."
+MSG="${VERDICT} — the lock no longer matches the tree. Restore the files it names. Only the person can re-record the lock (${CHECK} --lock, in their own terminal). If the rules should change, explain why and give them a patch to apply with cadence-ruling.sh, which re-records the lock and commits the numbered ruling."
 
 if [[ "${ORCH_STRICT_CADENCE_LOCK:-0}" == "1" && -n "$NEW" ]]; then
   MARK="${STATE}/cadence-stop-blocked.${SESSION_HASH}"

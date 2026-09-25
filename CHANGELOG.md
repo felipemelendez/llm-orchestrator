@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed
+
+- Rule changes now go through one command the person runs in their own
+  terminal: `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`. It
+  applies a patch to the protected files only, re-records the lock and commits
+  the next `Ruling <N>`, after a typed confirmation read from `/dev/tty`.
+  `--lock` rewrites an existing lock only when a terminal is attached. The
+  `ORCH_CADENCE_UNLOCK` variable, `guard-cadence-unlock.sh` and the init's
+  unlocked replacement of hooks, config and marked sections are removed.
+
 ### Fixed
 
 - In auto mode a subagent sends its report through the `SubagentHandback`
