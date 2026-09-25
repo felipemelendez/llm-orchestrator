@@ -163,7 +163,7 @@ if [[ -n "${CADENCE_STATE}" ]]; then
     # different rules run in two different places.
     if [[ -f "${CADENCE_PROJ}/.githooks/orch-cadence-check.sh" ]] \
        && ! cmp -s "${CADENCE_PROJ}/.githooks/orch-cadence-check.sh" "${CHECK_SH}"; then
-      VERDICT="${VERDICT} · hook copy differs from the plugin's (change it with a ruling: the cadence skill's cadence-ruling.sh)"
+      VERDICT="${VERDICT} · hook copy differs from the plugin's (re-run the cadence init: it writes an upgrade ruling to apply with cadence-ruling.sh)"
     fi
   else
     VERDICT="cadence: check script missing at ${CHECK_WANT}"

@@ -136,6 +136,7 @@ DENY_RULES=(
   'Edit(docs/llm-orchestrator/LOCK.sha256)'
   'Edit(.claude/settings.json)'
   'Edit(.githooks/**)'
+  'Bash(*cadence-ruling.sh*)'
 )
 
 printf '\n%s== a fresh project gets every file, and the lock closes over them ==%s\n' "$DIM" "$RESET"
@@ -1204,6 +1205,43 @@ has "$OUT" 'kept AGENTS.md' && ok "the file carrying the stray end marker is kep
 relock "$SE" > "$TMP/strayend_lock.log" 2>&1
 LRC=$?
 [[ "$LRC" == "0" ]] && ok "and --lock over the same file succeeds" || fail "strayend lock" "rc=$LRC $(cat "$TMP/strayend_lock.log")"
+
+printf '\n%s== an armed project with older cadence files gets a one-step upgrade ruling ==%s\n' "$DIM" "$RESET"
+# SCENE: given an armed project whose check script, marked block and deny rules
+# are older than this plugin's; when init runs; expect nothing written, an
+# upgrade ruling patch, and the one command that applies it. Applying it in a
+# terminal brings every file to the shipped version and commits the ruling.
+UP="$TMP/upgrade"; mkrepo "$UP"
+RC=$(run "$UP"); [[ "$RC" == "0" ]] || fail "up init" "rc=$RC out=$(cat "$OUT")"
+( cd "$UP" && git config core.hooksPath .githooks && git add -A && git "${GIT_ID[@]}" commit -qm "arm the cadence" ) >/dev/null 2>&1
+printf '# an older copy\n' >> "$UP/.githooks/orch-cadence-check.sh"
+{ printf '# AGENTS.md\n\n'; older_block; } > "$UP/AGENTS.md"
+python3 - "$UP/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["deny"] = [r for r in d["permissions"]["deny"] if not r.startswith("Bash(")]
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+relock "$UP" >/dev/null 2>&1
+( cd "$UP" && git add -A && git "${GIT_ID[@]}" -c core.hooksPath=/dev/null commit -qm "an older install" ) >/dev/null 2>&1
+UPHEAD=$(git -C "$UP" rev-parse HEAD)
+RC=$(run "$UP")
+[[ "$RC" == "0" ]] && ok "init over an armed project with older files exits 0" || fail "up exit" "rc=$RC out=$(cat "$OUT")"
+[[ -z "$(git -C "$UP" status --porcelain)" && "$(git -C "$UP" rev-parse HEAD)" == "$UPHEAD" ]] \
+  && ok "and writes no protected file" || fail "up wrote" "$(git -C "$UP" status --porcelain)"
+UPPATCH=$(sed -n 's/^  review the upgrade ruling patch: //p' "$OUT")
+[[ -n "$UPPATCH" && -f "$UPPATCH" ]] && ok "it writes an upgrade ruling patch outside the project" || fail "up patch" "$(cat "$OUT")"
+has "$OUT" 'cadence-ruling.sh" --root' && ok "and prints the one command that applies it" || fail "up command" "$(cat "$OUT")"
+( unset CLAUDECODE CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  python3 "${ROOT}/tests/lib/terminal.py" type $'ruling 1\n' bash "${ROOT}/skills/cadence/scripts/cadence-ruling.sh" --root "$UP" "$UPPATCH" "upgrade" ) > "$TMP/up-ruling.log" 2>&1
+URC=$?
+[[ "$URC" == "0" ]] && ok "the ruling command applies the upgrade patch" || fail "up ruling" "rc=$URC $(cat "$TMP/up-ruling.log")"
+cmp -s "$CHECK" "$UP/.githooks/orch-cadence-check.sh" && ok "the check script is now the shipped one" || fail "up check" "differs"
+cmp -s <(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$UP/AGENTS.md") "$BLOCK" \
+  && ok "the marked section is now the block" || fail "up block" "differs"
+grep -qF 'Bash(*cadence-ruling.sh*)' "$UP/.claude/settings.json" && ok "the deny rules gain the ruling command" || fail "up deny" "$(cat "$UP/.claude/settings.json")"
+RC=$(run "$UP")
+has "$OUT" 'nothing to commit' && ok "a second init finds nothing left to upgrade" || fail "up again" "$(cat "$OUT")"
 
 printf '\n%s== the real HOME is never written ==%s\n' "$DIM" "$RESET"
 NOW_SHA=""

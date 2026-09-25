@@ -125,6 +125,12 @@ ROOT_PHYS=$(cd "$ROOT_DIR" && pwd -P) || refuse "" "cannot enter $ROOT_DIR"
 # a hooks-path line printed there is an instruction that cannot be followed.
 IS_GIT=0
 git -C "$ROOT_DIR" rev-parse --git-dir >/dev/null 2>&1 && IS_GIT=1
+# An armed project has a lock at HEAD. Its protected files are never written
+# here: what differs from this plugin's copies goes into an upgrade ruling patch
+# the person applies with cadence-ruling.sh.
+ARMED=0
+[ "$IS_GIT" = "1" ] && git -C "$ROOT_DIR" cat-file -e "HEAD:docs/llm-orchestrator/LOCK.sha256" 2>/dev/null && ARMED=1
+UPG_FILES=""; UPG_SECTIONS=""; UPG_SETTINGS=0
 
 # Where a write to <path> actually lands: the link chain followed to its end,
 # then the containing directory resolved physically. The one-call GNU flag for
@@ -367,6 +373,8 @@ marker_gate() { # <file> <relative name> — refuses in the check script's own w
   # any other reason, which is the price of never printing `kept` over a file
   # whose marked text is not the laws. --adopt buys no exemption: the ORCH:LAWS
   # section is the plugin's own text, and the project's laws live in LAWS.md.
+  # In an armed project the upgrade ruling replaces the section instead.
+  if [ "$ARMED" = "1" ]; then UPG_SECTIONS="$UPG_SECTIONS $2"; return 0; fi
   refuse "$2" "its ORCH:LAWS section (lines ${SEC_L1}–${SEC_L2}) is not the current cadence block, compared against $BLOCK — change it to the current block with a ruling (cadence-ruling.sh), or remove the markers and re-run"
 }
 
@@ -470,7 +478,8 @@ merge_settings() { # <apply|plan> -> the verdict in $TMPD/merge.msg
       'Edit(docs/llm-orchestrator/cadence.json)' \
       'Edit(docs/llm-orchestrator/LOCK.sha256)' \
       'Edit(.claude/settings.json)' \
-      'Edit(.githooks/**)' > "$TMPD/merge.msg" 2>&1
+      'Edit(.githooks/**)' \
+      'Bash(*cadence-ruling.sh*)' > "$TMPD/merge.msg" 2>&1
   return $?
 }
 SETTINGS_PLAN=""
@@ -478,7 +487,8 @@ if [ -f "$SETTINGS_F" ]; then
   merge_settings plan
   SETTINGS_PLAN=$(head -1 "$TMPD/merge.msg")
   case "$SETTINGS_PLAN" in
-    KEPT|MERGED\ *) ;;
+    KEPT) ;;
+    MERGED\ *) if [ "$ARMED" = "1" ]; then UPG_SETTINGS=1; SETTINGS_PLAN=KEPT; fi ;;
     BAD\ *)         refuse "$SETTINGS_REL" "${SETTINGS_PLAN#BAD }" ;;
     *)              refuse "$SETTINGS_REL" "the merge could not be planned: $SETTINGS_PLAN" ;;
   esac
@@ -665,7 +675,8 @@ if [ ! -f "$SETTINGS_F" ]; then
       "Edit(docs/llm-orchestrator/cadence.json)",
       "Edit(docs/llm-orchestrator/LOCK.sha256)",
       "Edit(.claude/settings.json)",
-      "Edit(.githooks/**)"
+      "Edit(.githooks/**)",
+      "Bash(*cadence-ruling.sh*)"
     ]
   }
 }
@@ -679,7 +690,11 @@ else
   # The plan came from the preflight; only the apply happens here.
   case "$SETTINGS_PLAN" in
     KEPT)
-      emit keep "$SETTINGS_REL"
+      if [ "$UPG_SETTINGS" = "1" ]; then
+        emit keep "$SETTINGS_REL" " (it lacks deny rules; the upgrade ruling below adds them)"
+      else
+        emit keep "$SETTINGS_REL"
+      fi
       ;;
     MERGED\ *)
       if [ "$DRY" != "1" ]; then
@@ -739,6 +754,11 @@ install_hook() { # <source> <relative destination>
   if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
     emit keep "$rel"
     [ "$DRY" = "1" ] || chmod +x "$dest" 2>/dev/null
+    return 0
+  fi
+  if [ -f "$dest" ] && [ "$ARMED" = "1" ]; then
+    emit keep "$rel" " (it differs from the shipped one; the upgrade ruling below replaces it)"
+    UPG_FILES="$UPG_FILES $rel"
     return 0
   fi
   if [ -f "$dest" ]; then
@@ -812,6 +832,61 @@ if [ -s "$TMPD/cfg.msg" ]; then
   cat "$TMPD/cfg.msg"
 fi
 print_tip
+
+# ---------- 8. an armed project: the upgrade ruling ---------------------------
+# The patch is built in a scratch index against HEAD, so it applies to the
+# committed files and names only protected paths.
+upgrade_blob() { # <relative path> <new content file>
+  local mode blob
+  mode=$(git -C "$ROOT_DIR" ls-tree HEAD -- "$1" | awk '{print $1}')
+  [ -n "$mode" ] || mode=100644
+  blob=$(git -C "$ROOT_DIR" hash-object -w -- "$2") || return 1
+  git -C "$ROOT_DIR" update-index --add --cacheinfo "$mode,$blob,$1"
+}
+build_upgrade() { # <patch file>
+  local rel src high n
+  export GIT_INDEX_FILE="$TMPD/upgrade.index"
+  git -C "$ROOT_DIR" read-tree HEAD || return 1
+  for rel in $UPG_FILES; do
+    case "$rel" in
+      .githooks/commit-msg) src="$REF_DIR/commit-msg" ;;
+      *) src="$CHECK" ;;
+    esac
+    upgrade_blob "$rel" "$src" || return 1
+  done
+  for rel in $UPG_SECTIONS; do
+    git -C "$ROOT_DIR" show "HEAD:$rel" > "$TMPD/upg.old" || return 1
+    section_span "$TMPD/upg.old" || return 1
+    { head -n $((SEC_L1 - 1)) "$TMPD/upg.old"; cat "$BLOCK"; tail -n +$((SEC_L2 + 1)) "$TMPD/upg.old"; } > "$TMPD/upg.new"
+    upgrade_blob "$rel" "$TMPD/upg.new" || return 1
+  done
+  if [ "$UPG_SETTINGS" = "1" ]; then
+    git -C "$ROOT_DIR" show "HEAD:$SETTINGS_REL" > "$TMPD/upg.settings" || return 1
+    SETTINGS_F="$TMPD/upg.settings" merge_settings apply || return 1
+    upgrade_blob "$SETTINGS_REL" "$TMPD/upg.settings" || return 1
+  fi
+  git -C "$ROOT_DIR" show "HEAD:$LAWS_REL" > "$TMPD/upg.laws" || return 1
+  high=$(grep -oE 'Ruling [0-9]+' "$TMPD/upg.laws" | grep -oE '[0-9]+' | sort -n | tail -1)
+  n=$(( ${high:-0} + 1 ))
+  printf '\nRuling %s (%s): the cadence files the plugin ships (git hooks, the marked block, the deny rules) are upgraded to the current versions.\n' \
+    "$n" "$(date +%Y-%m-%d)" >> "$TMPD/upg.laws"
+  upgrade_blob "$LAWS_REL" "$TMPD/upg.laws" || return 1
+  git -C "$ROOT_DIR" diff --cached HEAD > "$1" || return 1
+  unset GIT_INDEX_FILE
+}
+if [ "$ARMED" = "1" ]; then
+  if [ -z "$UPG_FILES$UPG_SECTIONS" ] && [ "$UPG_SETTINGS" = "0" ]; then
+    echo "next: this project is already armed and its cadence files match this plugin's; nothing to commit."
+    exit 0
+  fi
+  UPG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cadence-upgrade.XXXXXX") || refuse "" "cannot create a directory for the upgrade patch"
+  UPG_PATCH="$UPG_DIR/upgrade-ruling.patch"
+  build_upgrade "$UPG_PATCH" || { unset GIT_INDEX_FILE; refuse "" "the upgrade ruling patch could not be built"; }
+  echo "next: this project is already armed, and some of its cadence files are older than this plugin's (the old check script still honours the removed ORCH_CADENCE_UNLOCK variable). One step:"
+  echo "  review the upgrade ruling patch: $UPG_PATCH"
+  echo "  then apply it in your own terminal: bash \"$SCRIPT_DIR/cadence-ruling.sh\" --root \"$ROOT_DIR\" \"$UPG_PATCH\" \"upgrade the cadence files to the shipped versions\""
+  exit 0
+fi
 
 # The recipe that takes the project from written to armed, in the order it has
 # to be run. Two steps printed in the wrong order walk the reader into a hook
