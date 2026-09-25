@@ -17,26 +17,29 @@ framework does not turn it on in every repository.
 
 ## Codex setup
 
-In your terminal, clone the framework into a folder you plan to keep:
+In your terminal, clone the framework into a folder you plan to keep, add it
+to Codex as a plugin, and add the instructions block:
 
 ```sh
 git clone https://github.com/felipemelendez/llm-orchestrator.git
 cd llm-orchestrator
+codex plugin marketplace add "$PWD"
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
-Open a new Codex session and run `/hooks`. Review the three hooks and trust
-them. Codex only runs a hook you have trusted, and the installer cannot do that
-step for you. Keep the framework folder in place, because the hooks point at
-scripts inside it.
+The plugin installs the cadence skill and the three hooks. The installer adds
+the instructions block to `~/.codex/AGENTS.md` and nothing else. Open a new
+Codex session and run `/hooks`. Review the three hooks and trust them. Codex
+only runs a hook you have trusted, and neither command can do that step for
+you.
 
 In short, the three hooks are: one that stops the assistant editing a
 project's rulebook, one that sends the assistant back once when a reply claims
 tests passed and none ran, and one that cleans up temporary files from
 finished tasks. None of them prints a message for you. The full picture is on
 the [Codex page](codex.md), including how project trust and
-`~/.codex/AGENTS.override.md` change what Codex reads, and what happens if you
-add this repository as a Codex plugin.
+`~/.codex/AGENTS.override.md` change what Codex reads.
 
 ## Enable cadence in a project
 
@@ -51,8 +54,8 @@ project, and a lock that keeps both from changing quietly.
 ```
 
 (The procedure is written out in [the command](../commands/cadence-init.md).)
-With Codex, ask the assistant to enable cadence using the scripts in
-`~/.agents/skills/cadence/scripts/`, following that same procedure; it
+With Codex, ask the assistant to enable cadence using the scripts in the
+cadence skill's `scripts/` folder, following that same procedure; it
 proposes the configuration and drafts rulebook text for your approval.
 
 **Step 2 — confirm the config.** The assistant shows you a proposed
@@ -122,14 +125,17 @@ In your framework checkout, on `main` with your local work saved, run:
 
 ```sh
 git pull --ff-only
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
-The skill is a copy, so it only changes when you rerun the installer. Then
-check `/hooks` in a new session: a hook whose definition changed needs your
-trust again. If you installed the Codex layer from v0.8 or v0.9, this run also
-removes old hook entries that pointed at deleted files and made every command
-fail.
+Codex runs the plugin from its own copy, and `codex plugin add` refreshes it.
+Then check `/hooks` in a new session: a hook whose definition changed needs
+your trust again. If you installed the Codex layer with an earlier
+`install.sh --codex`, add the plugin as in [Codex setup](#codex-setup) first;
+without it, this run removes nothing. With it, the run removes the skill copy and the hook entries that earlier install
+wrote, so each hook runs once. See
+[Upgrading from an older install](codex.md#upgrading-from-an-older-install).
 
 The remaining sections cover alternative Claude installations and detailed
 settings.
@@ -448,7 +454,7 @@ One seam between the installer and the init is worth knowing before you hit it: 
 
 ## Cross-harness
 
-Claude Code is supported first-class. Codex has an installer (`./scripts/install.sh --codex`) that ships the cadence skill, the shared instructions and three small hooks. What they do is on the [Codex page](codex.md).
+Claude Code is supported first-class. Codex gets the cadence skill and three small hooks from a Codex plugin (`codex plugin add`), and the shared instructions from `./scripts/install.sh --codex`. What they do is on the [Codex page](codex.md).
 
 The skills, commands and agent prompts are plain markdown, so they work as written instructions anywhere a tool will read them. For Gemini, Copilot or any other harness, copy `skills/`, `commands/` and `templates/` into its config directory by hand and wire the session-start equivalent to `scripts/hooks/session-start.sh`. What you do not get is the enforcement: the hooks and the guards are Claude Code's, and Codex gets the file guard, the completion check and the scratch cleanup only.
 
