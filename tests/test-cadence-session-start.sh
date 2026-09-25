@@ -21,8 +21,6 @@
 # Bash 3.2 compatible.
 
 set -uo pipefail
-# The suite's default fixtures are locked regardless of the launching session.
-unset ORCH_CADENCE_UNLOCK
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="${ROOT}/scripts/hooks/session-start.sh"

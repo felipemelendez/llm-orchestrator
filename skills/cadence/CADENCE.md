@@ -115,44 +115,57 @@ CI through `--audit` when it was not. It never prevents a write.
 
 **The boundary:** a careless write fails at once and loudly, but a write the deny
 rules do not stop — a computed path, an archive, an interpreter, a script that
-opens the file itself — happens, and layer 2 names it afterwards. A shell guard
+opens the file itself — happens, and layer 2 names it afterwards. The lock stops
+accidental edits and makes deliberate ones visible in the history; it cannot stop
+an agent determined to fake a ruling, since a script can rewrite `LAWS.md` and
+`LOCK.sha256` together and commit a `Ruling <N>` message the hook accepts. A shell guard
 that judged each command by its text was tried and removed; text matching cannot
 be made tight, and the alarm already named what it caught.
 
 An amendment is a commit that satisfies all three: its message carries
 `Ruling <N>`, greater than the highest ruling number in the laws; the staged
-`LAWS.md` records that ruling; and `LOCK.sha256` was rewritten under
-`ORCH_CADENCE_UNLOCK=1`. Any one alone is text the agent wrote about itself.
+`LAWS.md` records that ruling; and `LOCK.sha256` matches what is committed. The
+person makes it with one command, `scripts/cadence-ruling.sh`, in their own
+terminal.
 
-`ORCH_CADENCE_UNLOCK=1` is set by the person, in their own shell, at launch —
-never in a settings file, never inside a command an agent runs, because the unlock
-guard refuses any command naming it. The re-lock and the ruling commit happen
-inside that session. Three things hold that shape: the unlock is honoured only when
-no settings file in scope names it; in cadence mode a command whose text contains
-`ORCH_CADENCE_UNLOCK`, `ORCH_DISABLED_HOOKS`, `ORCH_HOOK_PROFILE` or `ORCH_ALLOW_`
-is refused whatever the verb — not to set one, not to read one, not to search for
-one, a cost the refusal states as it sends the work to the person's own shell; and
-a session holding the unlock prints `UNLOCKED` in its verdict line. That guard
-knows four names and no grammar: a name assembled at runtime is the residual.
+**Proposing a change.** A seat that believes a protected rule is wrong keeps
+working under it as written and explains why, in plain language. It writes the
+change as a patch file outside Git (`git diff` of protected files only, adding
+`Ruling <N>` to `LAWS.md`, where N is one more than the highest ruling there),
+and shows the person the reason and the diff. If the person agrees, it gives
+them the command, with this skill's absolute path:
 
-A seat that believes a law is wrong writes a proposed amendment into the handoff
-and keeps working under the law as written.
+```bash
+bash <skill>/scripts/cadence-ruling.sh <patch-file> "<the person's wording>"
+```
+
+The command refuses a patch that touches a file outside the lock set (renames
+and deletions included), changes `CLAUDE.md` or `AGENTS.md` outside the marked
+section, no longer applies, or does not add `Ruling <N>` to `LAWS.md`; it also
+refuses when `CLAUDECODE` or a Codex session variable is set, and the init's
+deny rule `Bash(*cadence-ruling.sh*)` refuses it in Claude Code. It asks the
+person to type `ruling <N>`, applies the patch, re-records the lock with
+`--lock`, and commits `Ruling <N>: <wording>`; on any failure it undoes the
+patch. It reads the confirmation from `/dev/tty`, and `--lock` rewrites an
+existing lock only when a terminal is attached. An agent's shell has no
+terminal, so both refuse there. The one known way around this is stated in
+`docs/install.md`, "Changing the rules".
 
 ## The check script and the verdict line
 
 `orch-cadence-check.sh` carries the modes `--verdict` (the session-start line),
-`--lock` (rewrite `LOCK.sha256`; the only writer, and it refuses to run over an
-existing lock without `ORCH_CADENCE_UNLOCK=1`), `--commit-msg <msgfile>` (what
-the git hook calls), `--audit <rev>` (the same check in CI, against a commit)
-and `--version`. It checks the lock, the ruling and the workflow; it grades no
-review and cannot say whether one ran.
+`--lock` (rewrite `LOCK.sha256`; the plugin's own writer of it, and it rewrites an
+existing lock only when a terminal is attached), `--commit-msg <msgfile>` (what
+the git hook calls), `--audit <rev>` (the same check in CI, against a commit),
+`--entries` (the lock set, one entry per line) and `--version`. It checks the
+lock, the ruling and the workflow; it grades no review and cannot say whether
+one ran.
 
 **The verdict line** is what `--verdict` prints at session start, always beginning
 `cadence:` — for example `cadence: LAWS.md (ruling <N>) · lock OK`. A project with
 `LAWS.md` and no `cadence.json` sees `cadence: LAWS.md present, cadence.json
-absent — run /llm-orchestrator:cadence-init`. A session holding the unlock sees
-` · UNLOCKED` appended. If a session printed no such line, the enforcement layer
-did not load; say so before anything else.
+absent — run /llm-orchestrator:cadence-init`. If a session printed no such
+line, the enforcement layer did not load; say so before anything else.
 
 ## The honest boundary
 

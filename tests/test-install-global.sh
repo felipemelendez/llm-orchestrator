@@ -636,7 +636,11 @@ section "G17 — live Codex: each hook and the skill are listed once"
 #
 # A real `codex plugin add` from this checkout into a temporary CODEX_HOME,
 # then the app server's hooks/list and skills/list. No model call is made.
+# Codex is optional: with no CLI on the PATH these probes are skipped, even
+# under ORCH_REQUIRE_DEPS=1, so CI needs no Codex. Setting CODEX_BIN asks for
+# them, and then a missing CLI is a failure.
 # ------------------------------------------------------------
+CODEX_ASKED="${CODEX_BIN:+1}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 if CODEX_VERSION=$("$CODEX_BIN" --version 2>/dev/null) && [[ "$CODEX_VERSION" == codex-cli* ]]; then
   printf '  %s%s%s\n' "$DIM" "$CODEX_VERSION" "$RESET"
@@ -692,10 +696,10 @@ skill llm-orchestrator:cadence"
   else
     printf '  skip the upgrade probes (5141c9d is not in this clone'"'"'s history)\n'
   fi
-elif [[ "${ORCH_REQUIRE_DEPS:-0}" == "1" ]]; then
-  fail "live Codex probes" "no Codex CLI at CODEX_BIN=$CODEX_BIN under ORCH_REQUIRE_DEPS=1"
+elif [[ -n "$CODEX_ASKED" ]]; then
+  fail "live Codex probes" "CODEX_BIN=$CODEX_BIN is set, but it is not a working Codex CLI"
 else
-  printf '  skip live Codex probes (no Codex CLI; set CODEX_BIN)\n'
+  printf '  skip live Codex probes (no Codex CLI on the PATH; set CODEX_BIN to require them)\n'
 fi
 
 else

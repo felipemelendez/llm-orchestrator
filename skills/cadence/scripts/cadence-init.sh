@@ -19,9 +19,8 @@
 #   Everything here is an install, and an install that clobbers is worse than no
 #   install: a tool that overwrites a project's LAWS.md while arming the lock on
 #   it has destroyed the one file the lock exists to protect. So every path is
-#   `created` when absent and `kept` when present, and the only two paths a flag
-#   can overwrite (the two git hooks and cadence.json) need ORCH_CADENCE_UNLOCK=1
-#   in the environment, the same hatch the rest of the cadence uses.
+#   `created` when absent and `kept` when present. A protected file that differs
+#   from the shipped one changes only by a ruling (cadence-ruling.sh).
 #
 #   ORDER MATTERS. A cadence project's protection covers LAWS.md, cadence.json,
 #   LOCK.sha256, .claude/settings.json and .githooks/** from the moment
@@ -70,10 +69,6 @@ GITIGNORE_REL='.gitignore'
 # would otherwise commit a copy of their settings into the repository.
 IGNORE_1='.claude/settings.json.bak'
 IGNORE_2='.claude/settings.json.bak.*'
-# A replaced ORCH:LAWS section leaves the same kind of backup beside AGENTS.md
-# or CLAUDE.md. One glob each covers .bak and the .bak.N shapes.
-IGNORE_3='AGENTS.md.bak*'
-IGNORE_4='CLAUDE.md.bak*'
 
 PY="${ORCH_CADENCE_PYTHON:-python3}"
 
@@ -109,7 +104,6 @@ fi
 ROOT_DIR="${ROOT_DIR%/}"
 
 have_py() { command -v "$PY" >/dev/null 2>&1 && "$PY" -c 'pass' >/dev/null 2>&1; }
-unlocked() { [ "${ORCH_CADENCE_UNLOCK:-}" = "1" ]; }
 
 # 0 until the first byte lands. A refusal that fires before it is set can say
 # so, which is the difference between "stop, nothing happened" and "stop, and
@@ -131,6 +125,12 @@ ROOT_PHYS=$(cd "$ROOT_DIR" && pwd -P) || refuse "" "cannot enter $ROOT_DIR"
 # a hooks-path line printed there is an instruction that cannot be followed.
 IS_GIT=0
 git -C "$ROOT_DIR" rev-parse --git-dir >/dev/null 2>&1 && IS_GIT=1
+# An armed project has a lock at HEAD. Its protected files are never written
+# here: what differs from this plugin's copies goes into an upgrade ruling patch
+# the person applies with cadence-ruling.sh.
+ARMED=0
+[ "$IS_GIT" = "1" ] && git -C "$ROOT_DIR" cat-file -e "HEAD:docs/llm-orchestrator/LOCK.sha256" 2>/dev/null && ARMED=1
+UPG_FILES=""; UPG_SECTIONS=""; UPG_SETTINGS=0
 
 # Where a write to <path> actually lands: the link chain followed to its end,
 # then the containing directory resolved physically. The one-call GNU flag for
@@ -287,14 +287,8 @@ fi
 #   4. the residual, and it is deliberate: a fence or a <pre> around the EXACT
 #      block is kept, because the wrapper lines fall outside the marker pair —
 #      the laws text is present byte for byte and the lock hashes the same span,
-#      so the loss is rendering, not governance. The residual is read, never
-#      written: the replacement refuses a file whose fences do not balance, in
-#      the append path's own words, rather than write the block under an
-#      unclosed opener that path would refuse to append into;
-#   5. under ORCH_CADENCE_UNLOCK=1 a span that is not the block is REPLACED
-#      whole, marker lines included, by the block, the file backed up first.
-# Rules 1-2 are marker_rc's; rules 3-5 are section_is_block's and
-# replace_section's. No reader consults a list of markdown code forms, so no
+#      so the loss is rendering, not governance.
+# Rules 1-2 are marker_rc's; rules 3-4 are section_is_block's. No reader consults a list of markdown code forms, so no
 # such list can be missing one, and a sample beside a live block is still two
 # STARTs (rule 2). Two readers hold copies of this — see the follow-up
 # ticket: one section reader in a sourceable library shared by the check
@@ -334,15 +328,6 @@ marker_rc() { # <file> -> 0 fine (starts in MARK_STARTS), 2 duplicate, 3 untermi
 # marker pair, the text is present byte for byte and the lock hashes the same
 # span, so the loss is rendering, not governance.
 
-# The first free backup path for <file>: <file>.bak, then .bak.1, .bak.2 …
-# A replacement that overwrites an existing .bak destroys the very thing the
-# first backup was made to keep.
-backup_path() { # <absolute file> -> a path that does not exist yet
-  local b="$1.bak" n=1
-  while [ -e "$b" ]; do b="$1.bak.$n"; n=$((n+1)); done
-  printf '%s\n' "$b"
-}
-
 SEC_L1=""; SEC_L2=""
 section_span() { # <file> -> SEC_L1, SEC_L2; non-zero when there is no span
   local f="$1"
@@ -371,34 +356,8 @@ section_is_block() { # <file>
   cmp -s "$TMPD/sec.have" "$BLOCK_WANT"
 }
 
-# The unlock's one write into a marked file: the WHOLE span, marker lines
-# included, becomes the block. Replacing only the interior would leave a quoted
-# or indented sample's own marker lines as the boundary and put un-prefixed
-# block text inside somebody's blockquote. The span is recomputed here rather
-# than carried from the preflight, because CLAUDE.md may have gained its import
-# line in between.
-SECTION_REPLACED=0
-replace_section() { # <file> <relative name>
-  local f="$1" rel="$2" bak
-  section_span "$f" || refuse "$rel" "its ORCH:LAWS section could not be read back"
-  bak=$(backup_path "$f")
-  if [ "$DRY" != "1" ]; then
-    cp -p "$f" "$bak" || refuse "$rel" "could not back up the file it was about to rewrite"
-    { head -n $((SEC_L1 - 1)) "$f"; cat "$BLOCK"; tail -n +$((SEC_L2 + 1)) "$f"; } > "$TMPD/sec.new" \
-      || refuse "$rel" "could not stage the replaced section"
-    cat "$TMPD/sec.new" > "$f" || refuse "$rel" "could not rewrite the section"
-    WROTE=1
-  fi
-  SECTION_REPLACED=1
-  emit replace "$rel#ORCH:LAWS" " (backup ${bak#$ROOT_DIR/}, compared against $BLOCK)"
-}
-
-# Set by marker_gate when this file's span is not the block and the unlock is on.
-A_SEC_REPLACE=0; C_SEC_REPLACE=0
-SEC_REPLACE=0
 marker_gate() { # <file> <relative name> — refuses in the check script's own words
   local rc
-  SEC_REPLACE=0
   marker_rc "$1"; rc=$?
   case "$rc" in
     2) refuse "$2" "it has a second $SEC_START marker (duplicate marker); one pair per file — repair it, then re-run" ;;
@@ -414,8 +373,9 @@ marker_gate() { # <file> <relative name> — refuses in the check script's own w
   # any other reason, which is the price of never printing `kept` over a file
   # whose marked text is not the laws. --adopt buys no exemption: the ORCH:LAWS
   # section is the plugin's own text, and the project's laws live in LAWS.md.
-  if unlocked; then SEC_REPLACE=1; return 0; fi
-  refuse "$2" "its ORCH:LAWS section (lines ${SEC_L1}–${SEC_L2}) is not the current cadence block, compared against $BLOCK — re-run under ORCH_CADENCE_UNLOCK=1 to replace that section with the current block (the old file is kept as $2.bak), or remove the markers and re-run"
+  # In an armed project the upgrade ruling replaces the section instead.
+  if [ "$ARMED" = "1" ]; then UPG_SECTIONS="$UPG_SECTIONS $2"; return 0; fi
+  refuse "$2" "its ORCH:LAWS section (lines ${SEC_L1}–${SEC_L2}) is not the current cadence block, compared against $BLOCK — change it to the current block with a ruling (cadence-ruling.sh), or remove the markers and re-run"
 }
 
 # The block's own interior, read by the same span rule, computed once.
@@ -424,24 +384,21 @@ section_span "$BLOCK" || refuse "" "the cadence block at $BLOCK carries no ORCH:
 section_interior "$BLOCK" "$SEC_L1" "$SEC_L2" > "$BLOCK_WANT" \
   || refuse "" "the cadence block at $BLOCK could not be read"
 
-marker_gate "$AGENTS_F" "AGENTS.md"; A_STARTS="$MARK_STARTS"; A_SEC_REPLACE="$SEC_REPLACE"
-marker_gate "$CLAUDE_F" "CLAUDE.md"; C_SEC_REPLACE="$SEC_REPLACE"
+marker_gate "$AGENTS_F" "AGENTS.md"; A_STARTS="$MARK_STARTS"
+marker_gate "$CLAUDE_F" "CLAUDE.md"
 
 # A block written into a file whose fences do not balance is a block inside a
 # fence, where it reads as sample text and governs nothing. Refuse rather than
 # bury it. Both fence syntaxes count, and each is counted on its own: a ```
-# block may legitimately contain a ~~~ line and the reverse. Both paths that
-# write the block into an existing file run this — the append at the end of the
-# file, and the unlock's replacement at the marker pair — in the same words,
-# each with its own verb. One tool, one file, one answer.
-fence_parity() { # <file> <relative name> <appending|replacing>
-  local f="$1" rel="$2" verb="$3" ticks tildes
+# block may legitimately contain a ~~~ line and the reverse.
+fence_parity() { # <file> <relative name>
+  local f="$1" rel="$2" ticks tildes
   ticks=$(grep -c '^[[:space:]]*```' "$f" 2>/dev/null | tr -d ' ')
   tildes=$(grep -c '^[[:space:]]*~~~' "$f" 2>/dev/null | tr -d ' ')
   [ -n "$ticks" ] || ticks=0
   [ -n "$tildes" ] || tildes=0
   if [ $((ticks % 2)) -ne 0 ] || [ $((tildes % 2)) -ne 0 ]; then
-    refuse "$rel" "its last code fence is never closed ($ticks \`\`\` lines, $tildes ~~~ lines) — $verb the block there would bury it inside the fence; close the fence, then re-run"
+    refuse "$rel" "its last code fence is never closed ($ticks \`\`\` lines, $tildes ~~~ lines) — appending the block there would bury it inside the fence; close the fence, then re-run"
   fi
 }
 
@@ -449,12 +406,8 @@ AGENTS_ACTION="create"
 if [ -f "$AGENTS_F" ]; then
   if [ "$A_STARTS" = "1" ]; then
     AGENTS_ACTION="keep"
-    # `keep` here covers the branch that REPLACES the span under the unlock, and
-    # that write lands wherever the marker pair sits — under an unclosed opener
-    # included. The preflight is where it must be caught: nothing written yet.
-    if [ "$A_SEC_REPLACE" = "1" ]; then fence_parity "$AGENTS_F" "AGENTS.md" replacing; fi
   else
-    fence_parity "$AGENTS_F" "AGENTS.md" appending
+    fence_parity "$AGENTS_F" "AGENTS.md"
     AGENTS_ACTION="append"
   fi
 fi
@@ -465,9 +418,6 @@ fi
 # file's first line as the first line — so line 1 stays the rule.)
 CLAUDE_ACTION="create"
 if [ -f "$CLAUDE_F" ]; then
-  # The replacement is the one path on which this script writes the block into
-  # CLAUDE.md, so it meets the same fence gate AGENTS.md's replacement does.
-  if [ "$C_SEC_REPLACE" = "1" ]; then fence_parity "$CLAUDE_F" "CLAUDE.md" replacing; fi
   line1=$(head -1 "$CLAUDE_F" 2>/dev/null)
   line1="${line1%"${line1##*[![:space:]]}"}"   # trailing whitespace tolerated
   if [ "$line1" = "@AGENTS.md" ]; then CLAUDE_ACTION="keep"; else CLAUDE_ACTION="insert"; fi
@@ -528,7 +478,8 @@ merge_settings() { # <apply|plan> -> the verdict in $TMPD/merge.msg
       'Edit(docs/llm-orchestrator/cadence.json)' \
       'Edit(docs/llm-orchestrator/LOCK.sha256)' \
       'Edit(.claude/settings.json)' \
-      'Edit(.githooks/**)' > "$TMPD/merge.msg" 2>&1
+      'Edit(.githooks/**)' \
+      'Bash(*cadence-ruling.sh*)' > "$TMPD/merge.msg" 2>&1
   return $?
 }
 SETTINGS_PLAN=""
@@ -536,7 +487,8 @@ if [ -f "$SETTINGS_F" ]; then
   merge_settings plan
   SETTINGS_PLAN=$(head -1 "$TMPD/merge.msg")
   case "$SETTINGS_PLAN" in
-    KEPT|MERGED\ *) ;;
+    KEPT) ;;
+    MERGED\ *) if [ "$ARMED" = "1" ]; then UPG_SETTINGS=1; SETTINGS_PLAN=KEPT; fi ;;
     BAD\ *)         refuse "$SETTINGS_REL" "${SETTINGS_PLAN#BAD }" ;;
     *)              refuse "$SETTINGS_REL" "the merge could not be planned: $SETTINGS_PLAN" ;;
   esac
@@ -548,14 +500,9 @@ can_write "$ROOT_DIR" || refuse "" "$ROOT_DIR is not writable"
 can_write "$ROOT_DIR/docs/llm-orchestrator" || refuse "docs/llm-orchestrator" "it cannot be written to — check its permissions"
 can_write "$ROOT_DIR/.claude" || refuse ".claude" "it cannot be written to — check its permissions"
 [ "$IS_GIT" = "1" ] && { can_write "$ROOT_DIR/.githooks" || refuse ".githooks" "it cannot be written to — check its permissions"; }
-# `keep` excuses a file from the writability check only when nothing will be
-# written to it. A marker pair sets the action to `keep` on the branch that
-# REPLACES the span under the unlock, so the replace flag has to be consulted
-# too — otherwise the one path that rewrites these files is the one path whose
-# writability is never checked, and the failure surfaces halfway through, as a
-# raw interpreter error behind a refusal with three documents already on disk.
-{ [ "$AGENTS_ACTION" = "keep" ] && [ "$A_SEC_REPLACE" != "1" ]; } || can_write "$AGENTS_F" || refuse "AGENTS.md" "it cannot be written to — check its permissions"
-{ [ "$CLAUDE_ACTION" = "keep" ] && [ "$C_SEC_REPLACE" != "1" ]; } || can_write "$CLAUDE_F" || refuse "CLAUDE.md" "it cannot be written to — check its permissions"
+# `keep` excuses a file from the writability check: nothing will be written to it.
+[ "$AGENTS_ACTION" = "keep" ] || can_write "$AGENTS_F" || refuse "AGENTS.md" "it cannot be written to — check its permissions"
+[ "$CLAUDE_ACTION" = "keep" ] || can_write "$CLAUDE_F" || refuse "CLAUDE.md" "it cannot be written to — check its permissions"
 [ "$SETTINGS_PLAN" = "KEPT" ] || can_write "$SETTINGS_F" || refuse "$SETTINGS_REL" "it cannot be written to — check its permissions"
 can_write "$GITIGNORE_F" || refuse "$GITIGNORE_REL" "it cannot be written to — check its permissions"
 
@@ -650,14 +597,9 @@ copy_doc traps.md          docs/llm-orchestrator/TRAPS.md
 # ---------- 2. AGENTS.md ------------------------------------------------------
 case "$AGENTS_ACTION" in
   keep)
-    # Under the unlock a span that is not the block is replaced whole; without
-    # the unlock the preflight already refused, so `kept` here means the marked
-    # text IS the block.
-    if [ "$A_SEC_REPLACE" = "1" ]; then
-      replace_section "$AGENTS_F" AGENTS.md
-    else
-      emit keep AGENTS.md
-    fi
+    # The preflight refused a span that is not the block, so `kept` here means
+    # the marked text IS the block.
+    emit keep AGENTS.md
     ;;
   create)
     if [ "$DRY" != "1" ]; then
@@ -712,13 +654,6 @@ case "$CLAUDE_ACTION" in
     emit insert CLAUDE.md " (@AGENTS.md as line 1)"
     ;;
 esac
-# The manifest hashes CLAUDE.md#ORCH:LAWS too, so the equality rule runs on both
-# files — and the unlocked replacement is the ONE path on which this script ever
-# writes the block into CLAUDE.md. It runs after the import, because an inserted
-# line 1 moves every span below it.
-if [ "$C_SEC_REPLACE" = "1" ]; then
-  replace_section "$CLAUDE_F" CLAUDE.md
-fi
 
 # ---------- 4. .claude/settings.json -----------------------------------------
 # The native deny rules are the primary lock in Claude Code: deny beats every
@@ -737,7 +672,8 @@ if [ ! -f "$SETTINGS_F" ]; then
       "Edit(docs/llm-orchestrator/cadence.json)",
       "Edit(docs/llm-orchestrator/LOCK.sha256)",
       "Edit(.claude/settings.json)",
-      "Edit(.githooks/**)"
+      "Edit(.githooks/**)",
+      "Bash(*cadence-ruling.sh*)"
     ]
   }
 }
@@ -751,7 +687,11 @@ else
   # The plan came from the preflight; only the apply happens here.
   case "$SETTINGS_PLAN" in
     KEPT)
-      emit keep "$SETTINGS_REL"
+      if [ "$UPG_SETTINGS" = "1" ]; then
+        emit keep "$SETTINGS_REL" " (it lacks deny rules; the upgrade ruling below adds them)"
+      else
+        emit keep "$SETTINGS_REL"
+      fi
       ;;
     MERGED\ *)
       if [ "$DRY" != "1" ]; then
@@ -775,7 +715,7 @@ fi
 # The arming commit is a `git add -A`, so without a rule it goes into the
 # repository along with everything else this run wrote.
 GI_ADD=""
-for rule in "$IGNORE_1" "$IGNORE_2" "$IGNORE_3" "$IGNORE_4"; do
+for rule in "$IGNORE_1" "$IGNORE_2"; do
   if [ -f "$GITIGNORE_F" ] && grep -qxF -- "$rule" "$GITIGNORE_F"; then continue; fi
   GI_ADD="${GI_ADD}${rule}
 "
@@ -788,7 +728,7 @@ elif [ -f "$GITIGNORE_F" ]; then
     printf '%s' "$GI_ADD" >> "$GITIGNORE_F" || refuse "$GITIGNORE_REL" "could not append to it"
     WROTE=1
   fi
-  emit append "$GITIGNORE_REL" " (the backups this script can leave)"
+  emit append "$GITIGNORE_REL" " (the settings backup this script can leave)"
 else
   if [ "$DRY" != "1" ]; then
     printf '%s' "$GI_ADD" > "$GITIGNORE_F" || refuse "$GITIGNORE_REL" "could not write it"
@@ -807,29 +747,24 @@ fi
 # the layer holding while an unruled laws edit would land.
 GIT_LAYER_FOREIGN=""
 install_hook() { # <source> <relative destination>
-  local src="$1" rel="$2" dest="$ROOT_DIR/$2" bak
+  local src="$1" rel="$2" dest="$ROOT_DIR/$2"
   if [ -f "$dest" ] && cmp -s "$src" "$dest"; then
     emit keep "$rel"
     [ "$DRY" = "1" ] || chmod +x "$dest" 2>/dev/null
     return 0
   fi
-  if [ -f "$dest" ] && ! unlocked; then
-    emit keep "$rel" " (it differs from the shipped one — this project's own hook is what git runs; ORCH_CADENCE_UNLOCK=1 replaces it)"
+  if [ -f "$dest" ] && [ "$ARMED" = "1" ]; then
+    emit keep "$rel" " (it differs from the shipped one; the upgrade ruling below replaces it)"
+    UPG_FILES="$UPG_FILES $rel"
+    return 0
+  fi
+  if [ -f "$dest" ]; then
+    emit keep "$rel" " (it differs from the shipped one — this project's own hook is what git runs; a ruling replaces it)"
     GIT_LAYER_FOREIGN="$rel"
     return 0
   fi
-  if [ ! -f "$dest" ]; then
-    if [ "$DRY" != "1" ]; then cp "$src" "$dest" || refuse "$rel" "could not write it"; WROTE=1; fi
-    emit create "$rel"
-  else
-    bak=$(backup_path "$dest")
-    if [ "$DRY" != "1" ]; then
-      cp -p "$dest" "$bak" || refuse "$rel" "could not back up the hook it was about to replace"
-      cp "$src" "$dest" || refuse "$rel" "could not write it"
-      WROTE=1
-    fi
-    emit replace "$rel" " (backup ${bak#$ROOT_DIR/})"
-  fi
+  if [ "$DRY" != "1" ]; then cp "$src" "$dest" || refuse "$rel" "could not write it"; WROTE=1; fi
+  emit create "$rel"
   [ "$DRY" = "1" ] || chmod +x "$dest" 2>/dev/null
   return 0
 }
@@ -842,7 +777,7 @@ else
   install_hook "$REF_DIR/commit-msg" .githooks/commit-msg
   install_hook "$CHECK"              .githooks/orch-cadence-check.sh
   if [ -n "$GIT_LAYER_FOREIGN" ]; then
-    echo "git layer NOT installed: $GIT_LAYER_FOREIGN differs from the shipped hook (re-run under the unlock to replace it)"
+    echo "git layer NOT installed: $GIT_LAYER_FOREIGN differs from the shipped hook (a ruling replaces it)"
   fi
 fi
 
@@ -853,10 +788,8 @@ if [ ! -f "$CFG_F" ]; then
   CFG_WRITE=1; CFG_VERB=create; CFG_SUFFIX=""
 elif cmp -s "$CFG_NEW" "$CFG_F"; then
   CFG_VERB=keep; CFG_SUFFIX=""
-elif unlocked; then
-  CFG_WRITE=1; CFG_VERB=replace; CFG_SUFFIX=""
 else
-  CFG_VERB=keep; CFG_SUFFIX=" (it differs from the one proposed; ORCH_CADENCE_UNLOCK=1 replaces it)"
+  CFG_VERB=keep; CFG_SUFFIX=" (it differs from the one proposed; a ruling replaces it)"
 fi
 if [ "$CFG_WRITE" = "1" ] && [ "$DRY" != "1" ]; then
   cp "$CFG_NEW" "$CFG_F" || refuse "$CFG_REL" "could not write it"
@@ -875,13 +808,10 @@ if [ "$DRY" = "1" ]; then
   exit 0
 fi
 
-# --lock refuses over a manifest that already exists unless the person launched
-# the session with the unlock. On a re-run that is the EXPECTED answer, so it is
-# reported as the no-op it is: a REFUSED line in a run that exits 0 teaches the
-# reader to read refusals as noise. It is only a failure when the project ends
-# this run with no manifest at all.
-if [ -f "$ROOT_DIR/$LOCK_REL" ] && ! unlocked; then
-  echo "lock kept (already armed; re-run under ORCH_CADENCE_UNLOCK=1 to re-lock)"
+# An existing manifest is kept: the init never rewrites it. It is only a
+# failure when the project ends this run with no manifest at all.
+if [ -f "$ROOT_DIR/$LOCK_REL" ]; then
+  echo "lock kept (already armed)"
 else
   bash "$CHECK" --root "$ROOT_DIR" --lock 2>&1 | sed 's/^/  /'
   if [ ! -f "$ROOT_DIR/$LOCK_REL" ]; then
@@ -900,26 +830,71 @@ if [ -s "$TMPD/cfg.msg" ]; then
 fi
 print_tip
 
+# ---------- 8. an armed project: the upgrade ruling ---------------------------
+# The patch is built in a scratch index against HEAD, so it applies to the
+# committed files and names only protected paths.
+upgrade_blob() { # <relative path> <new content file>
+  local mode blob
+  mode=$(git -C "$ROOT_DIR" ls-tree HEAD -- "$1" | awk '{print $1}')
+  [ -n "$mode" ] || mode=100644
+  blob=$(git -C "$ROOT_DIR" hash-object -w -- "$2") || return 1
+  git -C "$ROOT_DIR" update-index --add --cacheinfo "$mode,$blob,$1"
+}
+build_upgrade() { # <patch file>
+  local rel src high n
+  export GIT_INDEX_FILE="$TMPD/upgrade.index"
+  git -C "$ROOT_DIR" read-tree HEAD || return 1
+  for rel in $UPG_FILES; do
+    case "$rel" in
+      .githooks/commit-msg) src="$REF_DIR/commit-msg" ;;
+      *) src="$CHECK" ;;
+    esac
+    upgrade_blob "$rel" "$src" || return 1
+  done
+  for rel in $UPG_SECTIONS; do
+    git -C "$ROOT_DIR" show "HEAD:$rel" > "$TMPD/upg.old" || return 1
+    section_span "$TMPD/upg.old" || return 1
+    { head -n $((SEC_L1 - 1)) "$TMPD/upg.old"; cat "$BLOCK"; tail -n +$((SEC_L2 + 1)) "$TMPD/upg.old"; } > "$TMPD/upg.new"
+    upgrade_blob "$rel" "$TMPD/upg.new" || return 1
+  done
+  if [ "$UPG_SETTINGS" = "1" ]; then
+    git -C "$ROOT_DIR" show "HEAD:$SETTINGS_REL" > "$TMPD/upg.settings" || return 1
+    SETTINGS_F="$TMPD/upg.settings" merge_settings apply || return 1
+    upgrade_blob "$SETTINGS_REL" "$TMPD/upg.settings" || return 1
+  fi
+  git -C "$ROOT_DIR" show "HEAD:$LAWS_REL" > "$TMPD/upg.laws" || return 1
+  high=$(grep -oE 'Ruling [0-9]+' "$TMPD/upg.laws" | grep -oE '[0-9]+' | sort -n | tail -1)
+  n=$(( ${high:-0} + 1 ))
+  printf '\nRuling %s (%s): the cadence files the plugin ships (git hooks, the marked block, the deny rules) are upgraded to the current versions.\n' \
+    "$n" "$(date +%Y-%m-%d)" >> "$TMPD/upg.laws"
+  upgrade_blob "$LAWS_REL" "$TMPD/upg.laws" || return 1
+  git -C "$ROOT_DIR" diff --cached HEAD > "$1" || return 1
+  unset GIT_INDEX_FILE
+}
+if [ "$ARMED" = "1" ]; then
+  if [ -z "$UPG_FILES$UPG_SECTIONS" ] && [ "$UPG_SETTINGS" = "0" ]; then
+    echo "next: this project is already armed and its cadence files match this plugin's; nothing to commit."
+    exit 0
+  fi
+  UPG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/cadence-upgrade.XXXXXX") || refuse "" "cannot create a directory for the upgrade patch"
+  UPG_PATCH="$UPG_DIR/upgrade-ruling.patch"
+  build_upgrade "$UPG_PATCH" || { unset GIT_INDEX_FILE; refuse "" "the upgrade ruling patch could not be built"; }
+  echo "next: this project is already armed, and some of its cadence files are older than this plugin's (the old check script still honours the removed ORCH_CADENCE_UNLOCK variable). One step:"
+  echo "  review the upgrade ruling patch: $UPG_PATCH"
+  echo "  then apply it in your own terminal: bash \"$SCRIPT_DIR/cadence-ruling.sh\" --root \"$ROOT_DIR\" \"$UPG_PATCH\" \"upgrade the cadence files to the shipped versions\""
+  exit 0
+fi
+
 # The recipe that takes the project from written to armed, in the order it has
 # to be run. Two steps printed in the wrong order walk the reader into a hook
 # refusal: a commit made before the re-lock is a commit the manifest disagrees
 # with, and placeholders filled after the lock leave a manifest describing a
 # file nobody has.
-# A run that REPLACED a marked section did not arm a fresh project: it rewrote
-# a laws section in a project that already had one. That commit is not the
-# arming commit, so the hook demands a numbered ruling in its message, and the
-# manifest has to be rewritten under the unlock before it.
-if [ "$SECTION_REPLACED" = "1" ]; then
-  echo "next: this run replaced an ORCH:LAWS section. In order:"
-else
-  echo "next: this project is written, not yet armed. In order:"
-fi
+echo "next: this project is written, not yet armed. In order:"
 STEP=0
 if [ "$LAWS_CREATED" = "1" ]; then
   STEP=$((STEP+1)); echo "  $STEP. fill in every <PLACEHOLDER> in $LAWS_REL — it is a template until you do"
-  STEP=$((STEP+1)); echo "  $STEP. re-lock, because step $((STEP-1)) changes the laws after this run's manifest: ORCH_CADENCE_UNLOCK=1 bash \"$CHECK\" --root \"$ROOT_DIR\" --lock"
-elif [ "$SECTION_REPLACED" = "1" ]; then
-  STEP=$((STEP+1)); echo "  $STEP. re-lock, because this run rewrote a section the manifest covers: ORCH_CADENCE_UNLOCK=1 bash \"$CHECK\" --root \"$ROOT_DIR\" --lock"
+  STEP=$((STEP+1)); echo "  $STEP. re-lock in your own terminal, because step $((STEP-1)) changes the laws after this run's manifest: bash \"$CHECK\" --root \"$ROOT_DIR\" --lock"
 fi
 if [ "$IS_GIT" = "1" ]; then
   STEP=$((STEP+1))
@@ -929,11 +904,7 @@ if [ "$IS_GIT" = "1" ]; then
     echo "  $STEP. route this clone's hooks, once per clone: git config core.hooksPath .githooks"
   fi
   STEP=$((STEP+1))
-  if [ "$SECTION_REPLACED" = "1" ]; then
-    echo "  $STEP. commit what was written — this project was already armed, so the message needs a NUMBERED RULING or the commit-msg hook refuses it: git add -A && git commit -m \"ruling N: replace the ORCH:LAWS section with the current cadence block\""
-  else
-    echo "  $STEP. commit what was written — this first commit needs no numbered ruling: git add -A && git commit -m \"arm the cadence\""
-  fi
+  echo "  $STEP. commit what was written — this first commit needs no numbered ruling: git add -A && git commit -m \"arm the cadence\""
   # The last layer of the alarm, and the only one that still speaks in a clone
   # whose hooks were never routed or whose commit stepped past them.
   STEP=$((STEP+1))

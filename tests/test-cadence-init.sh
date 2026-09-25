@@ -18,7 +18,7 @@
 #   - the git layer holds end to end: after `core.hooksPath`, a commit that
 #     edits the laws without a numbered ruling is refused, and the same edit
 #     lands once the ruling is in the message, recorded in the laws, and the
-#     manifest has been rewritten under the unlock.
+#     manifest has been rewritten.
 #
 # Bash 3.2 compatible. Never touches the real HOME; every fixture is a
 # `mktemp -d` repo.
@@ -60,16 +60,14 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-# --lock refuses when ANY settings file in scope persists the unlock token, and
-# $HOME/.claude/settings.json is in that scope. The operator's own home must not
-# decide this suite's outcome, and this suite must never write to it.
+# The operator's own home must not decide this suite's outcome, and this suite
+# must never write to it.
 REAL_HOME="$HOME"
 REAL_HOME_SHA=""
 [[ -f "$REAL_HOME/.claude/settings.json" ]] && REAL_HOME_SHA="$(shasum -a 256 "$REAL_HOME/.claude/settings.json" 2>/dev/null | awk '{print $1}')"
 export HOME="$TMP/home"; mkdir -p "$HOME/.claude"
 export GIT_CONFIG_NOSYSTEM=1
 GIT_ID=(-c user.email=cadence@test -c user.name=cadence)
-unset ORCH_CADENCE_UNLOCK
 unset ORCH_CADENCE_PYTHON
 
 OUT="$TMP/out.txt"; ERR="$TMP/err.txt"
@@ -78,9 +76,8 @@ run() { # run <root> <args...> -> stdout in $OUT, stderr in $ERR, echoes rc
   local p="$1"; shift
   bash "$INIT" --root "$p" "$@" > "$OUT" 2> "$ERR"; echo $?
 }
-runu() { # runu <root> <args...> -> the same, with ORCH_CADENCE_UNLOCK=1 set
-  local p="$1"; shift
-  ORCH_CADENCE_UNLOCK=1 bash "$INIT" --root "$p" "$@" > "$OUT" 2> "$ERR"; echo $?
+relock() { # relock <root> — --lock run in a pseudo-terminal, as a person would
+  python3 "${ROOT}/tests/lib/terminal.py" type '' bash "$CHECK" --root "$1" --lock
 }
 has()  { grep -qF -- "$2" "$1"; }
 hasre(){ grep -qE -- "$2" "$1"; }
@@ -139,6 +136,7 @@ DENY_RULES=(
   'Edit(docs/llm-orchestrator/LOCK.sha256)'
   'Edit(.claude/settings.json)'
   'Edit(.githooks/**)'
+  'Bash(*cadence-ruling.sh*)'
 )
 
 printf '\n%s== a fresh project gets every file, and the lock closes over them ==%s\n' "$DIM" "$RESET"
@@ -319,7 +317,7 @@ for r in "${DENY_RULES[@]}"; do has "$P2/.claude/settings.json" "$r" || MISS="$M
 [[ -z "$MISS" ]] && ok "the fresh settings file it writes without python3 carries all five rules" || fail "nopy2 rules" "missing:$MISS"
 python3 -m json.tool "$P2/.claude/settings.json" >/dev/null 2>&1 && ok "and it is valid JSON" || fail "nopy2 json" "$(cat "$P2/.claude/settings.json")"
 
-printf '\n%s== a differing git hook is kept, and only the unlock replaces it ==%s\n' "$DIM" "$RESET"
+printf '\n%s== a differing git hook is kept ==%s\n' "$DIM" "$RESET"
 # SCENE: given a project whose .githooks/commit-msg has been edited by hand;
 # when init runs; expect it kept, because silently restoring a hook the operator
 # changed is the same class of harm as overwriting their laws.
@@ -328,11 +326,11 @@ printf '#!/usr/bin/env bash\n# the project wrote its own\nexit 0\n' > "$H/.githo
 cp "$H/.githooks/commit-msg" "$TMP/hook.orig"
 RC=$(run "$H")
 [[ "$RC" == "0" ]] && ok "a differing hook does not stop the init" || fail "hook exit" "rc=$RC out=$(cat "$OUT")"
-cmp -s "$TMP/hook.orig" "$H/.githooks/commit-msg" && ok "the project's own commit-msg is kept" || fail "hook overwritten" "replaced without the unlock"
+cmp -s "$TMP/hook.orig" "$H/.githooks/commit-msg" && ok "the project's own commit-msg is kept" || fail "hook overwritten" "replaced"
 has "$OUT" 'kept .githooks/commit-msg' && ok "the report says kept for it" || fail "hook kept line" "$(cat "$OUT")"
 # The whole sentence, not just the verb: a reader who is told only `kept` does
 # not learn that the hook git will actually run is the project's own one.
-has "$OUT" "kept .githooks/commit-msg (it differs from the shipped one — this project's own hook is what git runs; ORCH_CADENCE_UNLOCK=1 replaces it)" \
+has "$OUT" "kept .githooks/commit-msg (it differs from the shipped one — this project's own hook is what git runs; a ruling replaces it)" \
   && ok "and says whose hook git runs and what replaces it" || fail "hook kept wording" "$(grep -F 'kept .githooks/commit-msg' "$OUT")"
 # A kept foreign hook means the git layer is NOT installed: the manifest hashes
 # THAT hook, so `lock OK` is true and reads as the layer holding while a laws
@@ -340,25 +338,6 @@ has "$OUT" "kept .githooks/commit-msg (it differs from the shipped one — this 
 has "$OUT" 'git layer NOT installed' && ok "a kept foreign hook is announced as a git layer that is NOT installed" || fail "no git-layer warning" "$(cat "$OUT")"
 has "$OUT" ' · git layer: not installed' && ok "and the verdict line carries · git layer: not installed" || fail "verdict lacks git layer" "$(grep -F 'cadence:' "$OUT")"
 
-RC=$(ORCH_CADENCE_UNLOCK=1 run "$H")
-[[ "$RC" == "0" ]] && ok "the unlocked run exits 0" || fail "hook unlock exit" "rc=$RC out=$(cat "$OUT")"
-cmp -s "$REFS/commit-msg" "$H/.githooks/commit-msg" && ok "ORCH_CADENCE_UNLOCK=1 replaces it with the shipped hook" || fail "hook not replaced" "still the project's"
-has "$OUT" 'replaced .githooks/commit-msg' && ok "the report says replaced" || fail "hook replaced line" "$(cat "$OUT")"
-# SCENE: given a project with its own .githooks/commit-msg and a session
-# launched ORCH_CADENCE_UNLOCK=1; when init re-runs; expect the person's hook
-# preserved — the one variable that gates every re-run must not eat a linter.
-cmp -s "$TMP/hook.orig" "$H/.githooks/commit-msg.bak" \
-  && ok "the replaced hook is preserved byte for byte at .githooks/commit-msg.bak" \
-  || fail "hook bak" "missing or differs: $(ls -1 "$H/.githooks" | tr '\n' ' ')"
-has "$OUT" 'replaced .githooks/commit-msg (backup .githooks/commit-msg.bak)' \
-  && ok "the report names the backup it made" || fail "hook bak line" "$(cat "$OUT")"
-# A second replacement must not eat the first backup.
-printf '#!/usr/bin/env bash\n# a second hand-written hook\nexit 0\n' > "$H/.githooks/commit-msg"
-cp "$H/.githooks/commit-msg" "$TMP/hook.orig2"
-BAK1=$(sha "$H/.githooks/commit-msg.bak")
-RC=$(ORCH_CADENCE_UNLOCK=1 run "$H")
-[[ "$BAK1" == "$(sha "$H/.githooks/commit-msg.bak")" ]] && ok "an existing .bak is never overwritten" || fail "bak clobbered" "the first backup changed"
-cmp -s "$TMP/hook.orig2" "$H/.githooks/commit-msg.bak.1" && ok "the second backup lands at .bak.1" || fail "bak.1" "$(ls -1 "$H/.githooks" | tr '\n' ' ')"
 
 printf '\n%s== --dry-run writes nothing ==%s\n' "$DIM" "$RESET"
 # SCENE: given a fresh project; when init runs with --dry-run; expect a plan on
@@ -436,7 +415,7 @@ printf '\n%s== the git layer end to end ==%s\n' "$DIM" "$RESET"
 # SCENE: given an initialized repo with core.hooksPath set; when a commit edits
 # the laws with no numbered ruling; expect a refusal and no new commit. Then,
 # with the ruling in the message, recorded in the laws, and the manifest rewritten
-# under the unlock, expect the same edit to land.
+# in a terminal, expect the same edit to land.
 E="$TMP/e2e"; mkrepo "$E"
 RC=$(run "$E")
 [[ "$RC" == "0" ]] && ok "the e2e fixture initializes" || fail "e2e init" "rc=$RC out=$(cat "$OUT")"
@@ -454,7 +433,7 @@ if [[ "$RCC" != "0" ]]; then ok "a commit that edits the laws with no ruling is 
 has "$TMP/e2e2.log" 'numbered ruling' && ok "the refusal names what is missing" || fail "e2e reason" "$(cat "$TMP/e2e2.log")"
 
 printf 'Ruling 1 (2026-09-05, owner): the laws may say so.\n' >> "$E/docs/llm-orchestrator/LAWS.md"
-( cd "$E" && ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$E" --lock ) > "$TMP/e2e_relock.log" 2>&1
+relock "$E" > "$TMP/e2e_relock.log" 2>&1
 ( cd "$E" && git add -A && git "${GIT_ID[@]}" commit -q -m "amend the laws
 
 Ruling 1" ) > "$TMP/e2e3.log" 2>&1
@@ -578,7 +557,7 @@ has "$OUT" 'no such directory' && ok "the refusal names the missing directory" |
 [[ ! -d "$TMP/nope" ]] && ok "and the directory is not created" || fail "root created" "$TMP/nope exists"
 
 printf '\n%s== a second run reports the lock as kept, not refused ==%s\n' "$DIM" "$RESET"
-# SCENE: given an initialized project; when init runs again without the unlock;
+# SCENE: given an initialized project; when init runs again;
 # expect the expected no-op said as a no-op — a REFUSED line in a run that
 # exits 0 teaches the reader to read refusals as noise.
 RC=$(run "$F")
@@ -652,8 +631,7 @@ printf '\n%s== the command file names the mechanism a re-run actually meets ==%s
 # follows it; expect what a re-run actually meets — a no-op only while the
 # section still matches the block, a refusal once it has drifted — plus both
 # true reasons: the script keeps existing files, and the native deny rules
-# refuse the config paths. "A no-op unless the unlock is set" was true before the content
-# rule and is not true now: a drifted section exits 1.
+# refuse the config paths. A drifted section exits 1.
 CMDF="$ROOT/commands/cadence-init.md"
 has "$CMDF" 'is a no-op while its' \
   && ok "the command file calls a re-run a no-op only conditionally" || fail "cmd noop" "$(sed -n '105,125p' "$CMDF")"
@@ -886,7 +864,7 @@ RC=$(run "$CX1")
 has "$OUT" 'refused AGENTS.md' && ok "the refusal names AGENTS.md" || fail "ctx1 reason" "$(cat "$OUT")"
 has "$OUT" 'is not the current cadence block' && ok "and says the marked section is not the current cadence block" || fail "ctx1 wording" "$(cat "$OUT")"
 has "$OUT" '(lines 6–9)' && ok "and names the two lines the span runs between" || fail "ctx1 which" "$(cat "$OUT")"
-has "$OUT" 'ORCH_CADENCE_UNLOCK=1' && ok "and orders the two remedies with the unlock first" || fail "ctx1 remedy" "$(cat "$OUT")"
+has "$OUT" 'with a ruling (cadence-ruling.sh), or remove the markers' && ok "and names the two remedies, the ruling first" || fail "ctx1 remedy" "$(cat "$OUT")"
 has "$OUT" 'kept AGENTS.md' && fail "ctx1 kept" "kept was printed over a file with no live section" || ok "and it never prints kept over that file"
 [[ "$BEFORE" == "$(sha "$CX1/AGENTS.md")" ]] && ok "AGENTS.md is byte-identical after it" || fail "ctx1 mutated" "changed"
 [[ ! -f "$CX1/docs/llm-orchestrator/LAWS.md" && ! -f "$CX1/docs/llm-orchestrator/cadence.json" && ! -f "$CX1/docs/llm-orchestrator/LOCK.sha256" ]] \
@@ -1013,7 +991,7 @@ D=$(printf '# Agents\n\nHouse rules.\n' | mkbat s1)
 bat "1 no markers" "$D" 0 'appended AGENTS.md (the ORCH:LAWS block)' 0 '' none agree
 
 # The block source every kept fixture is built from, and the older version of
-# it that shape 21 and the unlock scenes use — one re-worded bullet, the delta
+# it that shape 21 and the drifted-section scenes use — one re-worded bullet, the delta
 # measured between two installs of this plugin.
 older_block() { sed 's/^- Read `docs\/llm-orchestrator\/LAWS\.md` first, never from memory\.$/- Read `docs\/llm-orchestrator\/LAWS.md` first, never from recollection./' "$BLOCK"; }
 # A fixture that no longer differs from the block would turn every "drifted
@@ -1113,7 +1091,7 @@ bat "20g 4-space indented pair in CLAUDE.md" "$D" 1 'refused CLAUDE.md' 0 '' CLA
 
 # 21 — an older version of the block: the same markers around one re-worded
 # bullet. Measured between two installs of this plugin, so this is the drift
-# case, not a hypothetical one. Its remedy is the unlock scene below.
+# case, not a hypothetical one. Its remedy is a ruling.
 D=$( { printf '# Agents\n\n'; older_block; } | mkbat s21)
 bat "21 an older version of the block" "$D" 1 'is not the current cadence block' 0 '' AGENTS.md stricter
 
@@ -1146,7 +1124,6 @@ bat "24 the exact block inside a fence — kept, and both readers agree" "$D" 0 
 # 25 — the whole block behind a blockquote prefix. Every interior line carries
 # "> ", so it is not the block.
 D=$( { printf '# Agents\n\n'; sed 's/^/> /' "$BLOCK"; } | mkbat s25)
-S25="$D"
 bat "25 the whole block inside a blockquote" "$D" 1 'is not the current cadence block' 0 '' AGENTS.md stricter
 
 # 26 — <pre> around the verbatim block is the same residual as 24; <pre> around
@@ -1171,71 +1148,9 @@ bat "28 the block with an extra blank line" "$D" 1 'is not the current cadence b
 D=$( { printf '# Agents\n\nFor reference:\n\n'; sed 's/^/    /' "$BLOCK"; } | mkbat s29)
 bat "29 the block indented four spaces" "$D" 1 'is not the current cadence block' 0 '' AGENTS.md stricter
 
-printf '\n%s== the unlock replaces a section that is not the block, whole and backed up ==%s\n' "$DIM" "$RESET"
-# SCENE: given a project whose AGENTS.md carries an OLDER version of the block;
-# when cadence-init.sh runs without the unlock; expect the refusal that names
-# both remedies with the unlock first. When it runs under
-# ORCH_CADENCE_UNLOCK=1; expect the WHOLE span — marker lines included —
-# replaced by the current block, the old file kept as AGENTS.md.bak, that
-# backup gitignored, and the recipe a replacement needs: a re-lock, then a
-# commit whose message carries a numbered ruling.
-U1="$TMP/unlock-drift"; mkrepo "$U1"; mkdir -p "$U1/docs/llm-orchestrator"
-printf '# THE LAWS\n\nRuling 3 (2026-01-01, owner): this project was armed already.\n' > "$U1/docs/llm-orchestrator/LAWS.md"
-{ printf '# Agents\n\n'; older_block; printf '\nTail.\n'; } > "$U1/AGENTS.md"
-cp "$U1/AGENTS.md" "$TMP/u1.orig"
-RC=$(run "$U1")
-[[ "$RC" == "1" ]] && ok "without the unlock a drifted block is refused" || fail "u1 locked" "rc=$RC out=$(cat "$OUT")"
-has "$OUT" 'ORCH_CADENCE_UNLOCK=1 to replace that section' && ok "and the refusal orders the unlock remedy before the destructive one" || fail "u1 remedy" "$(cat "$OUT")"
-has "$OUT" "compared against $BLOCK" && ok "and names the block file it compared against" || fail "u1 source" "$(cat "$OUT")"
-[[ "$(sha "$TMP/u1.orig")" == "$(sha "$U1/AGENTS.md")" ]] && ok "with AGENTS.md byte-identical" || fail "u1 mutated" "changed"
-RC=$(runu "$U1")
-[[ "$RC" == "0" ]] && ok "under the unlock the run completes" || fail "u1 exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'replaced AGENTS.md#ORCH:LAWS (backup AGENTS.md.bak, compared against ' \
-  && ok "the report names the replaced section, its backup and the source it compared against" || fail "u1 line" "$(cat "$OUT")"
-cmp -s "$TMP/u1.orig" "$U1/AGENTS.md.bak" && ok "the old file is kept byte for byte at AGENTS.md.bak" || fail "u1 bak" "missing or differs"
-cmp -s <(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$U1/AGENTS.md") "$BLOCK" \
-  && ok "and the span is now the block byte for byte" || fail "u1 section" "differs from $BLOCK"
-[[ "$(head -1 "$U1/AGENTS.md")" == "# Agents" && "$(tail -1 "$U1/AGENTS.md")" == "Tail." ]] \
-  && ok "with every byte outside the span untouched" || fail "u1 outside" "$(head -1 "$U1/AGENTS.md") .. $(tail -1 "$U1/AGENTS.md")"
-has "$U1/.gitignore" 'AGENTS.md.bak*' && ok ".gitignore gains the section-backup shape" || fail "u1 gitignore" "$(cat "$U1/.gitignore" 2>/dev/null)"
-has "$OUT" 'this run replaced an ORCH:LAWS section' && ok "the recipe says what this run did, not that the project is unarmed" || fail "u1 recipe head" "$(cat "$OUT")"
-has "$OUT" 'NUMBERED RULING' && ok "and demands a numbered ruling in the commit message" || fail "u1 recipe" "$(cat "$OUT")"
-has "$OUT" 'rewrote a section the manifest covers' && ok "and orders the re-lock under the unlock before it" || fail "u1 relock" "$(cat "$OUT")"
-# The already-armed recipe is a different branch with different numbering, and
-# a step added to one arm only is a step half the readers never see.
-has "$OUT" 'in CI, run .githooks/orch-cadence-check.sh --audit HEAD' \
-  && ok "and the replacement recipe carries the CI audit step too" || fail "u1 ci" "$(cat "$OUT")"
-
-# Idempotence: a second run finds the interior equal, so it keeps and makes no
-# second backup — without this the .bak.N scheme grows one file per run.
-BEFORE=$(sha "$U1/AGENTS.md")
-RC=$(runu "$U1")
-[[ "$RC" == "0" ]] && ok "a second run under the unlock exits 0" || fail "u1b exit" "rc=$RC out=$(cat "$OUT")"
-has "$OUT" 'kept AGENTS.md' && ok "and finds the section equal — kept, not replaced a second time" || fail "u1b kept" "$(cat "$OUT")"
-[[ "$BEFORE" == "$(sha "$U1/AGENTS.md")" ]] && ok "with not one byte changed" || fail "u1b mutated" "changed"
-[[ ! -e "$U1/AGENTS.md.bak.1" ]] && ok "and no second backup beside the first" || fail "u1b bak2" "$(ls -1 "$U1" | tr '\n' ' ')"
-
-# The backup must not reach the commit: the arming commit is a `git add -A`.
-( cd "$U1" && git add -A && git "${GIT_ID[@]}" commit -q -m "arm the cadence" ) > "$TMP/u1commit.log" 2>&1
-TRACKED=$( cd "$U1" && git ls-files | grep -c '\.bak' )
-[[ "$TRACKED" == "0" ]] && ok "the commit's tree carries no .bak" || fail "u1 bak tracked" "$( cd "$U1" && git ls-files | grep '\.bak' | tr '\n' ' ')"
-
-# SCENE: given the blockquoted whole block (shape 25); when init runs under the
-# unlock; expect the WHOLE span replaced, marker lines included — replacing only
-# the interior would leave `> <!-- ...START -->` as the boundary and put
-# un-prefixed block text inside somebody's blockquote.
-RC=$(runu "$S25")
-[[ "$RC" == "0" ]] && ok "the blockquoted sample is replaced under the unlock" || fail "u2 exit" "rc=$RC out=$(cat "$OUT")"
-cmp -s <(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$S25/AGENTS.md") "$BLOCK" \
-  && ok "and the whole span, marker lines included, is the block" || fail "u2 span" "$(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$S25/AGENTS.md" | head -3)"
-QUOTED=$(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$S25/AGENTS.md" | grep -c '^> ')
-[[ "$QUOTED" == "0" ]] && ok "no line of the replaced section still carries the blockquote prefix" || fail "u2 prefix" "$QUOTED quoted lines remain"
-
 printf '\n%s== the content rule runs on CLAUDE.md too, both directions ==%s\n' "$DIM" "$RESET"
 # SCENE: the manifest hashes CLAUDE.md#ORCH:LAWS as well, so a CLAUDE.md
-# carrying the exact block is kept and one carrying anything else is refused —
-# and the unlocked replacement is the one path on which this script ever writes
-# the block into CLAUDE.md.
+# carrying the exact block is kept and one carrying anything else is refused.
 CK="$TMP/claude-block"; mkrepo "$CK"
 { printf '@AGENTS.md\n\n'; cat "$BLOCK"; } > "$CK/CLAUDE.md"
 BEFORE=$(sha "$CK/CLAUDE.md")
@@ -1251,27 +1166,17 @@ RC=$(run "$CDR")
 [[ "$RC" == "1" ]] && ok "a CLAUDE.md whose section is not the block exits 1" || fail "cd exit" "rc=$RC out=$(cat "$OUT")"
 has "$OUT" 'refused CLAUDE.md' && ok "and the refusal names CLAUDE.md" || fail "cd reason" "$(cat "$OUT")"
 [[ "$(sha "$TMP/cd.orig")" == "$(sha "$CDR/CLAUDE.md")" ]] && ok "with the file byte-identical behind it" || fail "cd mutated" "changed"
-RC=$(runu "$CDR")
-[[ "$RC" == "0" ]] && ok "under the unlock that run completes" || fail "cdu exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'replaced CLAUDE.md#ORCH:LAWS (backup CLAUDE.md.bak' && ok "and the CLAUDE.md section is replaced, with a backup" || fail "cdu line" "$(cat "$OUT")"
-cmp -s "$TMP/cd.orig" "$CDR/CLAUDE.md.bak" && ok "the old CLAUDE.md is kept byte for byte" || fail "cdu bak" "missing or differs"
-cmp -s <(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$CDR/CLAUDE.md") "$BLOCK" \
-  && ok "and the block is now in CLAUDE.md byte for byte" || fail "cdu section" "differs"
-has "$CDR/.gitignore" 'CLAUDE.md.bak*' && ok ".gitignore gains the CLAUDE.md backup shape too" || fail "cdu gitignore" "$(cat "$CDR/.gitignore" 2>/dev/null)"
 
 printf '\n%s== --adopt buys no exemption from the content rule ==%s\n' "$DIM" "$RESET"
 # SCENE: given --adopt over a project whose ORCH:LAWS section is an older block;
 # when init runs; expect the same refusal — adopt keeps files the project owns,
 # and the ORCH:LAWS section is the plugin's own text (a project's laws live in
-# LAWS.md). Adopt plus the unlock still replaces.
+# LAWS.md).
 AS="$TMP/adopt-section"; mkrepo "$AS"
 { printf '# Agents\n\n'; older_block; } > "$AS/AGENTS.md"
 RC=$(run "$AS" --adopt)
 [[ "$RC" == "1" ]] && ok "--adopt over a drifted block still exits 1" || fail "as exit" "rc=$RC out=$(cat "$OUT")"
 has "$OUT" 'is not the current cadence block' && ok "with the same refusal" || fail "as reason" "$(cat "$OUT")"
-RC=$(runu "$AS" --adopt)
-[[ "$RC" == "0" ]] && ok "--adopt plus the unlock completes" || fail "asu exit" "rc=$RC out=$(cat "$OUT")"
-has "$OUT" 'replaced AGENTS.md#ORCH:LAWS' && ok "and still replaces the section" || fail "asu line" "$(cat "$OUT")"
 
 printf '\n%s== a target that is not a regular file is refused, FIFO included ==%s\n' "$DIM" "$RESET"
 # SCENE: given .claude/settings.json that is a FIFO; when init runs; expect a
@@ -1319,104 +1224,46 @@ RC=$(run "$SE")
 [[ "$RC" == "0" ]] && ok "one pair plus a stray end marker initializes at exit 0" || fail "strayend exit" "rc=$RC out=$(cat "$OUT")"
 has "$OUT" 'duplicate marker' && fail "strayend reason" "refused for a duplicate marker that is not in the file" || ok "and it is not refused as a duplicate marker"
 has "$OUT" 'kept AGENTS.md' && ok "the file carrying the stray end marker is kept" || fail "strayend kept" "$(cat "$OUT")"
-( cd "$SE" && ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$SE" --lock ) > "$TMP/strayend_lock.log" 2>&1
+relock "$SE" > "$TMP/strayend_lock.log" 2>&1
 LRC=$?
 [[ "$LRC" == "0" ]] && ok "and --lock over the same file succeeds" || fail "strayend lock" "rc=$LRC $(cat "$TMP/strayend_lock.log")"
 
-printf '\n%s== the writability preflight covers the replacement path too ==%s\n' "$DIM" "$RESET"
-# SCENE: given a project whose AGENTS.md is read-only and whose ORCH:LAWS
-# section has drifted — the ordinary case, since every project armed with the
-# previous block is refused by the next init — when cadence-init.sh runs under
-# ORCH_CADENCE_UNLOCK=1; expect the preflight's own refusal with nothing
-# written, not four law documents, a stray AGENTS.md.bak and a raw
-# `Permission denied` line behind a refusal. A marker pair sets the action to
-# `keep` on the branch that is about to REWRITE the file, so `keep` alone must
-# not excuse the file from the writability check.
-RO="$TMP/readonly-replace"; mkrepo "$RO"
-{ printf '# Agents\n\n'; older_block; printf '\nTail.\n'; } > "$RO/AGENTS.md"
-cp "$RO/AGENTS.md" "$TMP/ro.orig"
-chmod 444 "$RO/AGENTS.md"
-RC=$(runu "$RO")
-[[ "$RC" == "1" ]] && ok "a read-only AGENTS.md with a drifted section exits 1 under the unlock" || fail "ro exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'refused AGENTS.md: it cannot be written to — check its permissions' \
-  && ok "and the preflight's own permissions refusal is what prints" || fail "ro reason" "$(cat "$OUT")"
-has "$OUT" 'nothing was written' && ok "with the report saying nothing was written" || fail "ro silence" "$(cat "$OUT")"
-[[ ! -e "$RO/AGENTS.md.bak" ]] && ok "no backup is left beside the file it never rewrote" || fail "ro bak" "$(ls -1 "$RO" | tr '\n' ' ')"
-[[ ! -f "$RO/docs/llm-orchestrator/LAWS.md" && ! -f "$RO/docs/llm-orchestrator/cadence.json" ]] \
-  && ok "and no law document the project did not have" || fail "ro partial" "$(ls -R "$RO" 2>/dev/null | tr '\n' ' ')"
-[[ "$(sha "$TMP/ro.orig")" == "$(sha "$RO/AGENTS.md")" ]] && ok "with AGENTS.md byte-identical" || fail "ro mutated" "changed"
-has "$ERR" 'Permission denied' && fail "ro stderr" "a raw interpreter error reached the operator: $(cat "$ERR")" \
-  || ok "and no raw interpreter line on stderr"
-chmod u+w "$RO/AGENTS.md"
-RC=$(runu "$RO")
-[[ "$RC" == "0" ]] && ok "once the file is writable the same run completes" || fail "ro heal exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'replaced AGENTS.md#ORCH:LAWS' && ok "and replaces the drifted section" || fail "ro heal line" "$(cat "$OUT")"
-
-# The CLAUDE.md twin: line 1 is already @AGENTS.md, so its action is `keep` too,
-# and the replacement is the one path on which this script writes into it.
-ROC="$TMP/readonly-replace-claude"; mkrepo "$ROC"
-{ printf '# Agents\n\n'; cat "$BLOCK"; } > "$ROC/AGENTS.md"
-{ printf '@AGENTS.md\n\n'; older_block; } > "$ROC/CLAUDE.md"
-cp "$ROC/CLAUDE.md" "$TMP/roc.orig"
-chmod 444 "$ROC/CLAUDE.md"
-RC=$(runu "$ROC")
-[[ "$RC" == "1" ]] && ok "a read-only CLAUDE.md with a drifted section exits 1 under the unlock" || fail "roc exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'refused CLAUDE.md: it cannot be written to — check its permissions' \
-  && ok "and the CLAUDE.md arm refuses in the preflight's words too" || fail "roc reason" "$(cat "$OUT")"
-has "$OUT" 'nothing was written' && ok "with nothing written on the CLAUDE.md arm either" || fail "roc silence" "$(cat "$OUT")"
-has "$OUT" 'kept CLAUDE.md' && fail "roc kept" "the report claimed kept CLAUDE.md and then refused it" || ok "and no kept line for the file it could not rewrite"
-[[ ! -e "$ROC/CLAUDE.md.bak" ]] && ok "no CLAUDE.md.bak beside it" || fail "roc bak" "$(ls -1 "$ROC" | tr '\n' ' ')"
-[[ ! -f "$ROC/docs/llm-orchestrator/LAWS.md" ]] && ok "and no law document" || fail "roc partial" "$(ls -R "$ROC" 2>/dev/null | tr '\n' ' ')"
-[[ "$(sha "$TMP/roc.orig")" == "$(sha "$ROC/CLAUDE.md")" ]] && ok "with CLAUDE.md byte-identical" || fail "roc mutated" "changed"
-chmod u+w "$ROC/CLAUDE.md"
-RC=$(runu "$ROC")
-[[ "$RC" == "0" ]] && ok "once CLAUDE.md is writable the run completes" || fail "roc heal exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'replaced CLAUDE.md#ORCH:LAWS' && ok "and replaces the drifted CLAUDE.md section" || fail "roc heal line" "$(cat "$OUT")"
-
-printf '\n%s== the replacement refuses an unclosed fence, as the append path does ==%s\n' "$DIM" "$RESET"
-# SCENE: given an AGENTS.md whose last code fence is never closed and whose
-# marker pair sits below that opener carrying something other than the block;
-# when init runs under the unlock; expect the same refusal the append path
-# gives that file — one tool, one file, one answer. Writing the block under an
-# unclosed opener puts the laws on screen as sample code.
-FRP="$TMP/fence-replace"; mkrepo "$FRP"
-{ printf '# Agents\n\n```text\nan opener nobody closed\n\n'; older_block; printf '\nTail.\n'; } > "$FRP/AGENTS.md"
-cp "$FRP/AGENTS.md" "$TMP/frp.orig"
-RC=$(runu "$FRP")
-[[ "$RC" == "1" ]] && ok "an unclosed fence above a drifted pair exits 1 under the unlock" || fail "frp exit" "rc=$RC out=$(cat "$OUT")"
-has "$OUT" 'refused AGENTS.md: its last code fence is never closed' && ok "and the refusal names the unclosed fence" || fail "frp reason" "$(cat "$OUT")"
-has "$OUT" 'replacing the block there would bury it inside the fence; close the fence, then re-run' \
-  && ok "in the append path's words, with the replacement's own verb" || fail "frp verb" "$(cat "$OUT")"
-has "$OUT" 'nothing was written' && ok "and says nothing was written" || fail "frp silence" "$(cat "$OUT")"
-[[ ! -e "$FRP/AGENTS.md.bak" ]] && ok "with no backup left behind" || fail "frp bak" "$(ls -1 "$FRP" | tr '\n' ' ')"
-[[ ! -f "$FRP/docs/llm-orchestrator/LAWS.md" ]] && ok "and no law document" || fail "frp partial" "$(ls -R "$FRP" 2>/dev/null | tr '\n' ' ')"
-[[ "$(sha "$TMP/frp.orig")" == "$(sha "$FRP/AGENTS.md")" ]] && ok "and AGENTS.md byte-identical" || fail "frp mutated" "changed"
-
-# The control: the same drifted pair under a fence that IS closed. Balanced
-# fences must still replace, or the fix has simply blocked the unlock.
-FRC="$TMP/fence-replace-closed"; mkrepo "$FRC"
-{ printf '# Agents\n\n```text\na closed sample\n```\n\n'; older_block; printf '\nTail.\n'; } > "$FRC/AGENTS.md"
-RC=$(runu "$FRC")
-[[ "$RC" == "0" ]] && ok "a closed fence above a drifted pair still replaces under the unlock" || fail "frc exit" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-has "$OUT" 'replaced AGENTS.md#ORCH:LAWS' && ok "and the section becomes the block" || fail "frc line" "$(cat "$OUT")"
-
-# The CLAUDE.md twin — the replacement writes there too, so the same gate holds.
-FRCL="$TMP/fence-replace-claude"; mkrepo "$FRCL"
-{ printf '# Agents\n\n'; cat "$BLOCK"; } > "$FRCL/AGENTS.md"
-{ printf '@AGENTS.md\n\n~~~\nan opener nobody closed\n\n'; older_block; } > "$FRCL/CLAUDE.md"
-cp "$FRCL/CLAUDE.md" "$TMP/frcl.orig"
-RC=$(runu "$FRCL")
-[[ "$RC" == "1" ]] && ok "an unclosed fence above a drifted CLAUDE.md pair exits 1" || fail "frcl exit" "rc=$RC out=$(cat "$OUT")"
-has "$OUT" 'refused CLAUDE.md: its last code fence is never closed' && ok "and names CLAUDE.md" || fail "frcl reason" "$(cat "$OUT")"
-[[ "$(sha "$TMP/frcl.orig")" == "$(sha "$FRCL/CLAUDE.md")" ]] && ok "with CLAUDE.md byte-identical" || fail "frcl mutated" "changed"
-
-# The append path keeps its own verb: one shared test, two sentences.
-FRA="$TMP/fence-append-verb"; mkrepo "$FRA"
-printf '# Agents\n\n```text\nan opener nobody closed\n' > "$FRA/AGENTS.md"
-RC=$(run "$FRA")
-[[ "$RC" == "1" ]] && ok "the append path still refuses an unclosed fence" || fail "fra exit" "rc=$RC out=$(cat "$OUT")"
-has "$OUT" 'appending the block there would bury it inside the fence; close the fence, then re-run' \
-  && ok "and still says appending, not replacing" || fail "fra verb" "$(cat "$OUT")"
+printf '\n%s== an armed project with older cadence files gets a one-step upgrade ruling ==%s\n' "$DIM" "$RESET"
+# SCENE: given an armed project whose check script, marked block and deny rules
+# are older than this plugin's; when init runs; expect nothing written, an
+# upgrade ruling patch, and the one command that applies it. Applying it in a
+# terminal brings every file to the shipped version and commits the ruling.
+UP="$TMP/upgrade"; mkrepo "$UP"
+RC=$(run "$UP"); [[ "$RC" == "0" ]] || fail "up init" "rc=$RC out=$(cat "$OUT")"
+( cd "$UP" && git config core.hooksPath .githooks && git add -A && git "${GIT_ID[@]}" commit -qm "arm the cadence" ) >/dev/null 2>&1
+printf '# an older copy\n' >> "$UP/.githooks/orch-cadence-check.sh"
+{ printf '# AGENTS.md\n\n'; older_block; } > "$UP/AGENTS.md"
+python3 - "$UP/.claude/settings.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d["permissions"]["deny"] = [r for r in d["permissions"]["deny"] if not r.startswith("Bash(")]
+json.dump(d, open(sys.argv[1], "w"), indent=2)
+PY
+relock "$UP" >/dev/null 2>&1
+( cd "$UP" && git add -A && git "${GIT_ID[@]}" -c core.hooksPath=/dev/null commit -qm "an older install" ) >/dev/null 2>&1
+UPHEAD=$(git -C "$UP" rev-parse HEAD)
+RC=$(run "$UP")
+[[ "$RC" == "0" ]] && ok "init over an armed project with older files exits 0" || fail "up exit" "rc=$RC out=$(cat "$OUT")"
+[[ -z "$(git -C "$UP" status --porcelain)" && "$(git -C "$UP" rev-parse HEAD)" == "$UPHEAD" ]] \
+  && ok "and writes no protected file" || fail "up wrote" "$(git -C "$UP" status --porcelain)"
+UPPATCH=$(sed -n 's/^  review the upgrade ruling patch: //p' "$OUT")
+[[ -n "$UPPATCH" && -f "$UPPATCH" ]] && ok "it writes an upgrade ruling patch outside the project" || fail "up patch" "$(cat "$OUT")"
+has "$OUT" 'cadence-ruling.sh" --root' && ok "and prints the one command that applies it" || fail "up command" "$(cat "$OUT")"
+( unset CLAUDECODE CODEX_THREAD_ID CODEX_SANDBOX CODEX_SANDBOX_NETWORK_DISABLED
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  python3 "${ROOT}/tests/lib/terminal.py" type $'ruling 1\n' bash "${ROOT}/skills/cadence/scripts/cadence-ruling.sh" --root "$UP" "$UPPATCH" "upgrade" ) > "$TMP/up-ruling.log" 2>&1
+URC=$?
+[[ "$URC" == "0" ]] && ok "the ruling command applies the upgrade patch" || fail "up ruling" "rc=$URC $(cat "$TMP/up-ruling.log")"
+cmp -s "$CHECK" "$UP/.githooks/orch-cadence-check.sh" && ok "the check script is now the shipped one" || fail "up check" "differs"
+cmp -s <(sed -n '/<!-- ORCH:LAWS:START -->/,/<!-- ORCH:LAWS:END -->/p' "$UP/AGENTS.md") "$BLOCK" \
+  && ok "the marked section is now the block" || fail "up block" "differs"
+grep -qF 'Bash(*cadence-ruling.sh*)' "$UP/.claude/settings.json" && ok "the deny rules gain the ruling command" || fail "up deny" "$(cat "$UP/.claude/settings.json")"
+RC=$(run "$UP")
+has "$OUT" 'nothing to commit' && ok "a second init finds nothing left to upgrade" || fail "up again" "$(cat "$OUT")"
 
 printf '\n%s== the real HOME is never written ==%s\n' "$DIM" "$RESET"
 NOW_SHA=""

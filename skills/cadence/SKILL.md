@@ -68,8 +68,9 @@ old paths or discard another session's work.
 
 ## Protected policy
 
-The [lock and numbered-ruling mechanism](CADENCE.md#the-lock) applies to both
-workflows. The person supplies the unlock at session launch; agents never set
-it. Honour commit/push/merge authorization separately from implementation.
+The [lock and numbered-ruling mechanism](CADENCE.md#the-lock) is binding.
+Propose rule changes as a patch; only the person runs
+`scripts/cadence-ruling.sh`. Honour commit/push/merge authorization separately
+from implementation.
 Name dispatched models. Hooks require installation, enablement and trust;
 Git policy checks do not prove execution or review quality.

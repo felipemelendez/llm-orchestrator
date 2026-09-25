@@ -7,9 +7,7 @@
 #     of CLAUDE.md/AGENTS.md is CHANGED while a change outside it is not;
 #   - a second START marker cannot be used to hide an edit (a decoy pair
 #     defeats a last-block extractor, so the first pair is the only pair);
-#   - `--lock` is the only writer and refuses without the unlock, and refuses
-#     outright when a settings file in scope PERSISTS the unlock (a persisted
-#     unlock is not an unlock, it is a disarmed lock);
+#   - `--lock` rewrites an existing lock only when a terminal is attached;
 #   - the git layer runs at `commit-msg` (the only hook git hands a message
 #     file) and a stale lock cannot ride in under a ruling either.
 #
@@ -36,19 +34,19 @@ skip_suite() { # <suite-name> <reason>
 }
 
 command -v git >/dev/null 2>&1 || skip_suite test-cadence-check 'git unavailable'
+command -v python3 >/dev/null 2>&1 || skip_suite test-cadence-check 'python3 unavailable'
+TERMINAL="${ROOT}/tests/lib/terminal.py"
 [[ -f "$CHECK" ]] || { printf '%s✗%s %s\n' "$RED" "$RESET" "missing script: $CHECK"; \
   printf '%sFAIL: test-cadence-check — 0 passed, 1 failed.%s\n' "$RED" "$RESET"; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-# The unlock scope includes $HOME/.claude/settings.json, so HOME is isolated:
-# the operator's own settings must never decide this suite's outcome.
+# HOME is isolated: the operator's own settings must never decide this suite's
+# outcome.
 export HOME="$TMP/home"; mkdir -p "$HOME/.claude"
 # GIT_CONFIG_NOSYSTEM plus an isolated HOME keeps a system or user git config
 # (signing, hooksPath, templates) from deciding what these fixtures do.
 export GIT_CONFIG_NOSYSTEM=1
-# Fixtures exercise the locked state regardless of the launching session.
-unset ORCH_CADENCE_UNLOCK
 GIT_ID=(-c user.email=cadence@test -c user.name=cadence)
 OUT="$TMP/out.txt"; ERR="$TMP/err.txt"
 
@@ -69,6 +67,10 @@ mkproj() { # mkproj <dir>
 }
 
 has() { grep -qF -- "$2" "$1"; }
+
+relock() { # relock <root> — --lock run in a pseudo-terminal, as a person would
+  python3 "$TERMINAL" type '' bash "$CHECK" --root "$1" --lock
+}
 
 printf '%s== version and usage ==%s\n' "$DIM" "$RESET"
 RC=$(bash "$CHECK" --version > "$OUT" 2>"$ERR"; echo $?)
@@ -125,7 +127,7 @@ if has "$OUT" 'CHANGED CLAUDE.md#ORCH:LAWS'; then ok "editing INSIDE the section
 printf 'preamble\n<!-- ORCH:LAWS:START -->\nthe block\n<!-- ORCH:LAWS:END -->\nTAIL EDITED\n<!-- ORCH:LAWS:START -->\ndecoy\n<!-- ORCH:LAWS:END -->\n' > "$P/CLAUDE.md"
 RC=$(run "$P" --verdict)
 if has "$OUT" 'duplicate marker'; then ok "a second START marker reads 'duplicate marker', never the last block"; else fail "duplicate marker" "out=$(cat "$OUT")"; fi
-RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
+RC=$(relock "$P" > "$OUT" 2>"$ERR"; echo $?)
 if [[ "$RC" == "1" ]] && has "$OUT" 'duplicate marker'; then ok "--lock refuses a duplicate marker pair"; else fail "--lock duplicate" "rc=$RC out=$(cat "$OUT")"; fi
 printf 'preamble\n<!-- ORCH:LAWS:START -->\nthe block\n<!-- ORCH:LAWS:END -->\ntail\n' > "$P/CLAUDE.md"
 
@@ -142,21 +144,11 @@ rm -f "$NOL/docs/llm-orchestrator/LAWS.md"
 RC=$(run "$NOL" --verdict)
 has "$OUT" 'cadence: LAWS.md absent' && ok "cadence on with no LAWS.md reads 'LAWS.md absent'" || fail "laws absent" "out=$(cat "$OUT")"
 
-printf '\n%s== the unlock ==%s\n' "$DIM" "$RESET"
-RC=$(run "$P" --lock)
-if [[ "$RC" == "1" ]] && has "$OUT" 'ORCH_CADENCE_UNLOCK'; then ok "--lock over an existing lock refuses and names the unlock"; else fail "--lock refusal" "rc=$RC out=$(cat "$OUT")"; fi
-RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
-[[ "$RC" == "0" ]] && ok "--lock under ORCH_CADENCE_UNLOCK=1 rewrites the lock" || fail "--lock unlocked" "rc=$RC out=$(cat "$OUT")"
-RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --verdict > "$OUT" 2>"$ERR"; echo $?)
-if has "$OUT" ' · UNLOCKED'; then ok "the verdict says UNLOCKED when the unlock is in the environment"; else fail "verdict UNLOCKED" "out=$(cat "$OUT")"; fi
-for SF in "$P/.claude/settings.json" "$P/.claude/settings.local.json" "$HOME/.claude/settings.json"; do
-  BK=""; [[ -f "$SF" ]] && { BK="$SF.bk"; cp "$SF" "$BK"; }
-  printf '{ "env": { "ORCH_CADENCE_UNLOCK": "1" } }\n' > "$SF"
-  RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
-  if [[ "$RC" == "1" ]] && has "$OUT" "$(basename "$SF")"; then ok "--lock refuses when $(basename "$SF") persists the unlock"; else fail "persisted unlock $SF" "rc=$RC out=$(cat "$OUT")"; fi
-  rm -f "$SF"; [[ -n "$BK" ]] && mv "$BK" "$SF"
-done
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock >/dev/null 2>&1
+printf '\n%s== rewriting the lock needs a terminal ==%s\n' "$DIM" "$RESET"
+RC=$(python3 "$TERMINAL" none bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
+if [[ "$RC" == "1" ]] && has "$OUT" 'no terminal'; then ok "--lock over an existing lock refuses with no terminal"; else fail "--lock refusal" "rc=$RC out=$(cat "$OUT")"; fi
+RC=$(relock "$P" > "$OUT" 2>"$ERR"; echo $?)
+[[ "$RC" == "0" ]] && ok "--lock in a terminal rewrites the lock" || fail "--lock in a terminal" "rc=$RC out=$(cat "$OUT")"
 
 printf '\n%s== bounded: 64 hashed, the rest named, under 2s ==%s\n' "$DIM" "$RESET"
 BIG="$TMP/big"; mkproj "$BIG"
@@ -173,7 +165,7 @@ if [[ "$RC" == "0" ]] && has "$OUT" 'lock OK' && [[ $((S1-S0)) -le 2 ]]; then ok
 i=59; while [[ $i -lt 130 ]]; do printf 'content %s\n' "$i" > "$BIG/extra_$i.md"; EXTRA="$EXTRA\"extra_$i.md\","; i=$((i+1)); done
 printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"workflow\": \"proportional\", \"lock_extra\": [${EXTRA%,}] }" > "$BIG/docs/llm-orchestrator/cadence.json"
 RC=$(run "$BIG" --verdict)
-if has "$OUT" 'unhashed'; then ok "beyond 64 unlocked extras the verdict says how many are unhashed"; else fail "unhashed note" "out=$(cat "$OUT")"; fi
+if has "$OUT" 'unhashed'; then ok "beyond 64 unrecorded extras the verdict says how many are unhashed"; else fail "unhashed note" "out=$(cat "$OUT")"; fi
 
 printf '\n%s== five paths then +k ==%s\n' "$DIM" "$RESET"
 MANY="$TMP/many"; mkproj "$MANY"
@@ -203,7 +195,7 @@ RC=$(cmsg 'chore: sneak a law in
 Ruling 4 — amended.')
 if [[ "$RC" == "1" ]] && has "$OUT" 'a stale lock cannot ride along'; then ok "--commit-msg still blocks: the staged lock is stale under a ruling"; else fail "cmsg stale lock" "rc=$RC out=$(cat "$OUT")"; fi
 printf 'Ruling 4 — amended.\n' >> "$G/docs/llm-orchestrator/LAWS.md"
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$G" --lock >/dev/null 2>&1
+relock "$G" >/dev/null 2>&1
 ( cd "$G" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg 'chore: amend the laws
 
@@ -227,7 +219,7 @@ Ruling 5 — later.')
 if [[ "$RC" == "1" ]] && has "$OUT" 'stale lock'; then ok "a well-formed ruling still cannot carry a stale lock (check 1 alone)"; else fail "cmsg check1 isolated" "rc=$RC out=$(cat "$OUT")"; fi
 # Isolated: only check 2 can fail here - the lock is fresh and consistent, the
 # message simply carries no ruling.
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$G" --lock >/dev/null 2>&1
+relock "$G" >/dev/null 2>&1
 ( cd "$G" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg 'chore: a fresh lock but no ruling')
 if [[ "$RC" == "1" ]] && has "$OUT" 'the message carries no numbered ruling'; then ok "a fresh lock still needs a numbered ruling (check 2 alone), and says so"; else fail "cmsg check2 isolated" "rc=$RC out=$(cat "$OUT")"; fi
@@ -370,7 +362,7 @@ printf 'drifted\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
 ( cd "$ARM" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: cadence-init')
 [[ "$RC" == "1" ]] && ok "an arming commit whose staged manifest does not match the staged content is refused" || fail "arming drift" "rc=$RC out=$(cat "$OUT")"
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$ARM" --lock >/dev/null 2>&1
+relock "$ARM" >/dev/null 2>&1
 ( cd "$ARM" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: cadence-init' ) >/dev/null 2>&1
 ( cd "$ARM" && git "${GIT_ID[@]}" rm -q --cached docs/llm-orchestrator/LOCK.sha256 ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: tidy')
@@ -384,15 +376,15 @@ RC=$(cmsg_at "$ARM" 'chore: tidy')
 printf '\n%s== the remedy names only the missing piece ==%s\n' "$DIM" "$RESET"
 RC=$(cmsg_at "$ARM" 'chore: nothing to see')
 printf 'Ruling 6 — later still.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$ARM" --lock >/dev/null 2>&1
+relock "$ARM" >/dev/null 2>&1
 ( cd "$ARM" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: a fresh lock and no ruling')
 if [[ "$RC" == "1" ]] && ! has "$OUT" 're-run --lock'; then ok "a fresh lock with no ruling is not told to re-run --lock"; else fail "remedy over-tells" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'Ruling 7 — unlocked.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
+printf 'Ruling 7 — later again.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
 ( cd "$ARM" && git "${GIT_ID[@]}" add docs/llm-orchestrator/LAWS.md ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: a stale lock
 
-Ruling 7 — unlocked.')
+Ruling 7 — later again.')
 if [[ "$RC" == "1" ]] && has "$OUT" 're-run --lock'; then ok "a stale lock IS told to re-run --lock"; else fail "remedy under-tells" "rc=$RC out=$(cat "$OUT")"; fi
 
 printf '\n%s== --audit grades the revision with the revision ==%s\n' "$DIM" "$RESET"
