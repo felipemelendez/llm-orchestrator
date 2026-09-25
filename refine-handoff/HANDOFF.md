@@ -48,20 +48,21 @@ Dropped by Felipe: T2 (no notice shown to him; the check tells the agent only)
 and T9 (commands stay commands).
 
 **Last known state when the old machine stopped (2026-09-25, evening):**
-- T5 `refine/t5-review-build` head `764fb91`: round 2 found one last
-  catastrophic item (a quote could drop a real bug); the fix removes
-  quote-based drops, and `764fb91` ("Drop a finding only on a passing receipt
-  1…") appears to contain it — confirm. A live Full review with the sandbox
-  was running (`~/.local/state/llm-orchestrator/reviews/…-live2` on the old
-  machine; not portable) — **rerun one live Full review** on the new machine.
-  The Opus round 2 review of T5 was stopped unfinished to save time, so it
-  has not been done: run round 2 with both reviewers (the GPT round 2 report
-  is `reviews/t5-adversarial-report-r2.md`; its one finding is the quote-drop
-  fix above). Then `run-all.sh`, PR, merge.
-- T20 `refine/t20-ruling-command` head `11acdcf` (integration merged in
-  locally; push may be one merge behind): both reviewers' round 2 items are
-  fixed; the Opus reviewer found nothing serious left. Remaining: merge
-  `origin/refine/integration`, `run-all.sh`, PR, merge.
+- T5 `refine/t5-review-build` head `4b934af`: every review finding so far is
+  fixed, including GPT round 2's (quote-based drops removed: a finding is
+  dropped or lowered only on its own passing receipt 1). A live Full review
+  with the Claude sandbox and reduced environment ran on the old machine:
+  NOT-READY, both seats found the planted bug, all three findings reproduced
+  by the script, Claude sandbox confirmed by a new per-launch probe
+  (`sandbox_check`), served models `claude-opus-5-5` and `gpt-6-astra`,
+  0 clones left. **Left:** Opus round 2 review (stopped unfinished; redo),
+  a short GPT confirmation of the latest commits, `test-install-global` on
+  the final commit, `run-all.sh`, PR, merge.
+- T20 `refine/t20-ruling-command`: both reviewers' round 2 items fixed; the
+  Opus reviewer found nothing serious left. `refine/integration` is merged in
+  (CHANGELOG conflict resolved) and pushed; test-ruling-command,
+  test-cadence-check, validate-skills and test-cadence-docs pass after the
+  merge. **Left:** `run-all.sh </dev/null`, PR, merge.
 - T6 `refine/t6-remove-legacy` head `669a55d` (partial; its last, empty
   commit lists done and left). **Done, tests first:** the cadence scripts,
   init, detect, task cleanup and protocol hooks now give one clear error for a
