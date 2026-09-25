@@ -23,24 +23,54 @@
 ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 
 # Resolve policy from the actual project, never from an agent's claimed path
-# selection. Hook cwd wins; CLI callers use their current project directory.
-# Prints "proportional" or "legacy" for a project whose cadence.json has
-# enabled: true, and nothing when the cadence is absent, disabled or unreadable.
+# selection. Every hook that asks "is the cadence on here?" uses these two
+# functions, so they all answer the same way.
+#
+# orch_cadence_root [hook-input-json]: the project root. The hook event's cwd
+# wins, then CLAUDE_PROJECT_DIR, then the current directory; a directory inside
+# a git repository resolves to the repository's top level, so a session
+# launched from a subdirectory finds the root's cadence.json.
+orch_cadence_root() { # [hook-input-json]
+  local dir root
+  dir=$(printf '%s' "${1:-}" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"([^"\\]|\\.)*"' | head -1 \
+        | sed -E 's/^"cwd"[[:space:]]*:[[:space:]]*"//; s/"$//; s/\\(["\\])/\1/g')
+  [[ -n "${dir}" ]] || dir="${CLAUDE_PROJECT_DIR:-${PWD}}"
+  root=$(git -C "${dir}" rev-parse --show-toplevel 2>/dev/null) || root=""
+  [[ -n "${root}" ]] || root="${dir}"
+  printf '%s' "${root%/}"
+}
+
+# orch_protocol_workflow [hook-input-json]: prints "proportional" or "legacy"
+# for a project whose cadence.json has enabled: true, "error" when the file
+# exists but does not decode, and nothing when the cadence is absent or
+# disabled. Only "proportional" and "legacy" mean the cadence is on; "error"
+# lets the session-start verdict report the broken file. Without python3 the
+# file is read with grep instead: it counts as enabled when it contains
+# "enabled": true, and as proportional when it contains
+# "workflow": "proportional".
 orch_protocol_workflow() { # [hook-input-json]
-  python3 - "${1:-}" <<'PYEOF' 2>/dev/null
-import json, os, pathlib, subprocess, sys
+  local cfg
+  cfg="$(orch_cadence_root "${1:-}")/docs/llm-orchestrator/cadence.json"
+  [[ -f "${cfg}" ]] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${cfg}" <<'PYEOF' 2>/dev/null
+import json, sys
 try:
-    event = json.loads(sys.argv[1]) if sys.argv[1] else {}
-    cwd = pathlib.Path(event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve(strict=True)
-    result = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=2)
-    root = pathlib.Path(result.stdout.strip()) if result.returncode == 0 else cwd
-    config = json.loads((root / "docs/llm-orchestrator/cadence.json").read_text())
-    if isinstance(config, dict) and config.get("enabled") is True:
-        print("proportional" if config.get("workflow") == "proportional" else "legacy")
-except (OSError, ValueError, AttributeError, TypeError, subprocess.SubprocessError):
-    pass
+    config = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    print("error")
+    sys.exit(0)
+if isinstance(config, dict) and config.get("enabled") is True:
+    print("proportional" if config.get("workflow") == "proportional" else "legacy")
 PYEOF
+    return 0
+  fi
+  grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "${cfg}" || return 0
+  if grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"' "${cfg}"; then
+    printf 'proportional\n'
+  else
+    printf 'legacy\n'
+  fi
 }
 
 orch_protocol_is_proportional() { # [hook-input-json]

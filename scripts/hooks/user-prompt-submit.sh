@@ -54,8 +54,9 @@ if [[ -f "$PROTOCOL_LIB" ]]; then
   source "$PROTOCOL_LIB"
   WORKFLOW=$(orch_protocol_workflow "$INPUT")
 fi
-# No enabled cadence (or no way to tell): no reply-format rule and no reminder.
-[[ -n "${WORKFLOW}" ]] || exit 0
+# No enabled cadence, a cadence.json that does not decode, or no way to tell:
+# no reply-format rule and no reminder.
+[[ "${WORKFLOW}" == "proportional" || "${WORKFLOW}" == "legacy" ]] || exit 0
 MARKER="orch-turn-nudge"
 [[ "${WORKFLOW}" == "proportional" ]] && MARKER="orch-proportional-nudge"
 if [[ -f "${CANON}" ]]; then
@@ -63,9 +64,9 @@ if [[ -f "${CANON}" ]]; then
 fi
 if [[ -z "${REMINDER}" ]]; then
   if [[ "$MARKER" == "orch-proportional-nudge" ]]; then
-    REMINDER='LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS.'
+    REMINDER='Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", "Status:" unless project instructions set a reply format. End with "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — why". PASS needs checks you ran; applicability never clears failed or required checks.'
   else
-    REMINDER='LLM Orchestrator — open with one header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:", unless project instructions set a reply format. A "Changed:" block REQUIRES a "Verify:" line (real command + its output).'
+    REMINDER='LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. "Changed:" REQUIRES a "Verify:" line (real command + output). Lead with the outcome.'
   fi
 fi
 

@@ -60,9 +60,8 @@ grep -q 'PROTOCOL_MARKER="orch-turn-reminder"' "${ROOT}/scripts/hooks/session-st
   || fail "compact path wiring" "session-start.sh no longer extracts orch-turn-reminder"
 
 printf '\n%s== per-turn nudge is single-sourced and stays small ==%s\n' "$DIM" "$RESET"
-# The ceilings are the nudges' sizes on 2026-09-25, before the "unless project
-# instructions set a reply format" clause was added: the clause may not make the
-# per-turn cost grow.
+# The ceilings are the per-turn budgets. The nudge is paid on every turn in a
+# cadence-enabled project, so it may not grow past them.
 NUDGE_MAX=233
 PNUDGE_MAX=273
 NUDGE=$(awk '/<!-- orch-turn-nudge-start -->/{f=1;next} /<!-- orch-turn-nudge-end -->/{f=0} f' "$CANON")
@@ -113,6 +112,10 @@ printf '\n%s== proportional reminders use actual project policy ==%s\n' "$DIM" "
 PNUDGE=$(awk '/<!-- orch-proportional-nudge-start -->/{f=1;next} /<!-- orch-proportional-nudge-end -->/{f=0} f' "$CANON")
 PBYTES=$(printf '%s' "$PNUDGE" | wc -c | tr -d ' ')
 [[ -n "$PNUDGE" && "$PBYTES" -le "$PNUDGE_MAX" ]] && ok "proportional nudge stays within ${PNUDGE_MAX} bytes (${PBYTES})" || fail "proportional nudge budget" "$PBYTES bytes"
+printf '%s' "$NUDGE" | grep -q 'Lead with the outcome\.' && ok "legacy nudge says to lead with the outcome" || fail "legacy nudge outcome" "missing"
+printf '%s' "$PNUDGE" | grep -q 'applicability never clears failed or required checks' \
+  && ok "proportional nudge says applicability never clears failed or required checks" \
+  || fail "proportional nudge applicability" "missing"
 for n in "$NUDGE" "$PNUDGE"; do
   printf '%s' "$n" | grep -q 'unless project instructions set a reply format' \
     || { fail "nudge yields to the project's format" "a nudge lacks the project-format clause"; break; }
@@ -147,6 +150,42 @@ for proj in "$TMP/project" "$TMP/plain"; do
     fi
   done
 done
+
+printf '\n%s== both hooks decide "enabled" the same way ==%s\n' "$DIM" "$RESET"
+# session-start.sh and user-prompt-submit.sh share orch_protocol_workflow. Each
+# case below must give the same answer from both: the per-turn nudge appears
+# exactly when the session-start reply-format block does.
+FORMAT_MARK='## Reply format in a cadence-enabled project'
+both_hooks() { # <label> <project-dir> <expect on|off> [PATH override]
+  local label="$1" dir="$2" want="$3" path="${4:-$PATH}" raw ctx turn=off start=off
+  raw=$(printf '{"prompt":"x"}' | ( cd "$dir" && env PATH="$path" CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" "$BASH" "${ROOT}/scripts/hooks/user-prompt-submit.sh" ))
+  [[ -n "$raw" ]] && turn=on
+  ctx=$(printf '{"source":"startup"}' | ( cd "$dir" && env PATH="$path" CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$dir" ORCH_HOME="$TMP/home" "$BASH" "${ROOT}/scripts/hooks/session-start.sh" 2>/dev/null ) | extract_ctx)
+  case "$ctx" in *"$FORMAT_MARK"*) start=on ;; esac
+  if [[ "$turn" == "$want" && "$start" == "$want" ]]; then
+    ok "${label}: per-turn and session start both ${want}"
+  else
+    fail "${label}: hooks agree (${want})" "per-turn=${turn} session-start=${start}"
+  fi
+}
+MALFORMED="$TMP/malformed"; mkdir -p "$MALFORMED/docs/llm-orchestrator"
+printf '{"enabled": true, "workflow": "proportional",\n' > "$MALFORMED/docs/llm-orchestrator/cadence.json"
+both_hooks "malformed cadence.json" "$MALFORMED" off
+MCTX=$(printf '{"source":"startup"}' | ( cd "$MALFORMED" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" ) | extract_ctx)
+case "$MCTX" in *"does not decode"*) ok "malformed cadence.json: the session-start verdict still reports the error" ;;
+  *) fail "malformed verdict" "$(printf '%s' "$MCTX" | head -1)" ;; esac
+REPO="$TMP/repo"; mkdir -p "$REPO/docs/llm-orchestrator" "$REPO/sub/dir"
+git -C "$REPO" init -q
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$REPO/docs/llm-orchestrator/cadence.json"
+both_hooks "launched from a subdirectory of an enabled repo" "$REPO/sub/dir" on
+NOPY="$TMP/nopy"; mkdir -p "$NOPY"
+for t in bash sh grep sed awk head tail cat dirname basename git mkdir ls tr cut cmp wc date find sort uname mktemp rm env comm shasum sha256sum openssl od; do
+  p=$(command -v "$t" 2>/dev/null) && ln -sf "$p" "$NOPY/$t"
+done
+ENABLED2="$TMP/enabled2"; mkdir -p "$ENABLED2/docs/llm-orchestrator"
+printf '{"enabled": true, "workflow": "proportional"}\n' > "$ENABLED2/docs/llm-orchestrator/cadence.json"
+both_hooks "python3 missing, enabled project" "$ENABLED2" on "$NOPY"
+both_hooks "python3 missing, plain project" "$TMP/plain" off "$NOPY"
 
 printf '\n%s== the two other carrier surfaces stay aligned ==%s\n' "$DIM" "$RESET"
 CORE=$(awk '/<!-- ORCH:EAGER:START -->/{f=1;next} /<!-- ORCH:EAGER:END -->/{f=0} f' "${ROOT}/skills/using-orchestrator/SKILL.md")
