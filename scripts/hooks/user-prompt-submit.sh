@@ -22,29 +22,11 @@ fi
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-# --- turn boundary --------------------------------------------------------
-# Record when this user turn began. The Stop-hook verify gate asks the evidence
-# ledger "did a verify command run green since this epoch?" — which is how a
-# completion claim gets checked without the model citing anything, and what
-# stops a stale green from an earlier turn counting as evidence for this one.
-# Best-effort: absence just means the gate treats the window as unknown (soft).
-#
-# Guarded on a non-tty stdin. This hook did not read stdin at all before; under
-# the harness it is always piped, but a bare `bash user-prompt-submit.sh` in a
-# terminal (or a test that forgets to redirect) would block in `cat` forever.
-# A hook that can hang is worse than one that learns less.
+# The hook input carries the project's cwd, which decides whether the cadence
+# is enabled. Read it only from a non-tty stdin: a bare `bash
+# user-prompt-submit.sh` in a terminal would otherwise block in `cat` forever.
 INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
-if [[ -n "${INPUT}" && "${ORCH_HOOK_DRY_RUN:-0}" != "1" ]]; then
-  _SID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
-  if [[ -n "${_SID}" ]]; then
-    # The per-turn stamp this used to write belonged to the evidence ledger,
-    # which is gone; nothing reads it any more.
-    _PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
-    # shellcheck source=scripts/lib/orch-project.sh
-    [[ -f "${_PROJ_LIB}" ]] && source "${_PROJ_LIB}"
-  fi
-fi
 
 # The nudge's single source is concise-agent-protocol.md — the marked
 # "Turn nudge" block. Extract it at runtime; the embedded copy below is ONLY the
