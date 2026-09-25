@@ -47,8 +47,11 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 ## Steps
 
 1. **Preflight.** Each CLI the path needs is installed and signed in
-   (`claude auth status --json`, `codex login status`). Every path needs
-   `codex`, because fix experiments run under `codex sandbox` (R10). The
+   (`claude auth status --json`, `codex login status`). Full, and any path
+   whose writer is Codex, needs `codex`. On Standard on Claude Code a
+   missing `codex` does not stop the run; fix experiments then cannot start
+   their sandbox, and R10 applies (the finding is not reproduced and stays
+   blocking). The
    project has a `LAWS.md` with a harm ranking, or the shipped
    `skills/cadence/references/laws.md` template's ranking is used. No
    submodule, checked recursively with `git submodule foreach --recursive
@@ -442,7 +445,8 @@ Verified on 2026-09-25:
 - On macOS, `codex sandbox -P :workspace -C <copy> -- <cmd>` (0.157.0)
   allowed writes inside the copy and the system temporary directory,
   refused a write to `$HOME` ("Operation not permitted"), and refused to
-  start without `-P`.
+  start without `-P`. Under it, `sh -c "curl https://example.com"` failed
+  with curl exit 6 (could not resolve host), so network access is blocked.
 - `claude -p ... --output-format stream-json --verbose` shows each Bash call
   as an assistant `tool_use` block with `input.command`, and its result as a
   user `tool_result` block with the output text and `is_error`. The final
@@ -464,9 +468,8 @@ Not verified:
 - the full R5 flag set together (`--safe-mode`, `--restricted`,
   `--json-schema`, `--allowedTools`); the checks above used a smaller set;
 - what `workspace-write` allows outside `-C`;
-- whether `codex sandbox -P :workspace` also blocks network access;
 - the same sandbox on Linux, where Codex uses a different sandbox
-  mechanism: whether it starts and limits writes the same way. If it does
+  mechanism: whether it starts and limits writes and network the same way. If it does
   not start, R10 applies and the finding is not reproduced;
 - that the agent's shell on Codex allows a 540-second `wait`.
 
