@@ -126,7 +126,7 @@ If multiple skills could apply, use this priority:
 
 ## Dispatching subagents
 
-Read-heavy and specialized work goes to dedicated subagents through the `Agent` tool (`TaskCreate` manages the task list; it dispatches nothing) — each runs in its own fresh context. The exact `subagent_type` names and their models are listed in the Agent tool's agent roster; the dispatch skills (`dispatching-subagents`, `requesting-code-review`, and others) name the specific one to use at each step. The orchestrator does not write subagent prompts inline — it dispatches the declared agents.
+Read-heavy and specialized work goes to dedicated subagents through the `Agent` tool — each runs in its own fresh context. The exact `subagent_type` names and their models are listed in the Agent tool's agent roster; the dispatch skills (`dispatching-subagents`, `requesting-code-review`, and others) name the specific one to use at each step. The orchestrator does not write subagent prompts inline — it dispatches the declared agents.
 
 The roster covers, by role:
 

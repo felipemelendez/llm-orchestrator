@@ -36,12 +36,11 @@ Build N envelopes (`templates/dispatch-prompt.md`), each stating explicitly: rea
    bash "$MAT" "$SID" <slug1> <slug2> <slug3>
    ```
    It prints one `<slug>\t<path>\t<branch>` line per worktree. Non-zero exit → it found a conflict (duplicate slug, existing path/branch, already-claimed slug) and created nothing — do not dispatch. The implementer still self-defends: atomic `.orch-active` mutex on entry, `BLOCKED` if handed neither a worktree nor a shared-checkout declaration.
-3. **`TaskCreate` the set**, mark `in_progress`.
-4. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its printed worktree path, each self-contained.
-5. **Send in parallel, one message. Wait for all N returns** before any follow-up.
-6. **Triage each Status:** `DONE`/`DONE_WITH_CONCERNS` → mark completed, tick the plan checkbox. `BLOCKED` → the recovery tree in `dispatching-subagents` (missing context resumes the same agent via `SendMessage` by agentId — its partial context survives; sibling-wait, decomposition, and model escalation re-dispatch fresh). `NEEDS_CONTEXT` → answer the `Ask:` via `SendMessage`; the resume returns in the background — don't spawn a duplicate while waiting. `PARTIAL` → record `Progress:`, resume with unblocking guidance, or re-dispatch fresh with `Progress:`/`Remaining:` pasted if the transcript shows a retry storm.
-7. **Review** after all are done: per-task spec+code review for high-risk surface, or `/llm-orchestrator:review` on the combined diff for low-risk.
-8. **Merge back with the integration engine — don't merge by hand:**
+3. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its printed worktree path, each self-contained.
+4. **Send in parallel, one message. Wait for all N returns** before any follow-up.
+5. **Triage each Status:** `DONE`/`DONE_WITH_CONCERNS` → tick the plan checkbox. `BLOCKED` → the recovery tree in `dispatching-subagents` (missing context resumes the same agent via `SendMessage` by agentId — its partial context survives; sibling-wait, decomposition, and model escalation re-dispatch fresh). `NEEDS_CONTEXT` → answer the `Ask:` via `SendMessage`; the resume returns in the background — don't spawn a duplicate while waiting. `PARTIAL` → record `Progress:`, resume with unblocking guidance, or re-dispatch fresh with `Progress:`/`Remaining:` pasted if the transcript shows a retry storm.
+6. **Review** after all are done: per-task spec+code review for high-risk surface, or `/llm-orchestrator:review` on the combined diff for low-risk.
+7. **Merge back with the integration engine — don't merge by hand:**
    ```bash
    cd "$(git rev-parse --show-toplevel)"
    INTEG="${CLAUDE_PLUGIN_ROOT:-.}/scripts/orch-worktree-integrate.sh"; [[ -f "$INTEG" ]] || INTEG=".claude/scripts/orch-worktree-integrate.sh"
@@ -62,7 +61,7 @@ Only when the project rules out worktrees. The partition replaces the mutex, and
 
 ## Sizing and cadence
 
-Sweet spot is 3–5 agents; past 8, re-think the decomposition — coordination cost dominates. Review is sequential to implementation, so don't mix parallel writers with parallel reviewers. Don't pause between fan-out and review/merge unless the user is genuinely needed, don't trust a `DONE` without a matching `Verify:`, and keep `TaskUpdate` current or state drifts.
+Sweet spot is 3–5 agents; past 8, re-think the decomposition — coordination cost dominates. Review is sequential to implementation, so don't mix parallel writers with parallel reviewers. Don't pause between fan-out and review/merge unless the user is genuinely needed, don't trust a `DONE` without a matching `Verify:`, and tick plan checkboxes as tasks finish or state drifts.
 
 ## Output shape
 
