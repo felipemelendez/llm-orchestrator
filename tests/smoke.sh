@@ -229,14 +229,12 @@ if should_run hooks; then
 
   # UserPromptSubmit — injects the protocol reminder in an enabled project
   mkdir -p $SMOKE_TMP/enabled/docs/llm-orchestrator
-  printf '{"enabled": true}\n' > $SMOKE_TMP/enabled/docs/llm-orchestrator/cadence.json
+  printf '{"enabled": true, "workflow": "proportional"}\n' > $SMOKE_TMP/enabled/docs/llm-orchestrator/cadence.json
   printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP/enabled" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
   check "UserPromptSubmit emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "UserPromptSubmit reminder mentions the six shape headers" "Changed:" \
             cat $SMOKE_TMP/out.json
-  check_out "UserPromptSubmit requires Verify: in Changed:" "REQUIRE" \
-            cat $SMOKE_TMP/out.json
-  check_out "UserPromptSubmit routes 'best approach' to Plan:" "Plan" \
+  check_out "UserPromptSubmit asks for the Verification: line" "Verification: PASS" \
             cat $SMOKE_TMP/out.json
 
   # PreToolUse guard — blocks --no-verify
@@ -562,7 +560,7 @@ sys.exit(0 if d.get('hookSpecificOutput', {}).get('hookEventName') == 'SessionSt
   fi
 
   mkdir -p $SMOKE_TMP/fmt/docs/llm-orchestrator
-  printf '{"enabled": true}\n' > $SMOKE_TMP/fmt/docs/llm-orchestrator/cadence.json
+  printf '{"enabled": true, "workflow": "proportional"}\n' > $SMOKE_TMP/fmt/docs/llm-orchestrator/cadence.json
   OUT=$(printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP/fmt" ORCH_HOME="$(mktemp -d)" bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys

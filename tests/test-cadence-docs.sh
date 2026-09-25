@@ -76,7 +76,7 @@ done
 # The word "legacy" in shipped text is allowed only in the error that names the
 # fix, in Codex's own name for its older history mode, and in a quote from
 # Anthropic's guidance. Anything else describes the removed workflow.
-LEG=$(grep -rniw legacy "$ROOT/skills" "$ROOT/scripts" "$ROOT/commands" "$ROOT/agents" \
+LEG=$(grep -rIniw legacy "$ROOT/skills" "$ROOT/scripts" "$ROOT/commands" "$ROOT/agents" \
         "$ROOT/templates" "$ROOT/output-styles" "$ROOT/hooks" 2>/dev/null \
       | grep -v 'the legacy workflow was removed' | grep -v 'legacy-history' \
       | grep -v 'legacy harness scaffolding')
@@ -84,7 +84,7 @@ LEG=$(grep -rniw legacy "$ROOT/skills" "$ROOT/scripts" "$ROOT/commands" "$ROOT/a
   || fail "legacy text" "still written in: $(printf '%s\n' "$LEG" | cut -d: -f1,2 | tr '\n' ' ')"
 # A seat's report reaches its caller through SubagentHandback in auto mode;
 # "printed as your final message" alone never arrives there.
-FM=$(grep -rniE 'printed as (your|the) final message' "$ROOT/skills" "$ROOT/agents" \
+FM=$(grep -rIniE 'printed as (your|the) final message' "$ROOT/skills" "$ROOT/agents" \
        "$ROOT/templates" "$ROOT/commands" 2>/dev/null)
 [ -z "$FM" ] && ok "no brief says the report is only printed as the final message" \
   || fail "final-message wording" "still written in: $(printf '%s\n' "$FM" | cut -d: -f1,2 | tr '\n' ' ')"
