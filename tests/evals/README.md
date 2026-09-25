@@ -5,8 +5,9 @@ plugin changes what the agent does, and how the plugin's review compares with th
 built-in ones. Every run is a real model call. Nothing here runs in CI or in
 `tests/run-all.sh`; only the free checks below do.
 
-- `cases/` holds behaviour cases for `claude plugin eval` (Claude Code 2.1.269 or
-  later). Each case runs 8 times with the plugin and 8 times without it.
+- `cases/` holds behaviour cases for `claude plugin eval`. They were checked
+  against Claude Code 2.1.282; the plugin-evals docs name 2.1.269 as the first
+  version with the command, which was not tested here. Each case runs 8 times with the plugin and 8 times without it.
 - `review-compare/` holds small changes with planted defects, and a script that
   runs several reviewers on the same changes and scores them.
 - `results/benchmark.json`, `results/raw.jsonl` and `results/archive/` are the
