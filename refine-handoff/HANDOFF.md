@@ -41,11 +41,27 @@ copies. Keep working from these copies and update them as you go.
 
 ## 3. State of every ticket
 
-Merged into `refine/integration`: T1, T3, T4 (spec), T7, T8, T13, T14, T15,
-T16, T17, T18, T19, T21.
+Merged into `refine/integration`: T1, T3, T4 (spec), T7, T8, T10, T13, T14,
+T15, T16, T17, T18, T19, T21 (PRs #21–#33 and #35).
 
 Dropped by Felipe: T2 (no notice shown to him; the check tells the agent only)
 and T9 (commands stay commands).
+
+**Last known state when the old machine stopped (2026-09-25, evening):**
+- T5 `refine/t5-review-build` head `764fb91`: round 2 found one last
+  catastrophic item (a quote could drop a real bug); the fix removes
+  quote-based drops, and `764fb91` ("Drop a finding only on a passing receipt
+  1…") appears to contain it — confirm. A live Full review with the sandbox
+  was running (`~/.local/state/llm-orchestrator/reviews/…-live2` on the old
+  machine; not portable) — **rerun one live Full review** on the new machine.
+  Then a short confirmation by both reviewers, `run-all.sh`, PR, merge.
+- T20 `refine/t20-ruling-command` head `11acdcf` (integration merged in
+  locally; push may be one merge behind): both reviewers' round 2 items are
+  fixed; the Opus reviewer found nothing serious left. Remaining: merge
+  `origin/refine/integration`, `run-all.sh`, PR, merge.
+- T6 `refine/t6-remove-legacy` head `10c9a50` is a **WIP commit saved by the
+  coordinator**: partial, not reviewed, tests not run. Read its diff, finish
+  the ticket, then Full review.
 
 In progress (each on its branch; check its latest pushed commit first, since
 the agent may have pushed more after this file was written):
@@ -91,19 +107,11 @@ the agent may have pushed more after this file was written):
     and must not depend on any one person's tools. The lock stops accidental
     rule changes, every change shows in the history, and the docs say plainly
     what the lock cannot stop (item 11). Do not ask about signing again.
-- **T10, evaluation set** (`refine/t10-evals`, head `af356e8` or later). Built;
-  nothing paid has run. Review round 1 (one Opus reviewer, Standard path)
-  found 2 serious and 6 mild issues; **all are fixed** (`run-all.sh`: 44 suites
-  pass). Next: a short re-check by one fresh reviewer of the fixes, then PR
-  and merge. It depends on nothing else, but its Full arms refuse to run until
-  T5 is merged.
-  - The smallest run that answers "does Full beat /code-review" is
-    `run --arms full,code-review` on all 83 cases: estimated **$55–$250**. The
-    other arms add about $60–$270. The pilot step in `tests/evals/README.md`
-    checks the unverified parts first (does `/code-review` work under
-    `-p --safe-mode`; does `codex review --uncommitted` take instructions).
-    Bring Felipe this price once T5 is merged. **Never run paid evals yourself.**
-  - The effort arm stays unavailable: reviewers stay at high effort.
+- **T10 is merged** (PR #35). The smallest run that answers "does Full beat
+  /code-review" is `run --arms full,code-review` on all 83 cases, about
+  **$55–$250**, and needs T5 merged first; see `tests/evals/README.md` (pilot
+  step first). Bring Felipe that price after T5 merges. **Never run paid
+  evals yourself.**
 
 Not started (in order):
 - **T6**, remove the legacy procedure: **started** on `refine/t6-remove-legacy`
