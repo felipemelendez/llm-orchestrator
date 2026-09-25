@@ -337,6 +337,9 @@ done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* command
 # thing kept happening beyond security work — a Codex review of this repo's own
 # hook refused an ordinary audit brief as a "cybersecurity risk", and the Fable
 # review route was rate-limited out entirely — so the exception became the rule.
+# Opus 5.5, which `opus` now means, runs the same safety classifiers as Fable
+# (cybersecurity-flagged requests re-run on Opus 4.8), so the classifier reason
+# no longer separates the two; the rate limit and the lower price still do.
 # The agent files are the source of truth; this list follows them.
 while IFS= read -r agent_file; do
   [[ -f "$agent_file" ]] || continue

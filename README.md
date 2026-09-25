@@ -94,7 +94,7 @@ Claude Code ships first-party versions of several things this kit does. This plu
 | Worktrees | Per-agent isolated worktrees | Atomic ownership registry, green-baseline capture, speculative test-gated merge queue |
 | Memory | CLAUDE.md + auto-memory | Write-side classification (`/llm-orchestrator:remember`) and recoverable `/llm-orchestrator:forget` |
 | Planning | Native plan mode | Durable spec/plan artifacts whose checkboxes survive `/clear` |
-| Exploration | Built-in Explore agent | `orch-explorer` as the tools-restricted Fable 5 variant with a `file:line` output contract |
+| Exploration | Built-in Explore agent | `orch-explorer` as a tools-restricted Opus variant with a `file:line` output contract |
 | Fan-out orchestration | `Workflow` tool | The when-to-fan-out policy (`using-workflows`) and ready-made scripts like `workflows/review-diff.js` |
 
 Still exclusively this plugin's ground: the Concise Agent Protocol response shapes, the research gate, TDD and root-cause-first debugging enforcement, and the BLOCKED recovery tree. Full map with the delegation rules: [`docs/anthropic-ecosystem.md`](./docs/anthropic-ecosystem.md).
@@ -182,18 +182,20 @@ Controller (the agent you talk to)
  ├─ orch-code-reviewer       → is it idiomatic, safe, minimal?
  ├─ orch-security-reviewer   → injection, auth, secrets, unsafe deps
  ├─ orch-debugger            → root cause
- └─ orch-explorer            → read-only sweeps (Fable 5 — a scout's false negative silently narrows every downstream decision)
+ └─ orch-explorer            → read-only sweeps
 ```
 
 | Agent                  | Model  | Job                                                                  |
 |------------------------|--------|----------------------------------------------------------------------|
-| `orch-implementer`     | Fable 5 | Executes one plan task with TDD. Returns `Status:` block.            |
-| `orch-spec-reviewer`   | Fable 5 | Stage 1 of review: does the diff match the spec?                     |
-| `orch-code-reviewer`   | Fable 5 | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
-| `orch-debugger`        | Fable 5 | Root-cause investigator. Diagnoses bugs; does not patch them.        |
-| `orch-explorer`        | Fable 5 | Read-only codebase scout. Returns `file:line` refs.                  |
-| `orch-researcher`      | Fable 5 | Verifies external APIs against current sources before any spec.      |
-| `orch-security-reviewer` | Opus  | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. (Deliberately not Fable 5 — its safety classifiers fire on benign security work.) |
+| `orch-implementer`     | Opus   | Executes one plan task with TDD. Returns `Status:` block.            |
+| `orch-spec-reviewer`   | Opus   | Stage 1 of review: does the diff match the spec?                     |
+| `orch-code-reviewer`   | Opus   | Stage 2 of review: is the code correct, safe, idiomatic, minimal?    |
+| `orch-debugger`        | Opus   | Root-cause investigator. Diagnoses bugs; does not patch them.        |
+| `orch-explorer`        | Opus   | Read-only codebase scout. Returns `file:line` refs.                  |
+| `orch-researcher`      | Opus   | Verifies external APIs against current sources before any spec.      |
+| `orch-security-reviewer` | Opus   | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
+
+Every agent sets `model: opus`, which is Opus 5.5 on the Anthropic API. Felipe set this policy on 2026-09-21 after the Fable review route was rate-limited; Opus 5.5 also costs less than half as much per token as Fable ($4/$20 against $10/$50 per million input/output tokens). Opus 5.5 runs the same safety classifiers as Fable, so on either model a request flagged as cybersecurity re-runs on Opus 4.8. Agents set no `effort:` and inherit the session's effort level; a session on Opus 5.5 with no level set runs at `medium`.
 
 The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 
