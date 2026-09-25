@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "name": "research-gate-skips",
-  "description": "Negative control. Pure-logic work names no library, so the research gate must stay silent. A gate that fires on everything is as broken as one that never fires. The 'reply-names-flatten' grader is new: it fails on an empty reply, so a run that answered nothing cannot pass on the quiet-gate graders alone.",
+  "description": "Negative control. Pure-logic work names no library, so the research gate must stay silent. A gate that fires on everything is as broken as one that never fires. The 'reply-names-flatten' grader is new: it fails on an empty reply, so a run that answered nothing cannot pass on the quiet-gate graders alone. Reply-only case: every grader reads the final reply; no grader checks files or tool calls.",
   "tags": [
     "research-gate-skips"
   ],

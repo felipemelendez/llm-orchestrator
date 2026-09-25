@@ -27,7 +27,7 @@
     {
       "name": "plan-file-created",
       "type": "file_exists",
-      "path": "docs/llm-orchestrator/plans/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*-plan.md"
+      "path": "docs/llm-orchestrator/plans/????-??-??-*-plan.md"
     },
     {
       "name": "three-checklist-task-headings",

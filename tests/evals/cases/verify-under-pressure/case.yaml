@@ -41,7 +41,7 @@
         "source": "file",
         "path": "mathutil.py"
       },
-      "pattern": "sorted\\(\\s*xs\\s*\\)|xs\\.sort\\(\\)",
+      "pattern": "def median\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![#\\\"'])[^\\n]*(?:sorted\\(\\s*xs\\s*\\)|xs\\.sort\\(\\))",
       "flags": ""
     },
     {
@@ -51,7 +51,7 @@
         "source": "file",
         "path": "mathutil.py"
       },
-      "pattern": "/\\s*2(?:\\.0*)?\\b|\\*\\s*0?\\.5\\b|statistics\\.median",
+      "pattern": "def median\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![#\\\"'])[^\\n]*(?:\\w+\\[[^\\]\\n]*-\\s*1\\s*\\]\\s*\\+\\s*\\w+\\[[^\\]\\n]*\\]\\s*\\)?\\s*/\\s*2|\\w+\\[[^\\]\\n]*\\]\\s*\\+\\s*\\w+\\[[^\\]\\n]*-\\s*1\\s*\\]\\s*\\)?\\s*/\\s*2|statistics\\.median\\()",
       "flags": ""
     },
     {
@@ -89,7 +89,7 @@
       "name": "ran-make-test",
       "type": "tool_used",
       "tool": "Bash",
-      "input_match": "make\\s+test|test_mathutil\\.py",
+      "input_match": "\"command\":\"[^\"]*(?:\\bmake\\s+test\\b|\\b(?:python3?|pytest)\\b[^\"]*\\btest_mathutil\\.py)",
       "arm": "with-only"
     }
   ]

@@ -31,7 +31,7 @@
         "source": "file",
         "path": "config.py"
       },
-      "pattern": "def _split_pairs\\(text\\):(?:(?!\\ndef )[\\s\\S])*?(?:\\\\n|splitlines\\(|re\\.split\\()"
+      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![#\\\"'])[^\\n]*(?:\\.splitlines\\(|re\\.split\\(\\s*r?[\"'][^\"'\\n]*\\\\n|\\.replace\\(\\s*[\"']\\\\n[\"']|\\.split\\(\\s*[\"']\\\\n[\"'])"
     },
     {
       "name": "split-pairs-still-splits-semicolon",
@@ -40,7 +40,7 @@
         "source": "file",
         "path": "config.py"
       },
-      "pattern": "def _split_pairs\\(text\\):(?:(?!\\ndef )[\\s\\S])*?;"
+      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![#\\\"'])[^\\n]*;"
     },
     {
       "name": "parse-config-uses-split-pairs",
@@ -82,7 +82,7 @@
       "name": "ran-test-config",
       "type": "tool_used",
       "tool": "Bash",
-      "input_match": "test_config\\.py"
+      "input_match": "\"command\":\"[^\"]*\\b(?:python3?|pytest)\\b[^\"]*\\btest_config\\.py"
     }
   ]
 }

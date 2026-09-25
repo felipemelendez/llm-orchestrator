@@ -2,15 +2,16 @@
 """Check every `claude plugin eval` case under tests/evals/cases without a model call.
 
 For each case: case.yaml matches the schema Claude Code 2.1.282 enforces, the
-regexes compile, the scaffold runs, at least one grader fails on the bare
-scaffold (red before), and every file and reply grader passes on the case's
-reference solution (green after). Graders that read the trace (`tool_used`,
-`tool_order`, `trace` targets) cannot be evaluated here and are only
-schema-checked.
+regexes compile, and the scaffold runs in a workspace laid out like the eval's.
+At least one grader must fail on the bare scaffold (red before) and on the
+reference reply without the reference work, and every grader must pass on the
+reference solution (green after). Tool graders are evaluated against the
+reference tool calls: a Write for each file the reference creates or changes,
+plus any calls in reference-tools.json. Only regex graders on `trace` or
+`mock_calls` are left unevaluated.
 """
 from __future__ import annotations
 
-import fnmatch
 import json
 import os
 import pathlib
@@ -134,8 +135,6 @@ def grader_problems(g: dict) -> list[str]:
                 out.append("a file target is {source: file, path: <path>}")
         elif target not in TARGETS:
             out.append(f"unknown target {target!r}")
-        elif target == "files":
-            out.append("use file_exists instead of a regex over the created-file list")
         match = g.get("match", "contains")
         if match not in ("contains", "not_contains") and not re.fullmatch(r"count:\d+", str(match)):
             out.append("match must be contains, not_contains or count:N")
@@ -165,22 +164,58 @@ def scored(g: dict) -> bool:
 
 
 def offline(g: dict) -> bool:
-    """Whether this grader can be evaluated from files and the reply alone."""
-    if g["type"] == "file_exists":
-        return True
-    return g["type"] == "regex" and g.get("target", "last_message") not in ("trace", "mock_calls", "files")
+    """Whether this grader can be evaluated from files, the reply and the reference tool calls."""
+    return not (g["type"] == "regex" and g.get("target", "last_message") in ("trace", "mock_calls"))
 
 
-def evaluate(g: dict, work: pathlib.Path, reply: str, created: list[str]) -> bool:
+def glob_regex(glob: str) -> re.Pattern[str]:
+    """The file_exists glob rule of Claude Code 2.1.282: ** spans directories, * and ? do not
+    cross /, and every other special character, including [ and ], is literal."""
+    out, i = "^", 0
+    while i < len(glob):
+        ch = glob[i]
+        if ch == "*" and glob[i + 1:i + 3] == "*/":
+            out, i = out + "(?:.*/)?", i + 3
+            continue
+        if ch == "*" and glob[i + 1:i + 2] == "*":
+            out, i = out + ".*", i + 2
+            continue
+        out += "[^/]*" if ch == "*" else "." if ch == "?" else re.escape(ch) if ch in ".+^${}()|[]\\" else ch
+        i += 1
+    return re.compile(out + "$")
+
+
+def input_text(value) -> str:
+    """JSON.stringify of a tool input, which is what input_match is tested against."""
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def call_matches(call: dict, spec) -> bool:
+    spec = {"tool": spec} if isinstance(spec, str) else spec
+    if call["name"] != spec["tool"]:
+        return False
+    return "input_match" not in spec or bool(js_regex(spec["input_match"], "").search(input_text(call["input"])))
+
+
+def evaluate(g: dict, work: pathlib.Path, reply: str, created: list[str], calls: list[dict]) -> bool:
     if g["type"] == "file_exists":
-        hit = any(fnmatch.fnmatch(p, g["path"]) for p in created)
+        hit = any(glob_regex(g["path"]).search(p) for p in created)
         return hit == g.get("exists", True)
+    if g["type"] == "tool_used":
+        n = sum(call_matches(c, g) for c in calls)
+        return g.get("min", 1) <= n <= g.get("max", float("inf"))
+    if g["type"] == "tool_order":
+        first = lambda spec: next((i for i, c in enumerate(calls) if call_matches(c, spec)), -1)
+        before, after = first(g["before"]), first(g["after"])
+        return before != -1 and after != -1 and before < after
     target = g.get("target", "last_message")
     if isinstance(target, dict):
         path = work / target["path"]
         if not path.is_file():
             return False
         text = path.read_text(errors="replace")
+    elif target == "files":
+        text = "\n".join(created)
     else:
         text = reply
     found = js_regex(g["pattern"], g.get("flags", "")).findall(text)
@@ -192,54 +227,75 @@ def evaluate(g: dict, work: pathlib.Path, reply: str, created: list[str]) -> boo
     return len(found) == int(match.split(":", 1)[1])
 
 
-def listing(work: pathlib.Path) -> set[str]:
-    return {str(p.relative_to(work)) for p in work.rglob("*")
-            if p.is_file() and ".git" not in p.relative_to(work).parts}
+def listing(work: pathlib.Path) -> dict[str, bytes]:
+    return {str(p.relative_to(work)): p.read_bytes() for p in work.rglob("*") if p.is_file()}
 
 
-def run_script(script: pathlib.Path, work: pathlib.Path, home: pathlib.Path) -> subprocess.CompletedProcess:
-    # The same environment claude plugin eval gives a scaffold script.
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
-           "TMPDIR": str(home), "TERM": "dumb", "GIT_CONFIG_NOSYSTEM": "1"}
+def run_script(script: pathlib.Path, work: pathlib.Path) -> subprocess.CompletedProcess:
+    # The environment claude plugin eval gives a scaffold script.
+    home, root = work.parent, work.parent.parent
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home), "TMPDIR": str(root / "tmp"),
+           "TERM": "dumb", "GIT_CONFIG_NOSYSTEM": "1", "USER_TYPE": "external", "NODE_ENV": "production"}
     return subprocess.run(["bash", str(script)], cwd=work, env=env, capture_output=True,
                           text=True, timeout=120)
 
 
 def staged(case: dict, case_dir: pathlib.Path, tmp: pathlib.Path, label: str) -> pathlib.Path:
-    work, home = tmp / label / "work", tmp / label / "home"
-    work.mkdir(parents=True)
-    home.mkdir(parents=True)
+    """A workspace laid out like the eval's: <root>/home/cwd, a stub .git and .gitconfig in home."""
+    root = tmp / label
+    home, work = root / "home", root / "home" / "cwd"
+    for d in (work, root / "tmp", home / ".git" / "objects", home / ".git" / "refs" / "heads", home / ".git" / "hooks"):
+        d.mkdir(parents=True)
+    (home / ".gitconfig").write_text("[user]\nname = Plugin Eval\nemail = eval@example.invalid\n")
+    (home / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (home / ".git" / "config").write_text("[core]\nrepositoryformatversion = 0\nbare = false\n")
+    (home / ".git" / "commondir").write_text(".\n")
     script = case.get("context", {}).get("scaffold_script")
     if script:
-        r = run_script(case_dir / script, work, home)
+        r = run_script(case_dir / script, work)
         if r.returncode != 0:
             raise RuntimeError(f"scaffold exited {r.returncode}: {r.stderr.strip()[-300:]}")
     return work
 
 
+def reference_calls(case_dir: pathlib.Path, work: pathlib.Path, before: dict, after: dict) -> list[dict]:
+    """A Write call for each file the reference created or changed, then reference-tools.json."""
+    calls = [{"name": "Write", "input": {"file_path": str(work / name),
+                                         "content": after[name].decode(errors="replace")}}
+             for name in sorted(after) if before.get(name) != after[name] and not name.startswith(".git/")]
+    extra = case_dir / "reference-tools.json"
+    return calls + (json.loads(extra.read_text()) if extra.is_file() else [])
+
+
 def behaviour_problems(case: dict, case_dir: pathlib.Path, tmp: pathlib.Path) -> list[str]:
     graders = [g for g in case["graders"] if offline(g)]
     if not any(scored(g) for g in graders):
-        return ["no scored grader reads the reply or the files, so none can be checked here"]
+        return ["no scored grader can be evaluated here"]
+    reference, reply = case_dir / "reference.sh", case_dir / "reference-reply.md"
+    if not (reference.is_file() and reply.is_file()):
+        return ["reference.sh and reference-reply.md are required (green after)"]
+    text = reply.read_text()
     out = []
     try:
         work = staged(case, case_dir, tmp, case_dir.name + "-red")
     except RuntimeError as e:
         return [str(e)]
-    if all(evaluate(g, work, "", []) for g in graders if scored(g)):
+    if all(evaluate(g, work, "", [], []) for g in graders if scored(g)):
         out.append("red before fails: every scored grader already passes on the bare scaffold")
-    reference, reply = case_dir / "reference.sh", case_dir / "reference-reply.md"
-    if not (reference.is_file() and reply.is_file()):
-        return out + ["reference.sh and reference-reply.md are required (green after)"]
+    reply_only = all(g["type"] == "regex" and g.get("target", "last_message") == "last_message"
+                     for g in graders)
+    if not reply_only and all(evaluate(g, work, text, [], []) for g in graders if scored(g)):
+        out.append("every scored grader passes on the reference reply with none of the work done")
     work = staged(case, case_dir, tmp, case_dir.name + "-green")
     before = listing(work)
-    r = run_script(reference, work, work.parent / "home")
+    r = run_script(reference, work)
     if r.returncode != 0:
         return out + [f"reference.sh exited {r.returncode}: {r.stderr.strip()[-300:]}"]
-    created = sorted(listing(work) - before)
-    text = reply.read_text()
+    after = listing(work)
+    created = sorted(set(after) - set(before))
+    calls = reference_calls(case_dir, work, before, after)
     out += [f"green after fails: grader {g['name']!r} fails on the reference solution"
-            for g in graders if not evaluate(g, work, text, created)]
+            for g in graders if not evaluate(g, work, text, created, calls)]
     return out
 
 

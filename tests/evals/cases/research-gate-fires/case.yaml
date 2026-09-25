@@ -54,7 +54,7 @@
     {
       "name": "brief-created",
       "type": "file_exists",
-      "path": "docs/llm-orchestrator/research/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*-brief.md"
+      "path": "docs/llm-orchestrator/research/????-??-??-*-brief.md"
     },
     {
       "name": "brief-has-outcome",

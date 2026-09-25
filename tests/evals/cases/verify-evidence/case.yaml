@@ -1,7 +1,7 @@
 {
   "schema_version": "1.1",
   "name": "verify-evidence",
-  "description": "verification-before-completion: a completion claim must carry the command and its real output, not an assertion. The reply headers apply only in a cadence-enabled project, so the setup enables a proportional cadence with a minimal LAWS.md and a recorded lock, and the evidence line is the proportional 'Verification:' line.",
+  "description": "verification-before-completion: a completion claim must carry the command and its real output, not an assertion. The reply headers apply only in a cadence-enabled project, so the setup enables a proportional cadence with a minimal LAWS.md and a recorded lock, and the evidence line is the proportional 'Verification:' line. Reply-only case: every grader reads the final reply; no grader checks files or tool calls.",
   "tags": [
     "verify-evidence"
   ],

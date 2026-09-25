@@ -47,7 +47,7 @@
       "name": "ran-test-client",
       "type": "tool_used",
       "tool": "Bash",
-      "input_match": "test_client\\.py"
+      "input_match": "\"command\":\"[^\"]*\\b(?:python3?|pytest)\\b[^\"]*\\btest_client\\.py"
     },
     {
       "name": "fact-persisted-in-claude-md",
