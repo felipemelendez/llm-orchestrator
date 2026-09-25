@@ -22,16 +22,17 @@ carries the exact command (as an argv list), the exit code, and the turn it
 belongs to. Nothing the agent wrote is read: not the JavaScript it sent to the
 exec tool, not the text it chose to print from a result. An earlier version
 parsed those and every one of its false passes came from there. The recorded
-command's text is judged the plain way orch-completion-check.py documents,
-its limits (`cmd &`, heredoc bodies, `|| true`, quoted text) included.
+command is judged by orch-completion-check.py's word rules, its limits
+(`cmd &`, `|| true`, `false && cmd`) included.
 
-The label, the fence rule, the command pattern and the note come from
+The label, the fence rule, the command rules and the note come from
 orch-completion-check.py, so both harnesses say the same thing for the same
 reason.
 """
 import importlib.util
 import json
 import os
+import shlex
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -52,11 +53,9 @@ def command_text(value):
         shell = value[0].rsplit("/", 1)[-1]
         if len(value) >= 3 and shell in ("bash", "sh", "zsh", "dash") and value[1] in ("-c", "-lc", "-ic", "-lic"):
             return value[2]
-        # A raw argv runs one program; an argument holding shell punctuation
-        # is data to that program, not a second command.
-        if any(ch in arg for arg in value for ch in ";|&\n"):
-            return None
-        return " ".join(value)
+        # A raw argv runs one program; quoting keeps each argument one word,
+        # so `-m "Fix gate (pytest)"` is data to that program.
+        return shlex.join(value)
     return None
 
 

@@ -63,13 +63,26 @@ Rules:
   block of `orch-completion-check.py`; both harnesses use them. The command
   is read in linear passes, never with a backtracking pattern:
   1. **Words.** Quoted text and backslash escapes join the word they are
-     in. Outside quotes, `;`, `&`, `&&`, `|`, `||`, `(`, `)` and newlines
-     end a segment, and `<`, `>` (with `>&`, `&>`) are redirections that end
-     the word before them. A redirection and its target are not words. If a
-     quote is left open, every quote is read as an ordinary character.
-  2. **Prefixes.** Leading `VAR=value`, `env`, `time`, `timeout N` and
-     `cd dir` are skipped. A prefix with its own options, such as
-     `timeout -k 5 300`, is not.
+     in. Outside quotes:
+     - `;`, `&`, `&&`, `|`, `||`, `(`, `)` and newlines end a segment.
+     - A redirection ends the word before it and is dropped together with
+       its target word: `<`, `>`, `>>`, `<>`, `>|`, `<&`, `>&`, `&>`,
+       `&>>`, `<<<`, each optionally after a descriptor number (`2>`,
+       `2>&1`, `0<`). So `2>/dev/null pytest` reads as `pytest`.
+     - `<<WORD`, `<<'WORD'` and `<<-WORD` start a heredoc: its body, from
+       the next line up to the line that is exactly `WORD` (after leading
+       tabs for `<<-`), is skipped, so a body line is never read as a
+       command. With no such line the rest of the command is skipped.
+     - A `#` that starts a word starts a comment, which runs to the end of
+       the line.
+     If a quote is left open, every quote is read as an ordinary character.
+  2. **Prefixes.** Leading `VAR=value` words are skipped, and so are these
+     programs with the options listed for each and their plain arguments:
+     `env` (`-i`, `-u NAME`, `-C DIR`, `-0`, `-v`), `time` (`-p`),
+     `timeout DURATION` (`-k N`, `-s SIG`, `--signal=SIG`,
+     `--preserve-status`, `--foreground`, `-v`) and `cd DIR` (`-L`, `-P`).
+     An option not listed stops the skipping, so the segment is not read as
+     a check.
   3. **Wrapper.** If the segment starts with `aws-vault exec`, `doppler run`,
      `op run`, `dotenvx run`, `infisical run` or `mise exec`, everything up
      to and including its first `--` is skipped, and prefixes again. With no
@@ -81,7 +94,12 @@ Rules:
      `hatch run`, `rye run` and `bundle exec` are skipped with the options
      listed for each (and the value of each option that takes one), then an
      optional `--`. An option not on the list means the segment is not a
-     check. `npm`, `pnpm`, `yarn` and `bun` are read the same way; after
+     check. For `npx` and `npm exec`, `-c CMD` / `--call CMD` names a
+     command, and that command is judged by these same rules (nested up to
+     three deep). The option lists come from npm 11's and uv's own help;
+     npx's `-p` is `--package`, while npm's `-p` is `--parseable` and is not
+     accepted after `npm exec`. The lists for pnpm, yarn and bun come from
+     their published documentation, not a local run. `npm`, `pnpm`, `yarn` and `bun` are read the same way; after
      their options must come a check script (`test`, `t`, `tests`, `lint`,
      `typecheck`, `check`, or one of them followed by `:` or `-`, such as
      `test:unit`), `run <script>`, `exec`/`dlx` as above,
@@ -110,13 +128,23 @@ Rules:
   6. **Printing only.** A segment with `--version`, `--help`, `-h`, `-V`,
      `--collect-only`, `--dry-run`, `--list-tests`, `--list`,
      `--show-config`, `--co`, `--print-config` or `--why` is not a check.
+     Nor is a runner given one of its own dry-run or skip options:
+     `make` with `-n`, `--just-print`, `--recon`, `-q` or `--question`;
+     `just -n`; `cargo --no-run`; `gradle`/`gradlew -m`; `mvn -DskipTests`
+     or `-Dmaven.test.skip` (bare or `=true`). An option combined with
+     others (`make -kn test`) is not recognised.
 - When the project's `docs/llm-orchestrator/cadence.json` sets
-  `runner.test_cmd`, a command also passes when its words start with the
-  words of `test_cmd`. It is tried on the whole command and again after each
-  leading prefix (`cd /repo &&`, `FOO=1`, `env`, `time`, `timeout N`), so a
-  `test_cmd` holding `&&` still matches, and on each segment after its
-  prefixes. Because it compares words, `bin/suite --fast</dev/null` starts
-  with `bin/suite --fast` and `bin/suite --fastest` does not. The project
+  `runner.test_cmd`, a command also passes when the words and operators of
+  `test_cmd`, read by step 1, appear in the command's, starting where a
+  segment's command may start: at the segment's first word or after any of
+  its prefixes or a named wrapper's `--` (steps 2 and 3). So `cd /repo &&
+  cd app && ./check -q` matches `cd app && ./check`, and
+  `aws-vault exec p -- bin/suite --fast` matches `bin/suite --fast`.
+  Redirections are dropped on both sides, so `bin/suite --fast</dev/null`
+  and `bin/suite 2>/dev/null --fast` match `bin/suite --fast`, and
+  `bin/suite --fastest` does not. A segment the match touches that asks
+  only to print (step 6) cancels it. The search is Knuth-Morris-Pratt over
+  the words, so it is linear however long both commands are. The project
   is the payload's `cwd`, else `CODEX_PROJECT_DIR`, else the hook's working
   directory; on Claude Code it is `CLAUDE_PROJECT_DIR`, else the working
   directory. Unverified: that a live Codex sends the project root as `cwd`
@@ -127,8 +155,9 @@ Rules:
   `test_cmd`, leaves only the lists.
 - A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
-  one program, so it is joined with spaces only when no argument holds shell
-  punctuation.
+  one program, so it is joined with `shlex.join`, which quotes each
+  argument. `["git","commit","-m","Fix gate (pytest)"]` stays one program
+  with one message.
 - On Claude Code the harness records a launch and a finish differently, and
   the check tells them apart from the record alone: a Bash call made with
   `run_in_background`, or whose result is the launch acknowledgement
@@ -144,24 +173,32 @@ Rules:
 
 ## Limits, by construction
 
-The check reads what the harness recorded and the command's text the plain
-way above. These shapes get past it, on both harnesses, and stay that way on
-purpose:
+The check reads what the harness recorded and the command's words the way
+above. It catches the careless false claim, not deliberate faking
+(ARCHITECTURE.md Layer 7). These shapes get past it, on both harnesses, and
+stay out of scope on purpose:
 
-- `npm test &`: the shell reports 0 as soon as the check is launched.
-- A check named only inside a heredoc body: each body line is read as a
-  command.
-- `npm test || true`, or any other masking of the exit code.
+- `pytest &`: the shell reports 0 as soon as the check is launched.
+- `pytest || true`, or any other masking of the exit code.
+- `false && pytest; true`: the check is named in a segment that never ran;
+  the check does not follow which segments the shell runs.
+- `pytest() { :; }` then `pytest`: a shell function or alias with a
+  runner's name.
+- `echo $((pytest))`: text inside `$(( ))`, `$( )` or backticks is not
+  told apart from a command.
+- A quote left open anywhere in the command: every quote is then read as
+  an ordinary character, so quoted text can be read as words.
+- `bash <<EOF` with a check in the body: heredoc bodies are skipped, so
+  this honest run is not seen and the agent is sent back once.
 - A line appended to the log by hand; the log is the harness's.
 
-Each is a disguise, and the laws leave honesty to the agent: the check
-catches the careless false claim, not the deliberate one. The word split
-above only finds which program a segment runs. Earlier versions also tried to
-judge these shapes (heredoc and background rules), and every rule mis-judged
-an honest command somewhere else: `2>&1` read as a background `&`, a
-multi-line quoted argument read as an unbalanced line, a here-string read as
-a heredoc. A note that is wrong gets ignored, which is worse than no note. Do
-not add them back; `orch-completion-check.py`'s docstring says the same.
+The laws leave honesty to the agent. The word split above only finds which
+program a segment runs. Earlier versions also tried to judge what the shell
+does with the result (background and exit-code rules), and every rule
+mis-judged an honest command somewhere else: `2>&1` read as a background
+`&`, a multi-line quoted argument read as an unbalanced line. A note that is
+wrong gets ignored, which is worse than no note. Do not add those rules;
+`orch-completion-check.py`'s docstring says the same.
 
 A Codex build from before these records existed (July 2026 and earlier)
 writes none, so on such a build every PASS is sent back once.

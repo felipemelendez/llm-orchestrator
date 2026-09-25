@@ -106,7 +106,7 @@ Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or
   `aws-vault exec profile -- pytest`, `bash tests/...` and the like. A
   command that starts with the project's `runner.test_cmd` from
   `docs/llm-orchestrator/cadence.json` also counts. A check hidden in a
-  background job, a heredoc or behind `|| true` slips past on purpose. It
+  background job, behind `|| true` or after `false &&` slips past on purpose. It
   catches careless claims, not deliberate disguises.
 - It reads Codex's session log, which Codex says is not a stable format. If a
   future Codex stops writing command records, every PASS will be sent back once

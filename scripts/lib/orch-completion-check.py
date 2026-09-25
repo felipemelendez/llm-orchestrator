@@ -13,16 +13,18 @@ harness's launch acknowledgement ("Command running in background with ID:"),
 is a launch, not a finish.
 
 The command is split into words only to find which program a segment runs:
-quotes and escapes join a word, operators outside quotes end a segment. It
-does not judge what the shell would do with the result. Limits, by
-construction, the same on both harnesses: `npm test &` (the shell reports 0
-before the check has finished), a check named only inside a heredoc body, and
-`npm test || true` are all accepted. Those are disguises. The laws leave
-honesty to the agent: this check catches the careless false claim, not the
-deliberate one. Earlier versions tried to judge them (heredoc and background
-rules) and every rule mis-judged an honest command somewhere else: `2>&1`, a
-multi-line quoted argument, a here-string. Do not add those rules back; a
-note that is wrong gets ignored, which is worse than no note.
+quotes and escapes join a word, operators outside quotes end a segment,
+redirections, comments and heredoc bodies are dropped. It does not judge what
+the shell would do with the result. Limits, by construction, the same on both
+harnesses: `npm test &` (the shell reports 0 before the check has finished),
+`npm test || true`, `false && npm test`, a shell function named like a
+runner, and text inside `$(( ))` are all accepted; the spec lists them. Those
+are disguises. The laws leave honesty to the agent: this check catches the
+careless false claim, not the deliberate one. Earlier versions tried to judge
+them (background and exit-code rules) and every rule mis-judged an honest
+command somewhere else: `2>&1`, a multi-line quoted argument. Do not add
+those rules back; a note that is wrong gets ignored, which is worse than no
+note.
 
 What it does NOT catch, on purpose: a green run that tested nothing, a suite
 that does not cover the change, and anything deliberately dressed up to look
@@ -100,7 +102,7 @@ def configured_test_cmd(project):
 # --- Which commands count as a check -------------------------------------
 #
 # The lists below are the whole definition; docs/specs/codex-completion-check.md
-# describes them. A command is read in three linear passes and never with a
+# describes them. A command is read in linear passes and never with a
 # backtracking pattern: split into words and operators, cut into segments at
 # the operators, then read each segment's words from the left.
 
@@ -118,6 +120,15 @@ SUBCOMMANDS = {
     "task": ("test", "tests", "check", "lint", "typecheck", "ci", "verify"),
     "dotnet": ("test",), "swift": ("test",), "bazel": ("test",), "deno": ("test", "check", "lint"),
 }
+# Options that make one of those runners plan or skip the check instead of
+# running it: `make -n test`, `cargo test --no-run`, `mvn -DskipTests test`.
+DRY_RUNS = {
+    "make": ("-n", "--just-print", "--dry-run", "--recon", "-q", "--question"),
+    "just": ("-n", "--dry-run"),
+    "cargo": ("--no-run",),
+    "gradle": ("-m", "--dry-run"), "gradlew": ("-m", "--dry-run"),
+    "mvn": ("-DskipTests", "-Dmaven.test.skip"),
+}
 # `python -m <module>` runs a check for these modules.
 PY_MODULES = ("pytest", "unittest", "tox", "mypy", "ruff", "flake8")
 # package.json scripts that are checks: `npm test`, `pnpm run lint`, `yarn test:unit`.
@@ -126,138 +137,187 @@ SCRIPTS = ("t", "test", "tests", "lint", "typecheck", "check")
 TEST_SCRIPT = re.compile(r"(?:\./)?tests?/[A-Za-z0-9._/-]*\.(?:sh|py)|\./[A-Za-z0-9._-]*(?:test|check)[A-Za-z0-9._-]*\.sh")
 PYTHON = re.compile(r"python[0-9.]*")
 
+# Words skipped before the command proper: the options each takes that have a
+# value, those that do not, and how many plain words follow (`timeout 300`,
+# `cd dir`). `VAR=value` words are skipped too.
+PREFIXES = {
+    "env": ({"-u", "--unset", "-C", "--chdir"}, {"-i", "--ignore-environment", "-0", "--null", "-v", "--debug"}, 0),
+    "time": (set(), {"-p"}, 0),
+    "timeout": ({"-k", "--kill-after", "-s", "--signal"}, {"--preserve-status", "--foreground", "-v", "--verbose"}, 1),
+    "cd": (set(), {"-L", "-P"}, 1),
+}
 # Programs that end their own options with `--` and run what follows the
 # first `--`. A project with another wrapper names its command in test_cmd.
 WRAPPERS = (("aws-vault", "exec"), ("doppler", "run"), ("op", "run"),
             ("dotenvx", "run"), ("infisical", "run"), ("mise", "exec"))
 
 # Programs that run a project's copy of a runner: the words that name them,
-# the options they accept that take a value, and those that do not. Any
-# other option means the command is not read as a check.
+# their options that take a value, those that do not, and those whose value
+# is itself a command to judge (`npx -c "vitest run"`). Any other option
+# means the command is not read as a check. From npm 11 and uv's own help;
+# pnpm, yarn and bun from their documentation.
+NPM_PLAIN = {"-y", "--yes", "--no", "-q", "--quiet", "-s", "--silent", "--ws", "--workspaces",
+             "--include-workspace-root"}
 FRONTS = {
-    ("npx",): ({"-p", "--package", "-c", "--call"}, {"-y", "--yes", "--no", "--no-install", "-q", "--quiet"}),
-    ("bunx",): (set(), {"--bun"}),
-    ("npm", "exec"): ({"-p", "--package", "-w", "--workspace"}, {"-y", "--yes", "--no", "-ws", "--workspaces"}),
-    ("pnpm", "exec"): ({"--filter", "-F", "-C", "--dir"}, {"-r", "--recursive", "--parallel"}),
-    ("pnpm", "dlx"): (set(), set()),
-    ("yarn", "exec"): (set(), set()),
-    ("yarn", "dlx"): (set(), set()),
-    ("uv", "run"): ({"--with", "--python", "-p", "--project", "--directory", "--package", "--extra", "--group"},
-                    {"--frozen", "--locked", "--no-sync", "--isolated", "--all-extras", "-q", "--quiet"}),
-    ("poetry", "run"): (set(), set()),
-    ("pipenv", "run"): (set(), set()),
-    ("hatch", "run"): (set(), set()),
-    ("rye", "run"): (set(), set()),
-    ("bundle", "exec"): (set(), set()),
+    # npx's -p is --package; npm's own -p is --parseable.
+    ("npx",): ({"-p", "--package", "-w", "--workspace"}, NPM_PLAIN, {"-c", "--call"}),
+    ("npm", "exec"): ({"--package", "-w", "--workspace"}, NPM_PLAIN, {"-c", "--call"}),
+    ("bunx",): ({"-p", "--package"}, {"--bun"}, set()),
+    ("pnpm", "exec"): ({"--filter", "-F", "-C", "--dir", "--resume-from"}, {"-r", "--recursive", "--parallel"}, set()),
+    ("pnpm", "dlx"): ({"--package"}, {"-s", "--silent"}, set()),
+    ("yarn", "exec"): (set(), set(), set()),
+    ("yarn", "dlx"): ({"-p", "--package"}, {"-q", "--quiet"}, set()),
+    ("uv", "run"): ({"--with", "-w", "--with-editable", "--with-requirements", "--python", "-p", "--project",
+                     "--directory", "--package", "--extra", "--group"},
+                    {"--frozen", "--locked", "--no-sync", "--isolated", "--all-extras", "-q", "--quiet"}, set()),
+    ("poetry", "run"): (set(), set(), set()),
+    ("pipenv", "run"): (set(), set(), set()),
+    ("hatch", "run"): (set(), set(), set()),
+    ("rye", "run"): (set(), set(), set()),
+    ("bundle", "exec"): (set(), set(), set()),
 }
+FRONT_KEYS = {}
+for _key in FRONTS:
+    FRONT_KEYS.setdefault(_key[0], []).append(_key)
 # Package managers: their options, and whether a runner may follow directly
 # (`pnpm vitest`). After the options comes a check script, `run <script>`,
 # one of the FRONTS above, `yarn workspace <name> ...`, or (where allowed) a
 # runner. Anything else is one of its own subcommands (`add`, `why`, ...).
 MANAGERS = {
-    "npm": ({"--prefix", "-w", "--workspace"}, {"-s", "--silent", "-ws", "--workspaces", "--if-present"}, False),
+    "npm": ({"--prefix", "-C", "-w", "--workspace"}, NPM_PLAIN | {"--if-present"}, False),
     "pnpm": ({"--filter", "-F", "-C", "--dir", "--reporter", "--loglevel"},
              {"-r", "--recursive", "-w", "--workspace-root", "-s", "--silent", "--parallel", "--stream"}, True),
-    "yarn": ({"--cwd"}, {"-W", "--ignore-workspace-root-check", "-s", "--silent"}, True),
+    "yarn": ({"--cwd"}, {"--silent"}, True),
     "bun": (set(), set(), False),
 }
 
-# An option that makes a runner only print (`pytest --version`), not run.
+# An option that makes any runner only print (`pytest --version`), not run.
 PRINTS_ONLY = re.compile(r"--version|--help|-h|-V|--collect-only|--collectOnly|--dry-?[Rr]un|"
                          r"--list-?[Tt]ests?|--list|--show-?config|--co|--print-?config|--why")
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=.*", re.S)
+# How deep `npx -c "npx -c '...'"` is followed.
+MAX_DEPTH = 3
 
-# One pass over the text. Quoted text and escapes join the word they are in;
-# `;` `&` `|` `(` `)` and newlines outside quotes end a segment; `<` and `>`
-# outside quotes are redirections and end the word before them.
-PIECE = re.compile(r"""'[^']*'|"(?:[^"\\]|\\[\s\S])*"|\\[\s\S]|[ \t\r]+|&&|\|\||&>+|[<>]+&?|[;&|()\n]|[^\s'"\\;&|()<>]+|['"\\]""")
-PLAIN = re.compile(r"""[ \t\r]+|&&|\|\||&>+|[<>]+&?|[;&|()\n]|[^\s;&|()<>]+""")
+# The pieces of a command. Quoted text and escapes join the word they are in;
+# `;` `&` `&&` `|` `||` `(` `)` and newlines outside quotes are operators; a
+# redirection (`>`, `2>`, `2>&1`, `&>`, `<<EOF`) is dropped with its target.
+_REDIRECT = r"&>>?|[0-9]*(?:<<<|<<-|<<|>>|<>|<&|>&|>\||<|>)"
+PIECE = re.compile(r"""'[^']*'|"(?:[^"\\]|\\[\s\S])*"|\\[\s\S]|[ \t\r]+|&&|\|\||""" + _REDIRECT
+                   + r"""|[;&|()\n]|[^\s'"\\;&|()<>]+|['"\\]""")
+# The same with quotes read as ordinary characters, for a quote left open.
+PLAIN = re.compile(r"[ \t\r]+|&&|\|\||" + _REDIRECT + r"|[;&|()\n]|[^\s;&|()<>]+")
 OPERATORS = frozenset(("&&", "||", ";", "&", "|", "(", ")", "\n"))
 
 
-def tokens(text):
-    """(kind, text) pairs: kind "w" a word, "r" a redirection, "o" an operator.
-    An unbalanced quote makes every quote an ordinary character."""
-    out = []
-    for pattern in (PIECE, PLAIN):
-        out, word, broken = [], None, False
-        for match in pattern.finditer(text):
-            piece = match.group()
-            first = piece[0]
-            if first in " \t\r":
-                kind = "space"
-            elif piece in OPERATORS:
-                kind = "o"
-            elif first in "<>" or piece.startswith("&>"):
-                kind = "r"
-            elif pattern is PIECE and piece in ("'", '"', "\\"):
-                broken = True
-                break
-            else:
-                if pattern is PIECE:
-                    if first == "'":
-                        piece = piece[1:-1]
-                    elif first == '"':
-                        piece = re.sub(r'\\([\\"$`\n])', lambda m: "" if m.group(1) == "\n" else m.group(1), piece[1:-1])
-                    elif first == "\\":
-                        piece = "" if piece[1] == "\n" else piece[1]
-                word = (word or "") + piece
-                continue
-            if word is not None:
-                out.append(("w", word))
-                word = None
-            if kind != "space":
-                out.append((kind, piece))
-        if not broken:
-            if word is not None:
-                out.append(("w", word))
-            return out
+def _unquote(piece):
+    first = piece[0]
+    if first == "'":
+        return piece[1:-1]
+    if first == '"':
+        return re.sub(r'\\([\\"$`\n])', lambda m: "" if m.group(1) == "\n" else m.group(1), piece[1:-1])
+    if first == "\\":
+        return "" if piece[1] == "\n" else piece[1]
+    return piece
+
+
+def _read(text, pattern):
+    """Words and operators as a list: a word is a str, an operator a 1-tuple.
+    None when a quote is left open."""
+    out, word, pos, end = [], None, 0, len(text)
+    drop = False            # the next word is a redirection's target
+    heredoc = None          # a `<<` redirection's tab rule, until its word ends
+    pending = []            # heredoc (terminator, strip tabs) whose body is next
+
+    def flush():
+        nonlocal word, drop, heredoc
+        if word is not None:
+            if heredoc is not None:
+                pending.append((word, heredoc))
+                heredoc = None
+            if not drop:
+                out.append(word)
+            drop, word = False, None
+
+    while pos < end:
+        match = pattern.match(text, pos)
+        piece, pos = match.group(), match.end()
+        first = piece[0]
+        if pattern is PIECE and piece in ("'", '"', "\\"):
+            return None
+        if first in " \t\r":
+            flush()
+        elif piece in OPERATORS:
+            flush()
+            drop, heredoc = False, None
+            out.append((piece,))
+            if piece == "\n" and pending:
+                pos = _after_heredocs(text, pos, pending)
+                pending = []
+        elif first in "<>&" or (first.isdigit() and piece.lstrip("0123456789")[:1] in ("<", ">")):
+            if first.isdigit() and word is not None:
+                word += piece[:len(piece) - len(piece.lstrip("0123456789"))]
+            flush()
+            bare = piece.lstrip("0123456789")
+            drop = True
+            if bare in ("<<", "<<-"):
+                heredoc = bare == "<<-"
+        elif first == "#" and word is None:
+            newline = text.find("\n", pos)
+            pos = end if newline < 0 else newline
+        else:
+            word = (word or "") + (_unquote(piece) if pattern is PIECE else piece)
+    flush()
     return out
+
+
+def _after_heredocs(text, pos, pending):
+    """Position after the bodies of the heredocs started on the line just read."""
+    end = len(text)
+    for terminator, strip_tabs in pending:
+        while pos < end:
+            newline = text.find("\n", pos)
+            stop = end if newline < 0 else newline
+            line = text[pos:stop]
+            pos = stop + 1 if newline >= 0 else end
+            if (line.lstrip("\t") if strip_tabs else line) == terminator:
+                break
+    return pos
+
+
+SPECIAL = re.compile(r"""['"\\#<>]""")
+SPLIT = re.compile(r"(&&|\|\||[;&|()\n])")
+
+
+def tokens(text):
+    """Words and operators of a command (see _read). Text with no quote,
+    escape, comment or redirection is split directly, which is faster."""
+    if not SPECIAL.search(text):
+        out = []
+        for index, part in enumerate(SPLIT.split(text)):
+            if index % 2:
+                out.append((part,))
+            else:
+                out.extend(part.split())
+        return out
+    read = _read(text, PIECE)
+    return read if read is not None else _read(text, PLAIN)
 
 
 def segments(toks):
-    """The tokens between operators."""
-    current = []
-    for token in toks:
-        if token[0] == "o":
-            yield current
-            current = []
+    """The words between operators, with the index of each segment's first
+    token in toks."""
+    start, current = 0, []
+    for index, token in enumerate(toks):
+        if isinstance(token, tuple):
+            yield start, current
+            start, current = index + 1, []
         else:
             current.append(token)
-    yield current
-
-
-def words_of(segment):
-    """A segment's words, without redirections and their targets."""
-    out, skip = [], False
-    for kind, text in segment:
-        if kind == "r":
-            skip = True
-        elif skip:
-            skip = False
-        else:
-            out.append(text)
-    return out
-
-
-def skip_lead(items, word=lambda item: item):
-    """Index past the leading `VAR=value`, `env`, `time`, `timeout N`, `cd dir`."""
-    i = 0
-    while i < len(items):
-        w = word(items[i])
-        if w is None:
-            break
-        if ASSIGNMENT.match(w) or w in ("env", "time"):
-            i += 1
-        elif w in ("timeout", "cd"):
-            i += 2
-        else:
-            break
-    return i
+    yield start, current
 
 
 def skip_options(words, i, valued, plain):
-    """Index past known options; None at an option the front does not know."""
+    """Index past known options; None at an option the program does not know."""
     while i < len(words):
         w = words[i]
         if w in valued:
@@ -275,6 +335,33 @@ def base(word):
     return word.rsplit("/", 1)[-1]
 
 
+def starts(words):
+    """Where the command proper may start: 0, then after each leading prefix,
+    then after a named wrapper's first `--` and the prefixes after it. None
+    when a wrapper has no `--`."""
+    out, i, wrapped = [0], 0, False
+    while i < len(words):
+        w = words[i]
+        if "=" in w and ASSIGNMENT.match(w):
+            i += 1
+        elif w in PREFIXES:
+            valued, plain, positional = PREFIXES[w]
+            j = skip_options(words, i + 1, valued, plain)
+            if j is None:
+                break
+            i = j + positional
+        elif not wrapped and tuple(words[i:i + 2]) in WRAPPERS:
+            try:
+                i = words.index("--", i + 2) + 1
+            except ValueError:
+                return None
+            wrapped = True
+        else:
+            break
+        out.append(min(i, len(words)))
+    return out
+
+
 def is_script(word):
     return word in SCRIPTS or any(word.startswith(s + ":") or word.startswith(s + "-")
                                   for s in SCRIPTS if s != "t")
@@ -288,6 +375,10 @@ def is_runner(words, i):
     if name in TOOLS or TEST_SCRIPT.fullmatch(words[i]):
         return True
     if name in SUBCOMMANDS:
+        dry = DRY_RUNS.get(name, ())
+        if any(w in dry or w.split("=", 1)[0] in dry and w.split("=", 1)[1] in ("", "true")
+               for w in words[i + 1:]):
+            return False
         j = i + 1
         if name == "mvn":
             while j < len(words) and words[j].startswith("-"):
@@ -301,16 +392,32 @@ def is_runner(words, i):
     return False
 
 
-def after_front(words, j, key):
+def after_front(words, j, key, depth):
     """words[j:] follow the FRONTS entry `key`: skip its options, then a
-    runner must come next."""
-    j = skip_options(words, j, *FRONTS[key])
-    if j is not None and j < len(words) and words[j] == "--":
-        j += 1
-    return j is not None and is_runner(words, j)
+    runner must come next, or the command an option names must run a check."""
+    valued, plain, command = FRONTS[key]
+    while j < len(words):
+        w = words[j]
+        name, equals, value = w.partition("=")
+        if w in command:
+            return j + 1 < len(words) and runs_a_check(words[j + 1], depth + 1)
+        if name in command and equals:
+            return runs_a_check(value, depth + 1)
+        if w in valued:
+            j += 2
+        elif w in plain or (name in valued and equals):
+            j += 1
+        elif w == "--":
+            j += 1
+            break
+        elif w.startswith("-"):
+            return False
+        else:
+            break
+    return is_runner(words, j)
 
 
-def manager(words, i):
+def manager(words, i, depth):
     """words[i:] starts with a package manager: judge what it runs."""
     name = base(words[i])
     valued, plain, direct = MANAGERS[name]
@@ -324,72 +431,90 @@ def manager(words, i):
         if w in ("run", "run-script"):
             return j + 1 < len(words) and is_script(words[j + 1])
         if (name, w) in FRONTS:
-            return after_front(words, j + 1, (name, w))
+            return after_front(words, j + 1, (name, w), depth)
         if name == "yarn" and w == "workspace":
             i = j + 1           # `yarn workspace web jest`: read on after the name
             continue
         return direct and is_runner(words, j)
 
 
-def segment_is_check(words):
-    """One segment's words run a check, and not only to print."""
-    if any(PRINTS_ONLY.fullmatch(w) for w in words):
+def prints_only(words):
+    return any(PRINTS_ONLY.fullmatch(w) for w in words if w[:1] == "-")
+
+
+def segment_is_check(words, depth=0, positions=None, printing=None):
+    """One segment's words run a check, and not only to print. positions and
+    printing, when given, are starts(words) and prints_only(words)."""
+    if prints_only(words) if printing is None else printing:
         return False
-    i = skip_lead(words)
-    for wrapper in WRAPPERS:
-        if i < len(words) and tuple(words[i:i + 2]) == wrapper:
-            try:
-                i = words.index("--", i + 2) + 1
-            except ValueError:
-                return False
-            i += skip_lead(words[i:])
-            break
-    if i >= len(words):
+    if positions is None:
+        positions = starts(words)
+    if positions is None or positions[-1] >= len(words):
         return False
+    i = positions[-1]
     first = base(words[i])
-    for key in FRONTS:
+    for key in FRONT_KEYS.get(first, ()):
         if (first,) + tuple(words[i + 1:i + len(key)]) == key:
-            return after_front(words, i + len(key), key)
+            return after_front(words, i + len(key), key, depth)
     if first in MANAGERS:
-        return manager(words, i)
+        return manager(words, i, depth)
     return is_runner(words, i)
 
 
-def lead_step(toks, i):
-    """Index past one leading prefix of a whole command (`cd x &&` included),
-    or None when there is none."""
-    kind, word = toks[i] if i < len(toks) else ("", "")
-    if kind != "w":
-        return None
-    if ASSIGNMENT.match(word) or word in ("env", "time"):
-        return i + 1
-    if word in ("timeout", "cd"):
-        i += 2
-        return i + 1 if i < len(toks) and toks[i][1] in ("&&", ";") else i
-    return None
+def runs_a_check(text, depth=0):
+    """Some segment of text runs a check."""
+    return depth <= MAX_DEPTH and any(segment_is_check(words, depth) for _, words in segments(tokens(text)))
+
+
+def _occurrences(toks, want):
+    """Start indexes of want inside toks, by Knuth-Morris-Pratt: linear."""
+    fail, k = [0] * len(want), 0
+    for i in range(1, len(want)):
+        while k and want[i] != want[k]:
+            k = fail[k - 1]
+        if want[i] == want[k]:
+            k += 1
+        fail[i] = k
+    k = 0
+    for i, token in enumerate(toks):
+        while k and token != want[k]:
+            k = fail[k - 1]
+        if token == want[k]:
+            k += 1
+        if k == len(want):
+            yield i - k + 1
+            k = fail[k - 1]
 
 
 def ran_a_check(command, test_cmd=""):
-    """Any segment of the command runs a check and not only to print, or the
-    command, or one of its segments, starts with test_cmd word for word. The
-    whole command is tried after each leading prefix, so a test_cmd holding
-    `&&` still matches."""
+    """Some segment of the command runs a check, or test_cmd's words and
+    operators appear in it starting where a segment's command proper may
+    start (after its prefixes or a named wrapper). A segment that asks only
+    to print does not count either way."""
     toks = tokens(command)
-    want = tokens(test_cmd) if test_cmd else []
-    if want and not any(k == "w" and PRINTS_ONLY.fullmatch(t) for k, t in toks):
-        i = 0
-        while i is not None:
-            if toks[i:i + len(want)] == want:
-                return True
-            i = lead_step(toks, i)
-    for segment in segments(toks):
-        words = words_of(segment)
-        if segment_is_check(words):
+    candidates, printing = set(), []
+    for start, words in segments(toks):
+        positions, prints = starts(words), prints_only(words)
+        if segment_is_check(words, 0, positions, prints):
             return True
-        if want and not any(PRINTS_ONLY.fullmatch(w) for w in words):
-            i = skip_lead(segment, lambda t: t[1] if t[0] == "w" else None)
-            if segment[i:i + len(want)] == want:
-                return True
+        printing.append(prints)
+        candidates.update(start + p for p in (positions or ()))
+    want = tokens(test_cmd) if test_cmd else []
+    if not want:
+        return False
+    # Which segment each token is in, and how many of the segments before it
+    # ask only to print, so a match is checked in constant time.
+    segment_of, segment = [], 0
+    for token in toks:
+        segment_of.append(segment)
+        segment += isinstance(token, tuple)
+    printed = [0]
+    for prints in printing:
+        printed.append(printed[-1] + prints)
+    for at in _occurrences(toks, want):
+        first, last = segment_of[at], segment_of[at + len(want) - 1]
+        if at in candidates and printed[last + 1] == printed[first]:
+            return True
     return False
 
 
