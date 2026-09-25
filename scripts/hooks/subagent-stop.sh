@@ -18,9 +18,11 @@
 #      against the ledger the PostToolUse hook wrote. A fabricated stamp or a
 #      stamp from a FAILING run warns; the controller should not trust the DONE.
 #
-# The final text comes from the hook input's last_assistant_message field
-# (transcript files lag and, on SubagentStop, transcript_path points at the
-# MAIN transcript); the transcript is only a fallback for old harnesses.
+# The graded text is the report the subagent sent its caller: its last
+# SubagentHandback message (auto mode), else the hook input's
+# last_assistant_message (see orch_subagent_report). On SubagentStop,
+# transcript_path points at the MAIN transcript, so it is only a fallback for
+# old harnesses that send neither.
 #
 # Non-blocking by default; ORCH_STRICT_STATUS=1 makes checks 1–2 blocking
 # (exit 2 → the reason is fed back to the subagent, which keeps working).
@@ -70,25 +72,13 @@ PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
 INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 
-# Extract fields without jq. last_assistant_message needs real JSON decoding
-# (it contains escapes); the scalar fields are safe to grab with grep.
+# The report needs real JSON decoding (it contains escapes); the scalar fields
+# are safe to grab with grep.
 IN_FILE=$(mktemp) || exit 0
 # trap, not just a trailing rm: killed at the hook timeout, a plain rm never runs.
 trap 'rm -f "${IN_FILE}" 2>/dev/null' EXIT
 printf '%s' "${INPUT}" > "${IN_FILE}"
-# First output char is a sentinel: "1" = the field exists in the input (its
-# emptiness is then a REAL observation), "0" = old harness without the field.
-LAM_RAW=$(python3 - "${IN_FILE}" <<'PYEOF' 2>/dev/null || true
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        data = json.load(f)
-    has = "1" if "last_assistant_message" in data else "0"
-    sys.stdout.write(has + (data.get("last_assistant_message") or ""))
-except Exception:
-    sys.stdout.write("0")
-PYEOF
-)
+LAM_RAW=$(orch_subagent_report "${IN_FILE}")
 rm -f "${IN_FILE}" 2>/dev/null
 HAS_LAM="${LAM_RAW:0:1}"
 ASSISTANT_TEXT="${LAM_RAW:1}"
@@ -102,10 +92,10 @@ if orch_protocol_is_proportional "$INPUT"; then
   VERIFY_GUIDANCE='Verification: uses PASS, PENDING, BLOCKED or NOT APPLICABLE, followed by an em dash and explanation. The evidence gate validates truth; NOT APPLICABLE is not an executed pass and cannot clear failed, unknown or required validation.'
 fi
 
-# Fallback for harnesses that predate last_assistant_message: the transcript.
-# Only when the field was ABSENT — when it exists but is empty, reading the
-# transcript would grade the MAIN conversation's last message, not the
-# subagent's (transcript_path points at the main transcript on SubagentStop).
+# Fallback for old harnesses that send neither a SubagentHandback report nor
+# last_assistant_message: the transcript. When a source exists but is empty,
+# reading the transcript would grade the MAIN conversation's last message, not
+# the subagent's (transcript_path points at the main transcript on SubagentStop).
 if [[ "${HAS_LAM}" != "1" && -z "${ASSISTANT_TEXT}" ]]; then
   TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
   if [[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]]; then
