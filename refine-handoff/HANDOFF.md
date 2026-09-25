@@ -50,100 +50,65 @@ and T9 (commands stay commands).
 In progress (each on its branch; check its latest pushed commit first, since
 the agent may have pushed more after this file was written):
 
-- **T5, build the review system** (`refine/t5-review-build`). Built and working;
-  a live Full review on a planted bug gave NOT-READY with both reviewers
-  finding it. Two reviews came back (GPT adversarial in
-  `reviews/t5-adversarial-report.md`; Opus contract summarized below). The
-  builder was fixing all of them when this was written. Remaining fix list, as
-  sent to the builder:
-  - GPT 1: Claude seats run Bash unsandboxed: sandbox Claude seats (Claude Code
-    sandbox settings), start seats with a reduced environment (no cloud
-    tokens); a seat that cannot run sandboxed is a dropout.
-  - GPT 2: missing/unreadable findings.json gives READY: any missing run file
-    is INCOMPLETE; keep the run dir outside paths experiments can write.
-  - GPT 3: quote-based drops accept any explanation: tighten R15 (only for
-    findings with no receipts and not not_runnable; quote must be in the named
-    file and lines); fix tests/test-review.py around line 792.
-  - GPT 4 / Opus 11: `git clone --local` hardlinks objects: use
-    `--no-hardlinks`, verify no shared inodes.
-  - GPT 5 / Opus 8: kill the whole process group on timeout.
-  - GPT 6 / Opus 1: submodules are empty in copies: initialize them at their
-    recorded commits from the local module store, or mark INCOMPLETE.
-  - GPT 7: a background-command acknowledgement counts as test evidence:
-    reject background and unfinished commands.
-  - GPT 8: a lowered rank without a valid refuter verdict gives READY-WITH-FIXES:
-    check the verdict first; unjudged serious → INCOMPLETE.
-  - Opus, rules with no test that would fail: R15 explanation required; R15
-    timed-out receipt; R17 repro-copy fingerprint; R17 errors.json → INCOMPLETE;
-    R14 notes kept from refuter; R8 not_runnable dropped with repro; R10 600 s
-    timeout; R14 refuter is Claude on a Codex-written Full review; R1 real crash.
-  - Opus 2–7, 9, 10: refuter lowering an invalid-evidence finding gives `mild`
-    not `note`; mild test-tampering raised to serious without repro gives
-    INCOMPLETE; dropout seats' findings are lost (R19); `review.copy_ignored`
-    via `.git/info/exclude` makes every run INCOMPLETE; non-ASCII names
-    (`-z` / `core.quotePath=false`); `{"verdicts": []}` from a seat KeyErrors;
-    a Claude stream with no init event must be a dropout; verify `codex sandbox`
-    passes stdin to `git apply -`.
-  - Simplify: drop decide's duplicate fingerprint loop and the unneeded
-    counters; name `--allow-test-changes`, `run --child` and the 3600 s seat
-    timeout in the spec.
-  - After fixes: both reviewers check again (Full path), `run-all.sh`, PR,
-    merge. Ruling 4 text (remove `workflows/` from LAWS and cadence.json) is in
-    the T5 report and must go into the combined ruling (section 6).
-- **T20, the rule-change command** (`refine/t20-ruling-command`).
-  `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by Felipe
-  in his terminal. Fix list sent to the builder (GPT review in
-  `reviews/t20-adversarial-report.md`):
-  1. Copy the patch to a private temp file before validating; apply only that
-     copy; show its hash in the prompt.
-  2. Check rename sources and deletes, not only destinations.
-  3. Trap INT/TERM/EXIT to undo; if undo fails, say so and name the files.
-  4. Resolve `--root` to an absolute path once.
-  5. Refuse when a protected file differs from the index; run `--audit HEAD`
-     after committing and undo on mismatch.
-  6. Allow protected paths not yet in the lock (defined by cadence.json/deny
-     rules).
-  7. Old projects keep old `.githooks` copies that honour
-     `ORCH_CADENCE_UNLOCK`: cadence-init must write a ready-made upgrade
-     ruling patch and print the one command; document the upgrade.
-  8. Test undo after the lock is written.
-  9. Only the marked section of AGENTS.md/CLAUDE.md is protected.
-  10. Refuse when `CLAUDECODE=1` or a Codex session variable is set; add a
-      `Bash(*cadence-ruling.sh*)` deny rule in cadence-init.
-  11. Docs must say plainly: the lock stops accidental edits and makes
-      deliberate ones visible; it cannot stop an agent determined to fake a
-      ruling.
-  - **Open question to Felipe (ask him first thing):** do we add signed rule
-    changes? His ruling commits would be signed with his existing SSH key
-    (`~/.ssh/id_ed25519`), the check would refuse unsigned ruling commits, and
-    the key would ask for his fingerprint or password each time. About five
-    minutes of one-time setup. Commit signing is not set up on this machine
-    today. Without it, the lock catches accidents but not a determined agent.
-- **T10, evaluation set** (`refine/t10-evals`). Built; nothing paid has run.
-  Fix list sent to the builder:
-  1. `file_exists` globs with `[0-9]` never match in the real grader (it
-     escapes `[`/`]`); use `*` globs and make the free check use the binary's
-     rule.
-  2. Only Full arms get the spec: give every arm the same spec text.
-  3. Score line-less findings the same in every arm; credit only findings
-     whose claim matches the defect; report false findings with a paired test.
-  4. Strengthen weak graders (median, split-pairs, ran-test-*).
-  5. Free check: also run the scripted reply without the work; check
-     `tool_used` offline; stage the workspace like the real eval.
-  6. Score test-tampering separately; unverified serious per provider; no
-     double-counted Codex tokens; isolate `codex review` from the person's
-     Codex config and MCP servers.
-  7. Ground cost estimates; name the smallest decisive run
-     (`run --arms full,code-review` on all 83 cases) with its price.
-  8. Stale references: `scripts/hooks/user-prompt-submit.sh:45`,
-     `docs/specs/review-design.md:393`, the "2.1.269 or later" claim.
+- **T5, build the review system** (`refine/t5-review-build`, last commit
+  `1df09b3` or later). Built and working. Round 1 of the Full review (GPT
+  adversarial in `reviews/t5-adversarial-report.md`, plus an Opus contract
+  review) found 8 + about 20 issues; **all are fixed**, each with a test that
+  failed first (test-review went from 68 to 94 tests). Highlights: Claude
+  seats now run inside Claude Code's Bash sandbox with a reduced environment;
+  clones use `--no-hardlinks`; any missing run file gives INCOMPLETE; the run
+  directory may not be in a temp dir; a repo with submodules gives INCOMPLETE.
+  Next:
+  1. Round 2 of the Full review: the same two kinds of reviewer (fresh Opus
+     contract, GPT adversarial via the command in section 4), scoped to what
+     changed and to realistic cases.
+  2. One live Full review on a planted bug with the new sandbox and reduced
+     environment (the only live run so far predates them); show the result.
+  3. `bash tests/run-all.sh </dev/null`, PR into `refine/integration`, merge.
+  Known limits recorded in the spec: the GPT seat can read (not write) the
+  run directory; the Claude sandbox on Linux is unverified; a Claude seat that
+  needs Bedrock/Vertex credentials drops out. Ruling 4 text (remove
+  `workflows/` from LAWS and cadence.json) must go into the combined ruling
+  (section 7). `skills/cadence/references/refuter.md:59` is left for T6.
+- **T20, the rule-change command** (`refine/t20-ruling-command`, head
+  `ab0f30b` or later). `skills/cadence/scripts/cadence-ruling.sh <patch>
+  "<wording>"`, run by Felipe in his own terminal. Round 1 of the Full review
+  (GPT report in `reviews/t20-adversarial-report.md`, plus Opus) found 11
+  issues; **all are fixed** (`run-all.sh`: 45 suites pass). Highlights: it
+  applies a private copy of the patch and shows its hash; rename/copy headers
+  and changes outside the protected set are refused; any failure or
+  interruption undoes everything, including a landed commit; it runs
+  `--audit HEAD` after committing; old projects get a ready-made upgrade
+  ruling patch from cadence-init; it refuses inside Claude Code or Codex
+  sessions (the Codex variable names are unverified); cadence-init writes a
+  `Bash(*cadence-ruling.sh*)` deny rule; the docs say plainly what the lock
+  cannot stop. The test file is now `tests/test-ruling-command.sh`.
+  Next: round 2 of the Full review (fresh Opus contract + GPT adversarial,
+  scoped to the fixes and realistic cases), then PR and merge.
+  The regenerated protected-file patch is `reviews/t20-ruling-4.patch`; fold
+  it into the combined ruling (section 7).
+  - **Decided (Felipe, 2026-09-25): no signing.** The plugin is for everyone
+    and must not depend on any one person's tools. The lock stops accidental
+    rule changes, every change shows in the history, and the docs say plainly
+    what the lock cannot stop (item 11). Do not ask about signing again.
+- **T10, evaluation set** (`refine/t10-evals`, head `af356e8` or later). Built;
+  nothing paid has run. Review round 1 (one Opus reviewer, Standard path)
+  found 2 serious and 6 mild issues; **all are fixed** (`run-all.sh`: 44 suites
+  pass). Next: a short re-check by one fresh reviewer of the fixes, then PR
+  and merge. It depends on nothing else, but its Full arms refuse to run until
+  T5 is merged.
+  - The smallest run that answers "does Full beat /code-review" is
+    `run --arms full,code-review` on all 83 cases: estimated **$55–$250**. The
+    other arms add about $60–$270. The pilot step in `tests/evals/README.md`
+    checks the unverified parts first (does `/code-review` work under
+    `-p --safe-mode`; does `codex review --uncommitted` take instructions).
+    Bring Felipe this price once T5 is merged. **Never run paid evals yourself.**
   - The effort arm stays unavailable: reviewers stay at high effort.
-  - After fixes and review: bring Felipe the price of the smallest decisive
-    run. **Never run paid evals yourself.**
 
 Not started (in order):
-- **T6**, remove the legacy procedure. Starts after T5 merges (both edit
-  `skills/cadence/CADENCE.md`). Also fixes the "printed as your final message"
+- **T6**, remove the legacy procedure: **started** on `refine/t6-remove-legacy`
+  (check its latest commit). It avoids the sections T5 and T20 edit; merge
+  their branches into it after they land, then Full review (two reviewers). Also fixes the "printed as your final message"
   wording T18's review found, and `skills/cadence/references/refuter.md:59`.
 - **T12**, remove everything unused. Runs on the finished tree. Its ticket
   lists known items (stale hooks text in `docs/anthropic-ecosystem.md`; the
@@ -193,6 +158,8 @@ a tool; without it a hook or Codex waits forever for input.
 
 ## 5. Rules and standards (Felipe's)
 
+- The plugin is for a public audience: never design around Felipe's own
+  machine or tools (e.g. a password manager).
 - Talk to Felipe in plain, short language, with no jargon; lead with the
   answer; give a recommendation when he must decide. Address him as "Captain".
 - Commit, branch, push and PR as needed. **Never merge into `main`.**
@@ -213,7 +180,7 @@ a tool; without it a hook or Codex waits forever for input.
 ## 6. Decisions already made (do not re-ask)
 
 - Keep the rulebook lock. Rule changes: the agent explains why; if Felipe
-  agrees, he runs one command (T20).
+  agrees, he runs one command (T20). No commit signing.
 - Keep the destructive-git guard, the no-verify guard and the lock; the
   dispatch-model, config-protection and unlock guards go (T19 done; T20 removes
   the unlock guard).

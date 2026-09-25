@@ -26,6 +26,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 - The docs now say what the lock does: it stops accidental edits and makes
   deliberate ones visible in the history. It cannot stop an agent that rewrites
   `LAWS.md` and `LOCK.sha256` from a script and commits a `Ruling <N>` message.
+- The behaviour evals run on `claude plugin eval` (`tests/evals/cases/`), 8 runs
+  per case, and `tests/evals/run-evals.sh` with its two tests is gone. A new
+  review comparison (`tests/evals/review-compare/`) runs the Full review, the
+  built-in `/code-review` and `codex review` on the same changes with planted
+  defects and scores defects found, false findings and cost. Both have free
+  checks in `tests/`; the paid commands and cost estimates are in
+  `tests/evals/README.md`.
 
 ### Fixed
 

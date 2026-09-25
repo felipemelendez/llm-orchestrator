@@ -1,0 +1,152 @@
+{
+  "title": "Add repeating events with recurrence rules",
+  "spec": "docs/specs/recurrence.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "until-excluded",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "expand",
+      "what": "The until date itself is left out.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "        if rule.until is not None and day > rule.until:",
+          "replace": "        if rule.until is not None and day >= rule.until:"
+        }
+      ]
+    },
+    {
+      "id": "count-skips-skipped",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "expand",
+      "what": "count ignores skipped dates, so skipping a date adds one at the end.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "        produced += 1\n        if day not in rule.skip:\n            out.append(day)",
+          "replace": "        if day not in rule.skip:\n            out.append(day)\n            produced += 1"
+        }
+      ]
+    },
+    {
+      "id": "weekly-before-start",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "_candidates",
+      "what": "Weekly rules produce listed weekdays earlier in the start week, before the start date.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "                if day >= start:",
+          "replace": "                if day >= week_start:"
+        }
+      ]
+    },
+    {
+      "id": "weekly-interval-ignored",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "_candidates",
+      "what": "Weekly rules ignore the interval and repeat every week.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "            week_start += timedelta(weeks=rule.interval)",
+          "replace": "            week_start += timedelta(weeks=1)"
+        }
+      ]
+    },
+    {
+      "id": "month-year-wrap",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "add_months",
+      "what": "add_months never moves to the next year, so a monthly rule jumps from December back to January of the same year.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "    year, month = day.year + index // 12, index % 12 + 1",
+          "replace": "    year, month = day.year, index % 12 + 1"
+        }
+      ]
+    },
+    {
+      "id": "short-month-clamped",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "add_months",
+      "what": "A day missing from a short month is moved to the month's last day instead of skipped.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "    if day.day > calendar.monthrange(year, month)[1]:\n        return None",
+          "replace": "    if day.day > calendar.monthrange(year, month)[1]:\n        return date(year, month, calendar.monthrange(year, month)[1])"
+        }
+      ]
+    },
+    {
+      "id": "window-start-excluded",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "occurrences",
+      "what": "An occurrence on the window's first day is left out, which also makes cancel refuse every date.",
+      "edits": [
+        {
+          "file": "schedule/events.py",
+          "find": "        return [day for day in days if day >= window_start and day not in self.cancelled]",
+          "replace": "        return [day for day in days if day > window_start and day not in self.cancelled]"
+        }
+      ]
+    },
+    {
+      "id": "zero-interval",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "__post_init__",
+      "what": "An interval of 0 is accepted, and a daily rule with it never advances.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "        if self.interval < 1:",
+          "replace": "        if self.interval < 0:"
+        }
+      ]
+    },
+    {
+      "id": "until-and-count",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "__post_init__",
+      "what": "A rule may give both until and count.",
+      "edits": [
+        {
+          "file": "schedule/recurrence.py",
+          "find": "        if self.until is not None and self.count is not None:\n            raise RuleError(\"give until or count, not both\")\n",
+          "replace": ""
+        }
+      ]
+    },
+    {
+      "id": "next-includes-after",
+      "rank": "serious",
+      "kind": "test-tampering",
+      "symbol": "next_occurrence",
+      "what": "next_occurrence can return `after` itself, and the test for strictly-after was changed to expect that date.",
+      "edits": [
+        {
+          "file": "schedule/events.py",
+          "find": "        upcoming = self.occurrences(after + timedelta(days=1), after + timedelta(days=SEARCH_DAYS))",
+          "replace": "        upcoming = self.occurrences(after, after + timedelta(days=SEARCH_DAYS))"
+        },
+        {
+          "file": "tests/test_events.py",
+          "find": "        self.assertEqual(event.next_occurrence(date(2026, 4, 13)), date(2026, 4, 20))",
+          "replace": "        self.assertEqual(event.next_occurrence(date(2026, 4, 13)), date(2026, 4, 13))"
+        }
+      ]
+    }
+  ]
+}

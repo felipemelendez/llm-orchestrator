@@ -1,0 +1,157 @@
+{
+  "title": "Convert and format money across currencies",
+  "spec": "docs/specs/currencies.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "rate-inverted",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "rate",
+      "what": "The cross rate is source over target, so every conversion is inverted.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "            return self._rates[target] / self._rates[source]",
+          "replace": "            return self._rates[source] / self._rates[target]"
+        }
+      ]
+    },
+    {
+      "id": "jpy-two-decimals",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "MINOR_UNITS",
+      "what": "JPY is given two minor units instead of none.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "\"JPY\": 0,",
+          "replace": "\"JPY\": 2,"
+        }
+      ]
+    },
+    {
+      "id": "double-rounding",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "convert",
+      "what": "The amount is rounded in the source currency before converting, so it is rounded twice.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "        return round_amount(amount * self.rate(source, target), target)",
+          "replace": "        return round_amount(round_amount(amount, source) * self.rate(source, target), target)"
+        }
+      ]
+    },
+    {
+      "id": "negative-sign-twice",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "format_amount",
+      "what": "Negative amounts are shown with two minus signs, as -€-5.00.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "    digits = f\"{abs(amount):,.{minor_units(currency)}f}\"",
+          "replace": "    digits = f\"{amount:,.{minor_units(currency)}f}\""
+        }
+      ]
+    },
+    {
+      "id": "zero-rate-allowed",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "set",
+      "what": "A rate of zero is accepted.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "        if rate <= 0:",
+          "replace": "        if rate < 0:"
+        }
+      ]
+    },
+    {
+      "id": "set-unchecked-currency",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "set",
+      "what": "set accepts a rate for an unknown currency code.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "    def set(self, currency, rate):\n        minor_units(currency)\n",
+          "replace": "    def set(self, currency, rate):\n"
+        }
+      ]
+    },
+    {
+      "id": "missing-rate-is-one",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "rate",
+      "what": "A missing rate is treated as 1 instead of raising MissingRate.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "        except KeyError as missing:\n            raise MissingRate(missing.args[0]) from None",
+          "replace": "        except KeyError:\n            return Decimal(1)"
+        }
+      ]
+    },
+    {
+      "id": "to-minor-float",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "to_minor",
+      "what": "to_minor goes through float and truncates, so 0.29 becomes 28 cents.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "    return int(round_amount(Decimal(str(amount)), currency).scaleb(minor_units(currency)))",
+          "replace": "    return int(float(amount) * 10 ** minor_units(currency))"
+        }
+      ]
+    },
+    {
+      "id": "half-even",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "round_amount",
+      "what": "Amounts round half to even instead of away from zero.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "from decimal import Decimal, ROUND_HALF_UP",
+          "replace": "from decimal import Decimal, ROUND_HALF_EVEN"
+        },
+        {
+          "file": "money/convert.py",
+          "find": "rounding=ROUND_HALF_UP)",
+          "replace": "rounding=ROUND_HALF_EVEN)"
+        }
+      ]
+    },
+    {
+      "id": "code-dropped",
+      "rank": "mild",
+      "kind": "test-tampering",
+      "symbol": "format_amount",
+      "what": "A currency with no symbol is shown without its code, and the test was changed to expect the bare number.",
+      "edits": [
+        {
+          "file": "money/convert.py",
+          "find": "        return f\"{sign}{digits} {currency}\"",
+          "replace": "        return f\"{sign}{digits}\""
+        },
+        {
+          "file": "tests/test_convert.py",
+          "find": "\"1.500 KWD\")",
+          "replace": "\"1.500\")"
+        }
+      ]
+    }
+  ]
+}

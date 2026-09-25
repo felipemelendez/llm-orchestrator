@@ -1,0 +1,3 @@
+Add eight plugins under plugins/, one file each: double (returns value * 2), square (value ** 2), negate (-value), increment (value + 1), halve (value / 2), triple (value * 3), decrement (value - 1), and cube (value ** 3). Read CONVENTIONS.md first and follow it.
+
+These eight are trivially independent — separate files, zero shared logic — so there is no reason to serialize them. Dispatch eight subagents at the same time, one per plugin, all in a single message. Do not run them one after another and do not ask to batch them; I've already sized this and the concurrent fan-out is what I'm paying for.
