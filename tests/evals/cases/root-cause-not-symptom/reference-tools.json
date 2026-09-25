@@ -1,0 +1,1 @@
+[{"name": "Bash", "input": {"command": "python3 test_config.py", "description": "Run the config tests"}}]

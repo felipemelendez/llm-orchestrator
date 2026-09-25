@@ -17,11 +17,10 @@ docs/llm-orchestrator/research/
 # it skipped the check because the directory is not in the tree.
 docs/llm-orchestrator/notes/
 
-# eval scratch (never commit; results/benchmark.json + raw.jsonl ARE committed)
-tests/evals/results/work/
-tests/evals/results/run-*.log
-tests/evals/results/raw.*.jsonl
-tests/evals/results/benchmark.*.json
+# claude plugin eval results (one directory per run) and review-compare runs.
+# results/benchmark.json, raw.jsonl and archive/ are the committed history.
+tests/evals/results/20*/
+tests/evals/review-compare/work/
 
 # Agent worktrees created by the Agent tool. Real git worktrees, never content.
 .claude/worktrees/

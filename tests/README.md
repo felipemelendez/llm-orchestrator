@@ -140,8 +140,8 @@ non-zero on failure.
 | `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |
 | `test-detect.sh`, `test-lib-resolution.sh`, `test-telemetry.sh`, `test-retry-cap.sh`, `test-hook-latency.sh` | toolchain detection, lib lookup, opt-in telemetry, retry breaker, per-hook latency budget |
-| `test-eval-cases.sh` | every eval case is red before the agent runs, its regexes compile, its checks parse as shell, and it carries a `why` |
-| `test-eval-reporter.sh` | the eval reporter still calls the archived 2026-08-03 behavioural drop a regression, and reports each check separately |
+| `test-eval-cases.sh` | every `claude plugin eval` case matches the case schema, fails on its bare scaffold, and passes on its reference solution |
+| `test-review-compare.sh` | every planted review defect fails its held-out check but passes the committed tests, and the comparison scorer counts a dry run with fake reviewers correctly |
 | `handoff/smoke-handoff.sh`, `handoff/test-precompact.sh`, `handoff/test-token-floor.sh` | handoff artifact lifecycle, pre-compaction capture, token floor |
 
 **Isolation is a hard requirement for new suites.** Use `mktemp -d` for both the
@@ -167,6 +167,6 @@ CI runs on Linux; several defects in this area were BSD-vs-GNU differences that 
 silently on one platform, so run the suite locally on macOS too.
 
 Evals are not part of CI and never will be: they make paid API calls. See
-[`evals/README.md`](evals/README.md). What *is* in CI is the eval harness's own correctness
-— `test-eval-cases.sh` (every case is red before the agent runs) and `test-eval-reporter.sh`
-(the reporter still calls the archived 2026-08-03 regression a regression).
+[`evals/README.md`](evals/README.md). What *is* in CI is the free part: `test-eval-cases.sh`
+(every case is red before the agent runs and can pass) and `test-review-compare.sh` (every
+planted defect is real, and the scorer counts correctly).

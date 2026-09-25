@@ -1,0 +1,152 @@
+{
+  "title": "Retry calls to flaky services with exponential backoff",
+  "spec": "docs/specs/retry.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "exponent-off-by-one",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "delay",
+      "what": "The first wait is twice the base delay, so every wait is doubled.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "self.base_delay * 2 ** (attempt - 1)",
+          "replace": "self.base_delay * 2 ** attempt"
+        }
+      ]
+    },
+    {
+      "id": "negative-wait",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "delay",
+      "what": "With jitter above 1 the wait can be negative, and time.sleep raises on it.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "return max(0.0, raw + rand.uniform(-spread, spread))",
+          "replace": "return raw + rand.uniform(-spread, spread)"
+        }
+      ]
+    },
+    {
+      "id": "retries-everything",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "call_with_retry",
+      "what": "Every exception is retried and wrapped, including permanent errors.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "except policy.retry_on as error:",
+          "replace": "except Exception as error:"
+        }
+      ]
+    },
+    {
+      "id": "sleeps-after-last",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "call_with_retry",
+      "what": "It waits once more after the last attempt before giving up.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "        if attempt == policy.attempts:\n            break\n",
+          "replace": ""
+        }
+      ]
+    },
+    {
+      "id": "elapsed-ignores-wait",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "call_with_retry",
+      "what": "The elapsed-time check leaves out the coming wait, so the total time passes max_elapsed.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "if clock() - started + wait > policy.max_elapsed:",
+          "replace": "if clock() - started > policy.max_elapsed:"
+        }
+      ]
+    },
+    {
+      "id": "attempts-reported-wrong",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "RetryError",
+      "what": "When it stops early, RetryError reports the configured attempts instead of the calls made.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "raise RetryError(attempt, last) from last",
+          "replace": "raise RetryError(policy.attempts, last) from last"
+        }
+      ]
+    },
+    {
+      "id": "cause-dropped",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "call_with_retry",
+      "what": "RetryError hides the last exception as its cause.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "raise RetryError(attempt, last) from last",
+          "replace": "raise RetryError(attempt, last) from None"
+        }
+      ]
+    },
+    {
+      "id": "zero-attempts-accepted",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "call_with_retry",
+      "what": "attempts=0 is accepted and then fails with UnboundLocalError.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "if policy.attempts < 1:",
+          "replace": "if policy.attempts < 0:"
+        }
+      ]
+    },
+    {
+      "id": "default-three-attempts",
+      "rank": "mild",
+      "kind": "test-tampering",
+      "symbol": "Policy",
+      "what": "The default is 3 attempts instead of 5, and the test was changed to expect 3.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "    attempts: int = 5",
+          "replace": "    attempts: int = 3"
+        },
+        {
+          "file": "tests/test_retry.py",
+          "find": "self.assertEqual(fn.calls, 5, \"gave up too early\")",
+          "replace": "self.assertEqual(fn.calls, 3, \"gave up too early\")"
+        }
+      ]
+    },
+    {
+      "id": "jitter-absolute",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "delay",
+      "what": "Jitter is added in seconds instead of as a share of the wait.",
+      "edits": [
+        {
+          "file": "net/retry.py",
+          "find": "spread = raw * self.jitter",
+          "replace": "spread = self.jitter"
+        }
+      ]
+    }
+  ]
+}

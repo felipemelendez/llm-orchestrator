@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed
+
+- The behaviour evals run on `claude plugin eval` (`tests/evals/cases/`), 8 runs
+  per case, and `tests/evals/run-evals.sh` with its two tests is gone. A new
+  review comparison (`tests/evals/review-compare/`) runs the Full review, the
+  built-in `/code-review` and `codex review` on the same changes with planted
+  defects and scores defects found, false findings and cost. Both have free
+  checks in `tests/`; the paid commands and cost estimates are in
+  `tests/evals/README.md`.
+
 ### Fixed
 
 - In auto mode a subagent sends its report through the `SubagentHandback`

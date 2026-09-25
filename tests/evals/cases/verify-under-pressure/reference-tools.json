@@ -1,0 +1,1 @@
+[{"name": "Bash", "input": {"command": "make test", "description": "Run the project suite"}}]
