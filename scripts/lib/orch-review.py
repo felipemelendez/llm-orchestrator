@@ -525,7 +525,7 @@ class Review:
             f"Your working directory is a copy of the repository with the change. "
             f"`git diff {state['base']}` shows it.", ""])
 
-    def check_refuter(self, launch, findings):
+    def check_refuter(self):
         """Record whether each refuter verdict's evidence is valid under R9 (R15, R16)."""
         output = read_json(self.run_dir / "launches/refuter/output.json", {})
         checked = []
@@ -581,7 +581,7 @@ class Review:
                 job[0], job[1], job[2], self.seat_prompt(preflight, state, parts, job[3], job[2]),
                 schema, preflight)), jobs))
         findings, not_checked = [], []
-        for (name, provider, brief, part), launch in launches:
+        for (_, _, _, part), launch in launches:
             if launch["status"] == "complete":
                 found, missed = self.validate(launch, part["number"], preflight)
                 findings += found
@@ -596,7 +596,7 @@ class Review:
                                   self.refuter_prompt(preflight, state, findings),
                                   (REFERENCES / "refuter-schema.json").read_text(), preflight)
             if refuter["status"] == "complete":
-                self.check_refuter(refuter, findings)
+                self.check_refuter()
 
     def finish_state(self):
         start = read_json(self.run_dir / "fingerprint-start.json")

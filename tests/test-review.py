@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Rule-by-rule tests for scripts/lib/orch-review.py, run with fake claude and codex programs."""
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
-import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
