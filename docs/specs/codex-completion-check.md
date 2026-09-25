@@ -53,12 +53,10 @@ Sources: `codex-rs/rollout/src/policy.rs` at `rust-v0.157.0`
 history, `ExecCommandEnd` never); `codex-rs/app-server/src/request_processors/thread_processor.rs`
 (a new thread is paginated unless the client asks otherwise, the thread is
 ephemeral, or there is no state database); `codex-rs/core/src/tools/context.rs`
-(`response_header`, the output header); and the 82 rollouts in
-`~/.codex/sessions` on 2026-09-25: every paginated rollout that ran a command
-on 0.147.0 or later has command records; the 31 legacy rollouts and the four
-0.146.0 rollouts have none. Two of the legacy rollouts, both 0.154.0-alpha.6.2
-Desktop threads, used code-mode `exec`. Why those threads were legacy is
-unverified.
+(`response_header`, the output header); and local session logs, in which
+every paginated rollout that ran a command on 0.147.0 or later has command
+records, and legacy and 0.146.0 rollouts have none. Why some 0.154 Desktop
+threads are legacy is unverified.
 
 | Entry | Shape |
 |---|---|
