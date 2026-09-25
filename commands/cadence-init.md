@@ -134,6 +134,11 @@ placeholders and the re-lock yourself even when the recipe does not list them.
   `cadence.json`, `LOCK.sha256`, `.claude/settings.json`, `.githooks/**`) —
   present from the moment those rules are merged into `.claude/settings.json`.
   A protected file changes after that only by a ruling (`cadence-ruling.sh`).
+- In an armed project whose hooks, marked block or deny rules are older than
+  this plugin's, the script writes no protected file. It writes an upgrade
+  ruling patch outside the project and prints the one `cadence-ruling.sh`
+  command that applies it. Relay the patch path and the command; the user runs
+  it in their own terminal. Never run it yourself.
 - Never run `git config` for the user: routing a repo's hooks is their decision,
   so the one-liner is printed, not executed.
 - Never fill in `LAWS.md`'s placeholders yourself, and never edit a `LAWS.md`

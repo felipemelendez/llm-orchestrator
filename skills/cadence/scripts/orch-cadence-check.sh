@@ -5,9 +5,8 @@
 #   --verdict                 one line, <= 300 chars, on stdout: whether cadence
 #                             mode is on, the laws' highest ruling, and whether
 #                             the lock still matches the tree. Always exit 0.
-#   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256. The
-#                             only writer of that file; rewriting an existing
-#                             one needs a terminal.
+#   --lock                    (re)write docs/llm-orchestrator/LOCK.sha256.
+#                             Rewriting an existing one needs a terminal.
 #   --landing <ticket>        legacy report check, or proportional policy note.
 #     [--base <sha>]
 #   --commit-msg <msgfile>    the git-side gate (git hands the message file to

@@ -394,7 +394,10 @@ CI through `--audit` when it was not. It never prevents a write.
 
 **The boundary:** a careless write fails at once and loudly, but a write the deny
 rules do not stop — a computed path, an archive, an interpreter, a script that
-opens the file itself — happens, and layer 2 names it afterwards. A shell guard
+opens the file itself — happens, and layer 2 names it afterwards. The lock stops
+accidental edits and makes deliberate ones visible in the history; it cannot stop
+an agent determined to fake a ruling, since a script can rewrite `LAWS.md` and
+`LOCK.sha256` together and commit a `Ruling <N>` message the hook accepts. A shell guard
 that judged each command by its text was tried and removed; text matching cannot
 be made tight, and the alarm already named what it caught.
 
@@ -415,8 +418,11 @@ them the command, with this skill's absolute path:
 bash <skill>/scripts/cadence-ruling.sh <patch-file> "<the person's wording>"
 ```
 
-The command refuses a patch that touches a file outside the lock set, that no
-longer applies, or that does not add `Ruling <N>` to `LAWS.md`. It asks the
+The command refuses a patch that touches a file outside the lock set (renames
+and deletions included), changes `CLAUDE.md` or `AGENTS.md` outside the marked
+section, no longer applies, or does not add `Ruling <N>` to `LAWS.md`; it also
+refuses when `CLAUDECODE` or a Codex session variable is set, and the init's
+deny rule `Bash(*cadence-ruling.sh*)` refuses it in Claude Code. It asks the
 person to type `ruling <N>`, applies the patch, re-records the lock with
 `--lock`, and commits `Ruling <N>: <wording>`; on any failure it undoes the
 patch. It reads the confirmation from `/dev/tty`, and `--lock` rewrites an
@@ -467,8 +473,8 @@ fourth file is the controller's adjudication; where no gate seat ran, the fifth 
 gate script's complete output; each says so in its first line.
 
 `orch-cadence-check.sh` carries the modes `--verdict` (the session-start line),
-`--lock` (rewrite `LOCK.sha256`; the only writer, and it rewrites an existing
-lock only when a terminal is attached), `--landing <ticket>`,
+`--lock` (rewrite `LOCK.sha256`; the plugin's own writer of it, and it rewrites an
+existing lock only when a terminal is attached), `--landing <ticket>`,
 `--commit-msg <msgfile>` (what the git hook calls: it runs `--landing <ticket>` too
 whenever the commit subject matches the `ticket_re` from `cadence.json`), `--audit
 <rev>` (the same check in CI, against a commit), `--entries` (the lock set, one

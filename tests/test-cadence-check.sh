@@ -7,8 +7,7 @@
 #     of CLAUDE.md/AGENTS.md is CHANGED while a change outside it is not;
 #   - a second START marker cannot be used to hide an edit (a decoy pair
 #     defeats a last-block extractor, so the first pair is the only pair);
-#   - `--lock` is the only writer, and rewrites an existing lock only when a
-#     terminal is attached;
+#   - `--lock` rewrites an existing lock only when a terminal is attached;
 #   - the git layer runs at `commit-msg` (the only hook git hands a message
 #     file) and a stale lock cannot ride in under a ruling either.
 #

@@ -116,7 +116,11 @@ this layer is the only one that stops anything before the fact.
 ## The boundary
 
 A write the deny rules do not stop happens. It is named at the end of that turn
-by the verdict, again at the next session start, and refused at the commit by the
-`commit-msg` hook — or by `orch-cadence-check.sh --audit <rev>` in CI, for the
-clone where the hook was never routed. Hooks and deny rules are guardrails, not
-guarantees.
+by the verdict, again at the next session start, and a commit of it is refused by
+the `commit-msg` hook — or by `orch-cadence-check.sh --audit <rev>` in CI, for the
+clone where the hook was never routed — unless the commit also re-records the lock
+and carries a numbered ruling. So the lock stops accidental edits and makes
+deliberate ones visible in the history. It cannot stop an agent determined to
+fake a ruling: a script can rewrite `LAWS.md` and `LOCK.sha256` together and
+commit with a `Ruling <N>` message, which the hook accepts. Hooks and deny rules
+are guardrails, not guarantees.

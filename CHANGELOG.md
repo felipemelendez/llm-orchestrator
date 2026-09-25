@@ -14,6 +14,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   `--lock` rewrites an existing lock only when a terminal is attached. The
   `ORCH_CADENCE_UNLOCK` variable, `guard-cadence-unlock.sh` and the init's
   unlocked replacement of hooks, config and marked sections are removed.
+- **Upgrade step for projects set up with an older version.** Their
+  `.githooks/orch-cadence-check.sh` still honours `ORCH_CADENCE_UNLOCK`, so an
+  agent could re-record the lock without a terminal. Re-run
+  `/llm-orchestrator:cadence-init`: in an armed project it writes no protected
+  file, writes an upgrade ruling patch (the shipped hooks, the current marked
+  block, the missing deny rules and the next ruling line) and prints the one
+  `cadence-ruling.sh` command that applies it.
+- `cadence-init` adds the deny rule `Bash(*cadence-ruling.sh*)`, and the command
+  refuses to run when `CLAUDECODE` or a Codex session variable is set.
+- The docs now say what the lock does: it stops accidental edits and makes
+  deliberate ones visible in the history. It cannot stop an agent that rewrites
+  `LAWS.md` and `LOCK.sha256` from a script and commits a `Ruling <N>` message.
 
 ### Fixed
 
