@@ -39,4 +39,5 @@ with a `Status:` block of at most 20 lines — `Started:` first, the verdict
 `DONE | PARTIAL | BLOCKED` and the counts, `Finished:` last — then a `---` line
 and the evidence below it: the file list with what changed in each (naming every
 change to an existing test, with the reason), each floor's line read from its
-log, the `shasum -a 256` of every file you created or changed, and anything `UNVERIFIED`. Write a progress line every 15 minutes.
+log, the `shasum -a 256` of every file you created or changed, and anything
+`UNVERIFIED`. Write a progress line every 15 minutes.
