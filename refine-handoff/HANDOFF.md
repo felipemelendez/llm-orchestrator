@@ -112,8 +112,9 @@ the agent may have pushed more after this file was written):
   - The effort arm stays unavailable: reviewers stay at high effort.
 
 Not started (in order):
-- **T6**, remove the legacy procedure. Starts after T5 merges (both edit
-  `skills/cadence/CADENCE.md`). Also fixes the "printed as your final message"
+- **T6**, remove the legacy procedure: **started** on `refine/t6-remove-legacy`
+  (check its latest commit). It avoids the sections T5 and T20 edit; merge
+  their branches into it after they land, then Full review (two reviewers). Also fixes the "printed as your final message"
   wording T18's review found, and `skills/cadence/references/refuter.md:59`.
 - **T12**, remove everything unused. Runs on the finished tree. Its ticket
   lists known items (stale hooks text in `docs/anthropic-ecosystem.md`; the
