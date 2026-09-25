@@ -50,7 +50,7 @@ python3 "$REVIEW" wait "$RUN_DIR" --seconds 540
 - Add `--allow-test-changes` when the task may change tests; otherwise a
   `test-tampering` finding is raised to serious.
 - `--brief`, `--adversarial-provider`, `--split` and `--no-refuter` exist only
-  for measurement (T10). Do not use them for a real review.
+  for measurement (T10), not for real reviews.
 
 Full needs `claude` and `codex` both installed and signed in. Standard needs
 your own provider; without `codex`, fixes cannot be run, so a serious finding
@@ -80,10 +80,8 @@ each one:
 python3 "$REVIEW" record "$RUN_DIR" --dispositions <file>
 ```
 
-The file gives every finding id one disposition (R21): `fixed`, with the check
-that failed before and passes after; `refuted`, with a `file-line` quote that
-`record` checks against the reviewed files (a test run is not accepted); or
-`ignored`, with a reason. `record` rejects a file that leaves any finding out.
+Each finding gets one disposition (R21). `record` takes `refuted`, with a
+`file-line` quote, never a test run, and rejects omissions.
 
 ## The native `/code-review`
 
