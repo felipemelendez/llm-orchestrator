@@ -144,16 +144,18 @@ threat, and this one never was.
 
 - `archive/POISONED-2026-08-04T131538Z-*` — a session limit returned 94/100
   normal-looking $0 results; graded as failures they produced a confident
-  false "REGRESSION p=0.000". The runner now excludes error rows, aborts on
-  three consecutive errors, and invalidates arms with >10% loss.
+  false "REGRESSION p=0.000". `claude plugin eval` still grades such runs and
+  does not mark the suite partial, so read each run's `error` field before
+  trusting a score (`tests/evals/README.md`).
 - 2026-08-05 — arm names containing `/` (branch refs) broke scratch paths;
   the abort-don't-pay guard stopped the run after one arm was already paid.
-  Fixed with `ORCH_EVAL_DRY_RUN` coverage (`tests/test-eval-runner-paths.sh`).
+  That runner has since been replaced by `claude plugin eval`.
 
 ## Not yet measured
 
-The remaining deferred runs and every case marked "unrun detector" in
-`tests/evals/cases/` — see the open items in the dated plan under
+The remaining deferred runs, every case in `tests/evals/cases/` since its move
+to `claude plugin eval`, and the review comparison in
+`tests/evals/review-compare/` — see the open items in the dated plan under
 `docs/llm-orchestrator/plans/`. An unmeasured bet stays a bet; this ledger
 only ever grows by paid runs.
 
@@ -161,5 +163,6 @@ only ever grows by paid runs.
 cost and what it dropped, but not what it was worth: no arm ran without it. The
 settling run is a held-out set of tickets put through the cadence twice, once
 with the refuter stage and once without, graded on defects that reach a landing
-and on rounds spent. Until that runs, "the refuter pays above a threshold" is an
+and on rounds spent. The review comparison's `full` and `full-no-refuter` arms
+measure the review step's part of this. Until that runs, "the refuter pays above a threshold" is an
 operating rule taken from one operator's experience, not a measured finding.

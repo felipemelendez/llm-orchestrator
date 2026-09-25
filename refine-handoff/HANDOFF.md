@@ -41,11 +41,62 @@ copies. Keep working from these copies and update them as you go.
 
 ## 3. State of every ticket
 
-Merged into `refine/integration`: T1, T3, T4 (spec), T7, T8, T13, T14, T15,
-T16, T17, T18, T19, T21.
+Merged into `refine/integration`: T1, T3, T4 (spec), T7, T8, T10, T13, T14,
+T15, T16, T17, T18, T19, T21 (PRs #21–#33 and #35).
 
 Dropped by Felipe: T2 (no notice shown to him; the check tells the agent only)
 and T9 (commands stay commands).
+
+**CI is failing on `refine/integration`** (GitHub's Linux runners; every
+suite passes on the Mac). Four suites fail: test-verify-gate and
+test-codex-verify-gate (4 each — most likely the 200 KB timing cases, whose
+100 ms budget is too tight for CI), test-install-global (1) and smoke (6).
+PR #36 (`refine/ci-fix`) raises the timing budget to 1 s and makes
+`run-all.sh` print each failing check so the CI log shows the cause. Read
+PR #36's CI log first, fix what remains (likely Linux-only differences), and
+merge it before anything else. CI must be green before PR #34 is ready.
+
+**Last known state when the old machine stopped (2026-09-25, evening):**
+- T5 `refine/t5-review-build` head `4b934af`: every review finding so far is
+  fixed, including GPT round 2's (quote-based drops removed: a finding is
+  dropped or lowered only on its own passing receipt 1). A live Full review
+  with the Claude sandbox and reduced environment ran on the old machine:
+  NOT-READY, both seats found the planted bug, all three findings reproduced
+  by the script, Claude sandbox confirmed by a new per-launch probe
+  (`sandbox_check`), served models `claude-opus-5-5` and `gpt-6-astra`,
+  0 clones left. **Left:** Opus round 2 review (stopped unfinished; redo),
+  a short GPT confirmation of the latest commits, `test-install-global` on
+  the final commit, `run-all.sh`, PR, merge.
+- T20 `refine/t20-ruling-command`: both reviewers' round 2 items fixed; the
+  Opus reviewer found nothing serious left. `refine/integration` is merged in
+  (CHANGELOG conflict resolved) and pushed; test-ruling-command,
+  test-cadence-check, validate-skills and test-cadence-docs pass after the
+  merge. **Left:** `run-all.sh </dev/null`, PR, merge.
+- T6 `refine/t6-remove-legacy` head `669a55d` (partial; its last, empty
+  commit lists done and left). **Done, tests first:** the cadence scripts,
+  init, detect, task cleanup and protocol hooks now give one clear error for a
+  missing or non-proportional `workflow`; legacy code paths, `--landing`,
+  `--base`, the five-report check, `ticket_re` are gone; legacy nudges gone;
+  tests updated. **Left:** cut the legacy procedure from `CADENCE.md` (keep
+  T5's Full steps 3–4 and T20's lock text); `SKILL.md` lines 16–17 and 63;
+  delete briefs brief-review, cadence-state (also `scripts/install.sh:275`,
+  `tests/test-install.sh:291`), fixer, gate-seat, implementer, seat-rules,
+  handoff; trim reviewer-spec, reviewer-plain, refuter only after T5 merges
+  (T5 replaces them); `global-block.md` and its template copy;
+  `commands/cadence-init.md`, `commands/handoff.md`; reword (not delete) the
+  word "legacy" where it means "no cadence" (handing-off, worktrees,
+  finishing-a-branch, using-orchestrator, orch-implementer, templates, output
+  style); ARCHITECTURE.md, `.gitignore` notes line,
+  `docs/llm-orchestrator/HANDOFF_TEMPLATE.md`, test-cadence-docs; the
+  "printed as your final message" wording; then validate-skills, run-all and
+  a Full review. Expect small conflicts with T20 and T5.
+  **For the combined ruling:** the AGENTS.md marked block still describes
+  legacy; `.githooks/orch-cadence-check.sh` becomes an old copy; `cadence.json`
+  still has `notes_dir` and `ticket_re`, which nothing reads.
+  **Decided (Felipe):** Python 3 stays required. The coordinator checked
+  the T6 branch: with Python missing or broken, the commit check already says
+  "a working python3 is needed to validate docs/llm-orchestrator/cadence.json;
+  install or configure it". Nothing more to do; do not ask again.
 
 In progress (each on its branch; check its latest pushed commit first, since
 the agent may have pushed more after this file was written):
@@ -70,46 +121,32 @@ the agent may have pushed more after this file was written):
   needs Bedrock/Vertex credentials drops out. Ruling 4 text (remove
   `workflows/` from LAWS and cadence.json) must go into the combined ruling
   (section 7). `skills/cadence/references/refuter.md:59` is left for T6.
-- **T20, the rule-change command** (`refine/t20-ruling-command`).
-  `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by Felipe
-  in his terminal. Fix list sent to the builder (GPT review in
-  `reviews/t20-adversarial-report.md`):
-  1. Copy the patch to a private temp file before validating; apply only that
-     copy; show its hash in the prompt.
-  2. Check rename sources and deletes, not only destinations.
-  3. Trap INT/TERM/EXIT to undo; if undo fails, say so and name the files.
-  4. Resolve `--root` to an absolute path once.
-  5. Refuse when a protected file differs from the index; run `--audit HEAD`
-     after committing and undo on mismatch.
-  6. Allow protected paths not yet in the lock (defined by cadence.json/deny
-     rules).
-  7. Old projects keep old `.githooks` copies that honour
-     `ORCH_CADENCE_UNLOCK`: cadence-init must write a ready-made upgrade
-     ruling patch and print the one command; document the upgrade.
-  8. Test undo after the lock is written.
-  9. Only the marked section of AGENTS.md/CLAUDE.md is protected.
-  10. Refuse when `CLAUDECODE=1` or a Codex session variable is set; add a
-      `Bash(*cadence-ruling.sh*)` deny rule in cadence-init.
-  11. Docs must say plainly: the lock stops accidental edits and makes
-      deliberate ones visible; it cannot stop an agent determined to fake a
-      ruling.
+- **T20, the rule-change command** (`refine/t20-ruling-command`, head
+  `ab0f30b` or later). `skills/cadence/scripts/cadence-ruling.sh <patch>
+  "<wording>"`, run by Felipe in his own terminal. Round 1 of the Full review
+  (GPT report in `reviews/t20-adversarial-report.md`, plus Opus) found 11
+  issues; **all are fixed** (`run-all.sh`: 45 suites pass). Highlights: it
+  applies a private copy of the patch and shows its hash; rename/copy headers
+  and changes outside the protected set are refused; any failure or
+  interruption undoes everything, including a landed commit; it runs
+  `--audit HEAD` after committing; old projects get a ready-made upgrade
+  ruling patch from cadence-init; it refuses inside Claude Code or Codex
+  sessions (the Codex variable names are unverified); cadence-init writes a
+  `Bash(*cadence-ruling.sh*)` deny rule; the docs say plainly what the lock
+  cannot stop. The test file is now `tests/test-ruling-command.sh`.
+  Next: round 2 of the Full review (fresh Opus contract + GPT adversarial,
+  scoped to the fixes and realistic cases), then PR and merge.
+  The regenerated protected-file patch is `reviews/t20-ruling-4.patch`; fold
+  it into the combined ruling (section 7).
   - **Decided (Felipe, 2026-09-25): no signing.** The plugin is for everyone
     and must not depend on any one person's tools. The lock stops accidental
     rule changes, every change shows in the history, and the docs say plainly
     what the lock cannot stop (item 11). Do not ask about signing again.
-- **T10, evaluation set** (`refine/t10-evals`, head `af356e8` or later). Built;
-  nothing paid has run. Review round 1 (one Opus reviewer, Standard path)
-  found 2 serious and 6 mild issues; **all are fixed** (`run-all.sh`: 44 suites
-  pass). Next: a short re-check by one fresh reviewer of the fixes, then PR
-  and merge. It depends on nothing else, but its Full arms refuse to run until
-  T5 is merged.
-  - The smallest run that answers "does Full beat /code-review" is
-    `run --arms full,code-review` on all 83 cases: estimated **$55–$250**. The
-    other arms add about $60–$270. The pilot step in `tests/evals/README.md`
-    checks the unverified parts first (does `/code-review` work under
-    `-p --safe-mode`; does `codex review --uncommitted` take instructions).
-    Bring Felipe this price once T5 is merged. **Never run paid evals yourself.**
-  - The effort arm stays unavailable: reviewers stay at high effort.
+- **T10 is merged** (PR #35). The smallest run that answers "does Full beat
+  /code-review" is `run --arms full,code-review` on all 83 cases, about
+  **$55–$250**, and needs T5 merged first; see `tests/evals/README.md` (pilot
+  step first). Bring Felipe that price after T5 merges. **Never run paid
+  evals yourself.**
 
 Not started (in order):
 - **T6**, remove the legacy procedure: **started** on `refine/t6-remove-legacy`

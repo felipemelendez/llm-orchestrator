@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.1",
+  "name": "shape-header-plain-project",
+  "description": "Without an enabled docs/llm-orchestrator/cadence.json the plugin injects no reply-format rule, so a 'where is X' question gets a plain answer, not one of the six headers. The answer must still name the file. Reply-only case: every grader reads the final reply; no grader checks files or tool calls.",
+  "tags": [
+    "shape-header-plain-project"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "reply-matches-1",
+      "type": "regex",
+      "pattern": "net\\.py",
+      "flags": "mi"
+    },
+    {
+      "name": "reply-lacks-1",
+      "type": "regex",
+      "pattern": "^(Changed|Found|Blocked|Issues|Plan|Status):",
+      "flags": "mi",
+      "match": "not_contains"
+    }
+  ]
+}

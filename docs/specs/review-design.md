@@ -390,7 +390,7 @@ lacked. T10 tests the swap.
   `dispatching-*`, `executing-plans`, `finishing-a-branch`,
   `using-orchestrator`, and `commands/dispatch.md`, `finish.md`, `verify.md`
   and `skills.md`.
-- `tests/evals/cases/reviewer-confidence-anchoring.json`: update the text
+- `tests/evals/cases/reviewer-confidence-anchoring/`: update the text
   only; do not run it.
 
 **Delete**

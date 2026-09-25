@@ -42,8 +42,8 @@ INPUT=""
 # more likely to listen to instructions at the end of their context window than
 # at the start") is named as an EARLIER-model trait in Anthropic's Claude 5
 # context-engineering guidance, and this repo's own ablation
-# (tests/evals/cases/shape-header-no-turn-hook.json) measured the hook's turn-one
-# contribution at zero. What survives is the output-format contract the Stop-hook
+# (the shape-header-no-turn-hook case, removed when the evals moved to
+# claude plugin eval) measured the hook's turn-one contribution at zero. What survives is the output-format contract the Stop-hook
 # grader enforces, kept short per the Opus 5 guidance to "pair the instruction
 # with a short reminder near the end of the prompt".
 CANON="${HOOK_DIR}/../../concise-agent-protocol.md"

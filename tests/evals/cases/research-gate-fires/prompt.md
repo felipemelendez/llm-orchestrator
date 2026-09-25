@@ -1,0 +1,1 @@
+design our payment retry flow against Stripe API version 2026-06; sketch the module boundaries before we build. The retry module wraps the charge calls in payments/charge.py -- I want the boundaries and the retry/idempotency behavior written down before any implementation starts.
