@@ -7,14 +7,17 @@ Always exits 0: this warns, it never blocks. See orch-verify-gate.sh for why.
 It reads what the harness recorded, never the command's text cleverly. A
 command counts when the harness wrote a finished, non-error result for it (on
 Codex: its own record, exit code 0) and the command's text, split at `;`, `&`,
-`|` and newlines, has a segment that matches the shared check pattern. On
+`|` and newlines, has a segment that matches the shared check pattern. A
+command that starts with the project's `runner.test_cmd` (from
+docs/llm-orchestrator/cadence.json) counts the same way. On
 Claude Code a Bash call made with run_in_background, or whose result is the
 harness's launch acknowledgement ("Command running in background with ID:"),
 is a launch, not a finish.
 
 Limits, by construction, the same on both harnesses: `npm test &` (the shell
 reports 0 before the check has finished), a check named only inside a heredoc
-body or a quoted string (`printf 'npm test'`), and `npm test || true` are all
+body or a quoted string (`printf 'npm test'`), `npm test || true`, and
+`echo x -- pytest` (any program before `--` reads as a wrapper) are all
 accepted. Those are disguises. The laws leave honesty to the agent: this check
 catches the careless false claim, not the deliberate one. Earlier versions
 tried to read shell syntax for them (a tokenizer, heredoc and background rules)
@@ -33,10 +36,11 @@ import re
 import sys
 
 # Which commands count as a check is described once, in orch-signals.sh. The
-# shell writes POSIX classes; Python spells them differently.
+# shell writes POSIX classes; Python spells them differently. Replacing the
+# class name inside its brackets covers both `[[:space:]]` and `[^[:space:]]`.
 RUNS = os.environ.get("ORCH_VERIFY_CMD_RE") or ""
 NONRUN = os.environ.get("ORCH_VERIFY_NONRUN_RE") or ""
-for _posix, _py in ((r"[[:space:]]", r"\s"), (r"[[:alnum:]]", r"[0-9A-Za-z]")):
+for _posix, _py in (("[:space:]", r"\s"), ("[:alnum:]", "0-9A-Za-z")):
     RUNS, NONRUN = RUNS.replace(_posix, _py), NONRUN.replace(_posix, _py)
 
 LABEL = re.compile(r"(?im)^[ \t]*(?:[-*+][ \t]*)?(?:#{1,6}[ \t]*)?[*_]{0,3}Verification[*_]{0,3}:"
@@ -94,11 +98,41 @@ def finished_ok(block):
     return not result_text(block).lstrip().startswith(LAUNCH)
 
 
-def ran_a_check(command):
-    """Any segment of the command that runs a check and is not a --version."""
+def configured_test_cmd(project):
+    """The project's runner.test_cmd from its cadence.json, or "" when it has none."""
+    try:
+        with open(os.path.join(project, "docs", "llm-orchestrator", "cadence.json"),
+                  encoding="utf-8") as stream:
+            runner = json.load(stream).get("runner")
+        command = runner.get("test_cmd")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return command.strip() if isinstance(command, str) else ""
+
+
+def starts_with(text, test_cmd):
+    """text begins with test_cmd as whole words: `make test` starts
+    `make test -j4`, not `make tests`."""
+    rest = text[len(test_cmd):]
+    return text.startswith(test_cmd) and (not rest or rest[0] in " \t\n;&|")
+
+
+def prints_only(text):
+    """The text asks a runner only to print (`--version`, `--help`)."""
+    return bool(NONRUN) and bool(re.search(NONRUN, text, re.M))
+
+
+def ran_a_check(command, test_cmd=""):
+    """Any segment of the command that runs a check and is not a --version.
+    A command or segment that starts with test_cmd is a check too; the whole
+    command is tried so a test_cmd holding `&&` still matches."""
+    if test_cmd and starts_with(command.strip(), test_cmd) and not prints_only(command):
+        return True
     for segment in re.split(r"[;&|\n]+", command):
         segment = PREFIX.sub("", segment)
-        if re.search(RUNS, segment, re.M) and not (NONRUN and re.search(NONRUN, segment, re.M)):
+        if prints_only(segment):
+            continue
+        if re.search(RUNS, segment, re.M) or (test_cmd and starts_with(segment, test_cmd)):
             return True
     return False
 
@@ -156,6 +190,7 @@ def main():
     # for it. A call with no result was interrupted or is still running, and a
     # launch acknowledgement is a start, not a finish.
     finished = {b.get("tool_use_id") for e in recent for b in blocks(e) if finished_ok(b)}
+    test_cmd = configured_test_cmd(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     for entry in recent:
         for b in blocks(entry):
             if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
@@ -163,7 +198,7 @@ def main():
                     and isinstance(b["input"].get("command"), str)
                     and not b["input"].get("run_in_background")   # a launch is not a finish
                     and isinstance(b.get("id"), str) and b["id"] in finished
-                    and ran_a_check(b["input"]["command"])):
+                    and ran_a_check(b["input"]["command"], test_cmd)):
                 return 0
 
     if os.environ.get("ORCH_HOOK_DRY_RUN") == "1":

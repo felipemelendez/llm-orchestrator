@@ -123,9 +123,9 @@ ORCH_SIG_DESIGN_VERB='\b(add|implement|build|set[[:space:]]+up|wire|wiring|integ
 ORCH_SIG_INVOCATION='/llm-orchestrator:research\b'
 
 # Verify-shaped commands — test/lint/typecheck/build invocations across the
-# common ecosystems. Used by the evidence-ledger PostToolUse hook to decide
-# which Bash results get an evidence stamp, and (indirectly) by the verify
-# gate when it validates a cited stamp.
+# common ecosystems. Used by the completion checks
+# (scripts/lib/orch-completion-check.py and codex-completion-check.py) to
+# decide whether a finished command in the turn was a check.
 #
 # COMMAND-POSITION ANCHORED: the tool name must be the first word of a command
 # segment (start of string, or right after ; & | — which also covers && and
@@ -149,7 +149,25 @@ ORCH_SIG_INVOCATION='/llm-orchestrator:research\b'
 # substance=ok. Matched against the command and used to veto classification.
 ORCH_SIG_VERIFY_NONRUN='(^|[[:space:]])(--version|--help|-h|-V|--collect-only|--collectOnly|--dry-?[Rr]un|--list-?[Tt]ests?|--list|--listTests|--show-?config|--co|--print-?config|--why)([[:space:]]|$)'
 
-ORCH_SIG_VERIFY_CMD='(^|[;&|])[[:space:]]*((npx|pnpm[[:space:]]+(exec|dlx)|yarn[[:space:]]+(dlx|workspace[[:space:]]+[A-Za-z0-9@._/-]+)|bunx|poetry[[:space:]]+run|pipenv[[:space:]]+run|uv[[:space:]]+run|hatch[[:space:]]+run|rye[[:space:]]+run|bundle[[:space:]]+exec|dotnet[[:space:]]+run[[:space:]]+--|deno[[:space:]]+task)[[:space:]]+)?((npm|pnpm|yarn|bun)([[:space:]]+run)?[[:space:]]+(t|test|tests|lint|typecheck|typecheck:.*|check)\b|(pytest|py\.test|jest|vitest|mocha|rspec|tox|nox|phpunit|tsc|ruff|eslint|biome|flake8|mypy|pyright|clippy|shellcheck|rubocop|golangci-lint|ctest|bats)\b|python[0-9.]*[[:space:]]+-m[[:space:]]+(pytest|unittest|tox|mypy|ruff|flake8)\b|go[[:space:]]+(test|vet)\b|cargo[[:space:]]+(test|check|clippy|nextest)\b|mix[[:space:]]+test\b|(\./)?gradlew?[[:space:]]+(test|check)\b|mvn([[:space:]]+-[A-Za-z0-9.=-]+)*[[:space:]]+(test|verify)\b|(make|just|task)[[:space:]]+(test|tests|check|lint|typecheck|ci|verify)\b|dotnet[[:space:]]+test\b|swift[[:space:]]+test\b|bazel[[:space:]]+test\b|deno[[:space:]]+(test|check|lint)\b|(vendor/bin/|bin/)?(phpunit|pest)\b|(bash[[:space:]]+|sh[[:space:]]+)?(\./)?tests?/[A-Za-z0-9._/-]*\.sh\b|python[0-9.]*[[:space:]]+(\./)?tests?/[A-Za-z0-9._/-]*\.py\b|(bash[[:space:]]+|sh[[:space:]]+)?\./[A-Za-z0-9._-]*(test|check)[A-Za-z0-9._-]*\.sh\b)'
+# The pattern is built from the pieces below. Only ORCH_SIG_VERIFY_CMD is read
+# by the checks.
+#
+# A runner may be named by a path: `.ve/bin/pytest`, `./node_modules/.bin/vitest`.
+# The name must end the word, so `pytest.ini` and `ruff-lsp` are not runners.
+_ORCH_VERIFY_PATH='([A-Za-z0-9._~-]*/)*'
+_ORCH_VERIFY_END='([^A-Za-z0-9._-]|$)'
+# Something that runs the project's own copy of a tool: `npx jest`, `pnpm vitest`,
+# `poetry run pytest`.
+_ORCH_VERIFY_RUNNER='(npx|pnpm([[:space:]]+(exec|dlx))?|yarn([[:space:]]+(dlx|workspace[[:space:]]+[A-Za-z0-9@._/-]+))?|bunx|poetry[[:space:]]+run|pipenv[[:space:]]+run|uv[[:space:]]+run|hatch[[:space:]]+run|rye[[:space:]]+run|bundle[[:space:]]+exec|dotnet[[:space:]]+run[[:space:]]+--|deno[[:space:]]+task)[[:space:]]+'
+# A program that ends its own options with `--` and runs the rest:
+# `aws-vault exec profile -- pytest`, `op run -- npm test`.
+_ORCH_VERIFY_WRAPPER='[A-Za-z][A-Za-z0-9._-]*([[:space:]]+[^[:space:]]+)*[[:space:]]+--[[:space:]]+'
+# Test runners, linters and type checkers.
+_ORCH_VERIFY_TOOLS='((npm|pnpm|yarn|bun)([[:space:]]+run)?[[:space:]]+(t|test|tests|lint|typecheck|typecheck:.*|check)\b|'"${_ORCH_VERIFY_PATH}"'(pytest|py\.test|jest|vitest|mocha|rspec|tox|nox|phpunit|pest|tsc|ruff|eslint|biome|flake8|mypy|pyright|clippy|shellcheck|rubocop|golangci-lint|ctest|bats)'"${_ORCH_VERIFY_END}"'|'"${_ORCH_VERIFY_PATH}"'python[0-9.]*[[:space:]]+-m[[:space:]]+(pytest|unittest|tox|mypy|ruff|flake8)\b|go[[:space:]]+(test|vet)\b|cargo[[:space:]]+(test|check|clippy|nextest)\b|mix[[:space:]]+test\b|(\./)?gradlew?[[:space:]]+(test|check)\b|mvn([[:space:]]+-[A-Za-z0-9.=-]+)*[[:space:]]+(test|verify)\b|(make|just|task)[[:space:]]+(test|tests|check|lint|typecheck|ci|verify)\b|dotnet[[:space:]]+test\b|swift[[:space:]]+test\b|bazel[[:space:]]+test\b|deno[[:space:]]+(test|check|lint)\b)'
+# Test scripts named by their path. Not accepted after a wrapper: in
+# `git diff -- tests/x.sh` the `--` comes before file names, not a command.
+_ORCH_VERIFY_SCRIPTS='((bash[[:space:]]+|sh[[:space:]]+)?(\./)?tests?/[A-Za-z0-9._/-]*\.sh\b|python[0-9.]*[[:space:]]+(\./)?tests?/[A-Za-z0-9._/-]*\.py\b|(bash[[:space:]]+|sh[[:space:]]+)?\./[A-Za-z0-9._-]*(test|check)[A-Za-z0-9._-]*\.sh\b)'
+ORCH_SIG_VERIFY_CMD="(^|[;&|])[[:space:]]*(${_ORCH_VERIFY_WRAPPER})?(${_ORCH_VERIFY_RUNNER})?${_ORCH_VERIFY_TOOLS}|(^|[;&|])[[:space:]]*(${_ORCH_VERIFY_RUNNER})?${_ORCH_VERIFY_SCRIPTS}"
 
 # === Question-shape signals ===
 # These signals compel WITHOUT a design verb. They're queries against project

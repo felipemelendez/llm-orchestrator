@@ -3,7 +3,8 @@
 
 Reads a Codex Stop payload on stdin. The reply says Verification: PASS; did a
 command matching the shared check pattern (ORCH_SIG_VERIFY_CMD, from
-orch-signals.sh) run in this turn and finish with exit code 0? If so, or if the
+orch-signals.sh), or starting with the project's runner.test_cmd, run in this
+turn and finish with exit code 0? If so, or if the
 reply says anything else, nothing is printed. If not, the agent is sent back to
 work once with the same note the Claude side uses, and nothing is shown to the
 person. Always exits 0.
@@ -137,8 +138,9 @@ def main():
             if isinstance(entry, dict):
                 entries.append(entry)
 
+    test_cmd = shared_check.configured_test_cmd(os.environ.get("CODEX_PROJECT_DIR") or os.getcwd())
     for _, _, command, code in this_turn(entries, records(entries), payload.get("turn_id")):
-        if code == 0 and shared_check.ran_a_check(command):
+        if code == 0 and shared_check.ran_a_check(command, test_cmd):
             return 0
 
     if os.environ.get("ORCH_HOOK_DRY_RUN") == "1":

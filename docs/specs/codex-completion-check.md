@@ -14,8 +14,9 @@ At Codex's `Stop` event the hook receives `last_assistant_message`,
 `transcript_path`, `turn_id` and `stop_hook_active`. It answers one question:
 
 > The reply's last `Verification:` label, outside code fences, is `PASS`. Did a
-> command matching `ORCH_SIG_VERIFY_CMD` (and not `ORCH_SIG_VERIFY_NONRUN`)
-> run in this turn and finish with exit code 0?
+> command matching `ORCH_SIG_VERIFY_CMD`, or starting with the project's
+> `runner.test_cmd` (and not matching `ORCH_SIG_VERIFY_NONRUN`), run in this
+> turn and finish with exit code 0?
 
 - Yes, or the label is anything but PASS, or there is no label: print nothing.
 - No: print `{"decision":"block","reason":<NOTE>}` once. NOTE is
@@ -64,11 +65,24 @@ Rules:
   value; a prefix with its own options, such as `timeout -k 5 300`, is not
   stripped), one segment matching the shared pattern and not the non-run
   pattern. That is the whole reading of the text; the check does not parse
-  shell. The pattern is anchored at the segment's start, so a runner named
-  by a path (`./node_modules/.bin/jest`, `.venv/bin/pytest`) or with options
-  before its target (`make -j4 test`) is not recognised and the agent is sent
-  back once; widening the pattern is a measured change of its own, not a
-  parsing rule. A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
+  shell. The pattern is anchored at the segment's start. It accepts, before
+  the runner's name, a path (`./node_modules/.bin/jest`, `.ve/bin/pytest`),
+  a program that runs the project's copy of a tool (`npx`, `pnpm`, `yarn`,
+  `poetry run`, `uv run` and others), and a program that ends its own
+  options with `--` (`aws-vault exec profile -- pytest`). The runner's name
+  must end the word, so `pytest.ini` is not a runner. A test script named by
+  its path (`bash tests/x.sh`) is not accepted after `--`, because in
+  `git diff -- tests/x.sh` what follows `--` is a file name. A runner with
+  options before its target (`make -j4 test`) is not recognised and the
+  agent is sent back once.
+- When the project's `docs/llm-orchestrator/cadence.json` sets
+  `runner.test_cmd`, a command also passes when it, or one of its segments
+  after the prefixes are stripped, starts with that text followed by the end
+  of the command, a space or an operator. The whole command is tried so that
+  a `test_cmd` holding `&&` still matches. The project is `CODEX_PROJECT_DIR`
+  when it is set, else the hook's working directory (on Claude Code,
+  `CLAUDE_PROJECT_DIR`). A missing or unreadable `cadence.json`, or an empty
+  `test_cmd`, leaves only the pattern. A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
   one program, so it is joined with spaces only when no argument holds shell
   punctuation.
@@ -96,6 +110,8 @@ purpose:
   (`printf 'npm test'`).
 - `npm test || true`, or any other masking of the exit code.
 - A line appended to the log by hand; the log is the harness's.
+- `echo x -- pytest`: any program followed by `--` and a runner's name is
+  read as a wrapper, including one that only prints.
 
 Each is a disguise, and the laws leave honesty to the agent: the check
 catches the careless false claim, not the deliberate one. Earlier versions
@@ -121,7 +137,8 @@ segment) is shared with the Claude check on purpose; see that file's docstring.
 
 `bash tests/test-codex-verify-gate.sh` drives the hook with fixtures in the
 shape above, including a decoy script and an agent-printed result with no
-harness record behind them, and the honest shapes (`2>&1`, a quoted `&`, a
+harness record behind them, runners named by a path, behind a `--` wrapper or
+through `pnpm`/`yarn`/`npx`, a project's `runner.test_cmd`, and the honest shapes (`2>&1`, a quoted `&`, a
 here-string, a multi-line quoted argument) that must stay silent, and asserts
 the invariants (exit 0, no `systemMessage`, no stderr).
 `bash tests/test-install-global.sh` G16 runs the command exactly as
