@@ -227,7 +227,7 @@ fi
 # (j4) reviewer scoping: Issues: reply is that agent's valid shape; prose is not.
 out=$(python3 -c "
 import json
-print(json.dumps({'agent_type': 'llm-orchestrator:orch-code-reviewer',
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-spec-reviewer',
                   'last_assistant_message': 'Issues:\n- none found'}))" \
       | bash "$SUBAGENT" 2>&1); rc=$?
 if [[ $rc -eq 0 && -z "$out" ]]; then
@@ -237,7 +237,7 @@ else
 fi
 out=$(python3 -c "
 import json
-print(json.dumps({'agent_type': 'llm-orchestrator:orch-code-reviewer',
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-spec-reviewer',
                   'last_assistant_message': 'looks fine to me overall'}))" \
       | bash "$SUBAGENT" 2>&1); rc=$?
 if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "protocol shape"; then

@@ -243,7 +243,7 @@ case "${cmd}" in
         echo "missing: ${f}"; fail=1
       fi
     done
-    for d in skills commands agents templates hooks workflows scripts/hooks scripts/lib output-styles docs examples tests; do
+    for d in skills commands agents templates hooks scripts/hooks scripts/lib output-styles docs examples tests; do
       if [[ ! -d "${ROOT}/${d}" ]]; then
         echo "missing dir: ${d}"; fail=1
       fi
@@ -260,7 +260,9 @@ case "${cmd}" in
              scripts/lib/orch-git-classify.py \
              scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh \
              scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md \
-             docs/install.md templates/settings.json workflows/review-diff.js \
+             docs/install.md templates/settings.json scripts/lib/orch-review.py \
+             skills/requesting-code-review/references/seat-schema.json \
+             skills/requesting-code-review/references/refuter-schema.json \
              skills/brainstorming/scripts/server.cjs skills/using-orchestrator/SKILL.md \
              skills/cadence/SKILL.md skills/cadence/CADENCE.md \
              skills/cadence/scripts/orch-cadence-gate.sh skills/cadence/scripts/orch-cadence-check.sh \
@@ -270,7 +272,7 @@ case "${cmd}" in
              skills/cadence/scripts/orch-task-resources.py \
              scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
              scripts/lib/codex-cadence-read-command.py scripts/lib/codex-completion-check.py \
-             scripts/providers/claude-review.py docs/codex.md docs/codex-provider.md; do
+             docs/codex.md docs/codex-provider.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -279,8 +281,8 @@ case "${cmd}" in
     # Commands and agents ship without a wiring manifest, so this list is the
     # manifest. It fails closed on deletion (the reproduced blind spot); a new
     # command/agent must be appended here to be guarded.
-    for f in agents/orch-code-reviewer.md agents/orch-debugger.md agents/orch-explorer.md \
-             agents/orch-implementer.md agents/orch-researcher.md agents/orch-security-reviewer.md \
+    for f in agents/orch-debugger.md agents/orch-explorer.md \
+             agents/orch-implementer.md agents/orch-researcher.md \
              agents/orch-spec-reviewer.md \
              commands/cadence-init.md \
              commands/debug.md commands/dispatch.md commands/finish.md commands/forget.md \
@@ -759,10 +761,6 @@ PY
     cp -R "${ROOT}/agents" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/output-styles" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/hooks" "${dest}/.claude/"
-    # Workflow scripts. requesting-code-review and commands/review.md both name
-    # workflows/review-diff.js; without this the installed skills point at a file
-    # that does not exist.
-    cp -R "${ROOT}/workflows" "${dest}/.claude/"
     # Copy hook scripts and statusline.
     for f in "${ROOT}/scripts/hooks/"*.sh "${ROOT}/scripts/hooks/"*.py; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"

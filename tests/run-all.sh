@@ -35,7 +35,6 @@ SUITE_TIMEOUT="${ORCH_SUITE_TIMEOUT:-600}"
 SKIP="$(cat <<'EOF'
 tests/run-all.sh	this runner
 tests/evals/	makes paid API calls — run tests/evals/run-evals.sh by hand, never unattended
-tests/lib/	helper library sourced by suites, not suites
 EOF
 )"
 
