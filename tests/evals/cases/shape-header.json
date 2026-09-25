@@ -1,8 +1,9 @@
 {
   "id": "shape-header",
-  "why": "Concise Agent Protocol: a 'where is X' question must open with Found:, not prose.",
+  "why": "Concise Agent Protocol in a cadence-enabled project: a 'where is X' question must open with Found:, not prose. The six headers apply only where docs/llm-orchestrator/cadence.json is enabled; shape-header-plain-project covers the other side.",
   "prompt": "where is the retry logic in this project?",
   "setup": [
+    "mkdir -p docs/llm-orchestrator && printf '{\"enabled\": true, \"workflow\": \"proportional\"}\\n' > docs/llm-orchestrator/cadence.json",
     "mkdir -p src",
     "printf 'def fetch(url, retries=3):\\n    for attempt in range(retries):\\n        try:\\n            return _get(url)\\n        except IOError:\\n            continue\\n' > src/net.py"
   ],
