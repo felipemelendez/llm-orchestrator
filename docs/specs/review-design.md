@@ -376,9 +376,8 @@ still list `workflows/`. Felipe applies this text:
 
 `Ruling 4 (<date>, Felipe): the plugin ships no Workflow scripts. In LAWS.md section 2, "agents/, commands/, templates/, workflows/ and output-styles/" becomes "agents/, commands/, templates/ and output-styles/". In docs/llm-orchestrator/cadence.json, "workflows" is removed from src_roots and "workflows/**" from prod_globs. LOCK.sha256 is rewritten under ORCH_CADENCE_UNLOCK=1.`
 
-**Stop and report** if nested `claude -p` cannot run inside a Claude Code
-session, or if the event streams do not show command text and output as R9
-needs.
+**Stop and report** if a Claude stream-json event stream does not show
+command text and output as R9 needs (the Codex stream does; see below).
 
 ## What T10 measures
 
@@ -408,17 +407,26 @@ Verified on 2026-09-25:
   command in R6 and step 1.
 - A local 0.157.0 `codex exec` rollout contains `"model":"gpt-6-astra"` and
   `"effort":"high"`.
+- Run from inside a Claude Code session, `claude -p "<prompt>" --model opus
+  --tools Bash --permission-mode dontAsk --output-format json` ran a Bash
+  command with no prompt, returned `modelUsage` naming `claude-opus-5-5`,
+  and reported no permission denials.
+- `codex exec --json -s read-only --skip-git-repo-check` (0.157.0) emits
+  `item.completed` events of type `command_execution` with the fields
+  `command`, `aggregated_output`, `exit_code` and `status`. R9 reads these.
+- `git clone --local --no-checkout`, followed by `git read-tree -u --reset
+  <tree>` with a tree written from a temporary index that held tracked and
+  untracked changes, gave the clone the full uncommitted content. A local
+  clone brings the loose objects with it.
 
 Not verified:
 
-- that `--permission-mode dontAsk` with `--allowedTools Bash` runs Bash
-  without a prompt;
-- that nested `claude -p` works inside a Claude Code session;
-- which Codex `--json` record holds command text, output and exit code (T15
-  found sessions with no command records);
+- the full R5 flag set together (`--safe-mode`, `--restricted`,
+  `--json-schema`, `--allowedTools`, `stream-json`); the check above used a
+  smaller set;
+- that the Claude `stream-json` events carry command text and output as R9
+  needs;
 - what `workspace-write` allows outside `-C`;
-- that `git clone --local` copies the loose objects that `git add -A` wrote
-  for the fingerprint tree;
 - that the agent's shell on Codex allows a 540-second `wait`.
 
 ## Decided (pending Felipe's confirmation)
