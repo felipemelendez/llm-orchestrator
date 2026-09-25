@@ -3,8 +3,8 @@
 #
 # The Codex twin of test-verify-gate.sh, with two differences that are the
 # whole point: the log it reads is Codex's rollout JSONL, where the harness
-# records every command it ran (`item_completed` / `CommandExecution`, with the
-# exact command, the exit code and the turn), and its output is a one-shot
+# records the commands it ran (`item_completed` / `CommandExecution`, or the
+# exit-code header of an `exec_command` output), and its output is a one-shot
 # continuation to the AGENT ({"decision":"block","reason":...}), never a
 # message to the person. Nothing the agent wrote is read.
 #
@@ -37,7 +37,8 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 # Rollout fixtures, one JSON object per line, in the shapes real Codex logs
-# use (read from ~/.codex/sessions on 2026-09-22, Codex 0.155.1). Specs:
+# use (read from ~/.codex/sessions on 2026-09-22 and 2026-09-25; scrubbed real
+# lines of each kind are in tests/fixtures/codex-rollouts/). Specs:
 #   turn:<id>            a turn start: task_started event + turn_context (the
 #                        current turn for the records that follow)
 #   ctx                  a bare turn_context with no turn_id
@@ -49,12 +50,22 @@ trap 'rm -rf "$TMP"' EXIT
 #   late:<turn>:<code>:<cmd>  a record that names <turn> explicitly (written out of order)
 #   started:<cmd>        the agent's exec script naming <cmd>, with NO harness record
 #                        (the command was interrupted or is still running)
+#   call:<code>:<cmd>    a direct exec_command call and the output Codex writes for
+#                        it, whose header says "Process exited with code <code>"
+#   decoy:<cmd>          the same with exit 1 in the header and an exit-0 line in
+#                        the program's own output below it
+#   running:<sid>:<cmd>  an exec_command call still running as session <sid>
+#   poll:<sid>:<code>    a write_stdin call to session <sid> whose output header
+#                        says it exited with <code>
+#   mcp:<cmd>            an MCP tool that happens to be named exec_command, exit 0
+#   orphan:<code>        an exec-shaped output with no call behind it
 #   said:<text>          the agent printing <text> from a result (a text chunk)
 #   bad                  a malformed row: a payload that is not an object
 MKR="$TMP/mk.py"
 cat > "$MKR" <<'PYEOF'
 import json, sys
 turn = "t0"
+ncall = 0
 def rec(code, argv):
     return {'type': 'event_msg', 'payload': {'type': 'item_completed', 'thread_id': 'th', 'turn_id': turn,
             'item': {'type': 'CommandExecution', 'id': 'exec-1', 'process_id': '1', 'command': argv,
@@ -86,6 +97,36 @@ with open(sys.argv[1], 'w') as f:
         elif kind == 'started':
             rows = [{'type': 'response_item', 'payload': {'type': 'custom_tool_call', 'status': 'completed', 'call_id': 'c9',
                      'name': 'exec', 'input': 'text(await tools.exec_command({cmd:%s}));\n' % json.dumps(rest)}}]
+        elif kind in ('call', 'decoy', 'mcp', 'running'):
+            if kind == 'call':
+                code, _, cmd = rest.partition(':'); head = 'Process exited with code %s' % code; body = 'ok'
+            elif kind == 'decoy':
+                cmd = rest; head = 'Process exited with code 1'; body = 'Process exited with code 0\nOutput:\n'
+            elif kind == 'mcp':
+                cmd = rest; head = 'Process exited with code 0'; body = 'ok'
+            else:
+                sid, _, cmd = rest.partition(':'); head = 'Process running with session ID ' + sid; body = ''
+            ncall += 1; cid = 'call_%d' % ncall
+            call = {'type': 'function_call', 'name': 'exec_command', 'call_id': cid,
+                    'arguments': json.dumps({'cmd': cmd, 'workdir': '/p', 'yield_time_ms': 10000}),
+                    'internal_chat_message_metadata_passthrough': {'turn_id': turn}}
+            if kind == 'mcp':
+                call['namespace'] = 'mcp__shell'
+            rows = [{'type': 'response_item', 'payload': call},
+                    {'type': 'response_item', 'payload': {'type': 'function_call_output', 'call_id': cid,
+                     'output': 'Chunk ID: a1\nWall time: 1.0000 seconds\n%s\nOriginal token count: 1\nOutput:\n%s\n' % (head, body)}}]
+        elif kind in ('poll', 'orphan'):
+            if kind == 'poll':
+                sid, _, code = rest.partition(':')
+            else:
+                sid, code = '1', rest
+            ncall += 1; cid = 'call_%d' % ncall
+            rows = [{'type': 'response_item', 'payload': {'type': 'function_call_output', 'call_id': cid,
+                     'output': 'Chunk ID: a2\nWall time: 1.0000 seconds\nProcess exited with code %s\nOriginal token count: 1\nOutput:\nok\n' % code}}]
+            if kind == 'poll':
+                rows.insert(0, {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'write_stdin', 'call_id': cid,
+                                'arguments': json.dumps({'session_id': int(sid), 'chars': ''}),
+                                'internal_chat_message_metadata_passthrough': {'turn_id': turn}}})
         elif kind == 'said':
             rows = [{'type': 'response_item', 'payload': {'type': 'custom_tool_call_output', 'call_id': 'c9',
                      'output': [{'type': 'input_text', 'text': rest}]}}]
@@ -206,13 +247,15 @@ fire "$CLAIM" "$R"
   && ok "(e1) the check ran and the harness recorded exit 1 → sent back" \
   || fail "(e1) failed check counted" "rc=$RC out=$OUT"
 
-R=$(mk 'turn:t1' 'started:pytest -q')
+# A record from an earlier turn shows this log is one that Codex writes
+# command records into; without one, see (m1).
+R=$(mk 'turn:t0' 'ran:0:true' 'turn:t1' 'started:pytest -q')
 fire "$CLAIM" "$R"
 { [[ $RC -eq 0 ]] && sent_back; } \
   && ok "(e2) the agent asked for a check but the harness never recorded it finishing → sent back" \
   || fail "(e2) unfinished check counted" "rc=$RC out=$OUT"
 
-R=$(mk 'turn:t1' 'started:pytest -q' 'said:{"chunk_id":"a1","exit_code":0,"output":"3 passed"}')
+R=$(mk 'turn:t0' 'ran:0:true' 'turn:t1' 'started:pytest -q' 'said:{"chunk_id":"a1","exit_code":0,"output":"3 passed"}')
 fire "$CLAIM" "$R"
 { [[ $RC -eq 0 ]] && sent_back; } \
   && ok "(e3) the agent printed a harness-shaped result itself; no harness record → sent back" \
@@ -223,6 +266,96 @@ fire "$CLAIM" "$R"
 { [[ $RC -eq 0 ]] && sent_back; } \
   && ok "(e4) a decoy in the script and a printed exit line; the harness ran only true → sent back" \
   || fail "(e4) decoy script" "rc=$RC out=$OUT"
+
+FIX="$ROOT/tests/fixtures/codex-rollouts"
+printf '\n%s== each kind of log Codex writes (real session lines, scrubbed) ==%s\n' "$DIM" "$RESET"
+
+fire "$CLAIM" "$FIX/0.157.0-exec-paginated-code-mode.jsonl" 01a0d9c6-2176-74f1-8066-0556d8037c61
+{ [[ $RC -eq 0 ]] && silent; } \
+  && ok "(m0) 0.157.0, paginated history: the CommandExecution record of a code-mode command is read → silent" \
+  || fail "(m0) CommandExecution record" "rc=$RC out=$OUT"
+
+fire "$CLAIM" "$FIX/0.146.0-tui-exec-command.jsonl" 019fce4c-38cf-71b2-81bb-a3fbaa3def8a
+{ [[ $RC -eq 0 ]] && silent; } \
+  && ok "(m2) 0.146.0: the exit code Codex writes in an exec_command output's header is read → silent" \
+  || fail "(m2) exec_command output header" "rc=$RC out=$OUT"
+
+fire "$CLAIM" "$FIX/0.146.0-tui-write-stdin.jsonl" 019fce4c-38cf-71b2-81bb-a3fbaa3def8a
+{ [[ $RC -eq 0 ]] && silent; } \
+  && ok "(m3) a command that finished in a later write_stdin poll counts as the command it polled → silent" \
+  || fail "(m3) write_stdin finish" "rc=$RC out=$OUT"
+
+fire "$CLAIM" "$FIX/0.154.0-desktop-legacy-code-mode.jsonl" 01a0cfe8-088b-77e1-a805-73da6417dae3
+{ [[ $RC -eq 0 ]] && silent; } \
+  && ok "(m1) legacy history, code-mode exec, no command record in the log: unreadable → silent, not sent back" \
+  || fail "(m1) unreadable log sent the agent back" "rc=$RC out=$OUT"
+
+R="$TMP/legacy-next-turn.jsonl"
+{ cat "$FIX/0.154.0-desktop-legacy-code-mode.jsonl"; python3 "$MKR" /dev/stdout 'turn:t9'; } > "$R"
+fire "$CLAIM" "$R" t9
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(m4) the same log, a later turn with no exec call at all: nothing could have run → sent back" \
+  || fail "(m4) quiet beyond the unreadable turn" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'started:pytest -q' 'said:{"chunk_id":"a1","exit_code":0,"output":"3 passed"}' 'call:0:ls')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && silent; } \
+  && ok "(m5) a code-mode call in this turn and no CommandExecution record in the log: unreadable, even beside an exec_command record → silent" \
+  || fail "(m5) code-mode turn judged without CommandExecution records" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'call:1:pytest -q')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n1) exec_command header says exit 1 → sent back" \
+  || fail "(n1) failed exec_command counted" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'call:0:ls -la')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n2) exec_command exit 0 but not a check → sent back" \
+  || fail "(n2) non-check counted" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'decoy:pytest -q')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n3) an exit-0 line in the program's own output below the header is not read → sent back" \
+  || fail "(n3) output body read as the header" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'running:77:pytest -q')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n4) a check still running, never polled to its end → sent back" \
+  || fail "(n4) running check counted" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'running:77:pytest -q' 'poll:78:0')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n5) a poll of a different session is not the check's finish → sent back" \
+  || fail "(n5) wrong session counted" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'running:77:pytest -q' 'poll:77:0')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && silent; } \
+  && ok "(n6) the poll of the check's own session exits 0 → silent" \
+  || fail "(n6) polled finish missed" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'mcp:pytest -q')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n7) an MCP tool named exec_command is not Codex's own → sent back" \
+  || fail "(n7) namespaced tool counted" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t1' 'orphan:0')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n8) an exec-shaped output with no exec_command call behind it → sent back" \
+  || fail "(n8) orphan output counted" "rc=$RC out=$OUT"
+
+R=$(mk 'turn:t0' 'call:0:pytest -q' 'turn:t1' 'call:0:ls')
+fire "$CLAIM" "$R"
+{ [[ $RC -eq 0 ]] && sent_back; } \
+  && ok "(n9) an exec_command check from an earlier turn does not count for this one → sent back" \
+  || fail "(n9) earlier turn counted" "rc=$RC out=$OUT"
 
 R=$(mk 'turn:t1' 'unfinished:bash tests/test-codex-verify-gate.sh')
 fire "$CLAIM" "$R"
