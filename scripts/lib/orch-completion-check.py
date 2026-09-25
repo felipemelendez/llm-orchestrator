@@ -118,7 +118,8 @@ SUBCOMMANDS = {
     "go": (("test", "vet"), {"-C"}),
     "cargo": (("test", "check", "clippy", "nextest"), {"-C", "-Z", "--config"}),
     "mix": (("test",), set()), "dotnet": (("test",), set()), "swift": (("test",), set()),
-    "bazel": (("test",), set()), "deno": (("test", "check", "lint"), set()),
+    "bazel": (("test",), {"--output_base", "--output_user_root", "--bazelrc", "--host_jvm_args"}),
+    "deno": (("test", "check", "lint"), set()),
 }
 # Runners that take a list of targets: a check when any later plain word
 # before `--` is one of these (`mvn clean test`, `./gradlew :app:test`). The
@@ -138,9 +139,15 @@ TARGETS = {
                              "--dotenv-filename", "--dotenv-path"}),
     "task": (_MAKE_TARGETS, {"-d", "--dir", "-t", "--taskfile", "-o", "--output"}),
 }
-# Interpreter options that come before `-m` or the script, and those of them
-# that take a value: `python3 -u -m pytest`, `bash -e tests/x.sh`.
-INTERPRETERS = {"python": {"-X", "-W"}, "bash": {"-o", "-O"}, "sh": {"-o"}}
+# Interpreter options that come before `-m` or the script: the letters of
+# short options that take a value (in a cluster, the last letter takes the
+# next word: `bash -euo pipefail`), and the options that only parse the
+# script instead of running it (`bash -n`).
+INTERPRETERS = {
+    "python": ({"X", "W"}, set()),
+    "bash": ({"o", "O"}, {"-n", "--noexec"}),
+    "sh": ({"o"}, {"-n"}),
+}
 # Options that make a runner plan, list or skip instead of running:
 # `make -n test`, `cargo test --no-run`, `pytest --markers`. For the `-D`
 # options a value of `true` counts the same as none.
@@ -415,9 +422,13 @@ def is_runner(words, i):
         return False
     interpreter = "python" if PYTHON.fullmatch(name) else name
     if interpreter in INTERPRETERS:
+        valued, parse_only = INTERPRETERS[interpreter]
         j = 0           # the interpreter's own options, up to -m, -c or the script
         while j < len(rest) and rest[j][:1] == "-" and rest[j] not in ("-m", "-c", "--"):
-            j += 2 if rest[j] in INTERPRETERS[interpreter] else 1
+            w = rest[j]
+            if w in parse_only or (w[1:2] != "-" and any("-" + c in parse_only for c in w[1:])):
+                return False
+            j += 2 if w[1:2] != "-" and w[-1] in valued else 1
         if j < len(rest) and rest[j] == "--":
             j += 1
         if interpreter == "python" and rest[j:j + 1] == ["-m"]:

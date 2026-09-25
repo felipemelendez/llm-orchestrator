@@ -119,14 +119,19 @@ Rules:
      (`tests/x.sh`, `./tests/x.py`, `./run-tests.sh`). The interpreter's own
      options before `-m` or the script are skipped (`python3 -u -m pytest`,
      `bash -e tests/x.sh`); of those, python's `-X` and `-W`, bash's `-o`
-     and `-O`, and sh's `-o` take a value.
+     and `-O`, and sh's `-o` take a value, and in a cluster of short
+     options the last letter takes it (`bash -euo pipefail tests/x.sh`).
+     `bash -n`, `bash --noexec` and `sh -n`, alone or in a cluster
+     (`bash -en`), only parse the script, so they are not checks.
 
      Two kinds of runner need a target word:
      - Tools whose subcommand comes first: the first word after their own
        options must be the target. `go test`/`vet` (value option `-C`);
+       `bazel test` after its value startup options (`--output_base`,
+       `--output_user_root`, `--bazelrc`, `--host_jvm_args`);
        `cargo test`/`check`/`clippy`/`nextest` (after an optional
        `+toolchain`; value options `-C`, `-Z`, `--config`); `mix test`;
-       `dotnet`, `swift` and `bazel test`; `deno test`/`check`/`lint`. So
+       `dotnet` and `swift test`; `deno test`/`check`/`lint`. So
        `go build -o test`, `cargo run --bin check`, `bazel build //app:test`
        and `go mod why test` are not checks.
      - Tools that take a list of targets: any later plain word before `--`
@@ -222,6 +227,9 @@ stay out of scope on purpose:
   check, so an honest run with a stray quote sends the agent back once.
 - `npx -c "vitest run"` and `npm exec --call "..."`: the command an option
   names is not read, so this honest run is not seen.
+- `mix do compile + test`: the first word after `mix` is `do`, so this
+  run is not seen. A project that runs its tests this way names the
+  command in `runner.test_cmd`.
 - `just run test`: for make, gradle, mvn, just and task every later plain
   word is read as a target, so `test` given to the `run` recipe as an
   argument reads as the `test` target.
