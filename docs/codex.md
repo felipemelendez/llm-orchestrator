@@ -15,8 +15,9 @@ what you get, how to install it, and what it never does.
 - **Three hooks.**
   1. *The file guard.* In a project that has cadence turned on, it stops the
      assistant from editing the rulebook, the config and the lock. Claude Code
-     has built-in deny rules for this. Codex does not, so this hook fills that
-     gap.
+     has built-in deny rules for this. Codex can make single paths read-only
+     only through a permission profile in `~/.codex/config.toml`, which this
+     setup does not write, so this hook fills that gap.
   2. *The completion check.* When a reply ends with `Verification: PASS`, it
      looks at the session log Codex already keeps and asks one question: did a
      test command actually run and pass in this turn? If not, it sends the
@@ -42,7 +43,8 @@ queue, stays in Claude Code.
    them. Codex only runs a hook you have trusted, and the installer cannot do
    that step for you.
 
-That is all. The installer never touches `config.toml`.
+That is all. The installer never touches `config.toml`. Codex itself saves
+project trust and hook trust there.
 
 What it writes, all under your home folder:
 
@@ -65,11 +67,49 @@ git pull --ff-only
 ```
 
 The skill is a copy, so it only changes when you rerun the installer. Then
-check `/hooks` in a new session: a hook whose text changed needs your trust
-again.
+check `/hooks` in a new session: a hook whose definition changed needs your
+trust again.
 
 If you installed the Codex layer from v0.8 or v0.9, this run also removes old
 hook entries that pointed at deleted files and made every command fail.
+
+## Trust
+
+Codex asks whether to trust each project and saves the answer in
+`~/.codex/config.toml`. Checked against Codex 0.157.0:
+
+- In a project marked untrusted, Codex does not read the project's
+  `AGENTS.md` (since 0.150.0). It still reads `~/.codex/AGENTS.md`, so the
+  cadence block still applies, but the project's own rules do not.
+- A project's own `.codex/hooks.json` loads only when the project is trusted.
+  The installer's hooks are in `~/.codex/hooks.json`, so project trust does
+  not affect them.
+- A hook runs only after you trust it in `/hooks`. Trust is saved against a
+  hash of the hook's definition: its event, matcher and command. Editing the
+  script a hook runs does not ask for trust again; changing the command does.
+- If `~/.codex/AGENTS.override.md` exists, Codex reads it instead of
+  `~/.codex/AGENTS.md`, and the cadence block is not read at all. Copy the
+  block into the override file, or remove the override.
+
+## Codex plugin install and Claude Code import
+
+Codex can add this repository as a plugin (`codex plugin marketplace add`,
+then `codex plugin add llm-orchestrator@llm-orchestrator`). Codex looks for
+`.codex-plugin/plugin.json` before `.claude-plugin/plugin.json`, so it reads
+this repository's Codex manifest. That manifest loads the cadence skill and
+the same three hooks, and none of the Claude Code hooks or skills. Without it,
+Codex would load the Claude Code manifest and all of `hooks/hooks.json`.
+
+The installer above is the supported install. The plugin does not add the
+instructions block to `~/.codex/AGENTS.md`. Use one or the other for the skill
+and hooks, not both: with both, each hook is registered twice, so it runs
+twice, and the skill is listed twice.
+
+Codex `/import` can also copy Claude Code plugins and hooks. Whether an
+imported copy of this plugin reads the Codex manifest was not tested. If the
+import lists hooks from this plugin's `hooks/hooks.json`, such as
+`session-start.sh` or `orch-verify-gate.sh`, do not keep them: they are
+written for Claude Code's transcript and tools, not Codex's.
 
 ## Turn a project on
 
