@@ -203,7 +203,7 @@ Adding a role (`orch-refactorer`, `orch-test-writer`) is one new markdown file i
 
 ## The workflow
 
-Each phase is a skill the controller invokes before acting. Mandatory checks, not suggestions — the controller scans for the relevant skill at every step and refuses to skip.
+Each phase is a skill the controller invokes when the task matches its trigger. Ordinary questions, explanations and small edits need no skill.
 
 1. **`research-classifier`.** Fires before any spec is written if signals match (library + version, vendor API, security verb, architectural change). Emits `RESEARCH_NEEDED` or `RESEARCH_SKIP`. On `RESEARCH_NEEDED`, the controller dispatches the `orch-researcher` subagent, which returns a brief with one of four outcomes: `VERIFIED` / `CONTRADICTED` / `COULDN'T_VERIFY` / `NOT_APPLICABLE`. `CONTRADICTED` halts the workflow before the spec is drafted.
 2. **`brainstorming`.** Refines the rough idea through clarifying questions, explores alternatives in sections for validation. Writes the spec to `docs/llm-orchestrator/specs/<date>-<slug>.md`, then self-reviews it inline against a fixed checklist (placeholders, testable goals, non-goals, decision conflicts, scope). High-stakes specs — security-sensitive, irreversible migration, public API — additionally get a fresh `orch-spec-reviewer` subagent pass (advisory, capped at 3 iterations).
@@ -213,7 +213,7 @@ Each phase is a skill the controller invokes before acting. Mandatory checks, no
 6. **`test-driven-development`.** Red-green-refactor inside each implementer: failing test first, watch it fail, write minimal code, watch it pass, commit. If implementation gets written before its test, the skill instructs the implementer to delete it and start over test-first.
 7. **`requesting-code-review`.** Two reviewers in fresh contexts per task. Stage 1 — spec compliance: does the diff match what was specified? Stage 2 — code quality: correct, safe, idiomatic, minimal? Reviewers report every finding with a confidence tag and are told explicitly not to be conservative; the controller then demotes anything below 0.8 into a separate `Notes:` section. The filtering is deliberately downstream — a reviewer instructed to withhold follows that literally and loses real bugs.
 8. **`receiving-code-review`.** When the reviewer returns issues, the controller routes through a 5-branch BLOCKED recovery tree (missing context, sibling wait, decomposition, model escalation, genuinely needs the user). Branches 1–4 resolve invisibly; only branch 5 reaches you.
-9. **`verification-before-completion`.** Fires before any "done" claim. Every `Changed:` block must include a `Verify:` line with the actual command run and its output. A per-turn hook reinforces the rule.
+9. **`verification-before-completion`.** Fires before any "done" claim. The claim must carry the actual command run and its output. In a cadence-enabled project a per-turn hook reinforces the rule.
 10. **`finishing-a-branch`.** Verifies tests pass, presents merge / PR / keep / discard options, cleans up the worktree. Never destructive without explicit confirmation.
 
 ---
@@ -272,11 +272,12 @@ Projects initialized before this release keep the older fixed sequence (brief re
 
 ## How the hooks behave
 
-Three rules, so you can predict them without reading the source:
+Four rules, so you can predict them without reading the source:
 
 1. **Defaults warn, never block.** Out of the box nothing stops your turn. Hooks add context, check shapes, and warn — the retry-storm breaker (on by default, warn-only; `ORCH_RETRY_CAP=0` disables it) and the end-of-turn completion check (a note to the model, never a message to you) included. On Codex the same completion check sends the assistant back once instead, because Codex has no way to hand it a quiet note; it never prints a message for you ([`docs/codex.md`](./docs/codex.md)). No hook changes tool output. The guards are the deliberate exception: `guard-destructive-git`, `guard-no-verify`, `guard-config-protection`, `guard-dispatch-model`, the cadence unlock guard, and on Codex the cadence file guard refuse the command outright, because a guard that only warns is not a guard. A refusal is addressed to the agent, as the reason its command was refused. Their escape hatches are in [`docs/install.md`](./docs/install.md#escape-hatches-for-the-hard-guards).
 2. **Blocking is opt-in.** `ORCH_STRICT_STATUS=1` blocks a malformed or empty subagent return; `ORCH_STRICT_RETRY=1` blocks at the repetition threshold (`ORCH_RETRY_CAP_N`, default 3); `ORCH_STRICT_RESEARCH=1` blocks a malformed research brief. `ORCH_HOOK_PROFILE=strict` turns on the first two at once. The completion check has no strict mode: 200 runs comparing warn against block scored the same either way ([`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md), 2026-08-05), so on Claude Code it always warns, and on Codex it always takes the one route to the agent that harness offers.
 3. **Local-only state.** Nothing leaves your machine. Skill telemetry is opt-in (`ORCH_TELEMETRY=1`, off by default).
+4. **Quiet outside cadence projects.** In a project without an enabled `docs/llm-orchestrator/cadence.json`, session start adds only a short note on when a skill applies (ordinary questions and small edits need none), and each turn adds nothing. The reply-format rule (the six headers in [`concise-agent-protocol.md`](./concise-agent-protocol.md)) and its per-turn reminder are injected only in a cadence-enabled project, and a reply format set by the project's own CLAUDE.md or AGENTS.md wins over them. The guards run in every project either way.
 
 `ORCH_HOOK_DRY_RUN=1` makes the hooks that add context or check shapes print what they would have done and then do nothing. Use it to tune behavior before turning a strict flag on. The guards ignore it on purpose; the Stop pruner and the worktree reaper never implemented it.
 
@@ -289,7 +290,7 @@ For contributors and local development:
 ```bash
 git clone https://github.com/felipemelendez/llm-orchestrator
 cd llm-orchestrator
-./tests/smoke.sh                           # → "79 checks passed, 1 skipped." (~90s)
+./tests/smoke.sh                           # → "81 checks passed, 1 skipped." (~90s)
 claude --plugin-dir "$(pwd)"               # session-mount the plugin for live iteration
 ```
 
@@ -300,7 +301,7 @@ Other modes:
 - **Persistent symlink.** `./scripts/install.sh --link` then `/plugin marketplace add ~/.claude/llm-orchestrator`.
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
 - **Codex.** `./scripts/install.sh --codex` — the cadence skill, the shared instructions and three small hooks, into your Codex setup; then trust the hooks with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
-- **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders and the research gate.
+- **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders (which only cadence-enabled projects get) and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
 - **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `950000` (≈95% of a 1M-token window) — the token count at which the agent is reminded once to write a handoff note before native compaction kicks in. Lower it for a smaller context window.
 
