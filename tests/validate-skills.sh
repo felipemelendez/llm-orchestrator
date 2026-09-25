@@ -356,6 +356,18 @@ while IFS= read -r agent_file; do
     echo "      Change the policy list in tests/validate-skills.sh in this same commit and say why."
     fail=1
   fi
+  # Effort (Felipe, 2026-09-25): the three reviewers run at high, because a
+  # reviewer that stops early misses findings; every other agent inherits the
+  # session's level.
+  case "$agent_name" in
+    orch-spec-reviewer|orch-code-reviewer|orch-security-reviewer) want_effort=high ;;
+    *) want_effort="" ;;
+  esac
+  got_effort=$(awk '/^---$/{c++; next} c==1 && /^effort:/{print $2; exit}' "$agent_file")
+  if [[ "$got_effort" != "$want_effort" ]]; then
+    echo "FAIL: $agent_file has 'effort: ${got_effort:-<unset>}' but policy says '${want_effort:-<unset>}'"
+    fail=1
+  fi
 done < <(find "$ROOT/agents" -maxdepth 1 -name '*.md' | sort)
 
 # The plugin version is quoted in prose, and a quoted version rots: manual-testing

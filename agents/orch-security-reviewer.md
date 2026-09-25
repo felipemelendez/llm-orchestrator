@@ -3,6 +3,7 @@ name: orch-security-reviewer
 description: Stage-3 conditional reviewer — use only when the diff touches auth/crypto/payments/secrets. Returns an Issues block focused on security.
 tools: Read, Grep, Glob, Bash
 model: opus
+effort: high
 maxTurns: 30
 ---
 
