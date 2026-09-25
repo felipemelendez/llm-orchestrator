@@ -13,6 +13,7 @@
 #   --commit-msg <msgfile>    the git-side gate (git hands the message file to
 #                             commit-msg, and to no other hook).
 #   --audit <rev>             the same three checks against a commit, for CI.
+#   --entries                 print the lock set, one entry per line.
 #   --version                 print the version this copy carries.
 #   --root <dir>              use <dir> as the project root instead of resolving
 #                             it (git toplevel of $PWD, else CLAUDE_PROJECT_DIR,
@@ -66,7 +67,7 @@ TMPD="$(mktemp -d)" || exit 1
 trap 'rm -rf "$TMPD"' EXIT
 
 usage() {
-  echo "usage: orch-cadence-check.sh [--root <dir>] --verdict | --lock | --landing <ticket> [--base <sha>] | --commit-msg <msgfile> | --audit <rev> | --version"
+  echo "usage: orch-cadence-check.sh [--root <dir>] --verdict | --lock | --landing <ticket> [--base <sha>] | --commit-msg <msgfile> | --audit <rev> | --entries | --version"
 }
 
 # ---------- hashing -----------------------------------------------------------
@@ -821,6 +822,7 @@ while [ $# -gt 0 ]; do
     --landing)  MODE="landing"; shift; ARG1="${1:-}" ;;
     --commit-msg) MODE="commit-msg"; shift; ARG1="${1:-}" ;;
     --audit)    MODE="audit"; shift; ARG1="${1:-}" ;;
+    --entries)  MODE="entries" ;;
     --base)     shift; BASE="${1:-HEAD}" ;;
     --version)  echo "orch-cadence-check.sh ${ORCH_CADENCE_CHECK_VERSION}"; exit 0 ;;
     -h|--help)  usage; exit 0 ;;
@@ -839,6 +841,7 @@ case "$MODE" in
               mode_landing "$ARG1" "$BASE"; exit $? ;;
   commit-msg) [ -n "$ARG1" ] || { echo "--commit-msg needs the message file"; exit 1; }
               mode_commit_msg "$ARG1"; exit $? ;;
+  entries)    lock_entries; exit 0 ;;
   audit)      [ -n "$ARG1" ] || { echo "--audit needs a revision"; exit 1; }
               mode_audit "$ARG1"; exit $? ;;
 esac

@@ -471,7 +471,8 @@ gate script's complete output; each says so in its first line.
 lock only when a terminal is attached), `--landing <ticket>`,
 `--commit-msg <msgfile>` (what the git hook calls: it runs `--landing <ticket>` too
 whenever the commit subject matches the `ticket_re` from `cadence.json`), `--audit
-<rev>` (the same check in CI, against a commit) and `--version`. `--landing
+<rev>` (the same check in CI, against a commit), `--entries` (the lock set, one
+entry per line) and `--version`. `--landing
 <ticket>` checks presence, stamps and that final `EXIT=0`. It grades no content: it
 checks that the cadence ran, not that it ran well, and nothing but a reader can do
 the second.
