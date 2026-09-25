@@ -254,9 +254,12 @@ lacked. T10 tests the swap.
 
   Both states block, and both go to the refuter.
 - **R12.** A `serious` or `catastrophic` finding with neither `repro` nor
-  `not_runnable` makes the review `INCOMPLETE`. The exception is a finding
-  the script raised to `serious` under R13: its seat was not asked for a
-  repro, so it stays `unverified` and blocking.
+  `not_runnable` makes the review `INCOMPLETE`. The exception is a `mild`
+  test-tampering finding the script raised to `serious` under R13: its seat
+  was not asked for a repro, so it stays `unverified` and blocking. A rank
+  outside the allowed values that the script replaced with `serious` has no
+  exception: without `repro` or `not_runnable`, it makes the review
+  `INCOMPLETE`.
 - **R13.** Each `not_checked` item is `{category, text}`, with `category`
   one of `tests-not-run`, `files-not-read` or `claim-unverified`. Seats list
   only what they did not check. Every item is returned verbatim and makes
