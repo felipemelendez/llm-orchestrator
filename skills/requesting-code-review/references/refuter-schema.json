@@ -1,0 +1,92 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdicts"
+  ],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "verdict",
+          "rank",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "PROMOTED",
+              "DROPPED",
+              "UNRESOLVED"
+            ]
+          },
+          "rank": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "catastrophic",
+              "serious",
+              "mild",
+              null
+            ]
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "file",
+              "line",
+              "quote",
+              "explanation"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "receipt-1",
+                  "file-line",
+                  "none"
+                ]
+              },
+              "file": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "quote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "explanation": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
