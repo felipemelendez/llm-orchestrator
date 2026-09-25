@@ -1,0 +1,167 @@
+{
+  "arms": [
+    {
+      "name": "full",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}"
+      ]
+    },
+    {
+      "name": "full-swap",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}",
+        "--adversarial-provider",
+        "claude"
+      ]
+    },
+    {
+      "name": "full-no-refuter",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}",
+        "--no-refuter"
+      ]
+    },
+    {
+      "name": "full-split",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}",
+        "--split"
+      ]
+    },
+    {
+      "name": "standard-contract",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "standard",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}",
+        "--brief",
+        "contract"
+      ]
+    },
+    {
+      "name": "standard-adversarial",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "standard",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}",
+        "--brief",
+        "adversarial"
+      ]
+    },
+    {
+      "name": "code-review",
+      "output": "claude-json",
+      "command": [
+        "claude",
+        "-p",
+        "/code-review high",
+        "--model",
+        "opus",
+        "--effort",
+        "high",
+        "--safe-mode",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "dontAsk",
+        "--allowedTools",
+        "Read,Grep,Glob,Bash,Agent",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{{\"mcpServers\":{{}}}}",
+        "--no-session-persistence"
+      ]
+    },
+    {
+      "name": "codex-review",
+      "output": "codex-text",
+      "command": [
+        "codex",
+        "review",
+        "--uncommitted",
+        "-c",
+        "model_reasoning_effort=\"high\""
+      ]
+    },
+    {
+      "name": "full-effort-unset",
+      "output": "review-json",
+      "command": [],
+      "unavailable": "orch-review.py always asks for effort high (docs/specs/review-design.md: 'there is no override'), so this arm needs an --effort option that the spec does not define"
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.1",
+  "name": "shape-header",
+  "description": "Concise Agent Protocol in a cadence-enabled project: a 'where is X' question must open with Found:, not prose. The six headers apply only where docs/llm-orchestrator/cadence.json is enabled, so the setup enables it with a minimal LAWS.md and a recorded lock; shape-header-plain-project covers the other side.",
+  "tags": [
+    "shape-header"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "reply-matches-1",
+      "type": "regex",
+      "pattern": "^Found:",
+      "flags": "mi"
+    },
+    {
+      "name": "reply-opens-with-1",
+      "type": "regex",
+      "pattern": "^\\s*Found:",
+      "flags": ""
+    }
+  ]
+}

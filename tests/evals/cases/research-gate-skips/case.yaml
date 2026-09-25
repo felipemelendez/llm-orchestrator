@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.1",
+  "name": "research-gate-skips",
+  "description": "Negative control. Pure-logic work names no library, so the research gate must stay silent. A gate that fires on everything is as broken as one that never fires. The 'reply-names-flatten' grader is new: it fails on an empty reply, so a run that answered nothing cannot pass on the quiet-gate graders alone.",
+  "tags": [
+    "research-gate-skips"
+  ],
+  "runs": 8,
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "reply-lacks-1",
+      "type": "regex",
+      "pattern": "research (needed|gate)",
+      "flags": "mi",
+      "match": "not_contains"
+    },
+    {
+      "name": "reply-lacks-2",
+      "type": "regex",
+      "pattern": "verifying .* against (current|live) docs",
+      "flags": "mi",
+      "match": "not_contains"
+    },
+    {
+      "name": "reply-names-flatten",
+      "type": "regex",
+      "pattern": "flatten",
+      "flags": "i"
+    }
+  ]
+}
