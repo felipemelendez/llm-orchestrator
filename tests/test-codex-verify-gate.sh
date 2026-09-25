@@ -108,12 +108,14 @@ ANY_RC=0; ANY_PERSON=0; ANY_ERR=0; RC=0; OUT=""; ERR=""
 fire() {
   python3 -c 'import json,sys
 t = None if sys.argv[2] == "null" else sys.argv[2]
-print(json.dumps({"session_id":"s","turn_id":sys.argv[3],"transcript_path":t,"cwd":"/p",
+print(json.dumps({"session_id":"s","turn_id":sys.argv[3],"transcript_path":t,"cwd":sys.argv[5],
   "hook_event_name":"Stop","model":"m","permission_mode":"default",
   "stop_hook_active": sys.argv[4] == "true","last_assistant_message": (None if sys.argv[1] == "null" else sys.argv[1])}))' \
-    "$1" "$2" "${3:-t1}" "${4:-false}" > "$TMP/in"
-  # The project whose cadence.json may name a test_cmd; none unless PROJ_DIR is set.
-  CODEX_PROJECT_DIR="${PROJ_DIR:-$TMP/no-project}" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
+    "$1" "$2" "${3:-t1}" "${4:-false}" "${PROJ_DIR:-$TMP/no-project}" > "$TMP/in"
+  # The project whose cadence.json may name a test_cmd; none unless PROJ_DIR is
+  # set. It goes in the payload's cwd and, unless ENV_PROJ_DIR says otherwise,
+  # in CODEX_PROJECT_DIR.
+  CODEX_PROJECT_DIR="${ENV_PROJ_DIR:-${PROJ_DIR:-$TMP/no-project}}" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
   OUT=$(cat "$TMP/out"); ERR=$(cat "$TMP/err")
   [[ $RC -ne 0 ]] && ANY_RC=1
   grep -q 'systemMessage' "$TMP/out" && ANY_PERSON=1
@@ -340,6 +342,44 @@ PROJ_DIR="$PROJ" fire "$CLAIM" "$R"
   || fail "(l5) raw argv test_cmd" "rc=$RC out=$OUT"
 printf '{ not json' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ignored "(l6) a cadence.json that is not JSON: as if there were none" 'bin/suite --fast'
+
+printf '\n%s== review fixes: what ends a runner name, named wrappers, options ==%s\n' "$DIM" "$RESET"
+
+# A runner name is the whole last part of a path and ends the word; a path
+# that only passes through a directory named like a runner is not a run.
+# After `--`, only a named wrapper runs the rest; git, rm and ls take paths.
+for c in 'git diff -- tests/pytest/conftest.py' 'git diff -- config/jest/setup.js' \
+         'git show HEAD -- config/jest/setup.js' 'git checkout -- src/eslint/' \
+         'git log -- mypy/' 'git diff --stat -- pytest' 'git ls-files -- node_modules/.bin/jest' \
+         'rm -rf -- .ve/bin/pytest' 'ls -- node_modules/.bin/jest' 'scripts/eslint/build-rules.sh' \
+         'tools/tsc/emit.sh' './node_modules/mocha/package.json' 'echo x -- pytest'; do
+  ignored "(m1) not a run" "$c"
+done
+# Every runner may be named by a path, and options may come between the
+# package manager and the runner.
+for c in '/usr/bin/make test' '/usr/local/bin/go test ./...' '~/.cargo/bin/cargo test' \
+         'pnpm --filter web vitest run' 'pnpm -C connections vitest run' 'yarn --cwd web jest' \
+         'npx --yes vitest run' 'uv run --with x pytest' '$HOME/.ve/bin/pytest x' \
+         'doppler run -- bash tests/test-a.sh'; do
+  counts "(m2) a real run" "$c"
+done
+# The named wrappers. These already counted under the looser rule; they pin the list.
+for c in 'aws-vault exec testing-felipe -- .ve/bin/pytest -q' 'doppler run -- pytest' \
+         'op run --env-file=.env -- npm test' 'dotenvx run -f .env -- vitest run' \
+         'infisical run --env=dev -- pytest' 'mise exec -- pytest'; do
+  counts "(m3) a named wrapper" "$c"
+done
+# A test_cmd with its own && still counts after the usual prefixes.
+printf '{ "runner": { "test_cmd": "cd app && ./check" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(m4) test_cmd after cd" 'cd /repo && cd app && ./check -q'
+PROJ_DIR="$PROJ" counts "(m4) test_cmd after an assignment" 'FOO=1 cd app && ./check'
+# A cadence.json nested too deeply for the JSON reader falls back to the
+# pattern; it does not switch the whole check off.
+python3 -c 'print("[" * 100000)' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(m5) a cadence.json too deep to read: the check still runs" 'ls -la'
+# The project is the payload's cwd first, then CODEX_PROJECT_DIR.
+printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ENV_PROJ_DIR="$TMP/no-project" counts "(m6) the payload's cwd names the project" 'bin/suite --fast'
 
 printf '\n%s== the turn boundary is this turn ==%s\n' "$DIM" "$RESET"
 
