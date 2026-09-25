@@ -429,6 +429,15 @@ else
   fail "No-priors fail-open" "output unexpectedly contains a prior section: $output"
 fi
 
+# --- Test: the guidance is scoped to new features and design work ---
+output=$(gate_with_priors "add a retry to the stripe webhook handler")
+if echo "$output" | grep -q 'applies only to a new feature or design work' \
+   && echo "$output" | grep -q 'A small edit or a question needs no research step'; then
+  ok "Guidance says it applies only to new features or design work, not small edits"
+else
+  fail "Guidance scope" "output lacks the new-feature scope or the small-edit exemption: $output"
+fi
+
 # --- Test: fresh cache file → 'Cache priors' section appears ---
 echo "# cached stripe docs" > "$PRIORS_CACHE_DIR/stripe.md"
 output=$(gate_with_priors "Add Stripe webhook handler")

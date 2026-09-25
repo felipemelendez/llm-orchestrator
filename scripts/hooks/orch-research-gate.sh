@@ -262,11 +262,13 @@ if [[ -f "${PROJECT_LIB}" ]]; then
 fi
 
 # ============================================================================
-# Build guidance string. Lead with the always-emitted classifier instruction;
-# append optional sections only when corresponding priors were found.
+# Build guidance string. Lead with the always-emitted classifier instruction,
+# scoped to new features and design work so a small edit that names a library
+# does not start a research step; append optional sections only when
+# corresponding priors were found.
 # ============================================================================
 
-GUIDANCE="LLM Orchestrator research-gate: signals detected (${matched_signal}). Before any spec, plan, or approach, invoke the research-classifier skill on the task text and act on its RESEARCH_NEEDED / RESEARCH_SKIP verdict. On RESEARCH_NEEDED, dispatch the research subagent and surface the brief before committing. On RESEARCH_SKIP, proceed silently."
+GUIDANCE="LLM Orchestrator research-gate: signals detected (${matched_signal}). This applies only to a new feature or design work: before its spec, plan or approach, invoke the research-classifier skill on the task text and act on its RESEARCH_NEEDED / RESEARCH_SKIP verdict. On RESEARCH_NEEDED, dispatch the research subagent and surface the brief before committing. On RESEARCH_SKIP, proceed silently. A small edit or a question needs no research step."
 
 if [[ -n "${RESEARCH_CONFIG}" ]]; then
   GUIDANCE="${GUIDANCE}

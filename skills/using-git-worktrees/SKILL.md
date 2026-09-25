@@ -1,6 +1,6 @@
 ---
 name: using-git-worktrees
-description: Use when work needs isolation from the current branch — long-running feature, risky refactor, parallel attempt. Creates and tracks a worktree without touching unrelated state.
+description: Use when work needs its own branch and checkout — a long feature, a risky refactor, or a parallel attempt.
 ---
 
 # Using git worktrees

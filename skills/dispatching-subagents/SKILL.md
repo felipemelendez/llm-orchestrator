@@ -1,6 +1,6 @@
 ---
 name: dispatching-subagents
-description: Use when running plan tasks sequentially with per-task two-stage review — the default for tasks with dependencies, sensitive code, or shared files another task changed.
+description: Use when running plan tasks one at a time with a two-stage review each — for tasks with dependencies, sensitive code, or shared files.
 ---
 
 # Dispatching subagents (sequential, per-task review)

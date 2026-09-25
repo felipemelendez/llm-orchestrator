@@ -28,7 +28,20 @@
 
 set -uo pipefail
 
+# Where the cadence lives: the one rule every hook shares (orch_cadence_find in
+# scripts/lib/orch-project.sh, pure bash, no fork). The event's cwd is read only
+# when CLAUDE_PROJECT_DIR is unset, so the usual case still opens with a file
+# test and a grep.
+INPUT=""
+[[ -n "${CLAUDE_PROJECT_DIR:-}" || -t 0 ]] || INPUT=$(cat || true)
 PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
+_ORCH_LIB="${BASH_SOURCE[0]:-$0}"
+[[ "${_ORCH_LIB}" == */* ]] && _ORCH_LIB="${_ORCH_LIB%/*}" || _ORCH_LIB="."
+_ORCH_LIB="${_ORCH_LIB}/../lib/orch-project.sh"
+# shellcheck source=scripts/lib/orch-project.sh
+if [[ -f "${_ORCH_LIB}" ]] && source "${_ORCH_LIB}" && declare -f orch_cadence_find >/dev/null 2>&1; then
+  orch_cadence_find "${INPUT}"; PROJ="${ORCH_CADENCE_ROOT}"
+fi
 PROJ="${PROJ%/}"
 CJ="${PROJ}/docs/llm-orchestrator/cadence.json"
 [[ -f "$CJ" ]] || exit 0
@@ -36,8 +49,7 @@ grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "$CJ" || exit 0
 
 case ",${ORCH_DISABLED_HOOKS:-}," in *,orch-cadence-stop,*) exit 0 ;; esac
 
-INPUT=""
-[[ -t 0 ]] || INPUT=$(cat || true)
+[[ -n "${INPUT}" || -t 0 ]] || INPUT=$(cat || true)
 
 # orch_json_field returns STRINGS only, so a boolean has to be read off the raw
 # text. Re-entry first, before anything that could produce output.

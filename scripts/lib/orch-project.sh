@@ -79,3 +79,61 @@ orch_file_mtime_date() {
     fi
   fi
 }
+
+# Where is this project's cadence?
+#
+# Every hook that asks whether the cadence is on uses this one rule, so session
+# start, the per-turn hook, the guards and the stop hooks always agree:
+#
+#   1. Start at CLAUDE_PROJECT_DIR if set, else the hook event's cwd, else PWD.
+#   2. Walk up, one directory at a time, and stop at the first directory that
+#      holds docs/llm-orchestrator/cadence.json. Never walk past the git top
+#      level (a directory holding .git, a file in a worktree or submodule) or /.
+#   3. If no directory on the way holds one, the answer is the start directory.
+#      Outside any git repository only the start directory itself counts.
+#
+# So a cadence project nested inside a larger repository (cadence.json in
+# /repo/app) is found from /repo/app and from /repo/app/src alike, and a session
+# launched from a subdirectory of a cadence repository finds the repository's
+# cadence.json.
+#
+# Pure bash: no fork, no python3, so the guards can call it on every command.
+
+# orch_cadence_find [hook-input-json] — sets ORCH_CADENCE_ROOT.
+orch_cadence_find() {
+  local start="${CLAUDE_PROJECT_DIR:-}" d re='"cwd"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)"'
+  if [[ -z "${start}" && "${1:-}" =~ $re ]]; then
+    start="${BASH_REMATCH[1]}"
+    start="${start//\\\//\/}"
+    start="${start//\\\"/\"}"
+    start="${start//\\\\/\\}"
+  fi
+  [[ -n "${start}" ]] || start="${PWD}"
+  [[ "${start}" == /* ]] || start="${PWD%/}/${start}"
+  while [[ "${start}" == */ && "${start}" != "/" ]]; do start="${start%/}"; done
+  local found="" in_git=""
+  d="${start}"
+  while :; do
+    if [[ -z "${found}" && -f "${d%/}/docs/llm-orchestrator/cadence.json" ]]; then
+      found="${d}"
+      [[ "${d}" == "${start}" ]] && break
+    fi
+    if [[ -e "${d%/}/.git" ]]; then in_git=1; break; fi
+    [[ "${d}" == "/" ]] && break
+    d="${d%/*}"
+    [[ -n "${d}" ]] || d="/"
+  done
+  # Outside any git repository only the start directory counts, so a stray
+  # cadence.json in $HOME cannot turn the cadence on for every folder below it.
+  if [[ -n "${found}" && ( "${found}" == "${start}" || -n "${in_git}" ) ]]; then
+    ORCH_CADENCE_ROOT="${found}"
+  else
+    ORCH_CADENCE_ROOT="${start}"
+  fi
+}
+
+# orch_cadence_root [hook-input-json] — prints the same answer.
+orch_cadence_root() {
+  orch_cadence_find "${1:-}"
+  printf '%s' "${ORCH_CADENCE_ROOT}"
+}

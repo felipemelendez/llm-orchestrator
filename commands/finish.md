@@ -1,5 +1,5 @@
 ---
-description: Decide what to do with the current branch — merge, PR, keep, or discard. Never destructive without explicit confirmation.
+description: Decide what to do with the current branch — merge, PR, keep or discard. Nothing destructive without confirmation.
 ---
 
 You are running `/llm-orchestrator:finish`.
