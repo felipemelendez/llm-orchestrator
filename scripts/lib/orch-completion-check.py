@@ -16,8 +16,7 @@ is a launch, not a finish.
 
 Limits, by construction, the same on both harnesses: `npm test &` (the shell
 reports 0 before the check has finished), a check named only inside a heredoc
-body or a quoted string (`printf 'npm test'`), `npm test || true`, and
-`echo x -- pytest` (any program before `--` reads as a wrapper) are all
+body or a quoted string (`printf 'npm test'`), and `npm test || true` are all
 accepted. Those are disguises. The laws leave honesty to the agent: this check
 catches the careless false claim, not the deliberate one. Earlier versions
 tried to read shell syntax for them (a tokenizer, heredoc and background rules)
@@ -51,6 +50,8 @@ FENCE = re.compile(r"(?ms)^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*")
 # `CI=1 pytest`, `timeout 300 pytest`, `cd repo && pytest` — the tool is still
 # the tool. Stripped before matching so a prefix does not hide a real run.
 PREFIX = re.compile(r"^\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+|time\s+|env\s+|timeout\s+\S+\s+|cd\s+\S+\s+)*")
+# One such prefix at the start of a whole command, `cd x &&` included.
+LEAD = re.compile(r"\s*(?:cd\s+\S+\s*&&|[A-Za-z_][A-Za-z0-9_]*=\S*\s|time\s|env\s|timeout\s+\S+\s)\s*")
 # A user entry the person did not type: an agent returning, a slash command, a
 # compaction summary. Counting one as the turn start throws away real checks.
 MACHINE = ("<task-notification>", "<local-command-", "<bash-", "<command-name>", "<system-reminder>")
@@ -105,7 +106,7 @@ def configured_test_cmd(project):
                   encoding="utf-8") as stream:
             runner = json.load(stream).get("runner")
         command = runner.get("test_cmd")
-    except (OSError, ValueError, AttributeError):
+    except Exception:       # unreadable, not JSON, too deep, wrong shape: use the pattern alone
         return ""
     return command.strip() if isinstance(command, str) else ""
 
@@ -117,6 +118,17 @@ def starts_with(text, test_cmd):
     return text.startswith(test_cmd) and (not rest or rest[0] in " \t\n;&|")
 
 
+def leads(command):
+    """The command, then the command with each leading prefix removed in turn."""
+    text = command.strip()
+    while True:
+        yield text
+        match = LEAD.match(text)
+        if not match or not match.end():
+            return
+        text = text[match.end():]
+
+
 def prints_only(text):
     """The text asks a runner only to print (`--version`, `--help`)."""
     return bool(NONRUN) and bool(re.search(NONRUN, text, re.M))
@@ -125,8 +137,9 @@ def prints_only(text):
 def ran_a_check(command, test_cmd=""):
     """Any segment of the command that runs a check and is not a --version.
     A command or segment that starts with test_cmd is a check too; the whole
-    command is tried so a test_cmd holding `&&` still matches."""
-    if test_cmd and starts_with(command.strip(), test_cmd) and not prints_only(command):
+    command is tried, after each leading prefix, so a test_cmd holding `&&`
+    still matches."""
+    if test_cmd and not prints_only(command) and any(starts_with(t, test_cmd) for t in leads(command)):
         return True
     for segment in re.split(r"[;&|\n]+", command):
         segment = PREFIX.sub("", segment)

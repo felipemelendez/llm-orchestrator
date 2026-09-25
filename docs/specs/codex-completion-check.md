@@ -65,23 +65,45 @@ Rules:
   value; a prefix with its own options, such as `timeout -k 5 300`, is not
   stripped), one segment matching the shared pattern and not the non-run
   pattern. That is the whole reading of the text; the check does not parse
-  shell. The pattern is anchored at the segment's start. It accepts, before
-  the runner's name, a path (`./node_modules/.bin/jest`, `.ve/bin/pytest`),
-  a program that runs the project's copy of a tool (`npx`, `pnpm`, `yarn`,
-  `poetry run`, `uv run` and others), and a program that ends its own
-  options with `--` (`aws-vault exec profile -- pytest`). The runner's name
-  must end the word, so `pytest.ini` is not a runner. A test script named by
-  its path (`bash tests/x.sh`) is not accepted after `--`, because in
-  `git diff -- tests/x.sh` what follows `--` is a file name. A runner with
-  options before its target (`make -j4 test`) is not recognised and the
-  agent is sent back once.
+  shell. The pattern is anchored at the segment's start. Before the runner
+  only these may come, in this order:
+  1. One of these wrappers, its own arguments, then `--`: `aws-vault exec`,
+     `doppler run`, `op run`, `dotenvx run`, `infisical run`, `mise exec`.
+     No other program counts as a wrapper, because after `--` git, rm and
+     ls take file names (`git diff -- tests/x.sh`). A project with another
+     wrapper puts its full command in `runner.test_cmd`.
+  2. A program that runs the project's copy of a tool, with options and
+     their values: `npx`, `bunx`, `pnpm`, `pnpm exec`, `pnpm dlx`, `yarn`,
+     `yarn dlx`, `yarn workspace <name>`, `poetry run`, `pipenv run`,
+     `uv run`, `hatch run`, `rye run`, `bundle exec`, `dotnet run --`,
+     `deno task` (`pnpm --filter web vitest run`, `npx --yes jest`).
+  3. A path to the runner: `.ve/bin/`, `./node_modules/.bin/`, `/usr/bin/`,
+     `~/.cargo/bin/`, `$HOME/.ve/bin/`. Every runner may be named by a path
+     (`/usr/bin/make test`), and so may `bash`, `sh` and `python` before a
+     test script.
+
+  A tool's name (`pytest`, `jest`, `eslint`, `tsc` and the rest of the list
+  in `orch-signals.sh`) must be the whole last part of the path and must end
+  at whitespace, the end of the segment or a shell operator (`;`, `&`, `|`,
+  `(`, `)`, `<`, `>`). It never ends at `/`, `.` or `-`, so
+  `config/jest/setup.js`, `scripts/eslint/build-rules.sh` and `pytest.ini`
+  are not runs. This also means `tsc-watch` and `ruff-lsp` no longer count,
+  where the earlier word-boundary rule counted them. A runner with options
+  before its target (`make -j4 test`) is not recognised and the agent is
+  sent back once.
 - When the project's `docs/llm-orchestrator/cadence.json` sets
-  `runner.test_cmd`, a command also passes when it, or one of its segments
-  after the prefixes are stripped, starts with that text followed by the end
-  of the command, a space or an operator. The whole command is tried so that
-  a `test_cmd` holding `&&` still matches. The project is `CODEX_PROJECT_DIR`
-  when it is set, else the hook's working directory (on Claude Code,
-  `CLAUDE_PROJECT_DIR`). A missing or unreadable `cadence.json`, or an empty
+  `runner.test_cmd`, a command also passes when it starts with that text
+  followed by the end of the command, a space or an operator. It is tried
+  on the whole command and again after each leading prefix is removed
+  (`cd /repo &&`, `FOO=1`, `env`, `time`, `timeout N`), so a `test_cmd`
+  holding `&&` still matches; it is also tried on each segment. The project
+  is the payload's `cwd`, else `CODEX_PROJECT_DIR`, else the hook's working
+  directory; on Claude Code it is `CLAUDE_PROJECT_DIR`, else the working
+  directory. Unverified: that a live Codex sends the project root as `cwd`
+  (the recorded payload shape has the field; a session started in a
+  subdirectory would not find the file), and whether Codex sets
+  `CODEX_PROJECT_DIR` at all. A missing, unreadable or malformed
+  `cadence.json` (including one nested too deep to read), or an empty
   `test_cmd`, leaves only the pattern. A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
   one program, so it is joined with spaces only when no argument holds shell
@@ -110,8 +132,6 @@ purpose:
   (`printf 'npm test'`).
 - `npm test || true`, or any other masking of the exit code.
 - A line appended to the log by hand; the log is the harness's.
-- `echo x -- pytest`: any program followed by `--` and a runner's name is
-  read as a wrapper, including one that only prints.
 
 Each is a disguise, and the laws leave honesty to the agent: the check
 catches the careless false claim, not the deliberate one. Earlier versions
@@ -137,7 +157,7 @@ segment) is shared with the Claude check on purpose; see that file's docstring.
 
 `bash tests/test-codex-verify-gate.sh` drives the hook with fixtures in the
 shape above, including a decoy script and an agent-printed result with no
-harness record behind them, runners named by a path, behind a `--` wrapper or
+harness record behind them, runners named by a path, behind a named wrapper or
 through `pnpm`/`yarn`/`npx`, a project's `runner.test_cmd`, and the honest shapes (`2>&1`, a quoted `&`, a
 here-string, a multi-line quoted argument) that must stay silent, and asserts
 the invariants (exit 0, no `systemMessage`, no stderr).

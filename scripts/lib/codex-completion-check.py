@@ -138,7 +138,10 @@ def main():
             if isinstance(entry, dict):
                 entries.append(entry)
 
-    test_cmd = shared_check.configured_test_cmd(os.environ.get("CODEX_PROJECT_DIR") or os.getcwd())
+    # The project: the payload's cwd, else CODEX_PROJECT_DIR, else where the hook runs.
+    cwd = payload.get("cwd")
+    project = cwd if isinstance(cwd, str) and cwd else os.environ.get("CODEX_PROJECT_DIR") or os.getcwd()
+    test_cmd = shared_check.configured_test_cmd(project)
     for _, _, command, code in this_turn(entries, records(entries), payload.get("turn_id")):
         if code == 0 and shared_check.ran_a_check(command, test_cmd):
             return 0
