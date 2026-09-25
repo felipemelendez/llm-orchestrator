@@ -33,7 +33,7 @@ kind of copy, as the Claude seat.
 python3 scripts/lib/orch-review.py run --detach --path standard|full
     --writer claude|codex --base <ref> --spec <file> --run-dir <new dir>
     [--brief contract|adversarial] [--adversarial-provider claude|codex]
-    [--no-split] [--no-refuter]
+    [--split] [--no-refuter]
 python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 ```
 
@@ -47,37 +47,47 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 ## Steps
 
 1. **Preflight.** Each CLI the path needs is installed and signed in
-   (`claude auth status --json`, `codex login status`). Full needs both. No
-   submodule has uncommitted changes. Any failure ends the run as
-   `INCOMPLETE`, and nothing is substituted.
+   (`claude auth status --json`, `codex login status`). Every path needs
+   `codex`, because fix experiments run under `codex sandbox` (R10). The
+   project has a `LAWS.md` with a harm ranking, or the shipped
+   `skills/cadence/references/laws.md` template's ranking is used. No
+   submodule, checked recursively with `git submodule foreach --recursive
+   git status --porcelain`, has uncommitted changes. Any failure ends the
+   run as `INCOMPLETE`, and nothing is substituted.
 2. **Fingerprint.** Every tracked and untracked, non-ignored file of the
    real checkout is added to a temporary index (`GIT_INDEX_FILE=<tmp>`,
    `git read-tree HEAD`, `git add -A`), and `git write-tree` is recorded.
    That tree id is the reviewed state.
 3. **Copies.** Each copy is a disposable local clone in task-owned scratch,
-   made through `scripts/lib/orch-task-resources.py`:
+   registered in `scripts/lib/orch-task-resources.py` as a new resource
+   kind, `clone`:
    - It is made with `git clone --local --no-checkout`, then
      `git read-tree -u --reset <tree>`. The copy has its own `.git`, its
      HEAD at the real HEAD, and the uncommitted change.
    - The paths listed in `cadence.json` `review.copy_ignored` are then
      copied in, using copy-on-write where the file system supports it, and
      `review.setup` runs if it is set.
-   - The copy's own fingerprint must equal the one from step 2.
+   - The copy's own fingerprint must equal the one from step 2 when it is
+     created.
    - Submodules are present only at their recorded commits.
+   - Removal: the task helper deletes a `clone` only when it is owned by
+     this task, has no `.orch-active` mutex, and its `.git` holds no ref,
+     stash or worktree beyond those recorded when the clone was made.
+     Otherwise it keeps the clone and reports why. (Today
+     `orch-task-resources.py` refuses to remove any copy that contains a
+     repository.)
 
    Each seat launch, each fix experiment and the refuter get a fresh copy.
-4. **Parts.** Only when the diff has more than 150 changed lines:
-   - whole files are grouped in diff order until the next file would pass
-     150 lines;
-   - a file over 150 lines is its own part and is listed as `oversize`;
-   - `--no-split` keeps one part.
-
-   Each seat reviews each part in its own launch, and also gets the list of
-   all changed files with their line counts.
+4. **Parts.** By default each seat reviews the whole change in one launch.
+   `--split` (T10 only) groups whole files in diff order into parts of at
+   most 150 changed lines; a file over 150 lines is its own part. Each part
+   is then reviewed in its own launch, with the list of all changed files
+   and their line counts.
 5. **Seats.** All seat launches run in parallel (R3 to R7).
 6. **Validate, and run the fixes** (R8 to R13).
 7. **Refuter.** Full only, under R14.
-8. **Fingerprint again.** Recompute step 2 on the real checkout.
+8. **Fingerprint again.** Recompute step 2 on the real checkout, and repeat
+   the recursive submodule check from step 1.
 9. **Decide** (R17), write `review.json`, append the review row (R20).
 
 ## Seats, providers and models
@@ -101,16 +111,14 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   to the model family of the requested alias.
 - **R6.** GPT launch: `codex exec --json -s workspace-write -C <copy>
   -c model_reasoning_effort="high" --output-schema <schema> -o <file> -`.
-  - It never uses `--ephemeral`, and it passes no `-m` unless the project
-    sets a model.
-  - The requested model is `codex_providers.codex.model` in `cadence.json`,
-    or else `model` in `$CODEX_HOME/config.toml` (`CODEX_HOME` defaults to
-    `~/.codex`).
+  - It never uses `--ephemeral` and never passes `-m`.
+  - The requested model is `model` in `$CODEX_HOME/config.toml`
+    (`CODEX_HOME` defaults to `~/.codex`), the CLI's default.
   - The served model and effort are the `model` and `effort` fields of
     `$CODEX_HOME/sessions/**/rollout-*-<thread_id>.jsonl`. `thread_id` comes
     from the stream's `thread.started` event.
-  - If neither place names a requested model, the served model is recorded
-    but not compared.
+  - If `config.toml` names no model, the served model is recorded but not
+    compared.
 - **R7.** A launch is a **dropout** when any of these holds:
   - it exits nonzero;
   - it has no final result;
@@ -121,15 +129,15 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
 **Configuration.**
 
-- `cadence.json` `codex_providers.claude.{model,effort}` and
-  `codex_providers.codex.{model,effort}` override the defaults above. The
-  review records both the requested and the served values.
+- Models are always the alias (`opus`) or the CLI default, at effort
+  `high`; there is no override. The review records requested and served
+  values.
 - The seat prompt carries `runner.test_cmd`. When that field is empty, the
   prompt says "no test command is configured; find and run the project's
   tests".
-- The seat prompt carries the harm ranking from the project's `LAWS.md`. A
-  project without one gets `references/harm-default.md`, which holds the
-  three classes from this repository's `LAWS.md`.
+- The seat prompt carries the "Harm ranking" section of the project's
+  `LAWS.md`, or of the shipped template `skills/cadence/references/laws.md`
+  when the project has no `LAWS.md`.
 
 **Why GPT holds the adversarial brief on Claude Code.** The adversarial seat
 looks for what the writer missed, and a model approved 31.7% of its own
@@ -154,7 +162,8 @@ lacked. T10 tests the swap.
   - A `serious` or `catastrophic` finding also has either `repro {command,
     patch}` or `not_runnable` (a reason). `command` shows the failure;
     `patch` is the proposed fix as a unified diff.
-  - The script gives each finding the id `<seat>-<part>-<n>`.
+  - The script gives each finding the id `<seat>-<part>-<n>` (part `1`
+    without `--split`).
 - **R9.** Evidence is one of two kinds:
   - `file-line {file, line, quote}` is valid when that line exists in the
     copy and `quote` equals it, ignoring spaces at either end.
@@ -168,11 +177,18 @@ lacked. T10 tests the swap.
   2. It applies `patch` with `git apply`.
   3. It runs `command` again and records receipt 2.
 
+  All three run under `codex sandbox -C <copy>` with writes allowed only in
+  the copy and the system temporary directory, and no network. This is
+  chosen over accepting only commands that start with `runner.test_cmd`,
+  because a test command can still write anywhere the person can, and many
+  projects have no `test_cmd`; the sandbox limits writes whatever the
+  command is. If the sandbox cannot start, the experiment is not run, the
+  receipt says so, and the finding is not reproduced.
+
   A receipt holds the command, exit code, output, duration and the copy's
   fingerprint. The finding is **reproduced** when receipt 1 fails and
-  receipt 2 passes. A patch that does not apply, or a run longer than
-  `review.repro_timeout_s` (default 600 seconds), is recorded in the
-  receipt.
+  receipt 2 passes. A patch that does not apply, or a run longer than 600
+  seconds, is recorded in the receipt.
 - **R11.** A `mild` finding becomes a `note` when its evidence is invalid or
   its confidence is below 0.8 or missing. A `serious` or `catastrophic`
   finding never becomes a note:
@@ -183,10 +199,10 @@ lacked. T10 tests the swap.
   Both states block, and both go to the refuter.
 - **R12.** A `serious` or `catastrophic` finding with neither `repro` nor
   `not_runnable` makes the review `INCOMPLETE`.
-- **R13.** Each `not_checked` item is `{category, text}` and is returned
-  verbatim.
-  - The categories `tests-not-run` and `files-not-read` make the review
-    `INCOMPLETE`; `other` does not.
+- **R13.** Each `not_checked` item is `{category, text}`, with `category`
+  one of `tests-not-run`, `files-not-read` or `claim-unverified`. Seats list
+  only what they did not check. Every item is returned verbatim and makes
+  the review `INCOMPLETE`.
   - When the task does not allow test changes, a `test-tampering` finding is
     raised to `serious`. Test tampering means a test was deleted or skipped,
     an assertion was weakened, a test was changed to match the code, or code
@@ -206,16 +222,19 @@ lacked. T10 tests the swap.
     refuter dropout, makes the review `INCOMPLETE`.
   - `--no-refuter` skips the refuter (T10 only), and the review is marked
     `experimental`.
-- **R15.** `DROPPED` is valid only when it does one of these:
-  - cites the seat's own receipts, and they show the finding was not
-    reproduced (receipt 1 passed, or receipt 2 failed);
+- **R15.** A reproduced finding and a `not_runnable` finding can never be
+  dropped. For any other finding, `DROPPED` is valid only when it does one
+  of these:
+  - cites the seat's own receipt 1, and receipt 1 passed: the claimed
+    failure did not happen. A patch that did not apply, or a receipt 2 that
+    failed, proves nothing and cannot support a drop;
   - gives a `file-line` quote that is valid under R9, and explains why that
     line contradicts the claim.
 
-  A `not_runnable` finding cannot be dropped. An invalid `DROPPED` counts as
-  `UNRESOLVED`.
-- **R16.** The refuter may lower a rank only with the same evidence that
-  R15 asks for. It never raises a rank.
+  An invalid `DROPPED` counts as `UNRESOLVED`.
+- **R16.** The refuter may lower a rank only where R15 would allow a drop,
+  with the same evidence. A reproduced or `not_runnable` finding keeps its
+  rank. The refuter never raises a rank.
 
 ## The decision
 
@@ -226,7 +245,12 @@ lacked. T10 tests the swap.
     - a seat part or a needed refuter run is missing or a dropout;
     - a finding is unjudged;
     - R12 or R13 applies;
-    - any fingerprint differs from step 2.
+    - the real checkout's fingerprint at step 8 differs from step 2, or a
+      seat, refuter or repro copy's fingerprint at creation differs from
+      step 2 (seat copies may change while seats work, and repro copies
+      change when the patch is applied; receipt 2 records that
+      fingerprint);
+    - a submodule is dirty at step 8.
   - Otherwise it is `NOT-READY` if any finding is blocking.
   - Otherwise it is `READY-WITH-FIXES` if any finding is `mild`.
   - Otherwise it is `READY`.
@@ -293,7 +317,8 @@ lacked. T10 tests the swap.
 
 - `scripts/lib/orch-review.py` (`run`, `wait`, `record`). It takes over the
   model checks in `scripts/providers/claude-review.py`.
-- Copy support in `scripts/lib/orch-task-resources.py` (step 3).
+- The `clone` resource kind and its removal rule in
+  `scripts/lib/orch-task-resources.py` (step 3).
 - In `skills/requesting-code-review/references/`:
   - `contract.md`: spec compliance, and "which test would still pass with
     its mechanism removed", from `reviewer-spec.md`;
@@ -303,7 +328,6 @@ lacked. T10 tests the swap.
   - `security-lens.md`: the checklist from `orch-security-reviewer.md`,
     added to both seat briefs when the diff matches
     `ORCH_SIG_SECURITY_DIFF`;
-  - `harm-default.md`;
   - the JSON schemas.
 - `tests/test-review.py` and its `.sh` shim, using fake `claude` and `codex`
   binaries and fake rollouts, with one case per rule. The cases include:
@@ -329,8 +353,8 @@ lacked. T10 tests the swap.
 - `skills/cadence/SKILL.md` and `CADENCE.md`:
   - the proportional Full steps 3 and 4 point to `requesting-code-review`;
   - the "separate workflow" paragraph goes;
-  - "The project files" documents `review.copy_ignored`, `review.setup`,
-    `review.repro_timeout_s` and `codex_providers.codex`.
+  - "The project files" documents `review.copy_ignored` and
+    `review.setup`.
 
   These keys are optional, and `cadence-init.sh` writes none of them. The
   legacy steps 2 and 2b, and `reviewer-spec.md`, `reviewer-plain.md` and
@@ -390,7 +414,7 @@ Score defects found by rank, false findings, tokens and minutes:
 1. Full against the built-in `/code-review` and against `codex review`.
 2. The provider swap (`--adversarial-provider`).
 3. With and without the refuter (`--no-refuter`).
-4. Split against the whole diff (`--no-split`).
+4. Parts of 150 lines against the whole change (`--split`).
 5. Standard with each brief (`--brief`).
 6. Serious findings left `unverified`, per provider, and how many of them
    were real.
@@ -434,6 +458,10 @@ Not verified:
 - the full R5 flag set together (`--safe-mode`, `--restricted`,
   `--json-schema`, `--allowedTools`); the checks above used a smaller set;
 - what `workspace-write` allows outside `-C`;
+- the `codex sandbox` options that allow writes only in the copy and the
+  temporary directory with no network (`codex sandbox --help` in 0.157.0
+  lists `-C`, `-c`, `--permission-profile` and
+  `--sandbox-state-disable-network`, not a direct write-root flag);
 - that the agent's shell on Codex allows a 540-second `wait`.
 
 ## Decided (pending Felipe's confirmation)
