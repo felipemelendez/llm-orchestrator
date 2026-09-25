@@ -84,10 +84,20 @@ def emit(event):
 if not spec.get("no_init"):
     emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", [])})
 probe = re.search(r"^Sandbox check: run exactly this command first: (.+)$", prompt, re.M)
-if probe and spec.get("probe", "sandboxed") != "skip":
-    if spec.get("probe", "sandboxed") == "sandboxed":
+SANDBOX_ON = "touch: x: Operation not permitted\nORCH-SANDBOX-ON\n"
+mode = spec.get("probe", "sandboxed")
+if probe and mode != "skip":
+    if mode == "sandboxed":
+        spec.setdefault("commands", []).insert(0, {"command": probe.group(1), "output": SANDBOX_ON})
+    elif mode == "leaked":  # reports ON, but the write went through
+        subprocess.run(probe.group(1), shell=True, capture_output=True)
+        spec.setdefault("commands", []).insert(0, {"command": probe.group(1), "output": SANDBOX_ON})
+    elif mode == "both":
         spec.setdefault("commands", []).insert(0, {"command": probe.group(1),
-                                                   "output": "touch: x: Operation not permitted\nORCH-SANDBOX-ON\n"})
+                                                   "output": SANDBOX_ON + "ORCH-SANDBOX-OFF\n"})
+    elif mode == "late":  # another command runs before the probe
+        spec.setdefault("commands", []).insert(0, {"command": probe.group(1), "output": SANDBOX_ON})
+        spec["commands"].insert(0, {"command": "ls", "output": "calc.py\n"})
     else:
         spec.setdefault("commands", []).insert(0, {"command": probe.group(1)})
 background = {item["command"] for item in spec.get("commands", []) if item.get("background")}
@@ -426,7 +436,9 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(sandbox["network"]["allowedDomains"], [])
 
     def test_r5_a_claude_seat_whose_sandbox_check_fails_or_is_skipped_is_a_dropout(self):
-        for probe in ("unsandboxed", "skip"):
+        # leaked: the output says ON but the probe file exists; both: ON and OFF; late: not the
+        # first command, which the spec requires.
+        for probe in ("unsandboxed", "skip", "leaked", "both", "late"):
             with self.subTest(probe):
                 self.scenario["claude"]["seats"]["contract"] = seat(probe=probe)
                 review = self.review("standard", "claude")

@@ -132,7 +132,8 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   - The prompt starts with a sandbox check: the seat must first run
     `touch <run dir>/launches/<launch>/sandbox-probe 2>&1 && echo
     ORCH-SANDBOX-OFF || echo ORCH-SANDBOX-ON`. Unless its stream shows that
-    command with `ORCH-SANDBOX-ON` and no `ORCH-SANDBOX-OFF`, and the file
+    command as its first Bash call, with `ORCH-SANDBOX-ON` and no
+    `ORCH-SANDBOX-OFF`, and the file
     does not exist afterwards, the launch is a dropout. The result is
     recorded as `sandbox_check`.
   - The served model is the assistant messages' `model` field. It must

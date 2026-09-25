@@ -817,6 +817,10 @@ def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
         fields["reason"] = "a Bash call asked to run outside the sandbox"
     probed = [run for run in commands if run["command"].strip() == probe]
     fields["sandbox_check"] = probed[0]["output"] if probed else None
+    # The probe must be the seat's first Bash call; a later one proves nothing about what ran before it.
+    first = next(iter(uses.values()), (None, False))[0]
+    if not (isinstance(first, str) and first.strip() == probe and commands[:1] == probed[:1]):
+        probed = []
     if not fields["reason"] and (target.exists() or not probed or "ORCH-SANDBOX-ON" not in probed[0]["output"]
                                  or "ORCH-SANDBOX-OFF" in probed[0]["output"]):
         fields["reason"] = "the sandbox check did not show a refused write outside the copy"
