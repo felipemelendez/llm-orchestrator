@@ -427,10 +427,8 @@ person to type `ruling <N>`, applies the patch, re-records the lock with
 `--lock`, and commits `Ruling <N>: <wording>`; on any failure it undoes the
 patch. It reads the confirmation from `/dev/tty`, and `--lock` rewrites an
 existing lock only when a terminal is attached. An agent's shell has no
-terminal, so both refuse there. The residual: a command run inside a
-pseudo-terminal (`script`, Python's `pty`) has one, so an agent that wraps it
-that way on purpose gets past both; the commit it makes still shows in the log
-as a ruling the person did not make.
+terminal, so both refuse there. The one known way around this is stated in
+`docs/install.md`, "Changing the rules".
 
 ## The amendment mechanism
 

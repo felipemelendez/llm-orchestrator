@@ -109,6 +109,19 @@ if [ "$RC" != 0 ] && grep -q 'interrupted' "$OUT" && grep -q 'nothing changed' "
 else fail "interrupted" "rc=$RC $(cat "$OUT")"; fi
 git -C "$P" config core.hooksPath .githooks
 
+make_patch "$TMP/claude4.patch" docs/llm-orchestrator/LAWS.md "$R4" CLAUDE.md "$SECTION"
+printf 'my own notes\n' > "$P/CLAUDE.md"
+ruling $'ruling 4\n' "$TMP/claude4.patch"; RC=$?
+if [ "$RC" = 1 ] && grep -q 'CLAUDE.md already exists' "$OUT" && [ "$(cat "$P/CLAUDE.md")" = "my own notes" ]; then
+  ok "refuses a patch that adds a file already present, and leaves that file alone"
+else fail "existing untracked file" "rc=$RC $(cat "$OUT")"; fi
+rm -f "$P/CLAUDE.md"
+printf '#!/bin/sh\nexit 1\n' > "$TMP/failhooks/commit-msg"
+git -C "$P" config core.hooksPath "$TMP/failhooks"
+ruling $'ruling 4\n' "$TMP/claude4.patch"
+refused "a refused commit removes the file this run created" $? 'nothing changed' "$BASE"
+git -C "$P" config core.hooksPath .githooks
+
 printf '\n== applies, re-locks and commits ==\n'
 ( cd "$TMP" && python3 "$TTY" type $'ruling 4\n' bash "$RULING" --root proj "$TMP/ruling4.patch" "the fourth one" ) > "$OUT" 2>&1; RC=$?
 SUBJECT=$(git -C "$P" log -1 --format=%s)
@@ -146,6 +159,20 @@ git -C "$P" add docs/llm-orchestrator/LAWS.md
 if ! git -C "$P" commit -qm 'Ruling 6: slipped in' > "$OUT" 2>&1 && [ "$(git -C "$P" rev-parse HEAD)" = "$HEAD5" ]; then
   ok "the commit-msg hook refuses a direct edit without a re-recorded lock"
 else fail "direct edit" "$(cat "$OUT")"; fi
+
+printf '\n== the first marked section in an existing file ==\n'
+Q="$TMP/imports"; mkdir -p "$Q"
+git -C "$P" archive "$BASE" | tar -x -C "$Q"
+printf '@AGENTS.md\n' > "$Q/CLAUDE.md"
+git -C "$Q" init -q && git -C "$Q" config core.hooksPath .githooks
+bash "$CHECK" --root "$Q" --lock >/dev/null
+git -C "$Q" add -A && git -C "$Q" commit -qm 'chore: arm the cadence' >/dev/null 2>&1
+printf '%s\n' "$R4" >> "$Q/docs/llm-orchestrator/LAWS.md"; printf '\n%s\n' "$SECTION" >> "$Q/CLAUDE.md"
+git -C "$Q" diff > "$TMP/append.patch"; git -C "$Q" checkout -q -- .
+python3 "$TTY" type $'ruling 4\n' bash "$RULING" --root "$Q" "$TMP/append.patch" "a CLAUDE.md section" > "$OUT" 2>&1; RC=$?
+if [ "$RC" = 0 ] && git -C "$Q" show HEAD:docs/llm-orchestrator/LOCK.sha256 | grep -q 'CLAUDE.md#ORCH:LAWS$'; then
+  ok "appending the first marked section to an existing file is accepted and locked"
+else fail "append section" "rc=$RC $(cat "$OUT")"; fi
 
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then printf '%d checks passed (ruling command).\n' "$PASS"; exit 0; fi

@@ -23,6 +23,7 @@ SEC_END='<!-- ORCH:LAWS:END -->'
 STATE=checking
 WORK=""
 TOUCHED=""
+CREATED=""
 BASE=""
 
 say() { printf '%s\n' "$*"; }
@@ -38,7 +39,9 @@ undo() {
   for f in $TOUCHED "$LOCK_REL"; do
     if git cat-file -e "HEAD:$f" 2>/dev/null; then
       git checkout -q HEAD -- "$f" 2>/dev/null || bad="$bad $f"
-    else
+    elif in_list "$f" "$CREATED"; then
+      # Only a file this run created is removed; the preflight made sure no
+      # file was at that path before.
       git rm -q -f --cached --ignore-unmatch -- "$f" >/dev/null 2>&1 || bad="$bad $f"
       rm -f -- "$f" || bad="$bad $f"
     fi
@@ -63,11 +66,13 @@ trap 'say ""; say "ruling stopped: interrupted."; exit 130' INT TERM
 
 sha() { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$1"; else sha256sum "$1"; fi | awk '{print $1}'; }
 
-# The file on stdin with its marked section replaced by one placeholder line.
+# The file on stdin without its marked section and without blank lines, so
+# adding or changing only the section leaves this output the same.
 outside_section() {
   awk -v s="$SEC_START" -v e="$SEC_END" '
-    p == 0 && index($0, s) { print "@@ORCH:LAWS@@"; p = index($0, e) ? 2 : 1; next }
+    p == 0 && index($0, s) { p = index($0, e) ? 2 : 1; next }
     p == 1 { if (index($0, e)) p = 2; next }
+    /^[[:space:]]*$/ { next }
     { print }'
 }
 
@@ -141,6 +146,15 @@ DIRTY=$(git diff --name-only HEAD -- $PFILES)
 # shellcheck disable=SC2086
 [ -z "$DIRTY" ] || refuse "these protected files differ from HEAD: $(printf '%s ' $DIRTY)— commit or restore them first"
 
+# A path the patch adds must not exist yet, tracked or not: the undo removes
+# only files this run created.
+while IFS= read -r f; do
+  git cat-file -e "HEAD:$f" 2>/dev/null && continue
+  { [ -e "$f" ] || [ -L "$f" ]; } && refuse "the patch adds $f, but $f already exists. Move it aside first."
+  CREATED="$CREATED
+$f"
+done <<< "$TOUCHED"
+
 # ---------- the result, checked in a scratch index ----------------------------
 export GIT_INDEX_FILE="$WORK/index"
 git read-tree HEAD || refuse "cannot read HEAD"
@@ -151,9 +165,7 @@ git show ":$LAWS_REL" 2>/dev/null | grep -qE "Ruling ${N}([^0-9]|$)" \
   || refuse "the patch does not add Ruling $N to $LAWS_REL"
 while IFS= read -r f; do
   { in_list "$f" "$SECTIONS" && ! in_list "$f" "$WHOLE"; } || continue
-  # A file new to HEAD may hold nothing but its marked section.
-  if git cat-file -e "HEAD:$f" 2>/dev/null; then before=$(git show "HEAD:$f" | outside_section); else before="@@ORCH:LAWS@@"; fi
-  if [ "$before" != "$(git show ":$f" 2>/dev/null | outside_section)" ]; then
+  if [ "$(git show "HEAD:$f" 2>/dev/null | outside_section)" != "$(git show ":$f" 2>/dev/null | outside_section)" ]; then
     refuse "the patch changes $f outside its marked section, which is not a rule change"
   fi
 done <<< "$TOUCHED"
