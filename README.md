@@ -195,7 +195,7 @@ Controller (the agent you talk to)
 | `orch-researcher`      | Opus   | Verifies external APIs against current sources before any spec.      |
 | `orch-security-reviewer` | Opus   | Checks diffs for injection, auth gaps, exposed secrets, unsafe deps. |
 
-Every agent sets `model: opus`, which is Opus 5.5 on the Anthropic API. Felipe set this policy on 2026-09-21 after the Fable review route was rate-limited; Opus 5.5 also costs less than half as much per token as Fable ($4/$20 against $10/$50 per million input/output tokens). Opus 5.5 runs the same safety classifiers as Fable, so on either model a request flagged as cybersecurity re-runs on Opus 4.8. Agents set no `effort:` and inherit the session's effort level; a session on Opus 5.5 with no level set runs at `medium`.
+Every agent sets `model: opus` (Opus 5.5). Fable was dropped after its review route was rate-limited, and Opus costs less per token. Both run the same safety classifiers, so on either model a request flagged as cybersecurity re-runs on Opus 4.8. Agents set no `effort:` and inherit the session's level; a session on Opus 5.5 with no level set runs at `medium`.
 
 The controller — the agent you interact with — holds state via the native Task tools (`TaskCreate`/`TaskUpdate`/`TaskList`), ticks plan-file checkboxes (which survive `/clear`), runs the BLOCKED recovery tree, and routes tasks to parallel or sequential dispatch.
 
