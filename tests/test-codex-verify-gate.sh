@@ -327,7 +327,7 @@ printf '\n%s== the project'"'"'s own test_cmd counts ==%s\n' "$DIM" "$RESET"
 PROJ="$TMP/project"; mkdir -p "$PROJ/docs/llm-orchestrator"
 printf '{ "schema": 1, "enabled": true,\n  "runner": { "profile": "custom", "test_cmd": "bin/suite --fast" } }\n' \
   > "$PROJ/docs/llm-orchestrator/cadence.json"
-ignored "(l1) no cadence.json: a command the pattern does not know" 'bin/suite --fast unit'
+ignored "(l1) no cadence.json: a command the lists do not know" 'bin/suite --fast unit'
 PROJ_DIR="$PROJ" counts  "(l2) it starts with runner.test_cmd" 'bin/suite --fast unit'
 PROJ_DIR="$PROJ" counts  "(l2) after cd" 'cd sub && bin/suite --fast'
 PROJ_DIR="$PROJ" ignored "(l3) the same text continuing into another word" 'bin/suite --fastest'
@@ -374,7 +374,7 @@ printf '{ "runner": { "test_cmd": "cd app && ./check" } }\n' > "$PROJ/docs/llm-o
 PROJ_DIR="$PROJ" counts "(m4) test_cmd after cd" 'cd /repo && cd app && ./check -q'
 PROJ_DIR="$PROJ" counts "(m4) test_cmd after an assignment" 'FOO=1 cd app && ./check'
 # A cadence.json nested too deeply for the JSON reader falls back to the
-# pattern; it does not switch the whole check off.
+# lists; it does not switch the whole check off.
 python3 -c 'print("[" * 100000)' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ignored "(m5) a cadence.json too deep to read: the check still runs" 'ls -la'
 # The project is the payload's cwd first, then CODEX_PROJECT_DIR.

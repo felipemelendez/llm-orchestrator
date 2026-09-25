@@ -122,58 +122,6 @@ ORCH_SIG_DESIGN_VERB='\b(add|implement|build|set[[:space:]]+up|wire|wiring|integ
 # Explicit user invocation.
 ORCH_SIG_INVOCATION='/llm-orchestrator:research\b'
 
-# Verify-shaped commands — test/lint/typecheck/build invocations across the
-# common ecosystems. Used by the completion checks
-# (scripts/lib/orch-completion-check.py and codex-completion-check.py) to
-# decide whether a finished command in the turn was a check.
-#
-# COMMAND-POSITION ANCHORED: the runner must start a command segment (start
-# of string, or right after ; & | — which also covers && and ||). Before it
-# only three things may come: a named wrapper that ends its own options with
-# `--`, a program that runs the project's copy of a tool (`npx`, `pnpm`,
-# `poetry run`, ...), and a path to the runner. Without that anchor,
-# `git add tests/smoke.sh`, `echo pytest passed`, and `chmod +x tests/x.sh`
-# all counted as runs that verified nothing. A false negative costs one note;
-# a false positive is a PASS with no check behind it.
-#
-# COVERAGE MATTERS AS MUCH AS PRECISION. An adversarial pass ran 28 ordinary
-# verify invocations against an earlier pattern; 14 counted as nothing —
-# `npx jest`, `python -m pytest`, `poetry run pytest`, `uv run pytest`,
-# `bundle exec rspec`, `./gradlew test`, `dotnet test`, `swift test`,
-# `cargo nextest run`, `bazel test`, `just test`, `deno test`, `ctest`,
-# `vendor/bin/phpunit`. Every miss is a turn the check cannot confirm.
-# A run that only PRINTS something is not a verification run. `pytest --version`
-# minted a green row that satisfied a claim of "40 passed in 1.24s", and
-# `pytest --collect-only` (which executes nothing) did the same with
-# substance=ok. Matched against the command and used to veto classification.
-ORCH_SIG_VERIFY_NONRUN='(^|[[:space:]])(--version|--help|-h|-V|--collect-only|--collectOnly|--dry-?[Rr]un|--list-?[Tt]ests?|--list|--listTests|--show-?config|--co|--print-?config|--why)([[:space:]]|$)'
-
-# The pattern is built from the pieces below. Only ORCH_SIG_VERIFY_CMD is read
-# by the checks.
-#
-# A path before a runner: `.ve/bin/`, `./node_modules/.bin/`, `/usr/bin/`,
-# `~/.cargo/bin/`, `$HOME/.ve/bin/`. The runner is the whole last part of the
-# path, so `scripts/eslint/build-rules.sh` is not eslint.
-_ORCH_VERIFY_PATH='(\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/)?([A-Za-z0-9._~-]*/)*'
-# What ends a runner's name: whitespace, the end, or a shell operator. Never
-# `/`, `.` or `-`, so `pytest.ini`, `config/jest/setup.js` and `tsc-watch`
-# are not runners.
-_ORCH_VERIFY_END='([[:space:]]|$|[;&|()<>])'
-# Options, each with an optional value: `--filter web`, `-C connections`, `--yes`.
-_ORCH_VERIFY_OPTS='([[:space:]]+-[^[:space:]]+([[:space:]]+[^-[:space:]][^[:space:]]*)?)*'
-# Something that runs the project's copy of a tool, with its own options:
-# `npx --yes jest`, `pnpm --filter web vitest`, `uv run --with x pytest`.
-_ORCH_VERIFY_RUNNER="${_ORCH_VERIFY_PATH}"'(npx|bunx|pnpm('"${_ORCH_VERIFY_OPTS}"'[[:space:]]+(exec|dlx))?|yarn('"${_ORCH_VERIFY_OPTS}"'[[:space:]]+(dlx|workspace[[:space:]]+[A-Za-z0-9@._/-]+))?|poetry[[:space:]]+run|pipenv[[:space:]]+run|uv[[:space:]]+run|hatch[[:space:]]+run|rye[[:space:]]+run|bundle[[:space:]]+exec|dotnet[[:space:]]+run[[:space:]]+--|deno[[:space:]]+task)'"${_ORCH_VERIFY_OPTS}"'[[:space:]]+'
-# The wrappers that end their own options with `--` and run the rest. Only
-# these: after `--`, git, rm and ls take file names. A project with another
-# wrapper names its full command in runner.test_cmd.
-_ORCH_VERIFY_WRAPPER='(aws-vault[[:space:]]+exec|doppler[[:space:]]+run|op[[:space:]]+run|dotenvx[[:space:]]+run|infisical[[:space:]]+run|mise[[:space:]]+exec)([[:space:]]+[^[:space:]]+)*[[:space:]]+--[[:space:]]+'
-# Test runners, linters and type checkers, each optionally named by a path.
-_ORCH_VERIFY_TOOLS="${_ORCH_VERIFY_PATH}"'((npm|pnpm|yarn|bun)([[:space:]]+run)?[[:space:]]+(t|test|tests|lint|typecheck|typecheck:.*|check)\b|(pytest|py\.test|jest|vitest|mocha|rspec|tox|nox|phpunit|pest|tsc|ruff|eslint|biome|flake8|mypy|pyright|clippy|shellcheck|rubocop|golangci-lint|ctest|bats)'"${_ORCH_VERIFY_END}"'|python[0-9.]*[[:space:]]+-m[[:space:]]+(pytest|unittest|tox|mypy|ruff|flake8)\b|go[[:space:]]+(test|vet)\b|cargo[[:space:]]+(test|check|clippy|nextest)\b|mix[[:space:]]+test\b|gradlew?[[:space:]]+(test|check)\b|mvn([[:space:]]+-[A-Za-z0-9.=-]+)*[[:space:]]+(test|verify)\b|(make|just|task)[[:space:]]+(test|tests|check|lint|typecheck|ci|verify)\b|dotnet[[:space:]]+test\b|swift[[:space:]]+test\b|bazel[[:space:]]+test\b|deno[[:space:]]+(test|check|lint)\b)'
-# Test scripts named by their path; the interpreter may be named by a path.
-_ORCH_VERIFY_SCRIPTS='(('"${_ORCH_VERIFY_PATH}"'(bash|sh)[[:space:]]+)?(\./)?tests?/[A-Za-z0-9._/-]*\.sh\b|'"${_ORCH_VERIFY_PATH}"'python[0-9.]*[[:space:]]+(\./)?tests?/[A-Za-z0-9._/-]*\.py\b|('"${_ORCH_VERIFY_PATH}"'(bash|sh)[[:space:]]+)?\./[A-Za-z0-9._-]*(test|check)[A-Za-z0-9._-]*\.sh\b)'
-ORCH_SIG_VERIFY_CMD="(^|[;&|])[[:space:]]*(${_ORCH_VERIFY_WRAPPER})?(${_ORCH_VERIFY_RUNNER})?(${_ORCH_VERIFY_TOOLS}|${_ORCH_VERIFY_SCRIPTS})"
-
 # === Question-shape signals ===
 # These signals compel WITHOUT a design verb. They're queries against project
 # state or upstream sources, not design commitments. The sniffer's

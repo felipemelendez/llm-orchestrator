@@ -14,9 +14,8 @@ At Codex's `Stop` event the hook receives `last_assistant_message`,
 `transcript_path`, `turn_id` and `stop_hook_active`. It answers one question:
 
 > The reply's last `Verification:` label, outside code fences, is `PASS`. Did a
-> command matching `ORCH_SIG_VERIFY_CMD`, or starting with the project's
-> `runner.test_cmd` (and not matching `ORCH_SIG_VERIFY_NONRUN`), run in this
-> turn and finish with exit code 0?
+> command that runs a check (by the rules below), or that starts with the
+> project's `runner.test_cmd`, run in this turn and finish with exit code 0?
 
 - Yes, or the label is anything but PASS, or there is no label: print nothing.
 - No: print `{"decision":"block","reason":<NOTE>}` once. NOTE is
@@ -59,44 +58,65 @@ Rules:
   `turn_id` changed; a marker Codex re-emits for the same turn after a
   compaction is not a new turn.
 - A check passes when a record in this turn has exit code 0, status
-  `completed`, and a command that passes `ran_a_check`: the text split at
-  `;`, `&`, `|` and newlines, the plain forms of the known prefixes stripped
-  (`cd x &&`, `env`, `time`, `timeout N`, `VAR=value` with no space in the
-  value; a prefix with its own options, such as `timeout -k 5 300`, is not
-  stripped), one segment matching the shared pattern and not the non-run
-  pattern. That is the whole reading of the text; the check does not parse
-  shell. The pattern is anchored at the segment's start. Before the runner
-  only these may come, in this order:
-  1. One of these wrappers, its own arguments, then `--`: `aws-vault exec`,
-     `doppler run`, `op run`, `dotenvx run`, `infisical run`, `mise exec`.
-     No other program counts as a wrapper, because after `--` git, rm and
-     ls take file names (`git diff -- tests/x.sh`). A project with another
-     wrapper puts its full command in `runner.test_cmd`.
-  2. A program that runs the project's copy of a tool, with options and
-     their values: `npx`, `bunx`, `pnpm`, `pnpm exec`, `pnpm dlx`, `yarn`,
-     `yarn dlx`, `yarn workspace <name>`, `poetry run`, `pipenv run`,
-     `uv run`, `hatch run`, `rye run`, `bundle exec`, `dotnet run --`,
-     `deno task` (`pnpm --filter web vitest run`, `npx --yes jest`).
-  3. A path to the runner: `.ve/bin/`, `./node_modules/.bin/`, `/usr/bin/`,
-     `~/.cargo/bin/`, `$HOME/.ve/bin/`. Every runner may be named by a path
-     (`/usr/bin/make test`), and so may `bash`, `sh` and `python` before a
-     test script.
-
-  A tool's name (`pytest`, `jest`, `eslint`, `tsc` and the rest of the list
-  in `orch-signals.sh`) must be the whole last part of the path and must end
-  at whitespace, the end of the segment or a shell operator (`;`, `&`, `|`,
-  `(`, `)`, `<`, `>`). It never ends at `/`, `.` or `-`, so
-  `config/jest/setup.js`, `scripts/eslint/build-rules.sh` and `pytest.ini`
-  are not runs. This also means `tsc-watch` and `ruff-lsp` no longer count,
-  where the earlier word-boundary rule counted them. A runner with options
-  before its target (`make -j4 test`) is not recognised and the agent is
-  sent back once.
+  `completed`, and a command that passes `ran_a_check`. The lists it uses
+  (runners, wrappers, package managers and their options) are data in one
+  block of `orch-completion-check.py`; both harnesses use them. The command
+  is read in linear passes, never with a backtracking pattern:
+  1. **Words.** Quoted text and backslash escapes join the word they are
+     in. Outside quotes, `;`, `&`, `&&`, `|`, `||`, `(`, `)` and newlines
+     end a segment, and `<`, `>` (with `>&`, `&>`) are redirections that end
+     the word before them. A redirection and its target are not words. If a
+     quote is left open, every quote is read as an ordinary character.
+  2. **Prefixes.** Leading `VAR=value`, `env`, `time`, `timeout N` and
+     `cd dir` are skipped. A prefix with its own options, such as
+     `timeout -k 5 300`, is not.
+  3. **Wrapper.** If the segment starts with `aws-vault exec`, `doppler run`,
+     `op run`, `dotenvx run`, `infisical run` or `mise exec`, everything up
+     to and including its first `--` is skipped, and prefixes again. With no
+     `--` it is not a check. No other program is a wrapper, because after
+     `--` programs such as git, rm and ls take file names. A project with
+     another wrapper puts its full command in `runner.test_cmd`.
+  4. **Front.** `npx`, `bunx`, `npm exec`, `pnpm exec`, `pnpm dlx`,
+     `yarn exec`, `yarn dlx`, `uv run`, `poetry run`, `pipenv run`,
+     `hatch run`, `rye run` and `bundle exec` are skipped with the options
+     listed for each (and the value of each option that takes one), then an
+     optional `--`. An option not on the list means the segment is not a
+     check. `npm`, `pnpm`, `yarn` and `bun` are read the same way; after
+     their options must come a check script (`test`, `t`, `tests`, `lint`,
+     `typecheck`, `check`, or one of them followed by `:` or `-`, such as
+     `test:unit`), `run <script>`, `exec`/`dlx` as above,
+     `yarn workspace <name>` followed by the same again, or, for `pnpm` and
+     `yarn` only, a runner (`pnpm vitest`). Anything else is one of the
+     manager's own commands (`add`, `remove`, `update`, `why`, ...), so
+     `pnpm -w add -D vitest` and `pnpm --filter jest build` are not checks.
+  5. **Runner.** The next word, taken by its last path part so that any
+     path works (`.ve/bin/pytest`, `/usr/bin/make`, `$HOME/.ve/bin/pytest`),
+     must be a runner: `pytest`, `py.test`, `jest`, `vitest`, `mocha`,
+     `rspec`, `tox`, `nox`, `phpunit`, `pest`, `tsc`, `ruff`, `eslint`,
+     `biome`, `flake8`, `mypy`, `pyright`, `shellcheck`, `rubocop`,
+     `golangci-lint`, `ctest` or `bats`; or one that needs a second word
+     (`go test`/`vet`; `cargo test`/`check`/`clippy`/`nextest`; `mix test`;
+     `gradle` or `gradlew test`/`check`; `mvn test`/`verify` after its
+     options; `make`, `just` or `task` with `test`, `tests`, `check`,
+     `lint`, `typecheck`, `ci` or `verify`; `dotnet`, `swift` and
+     `bazel test`; `deno test`/`check`/`lint`); or `python -m` with
+     `pytest`, `unittest`, `tox`, `mypy`, `ruff` or `flake8`; or a test
+     script run directly or by `bash`, `sh` or `python`
+     (`tests/x.sh`, `./tests/x.py`, `./run-tests.sh`). The name must be the
+     whole word, so `tsc-watch`, `ruff-lsp`, `pytest.ini` and
+     `scripts/eslint/build-rules.sh` are not runners (`tsc-watch` and
+     `ruff-lsp` counted under an earlier rule). A runner with options before
+     its target (`make -j4 test`) is not recognised.
+  6. **Printing only.** A segment with `--version`, `--help`, `-h`, `-V`,
+     `--collect-only`, `--dry-run`, `--list-tests`, `--list`,
+     `--show-config`, `--co`, `--print-config` or `--why` is not a check.
 - When the project's `docs/llm-orchestrator/cadence.json` sets
-  `runner.test_cmd`, a command also passes when it starts with that text
-  followed by the end of the command, a space or an operator. It is tried
-  on the whole command and again after each leading prefix is removed
-  (`cd /repo &&`, `FOO=1`, `env`, `time`, `timeout N`), so a `test_cmd`
-  holding `&&` still matches; it is also tried on each segment. The project
+  `runner.test_cmd`, a command also passes when its words start with the
+  words of `test_cmd`. It is tried on the whole command and again after each
+  leading prefix (`cd /repo &&`, `FOO=1`, `env`, `time`, `timeout N`), so a
+  `test_cmd` holding `&&` still matches, and on each segment after its
+  prefixes. Because it compares words, `bin/suite --fast</dev/null` starts
+  with `bin/suite --fast` and `bin/suite --fastest` does not. The project
   is the payload's `cwd`, else `CODEX_PROJECT_DIR`, else the hook's working
   directory; on Claude Code it is `CLAUDE_PROJECT_DIR`, else the working
   directory. Unverified: that a live Codex sends the project root as `cwd`
@@ -104,7 +124,8 @@ Rules:
   subdirectory would not find the file), and whether Codex sets
   `CODEX_PROJECT_DIR` at all. A missing, unreadable or malformed
   `cadence.json` (including one nested too deep to read), or an empty
-  `test_cmd`, leaves only the pattern. A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
+  `test_cmd`, leaves only the lists.
+- A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
   one program, so it is joined with spaces only when no argument holds shell
   punctuation.
@@ -128,19 +149,19 @@ way above. These shapes get past it, on both harnesses, and stay that way on
 purpose:
 
 - `npm test &`: the shell reports 0 as soon as the check is launched.
-- A check named only inside a heredoc body or a quoted string
-  (`printf 'npm test'`).
+- A check named only inside a heredoc body: each body line is read as a
+  command.
 - `npm test || true`, or any other masking of the exit code.
 - A line appended to the log by hand; the log is the harness's.
 
 Each is a disguise, and the laws leave honesty to the agent: the check
-catches the careless false claim, not the deliberate one. Earlier versions
-tried to close these with text rules (a tokenizer, heredoc and background
-parsing), and every rule mis-judged an honest command somewhere else: `2>&1`
-read as a background `&`, a multi-line quoted argument read as an unbalanced
-line, a here-string read as a heredoc. Shell syntax has no bottom, and a note
-that is wrong gets ignored, which is worse than no note. Do not add them
-back; `orch-completion-check.py`'s docstring says the same.
+catches the careless false claim, not the deliberate one. The word split
+above only finds which program a segment runs. Earlier versions also tried to
+judge these shapes (heredoc and background rules), and every rule mis-judged
+an honest command somewhere else: `2>&1` read as a background `&`, a
+multi-line quoted argument read as an unbalanced line, a here-string read as
+a heredoc. A note that is wrong gets ignored, which is worse than no note. Do
+not add them back; `orch-completion-check.py`'s docstring says the same.
 
 A Codex build from before these records existed (July 2026 and earlier)
 writes none, so on such a build every PASS is sent back once.
@@ -150,8 +171,8 @@ writes none, so on such a build every PASS is sent back once.
 `SubagentStop` is not registered for Codex: the payload offers
 `agent_transcript_path`, but whether it is the child's rollout in this format
 is unverified, and judging a child by its parent's log is worse than silence.
-The pattern's known coarseness (a `|` inside a quoted argument splits a
-segment) is shared with the Claude check on purpose; see that file's docstring.
+The word split and the lists are shared with the Claude check on purpose; see
+that file's docstring.
 
 ## Verification
 

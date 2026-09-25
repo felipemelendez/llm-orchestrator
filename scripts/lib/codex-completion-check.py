@@ -2,9 +2,9 @@
 """Codex's completion check: the same one question, asked of Codex's own log.
 
 Reads a Codex Stop payload on stdin. The reply says Verification: PASS; did a
-command matching the shared check pattern (ORCH_SIG_VERIFY_CMD, from
-orch-signals.sh), or starting with the project's runner.test_cmd, run in this
-turn and finish with exit code 0? If so, or if the
+command that runs a check (by the lists in orch-completion-check.py), or that
+starts with the project's runner.test_cmd, run in this turn and finish with
+exit code 0? If so, or if the
 reply says anything else, nothing is printed. If not, the agent is sent back to
 work once with the same note the Claude side uses, and nothing is shown to the
 person. Always exits 0.
@@ -110,9 +110,6 @@ def this_turn(entries, found, turn_id):
 
 def main():
     shared_check = shared()
-    if not shared_check.RUNS or "[:" in shared_check.RUNS + shared_check.NONRUN:
-        return 0            # no usable shared pattern: say nothing rather than guess
-
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict) or shared_check.active(payload):
         return 0            # the continuation this check asked for: never twice
