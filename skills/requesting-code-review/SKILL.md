@@ -80,8 +80,10 @@ each one:
 python3 "$REVIEW" record "$RUN_DIR" --dispositions <file>
 ```
 
-The file gives every finding id one disposition (R21); `record` rejects a file
-that leaves any finding out.
+The file gives every finding id one disposition (R21): `fixed`, with the check
+that failed before and passes after; `refuted`, with a `file-line` quote that
+`record` checks against the reviewed files (a test run is not accepted); or
+`ignored`, with a reason. `record` rejects a file that leaves any finding out.
 
 ## The native `/code-review`
 

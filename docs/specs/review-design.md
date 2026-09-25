@@ -354,7 +354,9 @@ lacked. T10 tests the swap.
   runs `orch-review.py record <run-dir> --dispositions <file>`. The file
   gives every finding one disposition:
   - `fixed`, with the check that failed before and passes after;
-  - `refuted`, with evidence under R9;
+  - `refuted`, with a `file-line` quote under R9 that `record` checks
+    against the reviewed files. A `test-run` is not accepted here:
+    `record` has no event stream to check it against;
   - `ignored`, with a reason. A blocking finding may be `ignored` only when
     the person said so.
 

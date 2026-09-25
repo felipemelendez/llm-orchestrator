@@ -1210,6 +1210,21 @@ class ReviewTests(unittest.TestCase):
         again = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
         self.assertNotEqual(again.returncode, 0)
 
+    def test_r21_refuted_needs_a_file_line_quote_not_a_test_run(self):
+        # record has no event stream to check a test-run claim against, so it takes file-line only.
+        self.scenario["claude"]["seats"]["contract"] = seat(finding("mild", repro=None))
+        self.review("standard", "claude")
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"contract-1-1": {"disposition": "refuted", "evidence": {
+            "type": "test-run", "command": CHECK, "output": "ok"}}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("file-line", result.stderr)
+        spec = (ROOT / "docs/specs/review-design.md").read_text()
+        skill = (ROOT / "skills/requesting-code-review/SKILL.md").read_text()
+        for text in (spec, skill):
+            self.assertIn("`refuted`, with a `file-line` quote", " ".join(text.split()))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
