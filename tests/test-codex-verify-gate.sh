@@ -381,6 +381,46 @@ PROJ_DIR="$PROJ" ignored "(m5) a cadence.json too deep to read: the check still 
 printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ENV_PROJ_DIR="$TMP/no-project" counts "(m6) the payload's cwd names the project" 'bin/suite --fast'
 
+printf '\n%s== round 2: options, the first --, redirections, time ==%s\n' "$DIM" "$RESET"
+
+# A package manager's own subcommands, and a runner named only as an option's
+# value, are not runs.
+for c in 'pnpm -w add -D vitest' 'pnpm -r add -D eslint' 'yarn -W add -D jest' 'pnpm -r remove eslint' \
+         'pnpm -r update vitest' 'pnpm --recursive why jest' 'npx -y install jest' \
+         'npx --package jest /bin/echo done' 'npx -p jest echo hi' 'uv run --with pytest python script.py' \
+         "uv run --with mypy python -c 'print(1)'" 'pnpm --filter jest build' 'yarn --cwd tsc build'; do
+  ignored "(n1) not a run" "$c"
+done
+# A wrapper runs what follows its FIRST --; later ones belong to that program.
+for c in 'aws-vault exec p -- git ls-files -- node_modules/.bin/jest' 'aws-vault exec p -- git diff -- tests/x.sh' \
+         'op run -- git log -- tests/test-verify-gate.sh' 'op run --env-file=.env -- git diff -- pytest' \
+         'aws-vault exec p -- echo -- pytest' 'doppler run -- echo -- pytest' 'op run -- echo -- pytest' \
+         'dotenvx run -- echo -- pytest' 'infisical run -- echo -- pytest' 'mise exec -- echo -- pytest'; do
+  ignored "(n2) not a run" "$c"
+done
+counts "(n3) npm exec before --" 'npm exec -- vitest run'
+# A redirection ends test_cmd's last word.
+printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(n4) test_cmd then a redirection" 'bin/suite --fast</dev/null'
+PROJ_DIR="$PROJ" counts "(n4)" 'bin/suite --fast>check.log'
+
+budget_case() { # <label> <python expression for the command>
+  local cmd base big R
+  cmd=$(python3 -c "print($2, end='')")
+  R=$(mk 'turn:t1' 'ran:0:ls')
+  base=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$R"
+  base=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$base")
+  R=$(mk 'turn:t1' "ran:0:$cmd")
+  big=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$R"
+  big=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$big")
+  { [[ $RC -eq 0 ]] && sent_back && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.1 else 1)' "$big" "$base"; } \
+    && ok "(n5) $1: 200 KB judged within 100 ms of a one-word command, sent back" \
+    || fail "(n5) $1 time" "rc=$RC big=${big}s base=${base}s out=$OUT"
+}
+budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 20000'
+budget_case "repeated option values" '"pnpm " + "--filter a " * 20000'
+budget_case "repeated path parts" '"a/" * 100000'
+
 printf '\n%s== the turn boundary is this turn ==%s\n' "$DIM" "$RESET"
 
 R=$(mk 'turn:t1' 'ran:0:bash tests/test-codex-verify-gate.sh' 'turn:t2' 'ran:0:ls')

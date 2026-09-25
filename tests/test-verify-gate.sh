@@ -323,6 +323,48 @@ PROJ_DIR="$PROJ" counts "(m4) test_cmd after an assignment" 'FOO=1 cd app && ./c
 python3 -c 'print("[" * 100000)' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ignored "(m5) a cadence.json too deep to read: the check still runs" 'ls -la'
 
+printf '\n%s== round 2: options, the first --, redirections, time ==%s\n' "$DIM" "$RESET"
+
+# A package manager's own subcommands, and a runner named only as an option's
+# value, are not runs.
+for c in 'pnpm -w add -D vitest' 'pnpm -r add -D eslint' 'yarn -W add -D jest' 'pnpm -r remove eslint' \
+         'pnpm -r update vitest' 'pnpm --recursive why jest' 'npx -y install jest' \
+         'npx --package jest /bin/echo done' 'npx -p jest echo hi' 'uv run --with pytest python script.py' \
+         "uv run --with mypy python -c 'print(1)'" 'pnpm --filter jest build' 'yarn --cwd tsc build'; do
+  ignored "(n1) not a run" "$c"
+done
+# A wrapper runs what follows its FIRST --; later ones belong to that program.
+for c in 'aws-vault exec p -- git ls-files -- node_modules/.bin/jest' 'aws-vault exec p -- git diff -- tests/x.sh' \
+         'op run -- git log -- tests/test-verify-gate.sh' 'op run --env-file=.env -- git diff -- pytest' \
+         'aws-vault exec p -- echo -- pytest' 'doppler run -- echo -- pytest' 'op run -- echo -- pytest' \
+         'dotenvx run -- echo -- pytest' 'infisical run -- echo -- pytest' 'mise exec -- echo -- pytest'; do
+  ignored "(n2) not a run" "$c"
+done
+counts "(n3) npm exec before --" 'npm exec -- vitest run'
+# A redirection ends test_cmd's last word.
+printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(n4) test_cmd then a redirection" 'bin/suite --fast</dev/null'
+PROJ_DIR="$PROJ" counts "(n4)" 'bin/suite --fast>check.log'
+
+# A 200 KB command built to make a backtracking matcher slow must add under
+# 100 ms to the hook, and still gets the note.
+budget_case() { # <label> <python expression for the command>
+  local cmd base big T
+  cmd=$(python3 -c "print($2, end='')")
+  T=$(mk 'user:fix the gate' 'bash:t1:ls' 'result:t1:ok')
+  base=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$T"
+  base=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$base")
+  T=$(mk 'user:fix the gate' "bash:t1:$cmd" 'result:t1:ok')
+  big=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$T"
+  big=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$big")
+  { [[ $RC -eq 0 ]] && warned && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.1 else 1)' "$big" "$base"; } \
+    && ok "(n5) $1: 200 KB judged within 100 ms of a one-word command, note sent" \
+    || fail "(n5) $1 time" "rc=$RC big=${big}s base=${base}s out=$(cat "$TMP/out")"
+}
+budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 20000'
+budget_case "repeated option values" '"pnpm " + "--filter a " * 20000'
+budget_case "repeated path parts" '"a/" * 100000'
+
 printf '\n%s== it warns; it never blocks ==%s\n' "$DIM" "$RESET"
 (( ANY_RC == 0 ))    && ok "no fixture made the hook exit non-zero" \
   || fail "the hook exited non-zero" "a warn-only gate must always exit 0"
