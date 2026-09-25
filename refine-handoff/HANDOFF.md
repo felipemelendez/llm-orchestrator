@@ -99,27 +99,19 @@ the agent may have pushed more after this file was written):
     the key would ask for his fingerprint or password each time. About five
     minutes of one-time setup. Commit signing is not set up on this machine
     today. Without it, the lock catches accidents but not a determined agent.
-- **T10, evaluation set** (`refine/t10-evals`). Built; nothing paid has run.
-  Fix list sent to the builder:
-  1. `file_exists` globs with `[0-9]` never match in the real grader (it
-     escapes `[`/`]`); use `*` globs and make the free check use the binary's
-     rule.
-  2. Only Full arms get the spec: give every arm the same spec text.
-  3. Score line-less findings the same in every arm; credit only findings
-     whose claim matches the defect; report false findings with a paired test.
-  4. Strengthen weak graders (median, split-pairs, ran-test-*).
-  5. Free check: also run the scripted reply without the work; check
-     `tool_used` offline; stage the workspace like the real eval.
-  6. Score test-tampering separately; unverified serious per provider; no
-     double-counted Codex tokens; isolate `codex review` from the person's
-     Codex config and MCP servers.
-  7. Ground cost estimates; name the smallest decisive run
-     (`run --arms full,code-review` on all 83 cases) with its price.
-  8. Stale references: `scripts/hooks/user-prompt-submit.sh:45`,
-     `docs/specs/review-design.md:393`, the "2.1.269 or later" claim.
+- **T10, evaluation set** (`refine/t10-evals`, head `af356e8` or later). Built;
+  nothing paid has run. Review round 1 (one Opus reviewer, Standard path)
+  found 2 serious and 6 mild issues; **all are fixed** (`run-all.sh`: 44 suites
+  pass). Next: a short re-check by one fresh reviewer of the fixes, then PR
+  and merge. It depends on nothing else, but its Full arms refuse to run until
+  T5 is merged.
+  - The smallest run that answers "does Full beat /code-review" is
+    `run --arms full,code-review` on all 83 cases: estimated **$55–$250**. The
+    other arms add about $60–$270. The pilot step in `tests/evals/README.md`
+    checks the unverified parts first (does `/code-review` work under
+    `-p --safe-mode`; does `codex review --uncommitted` take instructions).
+    Bring Felipe this price once T5 is merged. **Never run paid evals yourself.**
   - The effort arm stays unavailable: reviewers stay at high effort.
-  - After fixes and review: bring Felipe the price of the smallest decisive
-    run. **Never run paid evals yourself.**
 
 Not started (in order):
 - **T6**, remove the legacy procedure. Starts after T5 merges (both edit
