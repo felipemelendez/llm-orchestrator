@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- In auto mode a subagent sends its report through the `SubagentHandback`
+  tool, and SubagentStop's `last_assistant_message` holds only its closing text
+  ("Report delivered to caller."). `subagent-stop.sh` and
+  `orch-researcher-validator.sh` checked that closing text, so every plugin
+  agent's return was flagged as badly shaped and the agent was sent back for
+  another turn, and researcher briefs were never validated. Both now read the
+  last `SubagentHandback` message from the subagent's own transcript, and fall
+  back to `last_assistant_message` when there is none. Tests use payloads
+  captured from Claude Code 2.1.282.
+
 ## [0.11.0] - 2026-09-23
 
 Codex is back. `./scripts/install.sh --codex` works again. It installs the

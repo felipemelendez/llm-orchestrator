@@ -123,6 +123,68 @@ if last_text is not None:
 PYEOF
 }
 
+# orch_subagent_report <payload_file>
+#
+# Prints the report a finished subagent sent its caller, from a SubagentStop
+# payload saved to a file. The first output character is a sentinel: "1" means
+# a report source existed (so an empty report is a real observation), "0" means
+# an old harness sent neither source.
+#
+# In auto mode a subagent sends its report as the SubagentHandback tool's
+# `message`, and last_assistant_message holds only its closing text ("Report
+# delivered to caller." in a captured payload). So the last SubagentHandback
+# call in the subagent's own transcript wins; a user prompt after it (a resumed
+# agent) discards it. Without one, last_assistant_message is the report.
+orch_subagent_report() {
+  python3 - "${1:-}" <<'PYEOF' 2>/dev/null || printf '0'
+import json, os, sys
+
+try:
+    with open(sys.argv[1]) as f:
+        data = json.load(f)
+except Exception:
+    sys.stdout.write("0")
+    sys.exit(0)
+
+path = data.get("agent_transcript_path") or ""
+main = data.get("transcript_path") or ""
+if not path and main.endswith(".jsonl") and data.get("agent_id"):
+    path = "%s/subagents/agent-%s.jsonl" % (main[:-len(".jsonl")], data["agent_id"])
+report = None
+if path and os.path.isfile(path):
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                msg = obj.get("message")
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content")
+                blocks = content if isinstance(content, list) else [{"type": "text"}]
+                if obj.get("type") == "user":
+                    if any(isinstance(b, dict) and b.get("type") != "tool_result" for b in blocks):
+                        report = None
+                elif obj.get("type") == "assistant":
+                    for b in blocks:
+                        if (isinstance(b, dict) and b.get("type") == "tool_use"
+                                and b.get("name") == "SubagentHandback"
+                                and isinstance((b.get("input") or {}).get("message"), str)):
+                            report = b["input"]["message"]
+    except OSError:
+        report = None
+
+if report is not None:
+    sys.stdout.write("1" + report)
+elif "last_assistant_message" in data:
+    sys.stdout.write("1" + (data.get("last_assistant_message") or ""))
+else:
+    sys.stdout.write("0")
+PYEOF
+}
+
 # orch_reply_from_hook_input <input_json> [transcript_path]
 #
 # THE HOOK STDIN, NOT THE TRANSCRIPT, CARRIES THE CURRENT TURN'S REPLY.

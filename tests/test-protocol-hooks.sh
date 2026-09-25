@@ -546,6 +546,46 @@ PY
 then ok "shared completion vocabulary is selected by project config, with legacy behavior preserved"
 else fail "proportional protocol hooks" "config-backed end-to-end fixture failed"; fi
 
+printf '\n%s== Captured SubagentStop payloads (SubagentHandback) ==%s\n' "$DIM" "$RESET"
+# Captured from Claude Code 2.1.282: in auto mode the explorer sent its report
+# through SubagentHandback and last_assistant_message was "Report delivered to
+# caller.".
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+cap_fire() { # <mode> [materialize args...] -> "rc|stderr"
+  local dir; dir=$(mktemp -d)
+  local out rc
+  out=$(python3 "$MAT" "$@" "$dir" | bash "$SUBAGENT" 2>&1 1>/dev/null); rc=$?
+  rm -rf "$dir"
+  printf '%s|%s' "$rc" "$out"
+}
+cap_dir=$(mktemp -d)
+python3 "$MAT" auto "$cap_dir" > "$cap_dir/payload.json"
+report=$(bash -c "source '$LIB'; orch_subagent_report '$cap_dir/payload.json'")
+rm -rf "$cap_dir"
+if [[ "$report" == "1Found:"* && "$report" != *"Report delivered"* ]]; then
+  ok "orch_subagent_report returns the SubagentHandback message, not the closing text"
+else
+  fail "orch_subagent_report on captured auto payload" "got: $(printf '%s' "$report" | head -1)"
+fi
+out=$(cap_fire auto)
+if [[ "$out" == "0|" ]]; then ok "auto-mode explorer with a valid handback report → silent"
+else fail "captured auto payload" "out='$out'"; fi
+out=$(cap_fire auto --no-agent-path)
+if [[ "$out" == "0|" ]]; then ok "no agent_transcript_path → subagent transcript found from transcript_path + agent_id"
+else fail "captured auto payload, derived path" "out='$out'"; fi
+out=$(cap_fire auto --report "here is what I found: calc.py")
+if [[ "${out%%|*}" == "0" && "$out" == *"here is what I found"* && "$out" != *"Report delivered"* ]]; then
+  ok "badly shaped handback report → warns about the report itself"
+else fail "captured auto payload, bad report" "out='$out'"; fi
+out=$(cap_fire auto --agent-type llm-orchestrator:orch-implementer --report "Status: BLOCKED")
+if [[ "${out%%|*}" == "0" && "$out" == *'Status: BLOCKED requires a "Need:"'* ]]; then
+  ok "implementer handback report is graded against the Status contract"
+else fail "captured auto payload, implementer" "out='$out'"; fi
+out=$(cap_fire default)
+if [[ "${out%%|*}" == "0" && "$out" == *"returns the sum"* ]]; then
+  ok "default mode (no handback) → last_assistant_message is graded"
+else fail "captured default payload" "out='$out'"; fi
+
 TOTAL=$((PASS + FAIL))
 printf '\n'
 if (( FAIL == 0 )); then

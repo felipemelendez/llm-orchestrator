@@ -365,6 +365,23 @@ else
   fail "LAM present-but-empty semantics" "rc=$rc out=$out"
 fi
 
+# Captured auto-mode payload (Claude Code 2.1.282): the report is the
+# SubagentHandback message; last_assistant_message is only "Report delivered to
+# caller.". The validator must grade the handback report.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+CAP_DIR=$(mktemp -d)
+out=$(python3 "$MAT" auto "$CAP_DIR" --agent-type llm-orchestrator:orch-researcher \
+        --report "Status: VERIFIED
+Brief: $TMP/briefs/sneaky-verified.md" \
+      | ORCH_HOME="$GATE_HOME" bash "${ROOT}/scripts/hooks/orch-researcher-validator.sh" 2>&1)
+rc=$?
+rm -rf "$CAP_DIR"
+if [[ "$rc" == "0" ]] && echo "$out" | grep -q 'deprecation/removal/rename'; then
+  ok "captured auto payload: the SubagentHandback report is validated, not the closing text"
+else
+  fail "captured auto payload (researcher)" "rc=$rc out=$out"
+fi
+
 # ============================================================
 # Gate prior-injection tests (Fix 1 + Fix 2 read enforcement)
 # ============================================================
