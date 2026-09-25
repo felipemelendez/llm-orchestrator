@@ -2,8 +2,9 @@
 """Codex's completion check: the same one question, asked of Codex's own log.
 
 Reads a Codex Stop payload on stdin. The reply says Verification: PASS; did a
-command matching the shared check pattern (ORCH_SIG_VERIFY_CMD, from
-orch-signals.sh) run in this turn and finish with exit code 0? If so, or if the
+command that runs a check (by the lists in orch-completion-check.py), or that
+starts with the project's runner.test_cmd, run in this turn and finish with
+exit code 0? If so, or if the
 reply says anything else, nothing is printed. If not, the agent is sent back to
 work once with the same note the Claude side uses, and nothing is shown to the
 person. Always exits 0.
@@ -21,16 +22,17 @@ carries the exact command (as an argv list), the exit code, and the turn it
 belongs to. Nothing the agent wrote is read: not the JavaScript it sent to the
 exec tool, not the text it chose to print from a result. An earlier version
 parsed those and every one of its false passes came from there. The recorded
-command's text is judged the plain way orch-completion-check.py documents,
-its limits (`cmd &`, heredoc bodies, `|| true`, quoted text) included.
+command is judged by orch-completion-check.py's word rules, its limits
+(`cmd &`, `|| true`, `false && cmd`) included.
 
-The label, the fence rule, the command pattern and the note come from
+The label, the fence rule, the command rules and the note come from
 orch-completion-check.py, so both harnesses say the same thing for the same
 reason.
 """
 import importlib.util
 import json
 import os
+import shlex
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,11 +53,9 @@ def command_text(value):
         shell = value[0].rsplit("/", 1)[-1]
         if len(value) >= 3 and shell in ("bash", "sh", "zsh", "dash") and value[1] in ("-c", "-lc", "-ic", "-lic"):
             return value[2]
-        # A raw argv runs one program; an argument holding shell punctuation
-        # is data to that program, not a second command.
-        if any(ch in arg for arg in value for ch in ";|&\n"):
-            return None
-        return " ".join(value)
+        # A raw argv runs one program; quoting keeps each argument one word,
+        # so `-m "Fix gate (pytest)"` is data to that program.
+        return shlex.join(value)
     return None
 
 
@@ -109,9 +109,6 @@ def this_turn(entries, found, turn_id):
 
 def main():
     shared_check = shared()
-    if not shared_check.RUNS or "[:" in shared_check.RUNS + shared_check.NONRUN:
-        return 0            # no usable shared pattern: say nothing rather than guess
-
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict) or shared_check.active(payload):
         return 0            # the continuation this check asked for: never twice
@@ -137,8 +134,12 @@ def main():
             if isinstance(entry, dict):
                 entries.append(entry)
 
+    # The project: the payload's cwd, else CODEX_PROJECT_DIR, else where the hook runs.
+    cwd = payload.get("cwd")
+    project = cwd if isinstance(cwd, str) and cwd else os.environ.get("CODEX_PROJECT_DIR") or os.getcwd()
+    test_cmd = shared_check.configured_test_cmd(project)
     for _, _, command, code in this_turn(entries, records(entries), payload.get("turn_id")):
-        if code == 0 and shared_check.ran_a_check(command):
+        if code == 0 and shared_check.ran_a_check(command, test_cmd):
             return 0
 
     if os.environ.get("ORCH_HOOK_DRY_RUN") == "1":

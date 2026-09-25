@@ -122,35 +122,6 @@ ORCH_SIG_DESIGN_VERB='\b(add|implement|build|set[[:space:]]+up|wire|wiring|integ
 # Explicit user invocation.
 ORCH_SIG_INVOCATION='/llm-orchestrator:research\b'
 
-# Verify-shaped commands — test/lint/typecheck/build invocations across the
-# common ecosystems. Used by the evidence-ledger PostToolUse hook to decide
-# which Bash results get an evidence stamp, and (indirectly) by the verify
-# gate when it validates a cited stamp.
-#
-# COMMAND-POSITION ANCHORED: the tool name must be the first word of a command
-# segment (start of string, or right after ; & | — which also covers && and
-# ||). Without that anchor, `git add tests/smoke.sh`, `echo pytest passed`,
-# and `chmod +x tests/x.sh` all minted valid exit-0 stamps — evidence for runs
-# that verified nothing. Conservative on purpose: a false negative just means
-# no stamp (soft note at most); a false positive is a forged credential.
-#
-# COVERAGE MATTERS AS MUCH AS PRECISION. An adversarial pass ran 28 ordinary
-# verify invocations against the previous pattern; 14 minted nothing —
-# `npx jest`, `python -m pytest`, `poetry run pytest`, `uv run pytest`,
-# `bundle exec rspec`, `./gradlew test`, `dotnet test`, `swift test`,
-# `cargo nextest run`, `bazel test`, `just test`, `deno test`, `ctest`,
-# `vendor/bin/phpunit`. Every miss is a turn the gate cannot corroborate, and
-# an uncorroborated turn is a turn a fabricated Verify: passes. A runner prefix
-# (`npx`/`pnpm exec`/`poetry run`/`bundle exec`/`uv run`/`nix-shell -p ... --run`)
-# is now allowed between the command position and the tool name.
-# A run that only PRINTS something is not a verification run. `pytest --version`
-# minted a green row that satisfied a claim of "40 passed in 1.24s", and
-# `pytest --collect-only` (which executes nothing) did the same with
-# substance=ok. Matched against the command and used to veto classification.
-ORCH_SIG_VERIFY_NONRUN='(^|[[:space:]])(--version|--help|-h|-V|--collect-only|--collectOnly|--dry-?[Rr]un|--list-?[Tt]ests?|--list|--listTests|--show-?config|--co|--print-?config|--why)([[:space:]]|$)'
-
-ORCH_SIG_VERIFY_CMD='(^|[;&|])[[:space:]]*((npx|pnpm[[:space:]]+(exec|dlx)|yarn[[:space:]]+(dlx|workspace[[:space:]]+[A-Za-z0-9@._/-]+)|bunx|poetry[[:space:]]+run|pipenv[[:space:]]+run|uv[[:space:]]+run|hatch[[:space:]]+run|rye[[:space:]]+run|bundle[[:space:]]+exec|dotnet[[:space:]]+run[[:space:]]+--|deno[[:space:]]+task)[[:space:]]+)?((npm|pnpm|yarn|bun)([[:space:]]+run)?[[:space:]]+(t|test|tests|lint|typecheck|typecheck:.*|check)\b|(pytest|py\.test|jest|vitest|mocha|rspec|tox|nox|phpunit|tsc|ruff|eslint|biome|flake8|mypy|pyright|clippy|shellcheck|rubocop|golangci-lint|ctest|bats)\b|python[0-9.]*[[:space:]]+-m[[:space:]]+(pytest|unittest|tox|mypy|ruff|flake8)\b|go[[:space:]]+(test|vet)\b|cargo[[:space:]]+(test|check|clippy|nextest)\b|mix[[:space:]]+test\b|(\./)?gradlew?[[:space:]]+(test|check)\b|mvn([[:space:]]+-[A-Za-z0-9.=-]+)*[[:space:]]+(test|verify)\b|(make|just|task)[[:space:]]+(test|tests|check|lint|typecheck|ci|verify)\b|dotnet[[:space:]]+test\b|swift[[:space:]]+test\b|bazel[[:space:]]+test\b|deno[[:space:]]+(test|check|lint)\b|(vendor/bin/|bin/)?(phpunit|pest)\b|(bash[[:space:]]+|sh[[:space:]]+)?(\./)?tests?/[A-Za-z0-9._/-]*\.sh\b|python[0-9.]*[[:space:]]+(\./)?tests?/[A-Za-z0-9._/-]*\.py\b|(bash[[:space:]]+|sh[[:space:]]+)?\./[A-Za-z0-9._-]*(test|check)[A-Za-z0-9._-]*\.sh\b)'
-
 # === Question-shape signals ===
 # These signals compel WITHOUT a design verb. They're queries against project
 # state or upstream sources, not design commitments. The sniffer's
