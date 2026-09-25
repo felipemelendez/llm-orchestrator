@@ -50,46 +50,26 @@ and T9 (commands stay commands).
 In progress (each on its branch; check its latest pushed commit first, since
 the agent may have pushed more after this file was written):
 
-- **T5, build the review system** (`refine/t5-review-build`). Built and working;
-  a live Full review on a planted bug gave NOT-READY with both reviewers
-  finding it. Two reviews came back (GPT adversarial in
-  `reviews/t5-adversarial-report.md`; Opus contract summarized below). The
-  builder was fixing all of them when this was written. Remaining fix list, as
-  sent to the builder:
-  - GPT 1: Claude seats run Bash unsandboxed: sandbox Claude seats (Claude Code
-    sandbox settings), start seats with a reduced environment (no cloud
-    tokens); a seat that cannot run sandboxed is a dropout.
-  - GPT 2: missing/unreadable findings.json gives READY: any missing run file
-    is INCOMPLETE; keep the run dir outside paths experiments can write.
-  - GPT 3: quote-based drops accept any explanation: tighten R15 (only for
-    findings with no receipts and not not_runnable; quote must be in the named
-    file and lines); fix tests/test-review.py around line 792.
-  - GPT 4 / Opus 11: `git clone --local` hardlinks objects: use
-    `--no-hardlinks`, verify no shared inodes.
-  - GPT 5 / Opus 8: kill the whole process group on timeout.
-  - GPT 6 / Opus 1: submodules are empty in copies: initialize them at their
-    recorded commits from the local module store, or mark INCOMPLETE.
-  - GPT 7: a background-command acknowledgement counts as test evidence:
-    reject background and unfinished commands.
-  - GPT 8: a lowered rank without a valid refuter verdict gives READY-WITH-FIXES:
-    check the verdict first; unjudged serious → INCOMPLETE.
-  - Opus, rules with no test that would fail: R15 explanation required; R15
-    timed-out receipt; R17 repro-copy fingerprint; R17 errors.json → INCOMPLETE;
-    R14 notes kept from refuter; R8 not_runnable dropped with repro; R10 600 s
-    timeout; R14 refuter is Claude on a Codex-written Full review; R1 real crash.
-  - Opus 2–7, 9, 10: refuter lowering an invalid-evidence finding gives `mild`
-    not `note`; mild test-tampering raised to serious without repro gives
-    INCOMPLETE; dropout seats' findings are lost (R19); `review.copy_ignored`
-    via `.git/info/exclude` makes every run INCOMPLETE; non-ASCII names
-    (`-z` / `core.quotePath=false`); `{"verdicts": []}` from a seat KeyErrors;
-    a Claude stream with no init event must be a dropout; verify `codex sandbox`
-    passes stdin to `git apply -`.
-  - Simplify: drop decide's duplicate fingerprint loop and the unneeded
-    counters; name `--allow-test-changes`, `run --child` and the 3600 s seat
-    timeout in the spec.
-  - After fixes: both reviewers check again (Full path), `run-all.sh`, PR,
-    merge. Ruling 4 text (remove `workflows/` from LAWS and cadence.json) is in
-    the T5 report and must go into the combined ruling (section 6).
+- **T5, build the review system** (`refine/t5-review-build`, last commit
+  `1df09b3` or later). Built and working. Round 1 of the Full review (GPT
+  adversarial in `reviews/t5-adversarial-report.md`, plus an Opus contract
+  review) found 8 + about 20 issues; **all are fixed**, each with a test that
+  failed first (test-review went from 68 to 94 tests). Highlights: Claude
+  seats now run inside Claude Code's Bash sandbox with a reduced environment;
+  clones use `--no-hardlinks`; any missing run file gives INCOMPLETE; the run
+  directory may not be in a temp dir; a repo with submodules gives INCOMPLETE.
+  Next:
+  1. Round 2 of the Full review: the same two kinds of reviewer (fresh Opus
+     contract, GPT adversarial via the command in section 4), scoped to what
+     changed and to realistic cases.
+  2. One live Full review on a planted bug with the new sandbox and reduced
+     environment (the only live run so far predates them); show the result.
+  3. `bash tests/run-all.sh </dev/null`, PR into `refine/integration`, merge.
+  Known limits recorded in the spec: the GPT seat can read (not write) the
+  run directory; the Claude sandbox on Linux is unverified; a Claude seat that
+  needs Bedrock/Vertex credentials drops out. Ruling 4 text (remove
+  `workflows/` from LAWS and cadence.json) must go into the combined ruling
+  (section 7). `skills/cadence/references/refuter.md:59` is left for T6.
 - **T20, the rule-change command** (`refine/t20-ruling-command`).
   `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by Felipe
   in his terminal. Fix list sent to the builder (GPT review in
