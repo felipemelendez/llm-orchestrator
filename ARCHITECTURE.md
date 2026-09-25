@@ -346,7 +346,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 
 ## Why this shape
 
-- **Harness boundaries.** Skills and prompts are portable instructions — any harness that reads markdown gets the guidance. The enforcement is Claude Code's: its hooks own the session, the guards and dispatch. Codex gets two pieces of it, the cadence file guard and the completion check, and nothing else. The git layer (the `commit-msg` hook and `--audit` in CI) is the part that works without a harness at all, and it proves only that the policy files are intact and amendments carry a ruling — never that tests or reviews ran.
+- **Harness boundaries.** Skills and prompts are portable instructions — any harness that reads markdown gets the guidance. The enforcement is Claude Code's: its hooks own the session, the guards and dispatch. Codex gets two pieces of it, the cadence file guard and the completion check, and nothing else; `.codex-plugin/plugin.json` names only those hooks and the cadence skill, so adding the repository as a Codex plugin does not load the Claude Code hooks. The git layer (the `commit-msg` hook and `--audit` in CI) is the part that works without a harness at all, and it proves only that the policy files are intact and amendments carry a ruling — never that tests or reviews ran.
 - **One file per skill** keeps discovery cheap. `ls skills/` is the catalog.
 - **Plain-markdown memory** is grep-able, readable, editable, and trivially backed up.
 - **Single hooks.json** with calls to `scripts/hooks/*.sh` keeps logic out of inline `node -e` strings.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # LLM Orchestrator — Codex's deny rules for the cadence lock set. Claude Code
-# denies the locked FILES natively; Codex has no such rule, so this PreToolUse
+# denies the locked FILES natively; Codex can only through a permission profile
+# in ~/.codex/config.toml, which the setup does not write, so this PreToolUse
 # hook (matchers Bash and apply_patch) is that one layer and nothing else: a
 # command or a patch header that names a locked file and is not one plain read
 # is refused with exit 2 and the way out printed.
