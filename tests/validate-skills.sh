@@ -142,7 +142,7 @@ while IFS= read -r dir; do
     executing-plans)               limit=903   ;;
     writing-skills)                limit=847   ;;
     finishing-a-branch)            limit=769   ;;
-    requesting-code-review)        limit=635   ;;
+    requesting-code-review)        limit=647   ;;
     receiving-code-review)         limit=619   ;;
     *)                              limit=500  ;;
   esac

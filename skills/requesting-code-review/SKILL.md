@@ -31,7 +31,7 @@ your harness (R2): `claude` on Claude Code, `codex` on Codex.
 ```bash
 orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" "${CODEX_HOME:-$HOME/.codex}/plugins/cache" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
 REVIEW=$(orch_lib orch-review.py)
-RUN_DIR="$(mktemp -d)/review"
+RUN_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/reviews/$(date +%Y%m%d-%H%M%S)"
 python3 "$REVIEW" run --detach --path full --writer claude --base origin/main --spec <spec file> --run-dir "$RUN_DIR"
 python3 "$REVIEW" wait "$RUN_DIR" --seconds 540
 ```
@@ -42,8 +42,9 @@ python3 "$REVIEW" wait "$RUN_DIR" --seconds 540
 - `"status": "crashed"` means the run stopped without a result. Report the
   review as incomplete, and start a new run in a new directory. `run` refuses
   a directory that already exists.
-- The run directory must be outside the repository. The script writes nothing
-  inside the repository.
+- The run directory must be new, outside the repository and outside every
+  temporary directory (the sandboxes let reviewers write there). The script
+  writes nothing inside the repository.
 - `--spec` is the file the change must implement. `--base` is the ref the
   change is reviewed against.
 - Add `--allow-test-changes` when the task may change tests; otherwise a

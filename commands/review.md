@@ -20,10 +20,11 @@ Steps:
    conversation, else the newest file in `docs/llm-orchestrator/specs/`. If
    there is none, ask the person which file states what the change must do.
 
-4. Start the run in a new directory outside the repository, then wait:
+4. Start the run in a new directory outside the repository and outside any
+   temporary directory, then wait:
 
    ```bash
-   RUN_DIR="$(mktemp -d)/review"
+   RUN_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/reviews/$(date +%Y%m%d-%H%M%S)"
    python3 "$REVIEW" run --detach --path <standard|full> --writer claude --base "$BASE" --spec "$SPEC" --run-dir "$RUN_DIR"
    python3 "$REVIEW" wait "$RUN_DIR" --seconds 540
    ```

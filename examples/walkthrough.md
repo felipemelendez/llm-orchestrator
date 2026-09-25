@@ -114,7 +114,7 @@ Verdict:
 Findings:
 - contract-1-1 mild mild — src/middleware/rate-limit.ts:20 — lacks a test for the new client construction
 Review:
-- /tmp/tmp.X1b2/review/review.json
+- ~/.local/state/llm-orchestrator/reviews/20260925-141502/review.json
 Next:
 - Add the missing test, record the disposition with orch-review.py record, then /llm-orchestrator:verify and /llm-orchestrator:finish.
 ```
