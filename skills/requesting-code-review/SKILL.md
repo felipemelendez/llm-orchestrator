@@ -29,7 +29,7 @@ Find the script, then start the run in the background (R1). Set `--writer` to
 your harness (R2): `claude` on Claude Code, `codex` on Codex.
 
 ```bash
-orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" "${CODEX_HOME:-$HOME/.codex}/plugins/cache" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
 REVIEW=$(orch_lib orch-review.py)
 RUN_DIR="$(mktemp -d)/review"
 python3 "$REVIEW" run --detach --path full --writer claude --base origin/main --spec <spec file> --run-dir "$RUN_DIR"

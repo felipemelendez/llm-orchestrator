@@ -112,8 +112,17 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   The served model is the assistant messages' `model` field. It must belong
   to the model family of the requested alias.
 - **R6.** GPT launch: `codex exec --json -s workspace-write -C <copy>
-  -c model_reasoning_effort="high" --output-schema <schema> -o <file> -`.
+  -c model_reasoning_effort="high" <MCP off> --output-schema <schema> -o
+  <file> -`, with `RUST_LOG=warn,codex_otel=info`.
   - It never uses `--ephemeral` and never passes `-m`.
+  - `<MCP off>` is `-c mcp_servers.<name>.enabled=false` for each server in
+    `$CODEX_HOME/config.toml`, then `--disable apps --disable plugins`. So
+    the person's MCP servers, apps and plugins are neither visible nor
+    usable. (`-c mcp_servers={}` does not do this: it is merged with the
+    configured servers.)
+  - At `codex_otel=info`, codex logs a `codex.conversation_starts` line with
+    `mcp_servers="<names>"`. If that list is not empty, or the line is
+    missing, the launch is a dropout (R7).
   - The requested model is `model` in `$CODEX_HOME/config.toml`
     (`CODEX_HOME` defaults to `~/.codex`), the CLI's default.
   - The served model and effort are the `model` and `effort` fields of
@@ -457,6 +466,19 @@ Verified on 2026-09-25:
 - `codex exec --json -s read-only --skip-git-repo-check` (0.157.0) emits
   `item.completed` events of type `command_execution` with the fields
   `command`, `aggregated_output`, `exit_code` and `status`. R9 reads these.
+- `codex exec` (0.157.0) with `RUST_LOG=warn,codex_otel=info` writes a
+  `codex.conversation_starts` log line to stderr naming the MCP servers it
+  started: nine on this machine (`notion, codex_apps, node_repl,
+  playwright, cua_repl, atlassian-rovo, figma, context7, atlassian`). With
+  `-c mcp_servers={}` plus `--disable apps --disable plugins`, seven
+  remained. With `-c mcp_servers.<name>.enabled=false` for each server in
+  `config.toml` plus `--disable apps --disable plugins`, the list was empty,
+  no MCP startup was logged, and the rollout still showed the configured
+  default model (`gpt-6-astra`).
+- The full R5 flag set together, in a live Full review: the `init` event had
+  `mcp_servers: []` and the tools `Bash, Glob, Grep, Read, StructuredOutput`,
+  and the final `result` event carried the answer as a `structured_output`
+  object.
 - `git clone --local --no-checkout`, followed by `git read-tree -u --reset
   <tree>` with a tree written from a temporary index that held tracked and
   untracked changes, gave the clone the full uncommitted content. A local
@@ -464,8 +486,8 @@ Verified on 2026-09-25:
 
 Not verified:
 
-- the full R5 flag set together (`--safe-mode`, `--restricted`,
-  `--json-schema`, `--allowedTools`); the checks above used a smaller set;
+- whether a project's own `.codex/config.toml` can add MCP servers that
+  `<MCP off>` does not name; if one starts, R6 makes the launch a dropout;
 - what `workspace-write` allows outside `-C`;
 - the same sandbox on Linux, where Codex uses a different sandbox
   mechanism: whether it starts and limits writes and network the same way. If it does

@@ -306,13 +306,16 @@ class Review:
         except (OSError, subprocess.TimeoutExpired):
             signed_in = False
         config = codex_home() / "config.toml"
-        model = None
+        settings = {}
         try:
-            model = tomllib.loads(config.read_text()).get("model") if config.is_file() else None
+            settings = tomllib.loads(config.read_text()) if config.is_file() else {}
         except (OSError, tomllib.TOMLDecodeError):
             pass
+        model = settings.get("model")
+        servers = settings.get("mcp_servers") if isinstance(settings.get("mcp_servers"), dict) else {}
         return {"ready": signed_in, "state": "signed in" if signed_in else "not signed in",
-                "executable": executable, "requested_model": model if isinstance(model, str) else None}
+                "executable": executable, "requested_model": model if isinstance(model, str) else None,
+                "mcp_servers": sorted(servers)}
 
     def sandbox_starts(self):
         probe = self.run_dir / "sandbox-probe"
@@ -427,8 +430,9 @@ class Review:
             elif provider == "claude":
                 record.update(run_claude(copy, prompt, schema, launch_dir))
             else:
-                record.update(run_codex(copy, prompt, schema, launch_dir,
-                                        preflight["providers"]["codex"].get("requested_model")))
+                codex = preflight["providers"]["codex"]
+                record.update(run_codex(copy, prompt, schema, launch_dir, codex.get("requested_model"),
+                                        codex.get("mcp_servers", [])))
         except (resources.Unsafe, Failure, OSError) as error:
             record["reason"] = f"the launch could not start: {error}"
         record["finished"] = now()
@@ -654,10 +658,10 @@ def receipt(copy, argv, command, fingerprint, stdin=None):
     return record
 
 
-def run_process(argv, cwd, prompt, stream_path, launch_dir):
+def run_process(argv, cwd, prompt, stream_path, launch_dir, env=None):
     with open(stream_path, "wb") as stream, open(launch_dir / "stderr.log", "wb") as errors:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE, stdout=stream, stderr=errors,
-                                   start_new_session=True)
+                                   start_new_session=True, env=env)
         try:
             process.communicate(prompt.encode(), timeout=SEAT_TIMEOUT)
         except subprocess.TimeoutExpired:
@@ -735,16 +739,41 @@ def run_claude(copy, prompt, schema, launch_dir):
     return fields
 
 
-def run_codex(copy, prompt, schema, launch_dir, requested):
+def codex_mcp_off(servers):
+    """Arguments that turn off each MCP server named in config.toml, and the apps and plugins features."""
+    argv = []
+    for name in servers:
+        key = name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+        argv += ["-c", f"mcp_servers.{key}.enabled=false"]
+    return argv + ["--disable", "apps", "--disable", "plugins"]
+
+
+def codex_mcp_servers(path):
+    """The MCP servers codex started, from its codex.conversation_starts log line, or None when absent."""
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if 'event.name="codex.conversation_starts"' in line:
+            match = re.search(r'mcp_servers="([^"]*)"', line)
+            if match:
+                return [name.strip() for name in match.group(1).split(",") if name.strip()]
+    return None
+
+
+def run_codex(copy, prompt, schema, launch_dir, requested, servers):
     """R6. Served model and effort come from the session rollout named by the thread id."""
     schema_path = launch_dir / "schema.json"
     schema_path.write_text(schema)
     result_path = launch_dir / "last-message.json"
     argv = ["codex", "exec", "--json", "-s", "workspace-write", "-C", str(copy),
-            "-c", f'model_reasoning_effort="{EFFORT}"', "--output-schema", str(schema_path),
-            "-o", str(result_path), "-"]
+            "-c", f'model_reasoning_effort="{EFFORT}"', *codex_mcp_off(servers),
+            "--output-schema", str(schema_path), "-o", str(result_path), "-"]
     stream = launch_dir / "stream.jsonl"
-    code = run_process(argv, copy, prompt, stream, launch_dir)
+    # At codex_otel=info, codex logs the MCP servers it started; R6 reads that line.
+    code = run_process(argv, copy, prompt, stream, launch_dir,
+                       env={**os.environ, "RUST_LOG": "warn,codex_otel=info"})
     thread, commands, usage = None, [], {}
     for event in stream_events(stream):
         if event.get("type") == "thread.started":
@@ -764,7 +793,11 @@ def run_codex(copy, prompt, schema, launch_dir, requested):
     mismatched = [model for model in served if requested is not None and model != requested]
     fields = {"served_model": served, "served_effort": efforts, "exit_code": code, "tokens": usage,
               "thread_id": thread, "model_compared": requested is not None}
-    fields["reason"] = dropout_reason(code, output, served, [], mismatched)
+    mcp = codex_mcp_servers(launch_dir / "stderr.log")
+    fields["mcp_servers"] = mcp
+    fields["reason"] = dropout_reason(code, output, served, mcp or [], mismatched)
+    if not fields["reason"] and mcp is None:
+        fields["reason"] = "no MCP server list in the codex log, so an MCP server may have loaded"
     if not fields["reason"]:
         write_json(launch_dir / "output.json", output)
         fields["status"] = "complete"

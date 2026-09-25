@@ -91,7 +91,13 @@ assert args[0] == "exec", args
 prompt = sys.stdin.read()
 brief, spec = behavior("codex", prompt)
 cwd = args[args.index("-C") + 1]
-log({"program": "codex", "brief": brief, "argv": args, "cwd": os.getcwd(), "prompt": prompt})
+log({"program": "codex", "brief": brief, "argv": args, "cwd": os.getcwd(), "prompt": prompt,
+     "rust_log": os.environ.get("RUST_LOG")})
+if not spec.get("no_mcp_log"):
+    # The line codex 0.157.0 writes at RUST_LOG=codex_otel=info when a session starts.
+    print('2026-09-25T00:00:00Z  INFO session_init: codex_otel.log_only: event.name="codex.conversation_starts" '
+          'mcp_servers="%s" event.timestamp=2026-09-25T00:00:00Z' % ", ".join(spec.get("mcp_servers", [])),
+          file=sys.stderr, flush=True)
 side_effects(spec, cwd)
 thread = str(uuid.uuid4())
 def emit(event):
@@ -363,6 +369,29 @@ class ReviewTests(unittest.TestCase):
         launch = review["launches"][0]
         self.assertEqual((launch["requested_model"], launch["served_model"]), ("gpt-test", ["gpt-test"]))
         self.assertEqual(launch["served_effort"], ["high"])
+
+    def test_r6_codex_launch_turns_off_the_person_mcp_servers_apps_and_plugins(self):
+        (self.codex_home / "config.toml").write_text(
+            'model = "gpt-test"\n[mcp_servers.figma]\nurl = "https://x.invalid"\n'
+            '[mcp_servers.computer-use]\ncommand = "x"\n')
+        review = self.review("standard", "codex")
+        self.assertEqual(review["verdict"], "READY", review["incomplete_reasons"])
+        row = next(row for row in self.launches("codex", "contract"))
+        argv = row["argv"]
+        pairs = [argv[i + 1] for i in range(len(argv) - 1) if argv[i] == "-c"]
+        self.assertIn("mcp_servers.figma.enabled=false", pairs)
+        self.assertIn("mcp_servers.computer-use.enabled=false", pairs)
+        disabled = [argv[i + 1] for i in range(len(argv) - 1) if argv[i] == "--disable"]
+        self.assertEqual(sorted(disabled), ["apps", "plugins"])
+        self.assertIn("codex_otel=info", row["rust_log"])
+
+    def test_r6_a_codex_launch_that_loads_mcp_servers_is_a_dropout(self):
+        self.scenario["codex"]["seats"]["contract"] = seat(mcp_servers=["figma", "codex_apps"])
+        self.assert_incomplete(self.review("standard", "codex"), "MCP")
+
+    def test_r6_a_codex_launch_that_shows_no_mcp_server_list_is_a_dropout(self):
+        self.scenario["codex"]["seats"]["contract"] = seat(no_mcp_log=True)
+        self.assert_incomplete(self.review("standard", "codex"), "MCP")
 
     def test_r6_codex_served_model_mismatch_is_a_dropout(self):
         self.scenario["codex"]["seats"]["contract"] = seat(served_model="gpt-other")

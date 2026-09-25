@@ -1,7 +1,7 @@
 # Codex
 
 LLM Orchestrator is built for Claude Code. If you use Codex, you can install a
-smaller part of it: the cadence skill and three small hooks. This page says
+smaller part of it: the cadence skill, the review skill and three small hooks. This page says
 what you get, how to install it, and what it never does.
 
 ## What you get
@@ -27,7 +27,9 @@ what you get, how to install it, and what it never does.
 
 Code review also runs on Codex: the `requesting-code-review` skill starts
 `scripts/lib/orch-review.py`, which works the same on both harnesses (see
-[codex-provider.md](codex-provider.md)). Everything else, such as planning,
+[codex-provider.md](codex-provider.md)). The plugin install below ships this
+skill and the script; `install.sh --codex` copies only the cadence skill, so
+with that install run the script from a checkout of this repository. Everything else, such as planning,
 brainstorming and the merge queue, stays in Claude Code.
 
 ## Install
@@ -99,8 +101,10 @@ Codex asks whether to trust each project and saves the answer in
 Codex can add this repository as a plugin (`codex plugin marketplace add`,
 then `codex plugin add llm-orchestrator@llm-orchestrator`). Codex looks for
 `.codex-plugin/plugin.json` before `.claude-plugin/plugin.json`, so it reads
-this repository's Codex manifest. That manifest loads the cadence skill and
-the same three hooks, and none of the Claude Code hooks or skills. Without it,
+this repository's Codex manifest. That manifest loads the cadence and
+`requesting-code-review` skills and the same three hooks, and none of the
+other Claude Code hooks or skills. Codex copies the whole plugin root into
+its plugin cache, so `scripts/lib/orch-review.py` is there too. Without it,
 Codex would load the Claude Code manifest and all of `hooks/hooks.json`.
 
 The installer above is the supported install. The plugin does not add the
@@ -113,8 +117,7 @@ again. Codex runs the plugin from its own cached copy, and neither `git pull`
 nor `codex plugin marketplace upgrade` refreshes that copy.
 
 Codex `/import` also copies Claude Code plugins. An imported copy of this
-plugin reads the Codex manifest too: the cadence skill and the same three
-hooks.
+plugin reads the Codex manifest too: the same two skills and three hooks.
 
 One route still brings the Claude Code hooks over. A `--copy` install wires
 them into a project's `.claude/settings.json`, and Codex offers to move hooks
