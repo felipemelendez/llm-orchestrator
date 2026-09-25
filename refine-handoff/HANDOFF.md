@@ -47,6 +47,15 @@ T15, T16, T17, T18, T19, T21 (PRs #21–#33 and #35).
 Dropped by Felipe: T2 (no notice shown to him; the check tells the agent only)
 and T9 (commands stay commands).
 
+**CI is failing on `refine/integration`** (GitHub's Linux runners; every
+suite passes on the Mac). Four suites fail: test-verify-gate and
+test-codex-verify-gate (4 each — most likely the 200 KB timing cases, whose
+100 ms budget is too tight for CI), test-install-global (1) and smoke (6).
+PR #36 (`refine/ci-fix`) raises the timing budget to 1 s and makes
+`run-all.sh` print each failing check so the CI log shows the cause. Read
+PR #36's CI log first, fix what remains (likely Linux-only differences), and
+merge it before anything else. CI must be green before PR #34 is ready.
+
 **Last known state when the old machine stopped (2026-09-25, evening):**
 - T5 `refine/t5-review-build` head `4b934af`: every review finding so far is
   fixed, including GPT round 2's (quote-based drops removed: a finding is
