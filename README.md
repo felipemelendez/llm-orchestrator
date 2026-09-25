@@ -53,11 +53,13 @@ For a task walkthrough, see [the sample session](./docs/examples/sample-session.
 
 ### Using Codex?
 
-Codex gets a smaller part of the plugin: the cadence skill and three small hooks. In your terminal, clone this repository into a folder you will keep and run the installer:
+Codex gets a smaller part of the plugin: the cadence skill and three small hooks, installed as a Codex plugin, plus the shared instructions, added by the installer. In your terminal, clone this repository into a folder you will keep and run:
 
 ```sh
 git clone https://github.com/felipemelendez/llm-orchestrator.git
 cd llm-orchestrator
+codex plugin marketplace add "$PWD"
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
@@ -307,7 +309,7 @@ Other modes:
 
 - **Persistent symlink.** `./scripts/install.sh --link` then `/plugin marketplace add ~/.claude/llm-orchestrator`.
 - **Per-project copy.** `./scripts/install.sh --copy <project-dir>` — copies the plugin into a project's `.claude/` directory.
-- **Codex.** `./scripts/install.sh --codex` — the cadence skill, the shared instructions and three small hooks, into your Codex setup; then trust the hooks with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
+- **Codex.** `codex plugin add llm-orchestrator@llm-orchestrator` for the cadence skill and three small hooks, and `./scripts/install.sh --codex` for the shared instructions; then trust the hooks with `/hooks`. See [`docs/codex.md`](./docs/codex.md).
 - **Minimal hook profile.** `ORCH_HOOK_PROFILE=minimal` — bootstrap only; skips per-turn protocol reminders (which only cadence-enabled projects get) and the research gate.
 - **Disable specific hooks.** `ORCH_DISABLED_HOOKS=orch-research-gate,orch-stop`.
 - **`ORCH_CONTEXT_HANDOFF_TOKENS`.** Default `950000` (≈95% of a 1M-token window) — the token count at which the agent is reminded once to write a handoff note before native compaction kicks in. Lower it for a smaller context window.
