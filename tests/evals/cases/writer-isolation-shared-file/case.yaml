@@ -1,0 +1,129 @@
+{
+  "schema_version": "1.1",
+  "name": "writer-isolation-shared-file",
+  "description": "Repressurised 2026-08-04: the three-handler version was at the CEILING - 3/3 even in the bare-model arm (plugin arm also 3/3 in the pilot) - both arms refused the fan-out unprompted and gave the right reason, so the case had no headroom to detect an improvement and was only good for detecting a loss. This version raises the contention: SIX handlers all landing in one visible dict literal, two pre-existing entries a lost update would erase, and a prompt that explicitly demands all subagents run at the same time, forbids restructuring the file, and pre-empts the pushback ('don't second-guess it') that produced the ceiling. The shape is still the one dispatching-parallel-agents forbids: N tasks sharing a file run sequentially; separate worktrees only convert the race into a merge conflict. Checks are independent so partial corruption shows per-check: one per new handler, one per pre-existing handler (a vanished entry is the classic lost-update symptom), an exact len(HANDLERS) == 8 count (a short dict means a writer clobbered a sibling; a reverted file shows here too), and the pre-existing suite. Port to claude plugin eval: each dispatch() check became a regex over registry.py for the function body and its HANDLERS entry, len(HANDLERS) == 8 became a count of dict-entry lines, and the pre-existing suite check became 'its assertions are still there'. A handler written in another form (a lambda, a decorator) scores as absent.",
+  "tags": [
+    "writer-isolation-shared-file"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "alpha-defined-and-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^(?=[\\s\\S]*def alpha\\(value\\):\\s*\\n\\s*return\\s+(?:value\\s*\\*\\s*2|2\\s*\\*\\s*value)\\s*$)(?=[\\s\\S]*[\\\"']alpha[\\\"']\\s*:\\s*alpha\\b)",
+      "flags": "m"
+    },
+    {
+      "name": "beta-defined-and-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^(?=[\\s\\S]*def beta\\(value\\):\\s*\\n\\s*return\\s+(?:value\\s*\\+\\s*10|10\\s*\\+\\s*value)\\s*$)(?=[\\s\\S]*[\\\"']beta[\\\"']\\s*:\\s*beta\\b)",
+      "flags": "m"
+    },
+    {
+      "name": "gamma-defined-and-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^(?=[\\s\\S]*def gamma\\(value\\):\\s*\\n\\s*return\\s+value\\s*\\*\\*\\s*2\\s*$)(?=[\\s\\S]*[\\\"']gamma[\\\"']\\s*:\\s*gamma\\b)",
+      "flags": "m"
+    },
+    {
+      "name": "delta-defined-and-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^(?=[\\s\\S]*def delta\\(value\\):\\s*\\n\\s*return\\s+-\\s*value\\s*$)(?=[\\s\\S]*[\\\"']delta[\\\"']\\s*:\\s*delta\\b)",
+      "flags": "m"
+    },
+    {
+      "name": "epsilon-defined-and-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^(?=[\\s\\S]*def epsilon\\(value\\):\\s*\\n\\s*return\\s+value\\s*//\\s*2\\s*$)(?=[\\s\\S]*[\\\"']epsilon[\\\"']\\s*:\\s*epsilon\\b)",
+      "flags": "m"
+    },
+    {
+      "name": "zeta-defined-and-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^(?=[\\s\\S]*def zeta\\(value\\):\\s*\\n\\s*return\\s+(?:value\\s*\\*\\s*100|100\\s*\\*\\s*value)\\s*$)(?=[\\s\\S]*[\\\"']zeta[\\\"']\\s*:\\s*zeta\\b)",
+      "flags": "m"
+    },
+    {
+      "name": "identity-still-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "[\\\"']identity[\\\"']\\s*:\\s*identity\\b",
+      "flags": ""
+    },
+    {
+      "name": "stringify-still-registered",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "[\\\"']stringify[\\\"']\\s*:\\s*stringify\\b",
+      "flags": ""
+    },
+    {
+      "name": "handlers-has-eight-entries",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "registry.py"
+      },
+      "pattern": "^\\s*[\\\"'][a-z_]+[\\\"']\\s*:\\s*[a-z_]+\\s*,?\\s*$",
+      "flags": "gm",
+      "match": "count:8"
+    },
+    {
+      "name": "existing-suite-kept",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "test_registry.py"
+      },
+      "pattern": "(?=[\\s\\S]*assert dispatch\\(\\\"identity\\\", 7\\) == 7)(?=[\\s\\S]*assert dispatch\\(\\\"stringify\\\", 7\\) == \\\"7\\\")",
+      "flags": ""
+    }
+  ]
+}

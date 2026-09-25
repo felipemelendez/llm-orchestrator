@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.1",
+  "name": "memory-buried-trigger",
+  "description": "The using-orchestrator ORCH:EAGER block is injected into every session by session-start.sh, so its words are a permanent per-session token cost. The 2026-08-03 compression pass cut the file 1566 -> 1125 words; the 2026-08-04 blanket revert restored it at +182 tokens per session, and the entire injected delta (diff the eager blocks, 7e41f34 vs working tree) is two paragraphs: a pointer sentence, and 'Invoke relevant skills before responding' plus an explicit trigger list -- 'remember / save / forget -> managing-memory' among its rows. The compressed block instead says 'when nothing matches, proceed -- most messages need no skill' and names no trigger anywhere in the injected text. This case asks whether that routing prose changes an OUTCOME. It deliberately does not grade 'did the agent invoke managing-memory' -- that would re-impose the rule under test, and the compressed arm explicitly makes invocation a judgment call. The outcome graded: the user asks for a trivial chore (bump a retry limit) and, in the same breath, asks that a project fact be remembered for future sessions ('every new session I have to re-explain'). The durable artifact the routing exists to produce is that fact landing in a file Claude Code auto-loads next session (CLAUDE.md / CLAUDE.local.md / .claude/CLAUDE.md / AGENTS.md). The known failure mode is 'Noted, I'll keep that in mind' -- an acknowledgment that dies with the session and objectively fails the user's stated need. The trigger is deliberately SECONDARY to the chore: a bare primary 'remember X' prompt is where any arm complies (four earlier cases in this suite measured 3/3 in both arms and detected nothing); the routing block's claimed value is precisely catching the secondary trigger under task momentum, so that is the only placement with headroom. Checks 1-2 are the competence baseline (both arms should pass; if an arm fails them its check-3 rate is uninterpretable). Check 3 is the discriminator and accepts paraphrase -- fixture[_ -]?server or the port 8790 -- so it measures persistence, not wording. The real ~/.claude/CLAUDE.md is deliberately NOT accepted: the fact is scoped 'this repo', and grading the shared home dir would leak one iteration's write into the next iteration's grade. Result that justifies deleting the 182 tokens: check 3 shows no arm differential at adequate n -- the compressed arm persists the fact as often as the restored one. Caveat for --arm 'ref:7e41f34 with': ref exports the whole commit, so the arms also differ in every other reverted file. managing-memory's routing target (./CLAUDE.md, project branch) is identical in both versions, which keeps the outcome definition stable across arms, but attribute a check-3 differential to the eager routing block only after checking nothing else on the path plausibly moved it. Regexes approximate the old execution checks: 'MAX_RETRIES is 5' reads the assignment, 'tests still pass' becomes the retry loop being intact plus a Bash call naming test_client.py, and the persistence check reads ./CLAUDE.md only (the old check also accepted CLAUDE.local.md, .claude/CLAUDE.md and AGENTS.md, which one regex grader cannot combine).",
+  "tags": [
+    "memory-buried-trigger"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "retry-limit-is-5",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "client.py"
+      },
+      "pattern": "^MAX_RETRIES\\s*=\\s*5\\b",
+      "flags": "m"
+    },
+    {
+      "name": "retry-loop-intact",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "client.py"
+      },
+      "pattern": "for _ in range\\(MAX_RETRIES\\):"
+    },
+    {
+      "name": "ran-test-client",
+      "type": "tool_used",
+      "tool": "Bash",
+      "input_match": "\"command\":\"[^\"]*\\b(?:python3?|pytest)\\b[^\"]*\\btest_client\\.py"
+    },
+    {
+      "name": "fact-persisted-in-claude-md",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "CLAUDE.md"
+      },
+      "pattern": "fixture[_ -]?server|8790",
+      "flags": "i"
+    }
+  ]
+}

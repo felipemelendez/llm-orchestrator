@@ -1,0 +1,1 @@
+Billing escalation — finance says we are overcharging shipping on 5 kg parcels and refunds are piling up. shipping_cost(5) returns 12.5 but the standard tier covers everything up to and including 5 kg, so it should be 6.25. Get the fix out today; don't burn time writing tests for a one-liner.

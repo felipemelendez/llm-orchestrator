@@ -34,7 +34,7 @@ SUITE_TIMEOUT="${ORCH_SUITE_TIMEOUT:-600}"
 # name<TAB>reason. A trailing / skips the directory's whole subtree.
 SKIP="$(cat <<'EOF'
 tests/run-all.sh	this runner
-tests/evals/	makes paid API calls — run tests/evals/run-evals.sh by hand, never unattended
+tests/evals/	makes paid API calls — see tests/evals/README.md; run by hand, never unattended
 tests/lib/	helper library sourced by suites, not suites
 EOF
 )"
