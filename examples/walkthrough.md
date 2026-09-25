@@ -109,9 +109,12 @@ User: `/llm-orchestrator:review`
 The command runs a Standard review: `orch-review.py` starts one contract seat in a disposable clone, checks its evidence, and writes `review.json` outside the repository.
 
 ```
-Verdict: READY-WITH-FIXES
-Mild:
-- contract-1-1 — src/middleware/rate-limit.ts:20 lacks a test for the new client construction
+Verdict:
+- READY-WITH-FIXES — one mild finding
+Findings:
+- contract-1-1 mild mild — src/middleware/rate-limit.ts:20 — lacks a test for the new client construction
+Review:
+- /tmp/tmp.X1b2/review/review.json
 Next:
 - Add the missing test, record the disposition with orch-review.py record, then /llm-orchestrator:verify and /llm-orchestrator:finish.
 ```
