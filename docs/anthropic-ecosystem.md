@@ -33,7 +33,7 @@ Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trig
 We wire sixteen hook scripts across seven events; `hooks/hooks.json` is the source of truth:
 - **SessionStart** — bootstrap the `using-orchestrator` core, plus the reply format in a cadence-enabled project. Loading CLAUDE.md stays Claude Code's own job.
 - **UserPromptSubmit** — per-turn protocol reminder (cadence-enabled projects only), research gate, handoff nudge.
-- **PreToolUse** — the three safety guards: destructive git, verification bypass, config protection.
+- **PreToolUse** — the safety guards: destructive git, verification bypass, the cadence unlock guard.
 - **PostToolUse / PostToolUseFailure** — evidence ledger, and opt-in skill telemetry.
 - **SubagentStop** — Status-block validator, researcher validator, retry cap, writer-mutex reaper.
 - **Stop** — protocol grader, verify gate, retry cap, retention pruning.
