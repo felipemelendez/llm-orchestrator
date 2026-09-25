@@ -177,8 +177,10 @@ lacked. T10 tests the swap.
   2. It applies `patch` with `git apply`.
   3. It runs `command` again and records receipt 2.
 
-  All three run under `codex sandbox -C <copy>` with writes allowed only in
-  the copy and the system temporary directory, and no network. This is
+  All three run as `codex sandbox -P :workspace -C <copy> -- <cmd>`. This
+  allows writes in the copy and in the system temporary directory, which
+  stays writable, and refuses writes anywhere else. Without `-P` the
+  sandbox refuses to start. This is
   chosen over accepting only commands that start with `runner.test_cmd`,
   because a test command can still write anywhere the person can, and many
   projects have no `test_cmd`; the sandbox limits writes whatever the
@@ -437,6 +439,10 @@ Verified on 2026-09-25:
   --tools Bash --permission-mode dontAsk --output-format json` ran a Bash
   command with no prompt, returned `modelUsage` naming `claude-opus-5-5`,
   and reported no permission denials.
+- On macOS, `codex sandbox -P :workspace -C <copy> -- <cmd>` (0.157.0)
+  allowed writes inside the copy and the system temporary directory,
+  refused a write to `$HOME` ("Operation not permitted"), and refused to
+  start without `-P`.
 - `claude -p ... --output-format stream-json --verbose` shows each Bash call
   as an assistant `tool_use` block with `input.command`, and its result as a
   user `tool_result` block with the output text and `is_error`. The final
@@ -458,10 +464,10 @@ Not verified:
 - the full R5 flag set together (`--safe-mode`, `--restricted`,
   `--json-schema`, `--allowedTools`); the checks above used a smaller set;
 - what `workspace-write` allows outside `-C`;
-- the `codex sandbox` options that allow writes only in the copy and the
-  temporary directory with no network (`codex sandbox --help` in 0.157.0
-  lists `-C`, `-c`, `--permission-profile` and
-  `--sandbox-state-disable-network`, not a direct write-root flag);
+- whether `codex sandbox -P :workspace` also blocks network access;
+- the same sandbox on Linux, where Codex uses a different sandbox
+  mechanism: whether it starts and limits writes the same way. If it does
+  not start, R10 applies and the finding is not reproduced;
 - that the agent's shell on Codex allows a 540-second `wait`.
 
 ## Decided (pending Felipe's confirmation)
