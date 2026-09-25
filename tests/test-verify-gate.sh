@@ -386,6 +386,28 @@ python3 -c 'import json; print(json.dumps({"runner": {"test_cmd": "a= " * 32500 
   > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" budget_case "a long test_cmd against a long command" '"a= " * 65000 + "true"'
 
+printf '\n%s== round 4: other spaces, non-run modes, env forms, later targets ==%s\n' "$DIM" "$RESET"
+
+# Any whitespace separates words, and no character stops the reader.
+for expr in '"git commit -m x y 2>&1"' '"printf \x27%s\\n\x27 hello world"' \
+            '"echo a b 2>&1"' '"echo a　b > x"' '"echo a\vb 2>&1"' '"echo a\fb 2>&1"'; do
+  ignored "(q1) an unusual space, not a run" "$(python3 -c "print($expr, end='')")"
+done
+counts "(q1) an unusual space between words" "$(python3 -c 'print("pytest -q 2>&1", end="")')"
+# Modes of a runner that inspect instead of running.
+for c in 'ruff rule F401' 'ruff config' 'ruff format .' 'pytest --markers' 'pytest --fixtures' \
+         'pytest --collect-only' 'pytest --co' 'jest --clearCache' 'jest --listTests'; do
+  ignored "(q2) not a run" "$c"
+done
+counts "(q2) ruff format --check is a check" 'ruff format --check .'
+for c in '/usr/bin/env make test' 'env -- make test' 'mvn clean test' './gradlew clean test' \
+         './gradlew :app:test' 'make -C app test' 'yarn -s test' 'npx --no-install jest'; do
+  counts "(q3) a real run" "$c"
+done
+ignored "(q3) a target after -- belongs to the program" 'cargo run -- test'
+printf '{ "runner": { "test_cmd": "/usr/bin/make test" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(q4) test_cmd with a dry-run option" '/usr/bin/make test -n -f /dev/stdin'
+
 printf '\n%s== it warns; it never blocks ==%s\n' "$DIM" "$RESET"
 (( ANY_RC == 0 ))    && ok "no fixture made the hook exit non-zero" \
   || fail "the hook exited non-zero" "a warn-only gate must always exit 0"
