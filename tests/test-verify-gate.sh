@@ -405,6 +405,25 @@ for c in '/usr/bin/env make test' 'env -- make test' 'mvn clean test' './gradlew
   counts "(q3) a real run" "$c"
 done
 ignored "(q3) a target after -- belongs to the program" 'cargo run -- test'
+
+printf '\n%s== targets: first word for subcommand tools, no option values ==%s\n' "$DIM" "$RESET"
+for c in './gradlew build -x test' 'gradle build -x test' './gradlew assemble -x check' \
+         'go build -o test ./cmd/server' 'go build -tags test ./...' 'cargo run --bin check' \
+         'cargo build --features test' 'dotnet run --project test' 'make -C test build' \
+         'bazel build //app:test' 'just --justfile check build' 'task -d test build' \
+         'swift build --product test' 'go mod why test'; do
+  ignored "(r1) not a run" "$c"
+done
+for c in 'cargo +nightly test' 'go -C app test ./...' 'bazel test //app:test' 'just -f ci.just check'; do
+  counts "(r2) a real run" "$c"
+done
+for c in 'python -m ruff rule F401' 'python3 -m ruff check --show-files' 'ruff check --show-settings'; do
+  ignored "(r3) not a run" "$c"
+done
+for c in 'python3 -u -m pytest -q' 'python -X dev -W error -m pytest' 'bash -e tests/test-verify-gate.sh' \
+         'sh -o errexit tests/test-a.sh'; do
+  counts "(r4) interpreter options before a real run" "$c"
+done
 printf '{ "runner": { "test_cmd": "/usr/bin/make test" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ignored "(q4) test_cmd with a dry-run option" '/usr/bin/make test -n -f /dev/stdin'
 
