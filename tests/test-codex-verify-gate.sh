@@ -480,6 +480,12 @@ for c in 'python3 -u -m pytest -q' 'python -X dev -W error -m pytest' 'bash -e t
          'sh -o errexit tests/test-a.sh'; do
   counts "(r4) interpreter options before a real run" "$c"
 done
+for c in 'bash -n tests/test-a.sh' 'sh -n tests/test-a.sh' 'bash --noexec tests/test-a.sh' 'bash -en tests/test-a.sh'; do
+  ignored "(r5) parse only, not a run" "$c"
+done
+for c in 'bash -euo pipefail tests/test-a.sh' 'bazel --output_base /tmp/bazel test //...'; do
+  counts "(r6) a real run" "$c"
+done
 printf '{ "runner": { "test_cmd": "/usr/bin/make test" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
 PROJ_DIR="$PROJ" ignored "(q4) test_cmd with a dry-run option" '/usr/bin/make test -n -f /dev/stdin'
 # A raw argv is one program; its arguments keep their boundaries.
