@@ -38,8 +38,7 @@ Between groups:
 ```
 Found:
 - Group <N> complete: <task numbers> DONE
-- Tasks: <X> completed, <Y> in flight, <Z> pending
-- Plan checkboxes: <X> ticked
+- Plan checkboxes: <X> ticked, <Y> unticked
 Next:
 - Starting group <N+1>: <task numbers>
 ```
