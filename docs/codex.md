@@ -80,11 +80,16 @@ new session: a hook whose definition changed needs your trust again.
 Earlier releases of `install.sh --codex` copied the skill to
 `~/.agents/skills/cadence` and added the hooks to `~/.codex/hooks.json`. With
 the plugin installed as well, Codex would run each hook twice and list the
-skill twice. `install.sh --codex` removes both:
+skill twice. Once the plugin is installed, `install.sh --codex` removes both.
+Until then it removes nothing, so the old hooks keep working, and it says to
+add the plugin first and run it again.
 
 - From `~/.codex/hooks.json` it removes only the entries that run this
-  plugin's hook scripts, including the ones v0.8 and v0.9 left behind. Your
-  own entries stay. The file as it was is kept as `hooks.json.bak`.
+  plugin's hook scripts from this checkout, the plugin's cache or another
+  llm-orchestrator checkout, including the ones v0.8 and v0.9 left behind.
+  Your own entries stay, even a script of yours with the same name. The file
+  as it was is kept as a backup beside it (`hooks.json.bak`, or a numbered
+  `hooks.json.bak.1` if that name is taken), and the run prints its path.
 - From `~/.agents/skills/cadence` it removes only the files this plugin
   ships, and only when the installer's `.orch-installed` marker is there. Any
   file you added is kept and named. A `cadence` skill without the marker is

@@ -132,8 +132,8 @@ codex plugin add llm-orchestrator@llm-orchestrator
 Codex runs the plugin from its own copy, and `codex plugin add` refreshes it.
 Then check `/hooks` in a new session: a hook whose definition changed needs
 your trust again. If you installed the Codex layer with an earlier
-`install.sh --codex`, add the plugin as in [Codex setup](#codex-setup) first.
-This run then removes the skill copy and the hook entries that earlier install
+`install.sh --codex`, add the plugin as in [Codex setup](#codex-setup) first;
+without it, this run removes nothing. With it, the run removes the skill copy and the hook entries that earlier install
 wrote, so each hook runs once. See
 [Upgrading from an older install](codex.md#upgrading-from-an-older-install).
 

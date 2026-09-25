@@ -205,12 +205,22 @@ render_block() {
 # few yes/no lines, because "is the cadence actually on here?" is otherwise
 # several separate things to remember.
 _has_block() { [[ -f "$1" ]] && grep -qF "${BLOCK_START}" "$1" 2>/dev/null && echo yes || echo no; }
+# `codex plugin add` records the plugin in config.toml; `enabled = false` in
+# that table means it is installed but off. Read only.
+codex_plugin_on() {
+  [[ -f "${HOME:-}/.codex/config.toml" ]] || return 1
+  awk '
+    /^[[:space:]]*\[/ { inside = ($0 ~ /^[[:space:]]*\[plugins\."llm-orchestrator@llm-orchestrator"\][[:space:]]*$/); if (inside) found = 1; next }
+    inside && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*false/ { off = 1 }
+    END { exit (found && !off) ? 0 : 1 }
+  ' "${HOME}/.codex/config.toml"
+}
 # What an earlier --codex left that the plugin now provides: hook entries in
 # ~/.codex/hooks.json and the marked skill copy. Both make Codex list a check twice.
 _codex_leftovers() {
   local h="${HOME:-}" n="" found=()
   if [[ -f "${h}/.codex/hooks.json" ]] && command -v python3 >/dev/null 2>&1; then
-    n=$(python3 "${ROOT}/scripts/lib/codex-old-hooks.py" count "${h}/.codex/hooks.json" 2>/dev/null || true)
+    n=$(python3 "${ROOT}/scripts/lib/codex-old-hooks.py" count "${h}/.codex/hooks.json" "${ROOT}" 2>/dev/null || true)
   fi
   [[ -n "${n}" && "${n}" != "0" ]] && found+=("${n} hook entries in ${h}/.codex/hooks.json")
   [[ -f "${h}/.agents/skills/cadence/.orch-installed" ]] && found+=("the skill copy in ${h}/.agents/skills/cadence")
@@ -222,7 +232,7 @@ layers_report() {
   printf '  %-44s %s\n' "${h}/.claude/CLAUDE.md cadence block:" "$(_has_block "${h}/.claude/CLAUDE.md")"
   printf '  %-44s %s\n' "${h}/.codex/AGENTS.md cadence block:" "$(_has_block "${h}/.codex/AGENTS.md")"
   printf '  %-44s %s\n' "Codex plugin llm-orchestrator@llm-orchestrator:" \
-    "$(grep -qF '[plugins."llm-orchestrator@llm-orchestrator"]' "${h}/.codex/config.toml" 2>/dev/null && echo yes || echo no)"
+    "$(codex_plugin_on && echo yes || echo no)"
   printf '  %-44s %s\n' "left by an earlier --codex:" "$(_codex_leftovers)"
   printf '  %-44s %s\n' "${proj}/docs/llm-orchestrator/cadence.json:" \
     "$([[ -f "${proj}/docs/llm-orchestrator/cadence.json" ]] && echo yes || echo no)"
@@ -378,11 +388,14 @@ case "${cmd}" in
     skills_dest="${HOME}/.agents/skills/cadence"
     old_hooks_lib="${ROOT}/scripts/lib/codex-old-hooks.py"
 
+    # Removing the old install before the plugin is on would leave Codex with
+    # no checks at all, so without the plugin nothing is removed.
+    plugin_on=0; codex_plugin_on && plugin_on=1
     old_hooks=0
-    if [[ -f "${hooks_file}" ]]; then
+    if [[ "${plugin_on}" -eq 1 && -f "${hooks_file}" ]]; then
       command -v python3 >/dev/null 2>&1 || codex_refuse \
         "--codex needs python3 to check ${hooks_file} for hook entries an earlier --codex wrote. Install python3 and re-run; nothing was changed."
-      if ! old_hooks=$(python3 "${old_hooks_lib}" count "${hooks_file}"); then
+      if ! old_hooks=$(python3 "${old_hooks_lib}" count "${hooks_file}" "${ROOT}"); then
         old_hooks=0
         echo "${hooks_file} is not a hooks object this installer can read, so Codex cannot load it either; it was left alone and not checked for entries an earlier --codex wrote."
       fi
@@ -403,7 +416,7 @@ case "${cmd}" in
     # The skill copy an earlier --codex wrote carries a marker at its root. A
     # cadence skill without it is the person's and is left alone.
     old_skill=""
-    if [[ -e "${skills_dest}" ]]; then
+    if [[ "${plugin_on}" -eq 1 && -e "${skills_dest}" ]]; then
       skills_res="$(resolve_target "${skills_dest}")"
       if [[ -d "${skills_res}" && ! ( -r "${skills_res}" && -w "${skills_res}" && -x "${skills_res}" ) ]]; then
         codex_refuse "${skills_dest} cannot be read, written or entered by this user, so it cannot be checked for a skill copy an earlier --codex wrote; fix its permissions, then re-run; nothing was changed."
@@ -444,7 +457,7 @@ case "${cmd}" in
 
     # Writes: the old hook entries, the block, then the old skill copy.
     if [[ "${old_hooks}" -gt 0 ]]; then
-      python3 "${old_hooks_lib}" remove "${hooks_res}" || codex_refuse \
+      python3 "${old_hooks_lib}" remove "${hooks_res}" "${ROOT}" || codex_refuse \
         "the hook entries an earlier --codex wrote could not be removed from ${hooks_file}; nothing was changed."
     fi
     render_block "${agents_file}"
@@ -471,14 +484,19 @@ case "${cmd}" in
         [[ -L "${skills_dest}" ]] && rm -f "${skills_dest}"
         echo "removed the skill copy an earlier --codex wrote from ${skills_dest}"
       fi
-    elif [[ -e "${skills_dest}" ]]; then
+    elif [[ "${plugin_on}" -eq 1 && -e "${skills_dest}" ]]; then
       echo "${skills_dest} is a cadence skill this installer did not write, so it was left in place. Codex lists it next to the plugin's cadence skill; remove it if it is an old copy."
     fi
 
     echo
-    echo "The cadence skill and the hooks come from the Codex plugin. If it is not installed yet, run:"
-    echo "  codex plugin marketplace add ${ROOT}"
-    echo "  codex plugin add llm-orchestrator@llm-orchestrator"
+    if [[ "${plugin_on}" -eq 1 ]]; then
+      echo "The cadence skill and the hooks come from the Codex plugin, which is installed."
+    else
+      echo "The cadence skill and the hooks come from the Codex plugin, which is not installed in ${HOME}/.codex. Until it is, nothing an earlier --codex wrote is removed, so its hooks keep working. To finish, add the plugin first, then run --codex again:"
+      echo "  codex plugin marketplace add ${ROOT}"
+      echo "  codex plugin add llm-orchestrator@llm-orchestrator"
+      echo "  ${ROOT}/scripts/install.sh --codex"
+    fi
     echo "Then open /hooks in a new Codex session and trust the three hooks. Installing does not grant hook trust. config.toml was not changed. See docs/codex.md."
     echo
     layers_report

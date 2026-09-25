@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Find or remove the hook entries an earlier `install.sh --codex` wrote.
 
-Usage: codex-old-hooks.py count|remove <hooks.json>
+Usage: codex-old-hooks.py count|remove <hooks.json> <this checkout>
 
 `count` prints how many entries are this plugin's; `remove` deletes them,
 keeps the first backup of the file as it was, and prints what it did. Exit 2
@@ -16,14 +16,15 @@ import sys
 import tempfile
 
 # The scripts earlier releases registered in ~/.codex/hooks.json, recognised
-# by the script the entry runs, by its name AND by where it lives (the
-# plugin's hooks are under scripts/hooks). A person's own
-# my-hooks/codex-verify-gate.sh, or a hook whose PATH merely contains the
-# plugin's name, is theirs.
+# by the script the entry runs: its name, and a scripts/hooks folder inside
+# this checkout, the plugin cache, or another llm-orchestrator checkout (where
+# an earlier --codex was run). A person's own tools/scripts/hooks/codex-verify-gate.sh,
+# or a hook whose PATH merely contains the plugin's name, is theirs.
 OWN = {"codex-cadence-adapter.sh", "codex-verify-gate.sh", "orch-task-cleanup.sh",
        "codex-evidence.py", "codex-verify.py"}
 INTERPRETERS = {"bash", "sh", "zsh", "python", "python3", "env"}
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+CHECKOUT = ""
 
 
 def invoked(words, depth=0):
@@ -48,6 +49,18 @@ def invoked(words, depth=0):
     return None
 
 
+def llm_orchestrator_folder(folder):
+    real = os.path.realpath(folder)
+    cache = os.path.realpath(os.path.expanduser("~/.codex/plugins/cache/llm-orchestrator"))
+    if real == CHECKOUT or real.startswith(cache + os.sep):
+        return True
+    try:
+        with open(os.path.join(real, ".claude-plugin/plugin.json")) as fh:
+            return json.load(fh).get("name") == "llm-orchestrator"
+    except Exception:
+        return False
+
+
 def ours(entry):
     if not isinstance(entry, dict):
         return False
@@ -62,7 +75,9 @@ def ours(entry):
     if not script:
         return False
     directory, _, base = script.rpartition("/")
-    return base in OWN and (directory == "scripts/hooks" or directory.endswith("/scripts/hooks"))
+    if base not in OWN or not directory.endswith("/scripts/hooks"):
+        return False
+    return llm_orchestrator_folder(directory[:-len("/scripts/hooks")] or "/")
 
 
 def load(path):
@@ -107,7 +122,9 @@ def exclusive(name):
 
 
 def main():
-    mode, path = sys.argv[1:3]
+    global CHECKOUT
+    mode, path, checkout = sys.argv[1:4]
+    CHECKOUT = os.path.realpath(checkout)
     data = load(path)
     if data is None:
         return 2
