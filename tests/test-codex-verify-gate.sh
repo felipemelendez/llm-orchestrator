@@ -718,8 +718,13 @@ s=importlib.util.spec_from_file_location("c", sys.argv[1]); m=importlib.util.mod
   "$ROOT/scripts/lib/orch-completion-check.py")
 fire "$CLAIM" "$R"
 REASON=$(printf '%s' "$OUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("reason",""))')
-[[ "$REASON" == "$NOTE" ]] && ok "(j) the reason handed to the agent is the Claude check's note, byte for byte" \
+[[ "$REASON" == "$NOTE "* ]] && ok "(j) the reason handed to the agent starts with the Claude check's note, byte for byte" \
   || fail "(j) same note on both harnesses" "codex='$REASON' claude='$NOTE'"
+# The continuation's reply becomes the turn's final answer (codex exec -o keeps only
+# the last message), so the agent must repeat its answer, not reply with the line alone.
+printf '%s' "$REASON" | grep -q 'repeat your full answer' \
+  && ok "(j1) the reason tells the agent to repeat its full answer" \
+  || fail "(j1) the answer would be lost" "$REASON"
 printf '%s' "$OUT" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert set(d)=={"decision","reason"}, d' 2>/dev/null \
   && ok "(j2) the output carries only decision and reason (Codex rejects unknown fields)" \
   || fail "(j2) output shape" "$OUT"

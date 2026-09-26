@@ -18,8 +18,10 @@ At Codex's `Stop` event the hook receives `last_assistant_message`,
 > project's `runner.test_cmd`, run in this turn and finish with exit code 0?
 
 - Yes, or the label is anything but PASS, or there is no label: print nothing.
-- No: print `{"decision":"block","reason":<NOTE>}` once. NOTE is
-  `orch-completion-check.py`'s note, byte for byte.
+- No: print `{"decision":"block","reason":<NOTE> <CONTINUE>}` once. NOTE is
+  `orch-completion-check.py`'s note, byte for byte. CONTINUE tells the agent to
+  repeat its full answer with the Verification line updated to match what it ran, because its reply to the
+  continuation becomes the turn's final answer (`codex exec -o` keeps only that).
 - `stop_hook_active` true: print nothing. This is the continuation the hook
   itself requested; it fires at most once per turn.
 - Always exit 0. Never print `systemMessage`. Never write to stderr outside
