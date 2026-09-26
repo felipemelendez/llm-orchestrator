@@ -33,7 +33,6 @@
 # Library / framework / SDK proper nouns.
 # Includes both pure libraries (react, prisma) and vendor names (stripe, supabase)
 # because the sniffer's design-verb-required branch treats them uniformly.
-# The classifier separates them for nudge routing via ORCH_SIG_VENDOR.
 ORCH_SIG_LIBRARY='\b(next\.?js|react|vue|svelte|angular|nuxt|astro|remix|prisma|drizzle|sequelize|mongoose|typeorm|tailwindcss|tailwind|django|fastapi|flask|spring|rails|laravel|express|hono|nest\.?js|nestjs|trpc|graphql|apollo|axios|boto3|aws-sdk|stripe|auth0|nextauth|clerk|supabase|firebase|cloudflare|vercel|netlify|openai|anthropic|langchain|llamaindex|pydantic|sqlalchemy|mocha|vitest|jest|playwright|cypress|webpack|vite|rollup|esbuild|turbopack|biome|eslint|prettier|ruff|mypy|openssl|claude[[:space:]]?code|claude-code|mcp[[:space:]]+server|jsonl[[:space:]]+transcript)\b'
 
 # Structural library/dependency shapes — name-agnostic complement to the curated
@@ -72,10 +71,6 @@ ORCH_SIG_LIBRARY_STRUCTURAL='\bimport\s+(@[a-z0-9_-]|[{*'"'"'"][[:space:]a-z*]|[
 # Dotted CapitalizedName pattern — must run against ORIGINAL-case prompt.
 # Matches patterns like Foo.Bar, Pandas.DataFrame, TensorFlow.keras, etc.
 ORCH_SIG_LIBRARY_STRUCTURAL_DOTTED='\b[A-Z][a-zA-Z0-9]+\.[a-zA-Z]'
-
-# Vendor SaaS platforms — subset of LIBRARY but maintained separately so the
-# classifier can prefer "vendor MCP" over "doc aggregator" for their APIs.
-ORCH_SIG_VENDOR='\b(stripe|cloudflare|vercel|auth0|supabase|firebase|netlify)\b'
 
 # Version-shaped tokens.
 # Matches: v-prefixed numbers (v4, v1.2.3), dotted semantic versions (3.12, 1.0.0),
@@ -162,7 +157,6 @@ ORCH_SIG_QUESTION_DEPRECATION='\b(is[[:space:]]+[^[:space:]]{1,30}[[:space:]]+de
 # The keyword is matched case-insensitively against the skill body.
 ORCH_SIGNAL_CLASSES_MAP='
 ORCH_SIG_LIBRARY=library/SDK
-ORCH_SIG_VENDOR=Vendor API
 ORCH_SIG_VERSION=Version-shaped
 ORCH_SIG_SECURITY=Security-sensitive
 ORCH_SIG_ARCH=Architectural signal
