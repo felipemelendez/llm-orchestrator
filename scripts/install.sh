@@ -279,7 +279,8 @@ case "${cmd}" in
              skills/cadence/scripts/orch-task-resources.py \
              scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
              scripts/lib/codex-cadence-read-command.py scripts/lib/codex-completion-check.py \
-             scripts/lib/codex-old-hooks.py \
+             scripts/lib/codex-old-hooks.py scripts/lib/orch-completion-check.py \
+             scripts/lib/orch-subagent-report.py skills/cadence/scripts/cadence-ruling.sh \
              docs/codex.md docs/codex-provider.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
