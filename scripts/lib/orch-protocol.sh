@@ -97,7 +97,7 @@ orch_protocol_has_verification() { # <reply>
 # — the content is NESTED under "message". An earlier version read only the
 # top-level "content" key, so on every real transcript it extracted nothing and
 # every consumer bailed at its `[[ -n "${REPLY}" ]] || exit 0` guard. That
-# silently disabled the protocol grader, the verify gate, and the retry cap's
+# silently disabled the verify gate and the retry cap's
 # Stop path: they ran on every turn, found no reply, and passed. A gate that
 # always passes looks exactly like a gate that never trips, which is why this
 # survived. tests/test-protocol-hooks.sh now fixtures both shapes.

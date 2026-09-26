@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LLM Orchestrator SubagentStop hook — subagent-return validator.
 #
-# Fires when a dispatched subagent finishes. Three checks, scoped by agent type:
+# Fires when a dispatched subagent finishes. Two checks, scoped by agent type:
 #
 #   1. EMPTY RETURN (all agents): a subagent that finishes with no final text
 #      terminated prematurely (MAST FM-3.1). This is a FAILURE signal — warn
@@ -13,10 +13,6 @@
 #      PARTIAL with the enum-implied sub-block), a protocol header
 #      (Found:/Issues:/Status:...) for the read-only agents. orch-researcher is
 #      skipped here — orch-researcher-validator.sh owns its contract.
-#   3. EVIDENCE (orch-implementer only, warn-only): a DONE /
-#      DONE_WITH_CONCERNS claim that cites an [orch-evidence] stamp is checked
-#      against the ledger the PostToolUse hook wrote. A fabricated stamp or a
-#      stamp from a FAILING run warns; the controller should not trust the DONE.
 #
 # The graded text is the report the subagent sent its caller: its last
 # SubagentHandback message (auto mode), else the hook input's
@@ -53,7 +49,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-# Source the protocol grader library.
+# Source the protocol library (the Status-block and reply-shape graders).
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
 if [[ ! -f "${LIB}" ]]; then
@@ -62,9 +58,6 @@ if [[ ! -f "${LIB}" ]]; then
 fi
 # shellcheck source=scripts/lib/orch-protocol.sh
 source "${LIB}"
-PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
-# shellcheck source=scripts/lib/orch-project.sh
-[[ -f "${PROJ_LIB}" ]] && source "${PROJ_LIB}"
 
 # Read the hook event JSON from stdin.
 # Guarded on a non-tty stdin: run interactively without a redirect, a bare
@@ -84,7 +77,6 @@ HAS_LAM="${LAM_RAW:0:1}"
 ASSISTANT_TEXT="${LAM_RAW:1}"
 
 AGENT_TYPE=$(printf '%s' "${INPUT}" | grep -oE '"agent_type"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
-SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 VERIFY_LABEL='Verify:'
 VERIFY_GUIDANCE='Verify: needs a real command and its real output, not an assertion.'
 WORKFLOW_STATE=$(orch_protocol_workflow "$INPUT")

@@ -279,7 +279,8 @@ case "${cmd}" in
              skills/cadence/scripts/orch-task-resources.py \
              scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
              scripts/lib/codex-cadence-read-command.py scripts/lib/codex-completion-check.py \
-             scripts/lib/codex-old-hooks.py \
+             scripts/lib/codex-old-hooks.py scripts/lib/orch-completion-check.py \
+             scripts/lib/orch-subagent-report.py skills/cadence/scripts/cadence-ruling.sh \
              docs/codex.md docs/codex-provider.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
@@ -548,7 +549,7 @@ case "${cmd}" in
     cp -R "${ROOT}/output-styles" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/hooks" "${dest}/.claude/"
     # Copy hook scripts and statusline.
-    for f in "${ROOT}/scripts/hooks/"*.sh "${ROOT}/scripts/hooks/"*.py; do
+    for f in "${ROOT}/scripts/hooks/"*.sh; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"
     done
     [[ -f "${ROOT}/scripts/statusline.sh" ]] && cp "${ROOT}/scripts/statusline.sh" "${dest}/.claude/scripts/"
@@ -584,7 +585,7 @@ case "${cmd}" in
       for d in skills commands templates agents output-styles hooks; do
         [[ -d "${d}" ]] && find "${d}" -type f
       done
-      for f in scripts/hooks/*.sh scripts/hooks/*.py scripts/statusline.sh scripts/protocol-lint.sh \
+      for f in scripts/hooks/*.sh scripts/statusline.sh scripts/protocol-lint.sh \
                scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh scripts/lib/* \
                concise-agent-protocol.md docs/install.md docs/anthropic-ecosystem.md; do
         [[ -f "${f}" ]] && printf '%s\n' "${f}"

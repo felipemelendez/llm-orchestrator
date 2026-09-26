@@ -33,6 +33,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   defects and scores defects found, false findings and cost. Both have free
   checks in `tests/`; the paid commands and cost estimates are in
   `tests/evals/README.md`.
+- Removed what nothing used any more: `templates/dispatch-response.md` is no
+  longer shipped or copied by `install.sh --copy` (the Status blocks live in
+  `templates/implementer-prompt.md` and `agents/orch-implementer.md`); the old
+  release-notes pages `docs/release-v0.8.0.md` and `docs/release-v0.9.0.md`
+  are gone, their content is in this changelog; and the worktree reaper no
+  longer reads mutex-map files an older version left behind.
 
 ### Fixed
 
@@ -149,8 +155,7 @@ risky changes get independent review, tests are remembered while the files
 they covered are unchanged, and a completion claim is checked against what
 actually ran. Onboarding was rewritten for a first-time reader.
 
-Start with the [release overview](docs/release-v0.9.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 
 ### Changed
 
@@ -198,8 +203,7 @@ verification process. Two reviewers check each code change independently, and
 Codex records actual test results before reporting verified completion.
 (0.9.0 sizes the reviews to the change.)
 
-Start with the [release overview](docs/release-v0.8.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 The implementation details follow.
 
 ### Added — Codex execution evidence and optional external reviews

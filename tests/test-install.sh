@@ -376,8 +376,8 @@ mv "$TMP/src/agents/orch-implementer.md" "$TMP/keep.a"
 expect_check_fail "--check fails when agents/orch-implementer.md is deleted"
 mv "$TMP/keep.a" "$TMP/src/agents/orch-implementer.md"
 
-# The cadence files. None of them is derived from hooks.json — several are
-# scripts and references no hook manifest names — so the manifest is the only
+# The cadence files and the libraries hooks load. None of them is derived from
+# hooks.json — no hook manifest names them — so the manifest is the only
 # thing that fails closed when one of them is deleted, which is exactly the
 # blind spot this section exists for.
 for cadence_entry in commands/cadence-init.md \
@@ -385,6 +385,9 @@ for cadence_entry in commands/cadence-init.md \
                      scripts/hooks/codex-verify-gate.sh \
                      scripts/lib/codex-completion-check.py \
                      scripts/lib/codex-cadence-read-command.py \
+                     scripts/lib/orch-completion-check.py \
+                     scripts/lib/orch-subagent-report.py \
+                     skills/cadence/scripts/cadence-ruling.sh \
                      templates/cadence-global-block.md \
                      skills/cadence/SKILL.md \
                      skills/cadence/CADENCE.md \

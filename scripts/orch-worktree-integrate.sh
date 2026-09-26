@@ -229,7 +229,7 @@ on_signal() {
 
 do_serial() {
   trap 'on_signal' EXIT INT TERM HUP
-  local raw slug branch i n="${#RAW[@]}" mergesha testline extra
+  local raw slug branch i n="${#RAW[@]}" testline extra
   for (( i=0; i<n; i++ )); do
     raw="${RAW[$i]}"; slug="$(sanitize "${raw}")"; branch="orch/${SID}/${slug}"
     CUR_SLUG="${slug}"; CUR_IDX=${i}; PRE=""
@@ -257,7 +257,6 @@ do_serial() {
     if [[ ${UNVERIFIED} -eq 1 ]]; then
       testline="UNVERIFIED"
       git commit -q --no-edit -m "integrate ${slug}" >/dev/null 2>&1 || true
-      mergesha="$(git rev-parse --short HEAD)"
       OWN_LANDED="${OWN_LANDED}$(git rev-parse HEAD 2>/dev/null)
 "
     else
@@ -274,7 +273,6 @@ do_serial() {
           fi
           PENDING=("${RAW[@]:$((i+1))}"); RERUN=("${RAW[@]:$i}"); report_and_exit 1
         fi
-        mergesha="$(git rev-parse --short HEAD)"
         OWN_LANDED="${OWN_LANDED}$(git rev-parse HEAD 2>/dev/null)
 "
       else

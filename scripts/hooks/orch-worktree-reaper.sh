@@ -5,30 +5,18 @@
 # by a VOLUNTARY final-turn rmdir. An implementer that dies or terminates
 # prematurely strands the mutex — and every later dispatch into that worktree
 # returns BLOCKED forever. This reaper releases a mutex ONLY when the evidence
-# ties it to the implementer that just stopped:
-#
-#   1. The mutex map. DEAD since 2026-09-21: orch-evidence-ledger.sh was its
-#      only writer and it is gone, so this source now finds nothing and the
-#      reaper falls through to source 2. That errs toward NOT reaping, which
-#      is the safe direction. Kept so a future writer can fill it again.
-#      Claims were recorded with
-#      THIS agent_id and no matching release → reap those paths exactly.
-#      (Sound because the ledger records a claim only when the COMMAND's
-#      success entails the mkdir's success — "PostToolUse fires only on
-#      success" alone was not enough: the polite losing form `mkdir X || echo
-#      BLOCKED` exits 0 for the LOSER, and recording it had this reaper
-#      releasing a mutex a live sibling held.)
-#   2. A `.worktrees/<slug>` path named in the agent's report, ONLY
-#      when that message is a success-shaped Status (DONE / DONE_WITH_CONCERNS
-#      / PARTIAL) — i.e. the agent reports having worked there and stopped
-#      without releasing. Never on BLOCKED/NEEDS_CONTEXT: a BLOCKED return
-#      routinely NAMES a sibling's held worktree ("Need: a worktree not
-#      already being written…"), and reaping it would unlock a tree a LIVE
-#      sibling is writing — the exact corruption the mutex exists to prevent.
+# ties it to the implementer that just stopped: the agent's working directory
+# is inside that `.worktrees/<slug>`, or it is the only worktree the report
+# names — and ONLY when the agent's report is a success-shaped Status (DONE /
+# DONE_WITH_CONCERNS / PARTIAL), i.e. the agent reports having worked there
+# and stopped without releasing. Never on BLOCKED/NEEDS_CONTEXT: a BLOCKED
+# return routinely NAMES a sibling's held worktree ("Need: a worktree not
+# already being written…"), and reaping it would unlock a tree a LIVE sibling
+# is writing — the exact corruption the mutex exists to prevent.
 #
 # There is deliberately NO "single leftover" heuristic: with parallel writers,
-# the one remaining mutex is usually a live sibling's. When neither evidence
-# path matches, the reaper reaps NOTHING and prints what is still held; the
+# the one remaining mutex is usually a live sibling's. When the evidence does
+# not match, the reaper reaps NOTHING and prints what is still held; the
 # controller releases by hand once all implementers have finished
 # (`rmdir <worktree>/.orch-active` — see dispatching-subagents, stale-mutex
 # corner).
@@ -48,9 +36,6 @@ if [[ ",${DISABLED}," == *",orch-worktree-reaper,"* ]] || [[ "${PROFILE}" == "mi
 fi
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
-# shellcheck source=scripts/lib/orch-project.sh
-[[ -f "${PROJ_LIB}" ]] && source "${PROJ_LIB}"
 
 # Guarded on a non-tty stdin: run interactively without a redirect, a bare
 # `cat` blocks forever. A hook that can hang is worse than one that learns less.
@@ -58,8 +43,6 @@ INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 [[ -n "${INPUT}" ]] || exit 0
 
-AGENT_ID=$(printf '%s' "${INPUT}" | grep -oE '"agent_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
-SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 CWD=$(printf '%s' "${INPUT}" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 [[ -n "${CWD}" ]] || CWD="${CLAUDE_PROJECT_DIR:-${PWD}}"
 
@@ -110,27 +93,7 @@ for p in "${BASE}/.orch-active" "${BASE}"/.worktrees/*/.orch-active; do
   is_corrupt "${p}" && corrupt "${p}"
 done
 
-# --- 1. mutex map (exact, per agent_id) -------------------------------------
-if [[ -n "${AGENT_ID}" && -n "${SESSION_ID}" ]]; then
-  HOME_DIR="${ORCH_HOME:-${HOME}/.llm-orchestrator}"
-  HASH="default"
-  declare -f orch_project_hash >/dev/null 2>&1 && HASH=$(orch_project_hash 2>/dev/null || echo default)
-  MAP="${HOME_DIR}/state/${HASH}/mutex-map.${SESSION_ID}.tsv"
-  if [[ -f "${MAP}" ]]; then
-    # Paths this agent claimed and never released.
-    while IFS= read -r path; do
-      [[ -n "${path}" ]] || continue
-      abs=$(resolve "${path}") || continue
-      reap "${abs}" "mutex map (agent ${AGENT_ID})" && REAPED=1
-    done < <(awk -F'\t' -v a="${AGENT_ID}" '
-      $2==a && $1=="claim"   { c[$3]=1 }
-      $2==a && $1=="release" { delete c[$3] }
-      END { for (p in c) print p }' "${MAP}" 2>/dev/null)
-    [[ ${REAPED} -eq 1 ]] && exit 0
-  fi
-fi
-
-# --- 2. worktree named in a SUCCESS-shaped final message --------------------
+# --- worktree named in a SUCCESS-shaped final message -----------------------
 # The message is the report the agent sent its caller (orch_subagent_report):
 # in auto mode a SubagentHandback message, since last_assistant_message then
 # holds only the closing text.

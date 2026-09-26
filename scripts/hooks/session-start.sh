@@ -20,11 +20,10 @@ if [[ ",${DISABLED}," == *",orch-session-start,"* ]]; then
   exit 0
 fi
 
-# One loud, early notice if python3 is missing: the protocol grader and the
-# subagent Status grader both no-op without it. Each also warns at grade time,
+# One loud, early notice if python3 is missing: the subagent Status grader and
+# the completion check both no-op without it. Each also warns when it runs,
 # but that stderr is easy to miss; this surfaces it once at session start.
-# Informational only — never fails the hook. Silent under the minimal profile,
-# where those graders are already off.
+# Informational only — never fails the hook. Silent under the minimal profile.
 if [[ "${PROFILE}" != "minimal" ]] && ! command -v python3 >/dev/null 2>&1; then
   printf 'LLM Orchestrator: python3 not found — the subagent Status grader and the completion check are disabled. Install python3 to enable them, or set ORCH_HOOK_PROFILE=minimal to silence this notice.\n' >&2
 fi
@@ -38,7 +37,10 @@ MAX_CHARS="${ORCH_SESSION_MAX_CHARS:-8000}"
 # controller that the in-flight narrative is lossy. A PreCompact hook exists,
 # but carries no additionalContext in hookSpecificOutput — it can block
 # compaction, not add to it — so this is where that advisory lives.
-INPUT=$(cat || true)
+# Read it only from a non-tty stdin: a bare `bash session-start.sh` in a
+# terminal would otherwise block in `cat` forever.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
 # Extract the source, matching only the documented enum values. Claude Code's
 # SessionStart payload is flat (source is a top-level field), so the first match
 # is the real value. (This takes the first enum-valued "source" in the payload;
