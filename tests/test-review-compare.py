@@ -18,6 +18,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tests" / "evals" / "review-compare" / "review_compare.py"
 TEMPLATE = "invoice-discounts"
+WORK = ROOT / "tests" / "evals" / "review-compare" / "work"
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(TOOL.parent))
@@ -34,9 +35,18 @@ TREE_HASH = textwrap.dedent("""\
     """)
 
 FAKE_ORCH = TREE_HASH + textwrap.dedent("""\
-    import json, os, pathlib, sys
+    import json, os, pathlib, subprocess, sys, tempfile
     args = sys.argv[1:]
     run_dir = pathlib.Path(args[args.index('--run-dir') + 1])
+    # The real script refuses a run directory that exists, sits in the repository, or sits in a temp dir.
+    roots = [os.environ.get('TMPDIR'), tempfile.gettempdir(), '/tmp', '/var/tmp']
+    if sys.platform == 'darwin':
+        roots.append(subprocess.run(['getconf', 'DARWIN_USER_TEMP_DIR'], capture_output=True, text=True).stdout.strip())
+    resolved = run_dir.resolve()
+    inside = lambda root: resolved == root or root in resolved.parents
+    if run_dir.exists() or inside(pathlib.Path.cwd().resolve()) or any(
+            inside(pathlib.Path(r).resolve()) for r in roots if r):
+        sys.exit('orch-review: the run directory must be new, outside the repository and outside every temp dir')
     run_dir.mkdir(parents=True)
     plan = json.loads(pathlib.Path(os.environ['FAKE_PLAN']).read_text())[tree_hash()]['full']
     findings = [dict(f, status='verified', evidence_valid=True, reproduced=n % 2 == 0,
@@ -222,7 +232,10 @@ class DryRun(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         tmp = pathlib.Path(self.tmp.name)
-        self.cases, self.results = tmp / "cases", tmp / "results"
+        # orch-review.py refuses a run directory in a temp dir, so results live in the ignored work folder.
+        WORK.mkdir(exist_ok=True)
+        self.work = tempfile.TemporaryDirectory(dir=WORK)
+        self.cases, self.results = tmp / "cases", pathlib.Path(self.work.name) / "results"
         self.assertEqual(run("build", "--out", str(self.cases), "--template", TEMPLATE).returncode, 0)
         self.key = json.loads((self.cases / "answer-key.json").read_text())["cases"]
         plan = {}
@@ -255,6 +268,7 @@ class DryRun(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+        self.work.cleanup()
 
     def run_arms(self, *extra):
         return run("run", "--cases", str(self.cases), "--arms", "full,code-review,codex-review",
