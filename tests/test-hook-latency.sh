@@ -118,6 +118,22 @@ check_latency "session-start.sh"            "$START_EVENT"   "$SESSION_BUDGET_MS
 check_latency "user-prompt-submit.sh"       "$PROMPT_EVENT"
 check_latency "orch-research-gate.sh"       "$PROMPT_EVENT"
 check_latency "orch-handoff-nudge.sh"       "$TRANSCRIPT_EVENT"
+# The nudge's slow path: a transcript over the floor, where it counts tokens and
+# emits additionalContext. It fires once per session, so every timed run clears
+# the marker first; otherwise runs 2-5 would time the early exit.
+NUDGE_EVENT="$TMP/nudge.json"
+printf '{"session_id":"latency","transcript_path":"%s","prompt":"continue"}' \
+  "${ROOT}/tests/handoff/fixtures/high.jsonl" > "$NUDGE_EVENT"
+NUDGE_RUN="$TMP/nudge-run.sh"
+printf 'rm -f "%s/handoff/nudged.latency"\nORCH_CONTEXT_HANDOFF_TOKENS=800000 exec bash "%s"\n' \
+  "$ORCH_HOME" "${HOOKS}/orch-handoff-nudge.sh" > "$NUDGE_RUN"
+if bash "$NUDGE_RUN" < "$NUDGE_EVENT" 2>/dev/null | grep -q additionalContext; then
+  ms=$(time_hook "$NUDGE_RUN" "$NUDGE_EVENT")
+  if (( ms < BUDGET_MS )); then ok "orch-handoff-nudge.sh emitting a nudge: ${ms}ms (< ${BUDGET_MS}ms)"
+  else fail "orch-handoff-nudge.sh emitting a nudge: ${ms}ms" "exceeds ${BUDGET_MS}ms budget"; fi
+else
+  fail "orch-handoff-nudge.sh emitting a nudge" "the high-input fixture did not produce additionalContext, so the slow path was not timed"
+fi
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
