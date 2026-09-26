@@ -505,6 +505,42 @@ for WV in none legacy; do
     ok "workflow $WV: --commit-msg refuses with that one line"; else fail "commit-msg workflow $WV" "rc=$RC out=$(cat "$OUT")"; fi
 done
 if grep -q 'legacy workflow was removed' "$TMP/out.txt"; then ok "the error says the legacy workflow was removed"; else fail "error names legacy removal" "out=$(cat "$OUT")"; fi
+
+# SCENE: given an armed project whose committed cadence.json still has a legacy
+# workflow; when the person repairs it through a ruling (the fixed config, the
+# ruling recorded in the laws, a fresh lock); expect --commit-msg and then
+# --audit on the landed commit to pass. The workflow is judged from the config
+# being committed, never from the one it replaces.
+RP="$TMP/wf-repair"; mkproj "$RP"
+( cd "$RP" && git init -q . ) >/dev/null 2>&1
+run "$RP" --lock >/dev/null
+printf '%s\n' '{ "schema": 1, "enabled": true, "workflow": "legacy", "lock_extra": [] }' > "$RP/docs/llm-orchestrator/cadence.json"
+python3 - "$RP" <<'PY'
+import hashlib, sys
+root = sys.argv[1]; cfg = "docs/llm-orchestrator/cadence.json"
+h = hashlib.sha256(open(root + "/" + cfg, "rb").read()).hexdigest()
+p = root + "/docs/llm-orchestrator/LOCK.sha256"
+lines = [(h + "  " + cfg) if l.endswith("  " + cfg) else l for l in open(p).read().splitlines()]
+open(p, "w").write("\n".join(lines) + "\n")
+PY
+( cd "$RP" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: an old project' ) >/dev/null 2>&1
+printf 'x\n' > "$RP/README.md"; ( cd "$RP" && git "${GIT_ID[@]}" add README.md ) >/dev/null 2>&1
+RC=$(cmsg_at "$RP" 'docs: unrelated')
+if [[ "$RC" == "1" ]] && has "$OUT" "$WF_FIX"; then ok "a commit that keeps the legacy workflow is still refused, naming the fix"; else fail "legacy kept" "rc=$RC out=$(cat "$OUT")"; fi
+( cd "$RP" && git "${GIT_ID[@]}" rm -q --cached README.md ) >/dev/null 2>&1; rm -f "$RP/README.md"
+printf '%s\n' '{ "schema": 1, "enabled": true, "workflow": "proportional", "lock_extra": [] }' > "$RP/docs/llm-orchestrator/cadence.json"
+( cd "$RP" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
+RC=$(cmsg_at "$RP" 'fix: the workflow line')
+if [[ "$RC" == "1" ]] && has "$OUT" 'the message carries no numbered ruling'; then ok "the repair without a ruling is refused by the lock, as any config change is"; else fail "repair no ruling" "rc=$RC out=$(cat "$OUT")"; fi
+printf 'Ruling 4 — the workflow is proportional.\n' >> "$RP/docs/llm-orchestrator/LAWS.md"
+relock "$RP" >/dev/null 2>&1
+( cd "$RP" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
+RMSG='Ruling 4: the workflow is proportional'
+RC=$(cmsg_at "$RP" "$RMSG")
+if [[ "$RC" == "0" ]]; then ok "the repair through a ruling passes --commit-msg"; else fail "repair commit-msg" "rc=$RC out=$(cat "$OUT")"; fi
+( cd "$RP" && git "${GIT_ID[@]}" commit -qm "$RMSG" ) >/dev/null 2>&1
+RC=$(run "$RP" --audit HEAD)
+if [[ "$RC" == "0" ]]; then ok "and --audit passes the landed repair"; else fail "repair audit" "rc=$RC out=$(cat "$OUT")"; fi
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-cadence-check%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"; exit 0

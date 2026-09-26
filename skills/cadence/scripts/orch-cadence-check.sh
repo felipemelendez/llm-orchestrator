@@ -254,7 +254,9 @@ cadence_on() { # 0 = on
 # the config being COMMITTED and the one at HEAD; either one enabled arms the
 # gate, and a copy that is present but does not decode arms it too (fail
 # closed). The chosen blob then serves lock_extra, so the revision is graded
-# with the revision's own config.
+# with the revision's own config. The workflow is judged only in the config
+# being committed: the commit that repairs an old workflow must not be refused
+# for the config it replaces.
 # rc 0 = on (CFG_FILE now points at the blob), 1 = off, 2 = cannot decide,
 # 3 = the workflow is not valid (the reason is already printed, once).
 git_mode() { # <index-ref-prefix> <head-ref-prefix>
@@ -267,7 +269,9 @@ git_mode() { # <index-ref-prefix> <head-ref-prefix>
     cfg_use "$blob"; cfg_load
     if [ "$CFG_OK" != "1" ]; then bad=1; continue; fi
     if cfg_bool enabled; then
-      msg=$(cfg_workflow validated) || { wbad="$msg"; continue; }
+      if [ "$n" = "1" ]; then
+        msg=$(cfg_workflow validated) || { wbad="$msg"; continue; }
+      fi
       on=1; [ -n "$chosen" ] || chosen="$blob"
     fi
   done
