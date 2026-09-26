@@ -610,17 +610,23 @@ case "${cmd}" in
         printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || remove_stale "${rel}"
       done <<< "${old_record}"
     else
-      # An install made before the record existed: only the folders of the
-      # skills this plugin ships are known to be its own, so only those are
-      # cleaned. Anything else stays; the record covers every later upgrade.
+      # An install made before the record existed: nothing proves which files
+      # this plugin put there, so nothing is removed. The files in the plugin's
+      # own skill folders that it no longer ships are listed for the person to
+      # delete; the record written below makes every later upgrade clean itself.
+      unshipped=""
       for sk in "${ROOT}"/skills/*/; do
         sk=$(basename "${sk}")
         [[ -d "${dest}/.claude/skills/${sk}" && ! -L "${dest}/.claude/skills/${sk}" ]] || continue
         while IFS= read -r rel; do
           [[ -n "${rel}" ]] || continue
-          printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || remove_stale "${rel}"
+          printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || unshipped="${unshipped}  ${dest}/.claude/${rel}"$'\n'
         done < <(cd "${dest}/.claude" && find "skills/${sk}" -type f)
       done
+      if [[ -n "${unshipped}" ]]; then
+        echo "Note: this copy predates the install record, so nothing was removed. These files sit in the plugin's skill folders but the plugin no longer ships them; delete them if you did not add them yourself:"
+        printf '%s' "${unshipped}"
+      fi
     fi
     printf '%s\n' "${new_record}" > "${record}"
 

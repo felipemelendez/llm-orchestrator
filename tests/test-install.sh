@@ -198,9 +198,20 @@ upgrade_scene() { # <label> <project> <drop-manifest 0|1>
   [[ "$3" == "1" ]] && rm -f "$proj/.claude/.llm-orchestrator-files"
   bash "$ROOT/scripts/install.sh" --copy "$proj" > "$TMP/up-new.out" 2>&1 \
     || fail "$label: new install" "$(tail -3 "$TMP/up-new.out")"
-  if [[ ! -e "$proj/.claude/skills/cadence/references/fixer.md" ]]; then
-    ok "$label: a file removed from a shipped skill is gone"
-  else fail "$label: stale skill file" "skills/cadence/references/fixer.md survived the upgrade"; fi
+  if [[ "$3" == "0" ]]; then
+    if [[ ! -e "$proj/.claude/skills/cadence/references/fixer.md" ]]; then
+      ok "$label: a file removed from a shipped skill is gone"
+    else fail "$label: stale skill file" "skills/cadence/references/fixer.md survived the upgrade"; fi
+  else
+    # With no record the installer cannot prove it put a file there, so it
+    # removes nothing and lists what the plugin no longer ships instead.
+    if [[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] \
+       && grep -qF 'skills/cadence/references/fixer.md' "$TMP/up-new.out" && grep -qi 'delete' "$TMP/up-new.out"; then
+      ok "$label: nothing is removed; the file the plugin no longer ships is listed for the person to delete"
+    else fail "$label: no-record listing" "kept=$([[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] && echo yes || echo no) out=$(tail -5 "$TMP/up-new.out")"; fi
+    grep -qF 'skills/my-skill' "$TMP/up-new.out" && fail "$label: listing" "the project's own skill was listed" \
+      || ok "$label: the project's own skill is not listed"
+  fi
   for f in skills/my-skill/SKILL.md commands/mine.md scripts/mine.sh; do
     [[ -f "$proj/.claude/$f" ]] && ok "$label: the project's own $f is kept" \
       || fail "$label: own file" "$f was removed"
