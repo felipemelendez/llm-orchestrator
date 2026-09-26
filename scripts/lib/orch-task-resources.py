@@ -302,11 +302,12 @@ class Manager:
                 raise Unsafe("unknown consumer generation")
             return self.result(state)
 
-    def create(self, task_id, token, kind, ref="HEAD", branch=None, tree=None):
+    def create(self, task_id, token, kind, ref="HEAD", branch=None, tree=None, head=None):
         if (kind not in {"copy", "worktree", "clone"} or ref.startswith("-")
                 or (branch and branch.startswith("-"))
-                or (kind == "clone") != bool(tree and re.fullmatch(r"[0-9a-f]{40,64}", tree))):
-            raise Unsafe("invalid resource kind, Git ref or tree")
+                or (kind == "clone") != bool(tree and re.fullmatch(r"[0-9a-f]{40,64}", tree))
+                or (head is not None and (kind != "clone" or not re.fullmatch(r"[0-9a-f]{40,64}", head)))):
+            raise Unsafe("invalid resource kind, Git ref, tree or head")
         with self.locked(task_id):
             state = self.read(task_id)
             if state["status"] != "open" or token not in state["leases"]:
@@ -322,7 +323,7 @@ class Manager:
             state["resources"].append(resource)
             self.save(state)
             if kind == "clone":
-                self.clone(project, path, tree)
+                self.clone(project, path, tree, head)
             elif kind == "worktree":
                 # Never claim an existing branch as owned; branches are always retained.
                 args = ["worktree", "add"]
@@ -339,13 +340,14 @@ class Manager:
             return {"id": task_id, "path": str(path), "kind": kind}
 
     @staticmethod
-    def clone(project, path, tree):
+    def clone(project, path, tree, head=None):
         # A disposable clone with its own .git (objects copied, never hardlinked, so
-        # nothing in the clone can change the real object files), HEAD at the real HEAD, and the
-        # fingerprinted tree (committed plus uncommitted files) checked out.
+        # nothing in the clone can change the real object files), HEAD at the real HEAD (or at
+        # `head`, such as the merge-base a review compares against), and the fingerprinted tree
+        # (committed plus uncommitted files) checked out.
         # The remote is removed so nothing in the clone can push to the project.
         git(project, "clone", "--quiet", "--local", "--no-hardlinks", "--no-checkout", str(project), str(path))
-        head = git(project, "rev-parse", "HEAD").strip()
+        head = head or git(project, "rev-parse", "HEAD").strip()
         if git(path, "rev-parse", "HEAD").strip() != head:
             git(path, "update-ref", "--no-deref", "HEAD", head)
         git(path, "remote", "remove", "origin")

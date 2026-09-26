@@ -188,6 +188,28 @@ class LifecycleTests(unittest.TestCase):
             return {(path.stat().st_dev, path.stat().st_ino) for path in root.rglob("*") if path.is_file()}
         self.assertEqual(inodes(self.project / ".git/objects") & inodes(clone / ".git/objects"), set())
 
+    def test_clone_can_set_head_to_an_older_commit_and_is_still_removed_safely(self):
+        # orch-review.py sets the clone's HEAD to the merge-base, so the whole change is uncommitted there.
+        base = self.git("rev-parse", "HEAD").strip()
+        (self.project / "committed.py").write_text("committed\n")
+        self.git("add", "committed.py")
+        self.git("commit", "-qm", "later")
+        (self.project / "source.py").write_text("edited\n")
+        token = self.acquire()
+        result = self.manager.create(self.task_id, token, "clone", tree=MOD.fingerprint(self.project), head=base)
+        self.release(token)
+        clone = Path(result["path"])
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=clone).strip(), base)
+        self.assertEqual(MOD.fingerprint(clone), MOD.fingerprint(self.project))
+        status = self.git("status", "--porcelain", cwd=clone)
+        self.assertIn("committed.py", status)
+        self.assertIn("source.py", status)
+        token = self.acquire()
+        with self.assertRaises(MOD.Unsafe):
+            self.manager.create(self.task_id, token, "clone", tree=MOD.fingerprint(self.project), head="-x")
+        self.release(token)
+        self.assertEqual(self.manager.finish(self.task_id)["status"], "done")
+
     def test_clone_at_detached_head_matches_real_head(self):
         self.git("checkout", "-q", "--detach")
         clone = self.clone()

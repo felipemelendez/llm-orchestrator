@@ -2,32 +2,28 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "findings",
-    "not_checked"
+    "results"
   ],
   "properties": {
-    "findings": {
+    "results": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "file",
-          "line",
+          "id",
           "rank",
           "kind",
           "confidence",
           "claim",
           "evidence",
+          "mild_reason",
           "repro",
           "not_runnable"
         ],
         "properties": {
-          "file": {
+          "id": {
             "type": "string"
-          },
-          "line": {
-            "type": "integer"
           },
           "rank": {
             "type": "string",
@@ -44,7 +40,8 @@
               "spec-gap",
               "scope-creep",
               "test-tampering",
-              "test-gap"
+              "test-gap",
+              "style"
             ]
           },
           "confidence": {
@@ -104,6 +101,12 @@
               }
             }
           },
+          "mild_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "repro": {
             "anyOf": [
               {
@@ -132,30 +135,6 @@
               "string",
               "null"
             ]
-          }
-        }
-      }
-    },
-    "not_checked": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "category",
-          "text"
-        ],
-        "properties": {
-          "category": {
-            "type": "string",
-            "enum": [
-              "tests-not-run",
-              "files-not-read",
-              "claim-unverified"
-            ]
-          },
-          "text": {
-            "type": "string"
           }
         }
       }
