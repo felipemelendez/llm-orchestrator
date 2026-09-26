@@ -267,10 +267,10 @@ class Manager:
         if expected is None or ident(path) != expected or path.resolve() != path:
             raise Unsafe(f"resource missing, replaced or uncertain: {path}")
 
-    def project_valid(self, state, timeout=None):
+    def project_valid(self, state):
         project = Path(state["project"])
         self.owned(project, state["project_identity"])
-        common = git(project, "rev-parse", "--git-common-dir", timeout=timeout).strip()
+        common = git(project, "rev-parse", "--git-common-dir").strip()
         actual = canonical(Path(common) if Path(common).is_absolute() else project / common)
         if str(actual) != state["common_dir"]:
             raise Unsafe("project repository changed")
@@ -576,51 +576,6 @@ class Manager:
         except BlockingIOError:
             return ["completed-task pruning deferred: task registry is busy"]
         return []
-
-
-def owned_disposable_target(path, project):
-    """Recognize leased disposable scratch from existing helper state, read-only.
-
-    Infer custom storage from its exact managed layout, never from a filename
-    prefix alone. Writer worktrees are deliberately outside this exemption.
-    False means unknown ownership; callers must retain normal source uncertainty.
-    """
-    try:
-        target = Path(path).expanduser().absolute()
-        if ".." in target.parts or target.resolve() != target:
-            return False
-        project = canonical(project)
-        for scratch in (target, *target.parents):
-            if scratch.parent.name != "scratch" or not re.fullmatch(r"[0-9a-f]{32}", scratch.name):
-                continue
-            manager = Manager(scratch.parent.parent, create=False)
-            with manager.locked(scratch.name, existing_only=True, nonblocking=True):
-                state = manager.read(scratch.name, max_bytes=RoutineBudget.STATE_BYTES)
-                if (state["project"] != str(project) or state["status"] != "open"
-                        or not state["leases"]):
-                    return False
-                manager.project_valid(state, timeout=0.5)
-                manager.owned(scratch, state["identity"])
-                relative = target.relative_to(scratch)
-                if ".git" in relative.parts:
-                    return False
-                if relative.parts:
-                    for resource in state["resources"]:
-                        if resource["name"] == relative.parts[0]:
-                            if resource["kind"] != "copy" or resource["removed"]:
-                                return False
-                            manager.owned(scratch / resource["name"], resource["identity"])
-                for ancestor in (target, *target.parents):
-                    if not nested(ancestor, scratch):
-                        break
-                    if ((ancestor / ".git").exists() or (ancestor / ".git").is_symlink()
-                            or ((ancestor / "HEAD").exists() and (ancestor / "objects").is_dir()
-                                and (ancestor / "refs").is_dir())):
-                        return False
-                return True
-    except (Unsafe, OSError, ValueError, KeyError, TypeError):
-        pass
-    return False
 
 
 def hook_retry(state_dir=None, payload=None):

@@ -774,21 +774,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.manager.paths(self.task_id)[0].read_bytes(), before)
         self.assertEqual(self.manager.retry_project(self.project)["tasks"][0]["status"], "done")
 
-    def test_disposable_attribution_returns_unknown_on_busy_task_or_registry(self):
-        self.acquire("writer")
-        target = self.scratch / "probe.py"
-        for lock in (self.manager.paths(self.task_id)[1], self.manager.base / ".registry.lock"):
-            with self.subTest(lock=lock.name):
-                child, release = self.hold_lock(lock)
-                results = CTX.Queue()
-                attribution = self.spawn(lambda: results.put(MOD.owned_disposable_target(target, self.project)))
-                self.assertFalse(results.get(timeout=2))
-                self.joined(attribution)
-                release.set()
-                self.joined(child)
-        self.assertTrue(MOD.owned_disposable_target(target, self.project))
-
-    def test_routine_git_discovery_and_disposable_attribution_are_time_bounded(self):
+    def test_routine_git_discovery_is_time_bounded(self):
         _, run_hook = self.hook_fixture()
         self.acquire("writer")
         binaries = self.root / "slow-git-bin"
@@ -799,10 +785,6 @@ class LifecycleTests(unittest.TestCase):
         env = {"PATH": str(binaries) + os.pathsep + os.environ.get("PATH", "")}
         result = run_hook(env)
         self.assertIn("timed out", result.stderr)
-        started = time.monotonic()
-        with mock.patch.dict(os.environ, env):
-            self.assertFalse(MOD.owned_disposable_target(self.scratch / "probe.py", self.project))
-        self.assertLess(time.monotonic() - started, 2)
         self.assertTrue(self.scratch.exists())
 
     def test_hook_malformed_payload_is_inert_and_warns(self):
@@ -870,46 +852,7 @@ class LifecycleTests(unittest.TestCase):
         result = self.manager.finish(self.task_id)
         self.assertEqual(result["status"], "closed")
 
-    def test_owned_disposable_target_requires_real_lease_and_exact_project(self):
-        target = self.scratch / "probe.py"
-        self.assertFalse(MOD.owned_disposable_target(target, self.project))
-        token = self.acquire("probe writer")
-        self.assertTrue(MOD.owned_disposable_target(target, self.project))
-        self.assertFalse(target.exists())  # recognition never creates target
-        self.assertFalse(MOD.owned_disposable_target(target, self.root / "other-project"))
-        copied = self.manager.create(self.task_id, token, "copy")
-        copied_target = Path(copied["path"]) / "source.py"
-        self.assertTrue(MOD.owned_disposable_target(copied_target, self.project))
-        self.release(token)
-        self.assertFalse(MOD.owned_disposable_target(copied_target, self.project))
-        token = self.acquire("second writer")
-        self.manager.finish(self.task_id)
-        self.assertFalse(MOD.owned_disposable_target(copied_target, self.project))
-        self.release(token)
-
-    def test_owned_disposable_target_rejects_worktree_repo_spoof_and_symlinks(self):
-        token = self.acquire()
-        worktree = self.manager.create(self.task_id, token, "worktree")
-        self.assertFalse(MOD.owned_disposable_target(Path(worktree["path"]) / "source.py", self.project))
-        spoof = self.root / "fake-state/scratch" / ("a" * 32) / "probe.py"
-        spoof.parent.mkdir(parents=True)
-        before = sorted(str(path) for path in (self.root / "fake-state").rglob("*"))
-        self.assertFalse(MOD.owned_disposable_target(spoof, self.project))
-        self.assertEqual(before, sorted(str(path) for path in (self.root / "fake-state").rglob("*")))
-        linked = self.scratch / "linked"
-        linked.symlink_to(self.project, target_is_directory=True)
-        self.assertFalse(MOD.owned_disposable_target(linked / "source.py", self.project))
-        self.assertFalse(MOD.owned_disposable_target(self.scratch / ".." / "probe.py", self.project))
-        repo = self.scratch / "unregistered-repo"
-        repo.mkdir()
-        self.git("init", "-q", cwd=repo)
-        self.assertFalse(MOD.owned_disposable_target(repo / "source.py", self.project))
-        copy = Path(self.manager.create(self.task_id, token, "copy")["path"])
-        copy.rename(self.scratch / "moved-copy")
-        copy.mkdir()
-        self.assertFalse(MOD.owned_disposable_target(copy / "source.py", self.project))
-
-    def test_owned_disposable_target_works_from_copied_skill_helper(self):
+    def test_copied_skill_helper_allocates_a_copy(self):
         installed = self.root / "installed/.claude"
         (installed / "scripts/lib").mkdir(parents=True)
         (installed / "skills/cadence/scripts").mkdir(parents=True)
@@ -925,8 +868,9 @@ class LifecycleTests(unittest.TestCase):
         result = subprocess.run(command + ["copy", "--id", self.task_id, "--token", lease["token"]],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        target = Path(json.loads(result.stdout)["path"]) / "source.py"
-        self.assertTrue(MOD.owned_disposable_target(target, self.project))
+        copied = Path(json.loads(result.stdout)["path"])
+        self.assertEqual(copied.parent, self.scratch)
+        self.assertEqual(self.manager.read(self.task_id)["resources"][-1]["kind"], "copy")
 
     def test_successful_tombstones_expire_without_age_reaping_unfinished_work(self):
         opened = self.manager.start(self.project, "paused")
