@@ -175,6 +175,49 @@ else
 fi
 
 # ------------------------------------------------------------
+# P11 — a --copy upgrade leaves nothing the plugin no longer ships, and never
+# touches what the project put in .claude/ itself.
+# ------------------------------------------------------------
+section "--copy upgrade removes what the plugin stopped shipping (P11)"
+copy_tree "$TMP/src-old"
+mkdir -p "$TMP/src-old/skills/old-skill"
+printf 'x\n' > "$TMP/src-old/skills/cadence/references/fixer.md"
+printf -- '---\nname: old-skill\ndescription: Use when never.\n---\nold\n' > "$TMP/src-old/skills/old-skill/SKILL.md"
+printf 'x\n' > "$TMP/src-old/commands/old-command.md"
+printf 'x\n' > "$TMP/src-old/scripts/lib/old-lib.py"
+printf 'x\n' > "$TMP/src-old/scripts/hooks/old-hook.sh"
+upgrade_scene() { # <label> <project> <drop-manifest 0|1>
+  local label="$1" proj="$2" f
+  mkdir -p "$proj/.claude/skills/my-skill" "$proj/.claude/commands" "$proj/.claude/scripts"
+  printf 'mine\n' > "$proj/.claude/skills/my-skill/SKILL.md"
+  printf 'mine\n' > "$proj/.claude/commands/mine.md"
+  printf 'mine\n' > "$proj/.claude/scripts/mine.sh"
+  bash "$TMP/src-old/scripts/install.sh" --copy "$proj" > "$TMP/up-old.out" 2>&1 \
+    || fail "$label: old install" "$(tail -3 "$TMP/up-old.out")"
+  [[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] || fail "$label: fixture" "the old install did not place fixer.md"
+  [[ "$3" == "1" ]] && rm -f "$proj/.claude/.llm-orchestrator-files"
+  bash "$ROOT/scripts/install.sh" --copy "$proj" > "$TMP/up-new.out" 2>&1 \
+    || fail "$label: new install" "$(tail -3 "$TMP/up-new.out")"
+  if [[ ! -e "$proj/.claude/skills/cadence/references/fixer.md" ]]; then
+    ok "$label: a file removed from a shipped skill is gone"
+  else fail "$label: stale skill file" "skills/cadence/references/fixer.md survived the upgrade"; fi
+  for f in skills/my-skill/SKILL.md commands/mine.md scripts/mine.sh; do
+    [[ -f "$proj/.claude/$f" ]] && ok "$label: the project's own $f is kept" \
+      || fail "$label: own file" "$f was removed"
+  done
+}
+upgrade_scene "with the install record" "$TMP/proj-up" 0
+for f in skills/old-skill/SKILL.md commands/old-command.md scripts/lib/old-lib.py scripts/hooks/old-hook.sh; do
+  [[ ! -e "$TMP/proj-up/.claude/$f" ]] && ok "with the install record: $f, no longer shipped, is gone" \
+    || fail "with the install record: stale $f" "it survived the upgrade"
+done
+[[ ! -d "$TMP/proj-up/.claude/skills/old-skill" ]] && ok "with the install record: the emptied skill folder is gone" \
+  || fail "empty skill dir" "skills/old-skill is still there"
+upgrade_scene "an install made before the record existed" "$TMP/proj-up-legacy" 1
+[[ -f "$TMP/proj-up-legacy/.claude/.llm-orchestrator-files" ]] && ok "the upgrade writes the install record" \
+  || fail "install record" "no .claude/.llm-orchestrator-files after --copy"
+
+# ------------------------------------------------------------
 # P4 — --check must fail on deletions and corruption
 # ------------------------------------------------------------
 section "--check blind spots (P4)"

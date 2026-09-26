@@ -182,7 +182,7 @@ cd /path/to/llm-orchestrator
 ./scripts/install.sh --copy ~/myproject
 ```
 
-This copies `skills/`, `commands/`, `agents/`, `templates/`, `output-styles/`, `hooks/`, `scripts/` (including `scripts/lib/orch-lock.sh`), and this document (to `.claude/docs/install.md`) into `~/myproject/.claude/`. Hook paths in the copied `hooks/hooks.json` are rewritten to absolute — and the installer verifies that every rewritten command path exists on disk before claiming so; if verification fails, the install fails. A starter `settings.json` is seeded from `templates/settings.json` (permissions block plus the ORCH env knobs) unless one already exists.
+This copies `skills/`, `commands/`, `agents/`, `templates/`, `output-styles/`, `hooks/`, `scripts/` (including `scripts/lib/orch-lock.sh`), and this document (to `.claude/docs/install.md`) into `~/myproject/.claude/`. Hook paths in the copied `hooks/hooks.json` are rewritten to absolute — and the installer verifies that every rewritten command path exists on disk before claiming so; if verification fails, the install fails. A starter `settings.json` is seeded from `templates/settings.json` (permissions block plus the ORCH env knobs) unless one already exists. The installer records every file it places in `.claude/.llm-orchestrator-files`; running `--copy` again removes the recorded files the plugin no longer ships, and never touches anything else in `.claude/`. A copy made before that record existed gets only the folders of the skills the plugin ships cleaned.
 
 ### Wiring hooks for a `--copy` install
 

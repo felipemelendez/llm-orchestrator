@@ -527,6 +527,16 @@ case "${cmd}" in
     # would bake relative hook paths into hooks.json.
     dest="$(cd "${dest}" && pwd)"
     mkdir -p "${dest}/.claude" "${dest}/.claude/scripts/hooks" "${dest}/.claude/scripts/lib" "${dest}/.claude/scripts/verification" "${dest}/.claude/docs"
+    # The install record: every file this install places, one relative path per
+    # line. The next --copy removes what the record lists and the plugin no
+    # longer ships, so an upgrade leaves no stale briefs, hooks or libs behind.
+    # Nothing outside the record is ever removed: .claude/ also holds the
+    # project's own skills, commands and settings.
+    record="${dest}/.claude/.llm-orchestrator-files"
+    old_record=""
+    if [[ -f "${record}" && ! -L "${record}" ]]; then
+      old_record=$(cat "${record}")
+    fi
     cp -R "${ROOT}/skills" "${dest}/.claude/"
     cp -R "${ROOT}/commands" "${dest}/.claude/"
     cp -R "${ROOT}/templates" "${dest}/.claude/"
@@ -563,6 +573,56 @@ case "${cmd}" in
     # dispatching-subagents points at this for model/effort guidance; without it
     # the reference dangles in every --copy install.
     cp "${ROOT}/docs/anthropic-ecosystem.md" "${dest}/.claude/docs/" 2>/dev/null || true
+
+    # The files this install placed, from the same list the copies above use.
+    new_record=$(
+      cd "${ROOT}" || exit 1
+      for d in skills commands templates agents output-styles hooks; do
+        [[ -d "${d}" ]] && find "${d}" -type f
+      done
+      for f in scripts/hooks/*.sh scripts/hooks/*.py scripts/statusline.sh scripts/protocol-lint.sh \
+               scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh scripts/lib/* \
+               concise-agent-protocol.md docs/install.md docs/anthropic-ecosystem.md; do
+        [[ -f "${f}" ]] && printf '%s\n' "${f}"
+      done
+    ) || { echo "ERROR: could not list the files this install placed" >&2; exit 1; }
+    new_record=$(printf '%s\n' "${new_record}" | LC_ALL=C sort -u)
+
+    # remove_stale <relative path>: delete one file this plugin placed earlier
+    # and no longer ships, then any folders that leaves empty. Only a plain
+    # relative path to a regular file inside .claude/ qualifies; a link, an
+    # absolute path or one with a ".." part is left alone.
+    remove_stale() {
+      local rel="$1" d
+      case "/${rel}/" in */../*|*/./*|//*) return 0 ;; esac
+      [[ -n "${rel}" && "${rel}" != /* ]] || return 0
+      [[ -f "${dest}/.claude/${rel}" && ! -L "${dest}/.claude/${rel}" ]] || return 0
+      rm -f "${dest}/.claude/${rel}"
+      d=$(dirname "${rel}")
+      while [[ "${d}" != "." && "${d}" != "/" ]]; do
+        rmdir "${dest}/.claude/${d}" 2>/dev/null || break
+        d=$(dirname "${d}")
+      done
+    }
+    if [[ -n "${old_record}" ]]; then
+      while IFS= read -r rel; do
+        [[ -n "${rel}" ]] || continue
+        printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || remove_stale "${rel}"
+      done <<< "${old_record}"
+    else
+      # An install made before the record existed: only the folders of the
+      # skills this plugin ships are known to be its own, so only those are
+      # cleaned. Anything else stays; the record covers every later upgrade.
+      for sk in "${ROOT}"/skills/*/; do
+        sk=$(basename "${sk}")
+        [[ -d "${dest}/.claude/skills/${sk}" && ! -L "${dest}/.claude/skills/${sk}" ]] || continue
+        while IFS= read -r rel; do
+          [[ -n "${rel}" ]] || continue
+          printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || remove_stale "${rel}"
+        done < <(cd "${dest}/.claude" && find "skills/${sk}" -type f)
+      done
+    fi
+    printf '%s\n' "${new_record}" > "${record}"
 
     sed_inplace() {
       if sed --version >/dev/null 2>&1; then
