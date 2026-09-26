@@ -20,7 +20,7 @@ At Codex's `Stop` event the hook receives `last_assistant_message`,
 - Yes, or the label is anything but PASS, or there is no label: print nothing.
 - No: print `{"decision":"block","reason":<NOTE> <CONTINUE>}` once. NOTE is
   `orch-completion-check.py`'s note, byte for byte. CONTINUE tells the agent to
-  repeat its full answer with the corrected line, because its reply to the
+  repeat its full answer with the Verification line updated to match what it ran, because its reply to the
   continuation becomes the turn's final answer (`codex exec -o` keeps only that).
 - `stop_hook_active` true: print nothing. This is the continuation the hook
   itself requested; it fires at most once per turn.

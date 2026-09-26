@@ -21,8 +21,8 @@ hooks. This page says what you get, how to install it, and what it never does.
   2. *The completion check.* When a reply ends with `Verification: PASS`, it
      looks at the session log Codex already keeps and asks one question: did a
      test command actually run and pass in this turn? If not, it sends the
-     assistant back once to run the check or change PASS to PENDING. You never
-     see a message from it.
+     assistant back once to run the check or change PASS to PENDING, repeating
+     its full answer. You never see a message from it.
   3. *Scratch cleanup.* Removes temporary files left behind by finished tasks.
 
 Code review also runs on Codex: the `requesting-code-review` skill starts
@@ -159,7 +159,8 @@ the session unlocked, as described under
 records Codex writes when a command finishes, with the exact command and exit
 code. Nothing the assistant wrote or printed counts. If the reply says PASS and no
 test command finished with exit code 0 in this turn, the assistant is sent back
-once with a short note. On that second stop the check stays quiet, so it can
+once with a short note that also asks it to repeat its full answer, since
+its reply becomes the final one. On that second stop the check stays quiet, so it can
 never loop. It never blocks you, never hashes files and never prints for you.
 
 Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or

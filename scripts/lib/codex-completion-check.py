@@ -6,8 +6,8 @@ command that runs a check (by the lists in orch-completion-check.py), or that
 starts with the project's runner.test_cmd, run in this turn and finish with
 exit code 0? If so, or if the
 reply says anything else, nothing is printed. If not, the agent is sent back to
-work once with the same note the Claude side uses, and nothing is shown to the
-person. Always exits 0.
+work once with the same note the Claude side uses, plus a line asking it to
+repeat its full answer, and nothing is shown to the person. Always exits 0.
 
 Why the agent and not the person: Codex's Stop hook has two outputs and no
 third. `systemMessage` is a warning in the person's UI, which is an interruption
@@ -47,8 +47,8 @@ import shlex
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CONTINUE = ("Your next message replaces this one as the final answer, so repeat your full answer "
-            "with the corrected Verification line.")
+CONTINUE = ("Your reply to this becomes the final answer, so repeat your full answer "
+            "with the Verification line updated to match what you ran.")
 
 
 def shared():
