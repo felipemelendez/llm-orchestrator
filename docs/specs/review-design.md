@@ -216,8 +216,9 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
      unless `--allow-test-changes`. Only `test-gap`, `scope-creep` and
      `style` (wording, naming, maintainability) may be `mild`, and only with
      a `mild_reason`; without one they become `serious`.
-  2. A `test-gap` keeps a serious rank only when its receipt 1 failed on the
-     unpatched copy; otherwise it is lowered to `mild` (`rank_lowered`).
+  2. A `test-gap` claims only missing coverage, which a passing run cannot
+     disprove: without a failing receipt 1 on the unpatched copy it is
+     `mild` (`rank_lowered`); with one it keeps its serious rank.
   3. A `codex review` finding with priority 0 or 1 is at least `serious`,
      whatever step 1 or 2 gave: the floor wins over the test-gap lowering.
 
@@ -235,10 +236,19 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   stream's tool result, and the receipt fails when the call text differs,
   the order differs, or the marker is missing. **Reproduced** means receipt
   1 failed and receipt 2 passed. A passing receipt 1 proves only that the
-  command did not target the claim: it never drops or lowers a finding.
-- **R11.** A `mild` finding with invalid evidence or confidence below 0.8 is
-  a `note`. A serious or catastrophic one is `verified` (valid evidence, and
-  reproduced or `not_runnable`) or `unverified`. Both block.
+  command did not target the claim: it never drops a finding, and never
+  lowers a `defect`, `spec-gap` or `test-tampering` finding. (A `test-gap`
+  without a failing receipt is mild by R8 step 2; the priority 0/1 floor of
+  step 3 still wins over that.)
+- **R11.** A finding from a built-in reviewer never becomes a note and
+  never disappears; only a valid refuter `DROPPED` (R15) removes it from the
+  verdict, and it stays listed in `review.json`. T5's `note` status and
+  confidence floor are removed: every finding here is a reviewer finding.
+  A `mild` finding is `mild` whatever its evidence or confidence (both are
+  recorded) and makes the verdict `READY-WITH-FIXES` at most. A serious or
+  catastrophic one is `verified` (valid evidence, and reproduced or
+  `not_runnable`) or `unverified`. Both block. `READY` needs zero surviving
+  findings.
 - **R12.** A serious or catastrophic result the prover itself ranked, with
   neither `repro` nor `not_runnable`: `INCOMPLETE`. A rank the script raised
   (the floors) without a repro stays `unverified` and blocking. An unknown
@@ -253,19 +263,24 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
 - **R14.** Full only. It runs when every reviewer and prover launch is
   complete and a serious or catastrophic finding exists, on the R3 provider
-  in a fresh copy. It sees every non-note finding with the reviewer's words,
+  in a fresh copy. It sees every finding with the reviewer's words,
   the prover's result and the receipts. It returns `PROMOTED`, `DROPPED` or
   `UNRESOLVED` per serious or catastrophic id, and may return `RAISE` for a
   mild one (a raise only makes the review stricter). A missing verdict or a
   refuter dropout: `INCOMPLETE`. Standard has no refuter.
 - **R15.** A reproduced or `not_runnable` finding can never be dropped. For
-  any other, `DROPPED` is valid only with the refuter's own `test-run`
-  evidence (R9, checked against its stream) of a command that runs the
-  reviewer's stated failure scenario, quoted in `scenario`, and shows the
-  correct result. A passing receipt 1, a quote, or a patch that did not
-  apply is not enough. An invalid `DROPPED` counts as `UNRESOLVED`.
-- **R16.** The refuter lowers a rank only with the evidence R15 needs for a
-  drop, and never below a floor of R8.
+  any other, a `DROPPED` verdict carries `scenario` (the reviewer's stated
+  failure scenario, quoted) and `drop_check {command, expected_output}`. The
+  refuter's own runs count for nothing, since its copy is writable. The
+  script runs `command` itself, in the experiment sandbox of R10, on a fresh
+  unpatched copy of the reviewed tree whose fingerprint must equal step 2's,
+  600 seconds, process group killed. The drop is valid only when that run
+  exits 0 and every line of `expected_output` (at least one non-empty line)
+  appears as a whole line of its output; its receipt is kept as
+  `drop_receipt`. A passing receipt 1, a quote, or a patch that did not apply
+  is not enough. An invalid `DROPPED` counts as `UNRESOLVED`.
+- **R16.** The refuter lowers a rank only with a valid `drop_check` as R15
+  requires, and never below a floor of R8.
 
 ## The decision
 
@@ -277,8 +292,9 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   at creation differs; a submodule is dirty or present. Otherwise `NOT-READY`
   if any finding blocks, `READY-WITH-FIXES` if any is `mild`, else `READY`.
   A missing reviewer is never agreement.
-- **R18.** Statuses unchanged; blocking: `verified`, `unverified`,
-  `promoted`, `unresolved`, `unjudged`.
+- **R18.** Statuses: `mild`, `verified`, `unverified`, `promoted`,
+  `dropped`, `unresolved`, `unjudged` (T5's `note` is removed). Blocking:
+  `verified`, `unverified`, `promoted`, `unresolved`, `unjudged`.
 - **R19.** `review.json` holds the verdict and every `INCOMPLETE` reason;
   per launch the role, provider, requested and served model and effort,
   `same_provider`, and the served sandbox (`codex review`) or probe result
@@ -332,6 +348,10 @@ reviewer launches, the prover step, the Claude experiment runner.
 removed options; the section "The native `/code-review`" goes);
 `skills/receiving-code-review/SKILL.md` (ids `code-review-1`,
 `codex-review-2`); `references/refuter.md` (R14 to R16);
+`references/refuter-schema.json` migrates: `verdict` adds `RAISE`; each
+verdict gains `scenario` (string, required for `DROPPED`) and `drop_check`
+(`{command, expected_output}`, required for `DROPPED` and for a lowered
+`rank`); the old `receipt-1` evidence type is removed;
 `skills/cadence/CADENCE.md` lines 40 to 43 and `tests/test-cadence-docs.sh:121`
 (prover, refuter, security lens); `scripts/install.sh:271`
 (`prover-schema.json`); `scripts/lib/orch-signals.sh:103` (the lens goes to
@@ -361,7 +381,9 @@ agent, starts the built-ins.
   both parsers on the recorded shapes; an empty array before a full one;
   prose-only, conflicting or count-mismatched Codex replies; a missing or
   failed probe; an extra `modelUsage` key; every floor and their order; a
-  passing receipt 1 that cannot drop; a drop without `scenario` evidence; the
+  passing receipt 1 that cannot drop; a drop without `scenario` or with a
+  `drop_check` that fails on the script's fresh copy; a low-confidence mild
+  test-gap that stays visible and gives `READY-WITH-FIXES`, never `READY`; the
   runner's receipts; the merge-base copy; plus T5's kept cases.
 - **Scorer, free.** `tests/test-review-compare.py` covers the shared parsers;
   re-score the recorded comparison and note any count change in
@@ -391,6 +413,8 @@ agent, starts the built-ins.
   `INCOMPLETE`, never `READY`.
 - A mild `style`, `scope-creep` or `test-gap` label is the prover's
   judgment; on Standard nothing re-checks it (Full's refuter can `RAISE`).
+  Such a finding still stays listed, needs a disposition (R21), and keeps
+  the verdict at `READY-WITH-FIXES` at most; it can never produce `READY`.
 - Whether a refuter's drop command targets the claim is judged, not checked.
 - With one CLI, Full's two reviews come from one provider and may share its
   blind spots; the review says so, it does not hide it.
