@@ -75,6 +75,14 @@ numbers: in four the contract seat listed something it had not checked
 system), and in one the contract seat dropped out because its sandbox check did
 not show a refused write outside the copy.
 
+**The `code-review` arm never received its spec sentence.** It was passed with
+`--append-system-prompt`, and a live check on 2026-09-26 showed that text does
+not reach the subagent `/code-review` reviews in (a required marker line and the
+spec path were ignored; the same text in the `-p` prompt was obeyed). So the
+`code-review` row below is `/code-review` without the spec, while `full` and
+`codex-review` had it. The arm now carries the sentence in its `-p` text and is
+to be re-run.
+
 Scored with the corrected scorer. The first scoring read each `/code-review`
 reply as one finding, because that reply puts its findings in a JSON array in a
 fenced block and the scorer split only on list items and headings: it saw 84
@@ -106,9 +114,14 @@ finding except notes and dropped ones) were reproduced by a failing command
 and a patch, and it blocks. It returned NOT-READY on all 78 complete runs, including
 all 13 complete clean cases, partly because it ranked notes that the tests do
 not cover something as serious. **Acted on:** such a note is now a `test-gap`
-finding, mild unless it carries a failing command (R13 in
-`docs/specs/review-design.md`); test tampering stays serious. Not yet run: the `full-swap`, `full-no-refuter`, `full-split`
-and Standard arms.
+finding, mild unless it carries a failing command; test tampering stays serious.
+Then, in T22 (`docs/specs/review-design.md`), the seats were replaced by the
+built-in reviewers: `/code-review` and `codex review` find, and `orch-review.py`
+proves, decides and records. The seat arms (`full`, `full-swap`,
+`full-no-refuter`, `full-split` and the Standard seat arms) were removed with the
+seats, the last four never run; the built-in arms are `full-builtin`,
+`standard-builtin`, `standard-builtin-codex` and `full-builtin-single`, not yet
+run.
 
 ## Field records (not A/B)
 

@@ -130,7 +130,7 @@ one exits non-zero on failure.
 | Suite | Covers |
 |---|---|
 | `validate-skills.sh` | skill/command/agent frontmatter, length cap, reference resolution |
-| `test-review.sh` (runs `test-review.py`) | `scripts/lib/orch-review.py`, one case per rule in `docs/specs/review-design.md`, with fake `claude` and `codex` programs: a missing seat or unchecked item gives `INCOMPLETE`, dropouts are never replaced, bad evidence keeps a serious finding blocking, a drop needs a passing receipt 1, a write to the real checkout gives `INCOMPLETE` |
+| `test-review.sh` (runs `test-review.py`) | `scripts/lib/orch-review.py`, one case per rule in `docs/specs/review-design.md`, with fake `claude` and `codex` programs standing in for `/code-review`, `codex review`, the prover, the refuter, the runner and `codex sandbox`: provider choice with one or both CLIs, the exact flags, both reply parsers, the sandbox proof from the kept transcript and its exact-id deletion, the rank floors, a mild finding never giving `READY`, a drop only through the script's own check on a fresh copy, dropouts never replaced, a write to the real checkout gives `INCOMPLETE` |
 | `test-install.sh` | the installer's claims are true: `--copy` rewrites every hook command to an absolute existing path (positive property, independently asserted) and fails closed; `--check` fails on deleted/corrupted shipped files; docs wire every hook; no dead permission rules |
 | `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
 | `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
@@ -143,7 +143,7 @@ one exits non-zero on failure.
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |
 | `test-detect.sh`, `test-lib-resolution.sh`, `test-telemetry.sh`, `test-retry-cap.sh`, `test-hook-latency.sh` | toolchain detection, lib lookup, opt-in telemetry, retry breaker, per-hook latency budget |
 | `test-eval-cases.sh` | every `claude plugin eval` case matches the case schema, fails on its bare scaffold, and passes on its reference solution |
-| `test-review-compare.sh` | every planted review defect fails its held-out check but passes the committed tests, and the comparison scorer counts a dry run with fake reviewers correctly |
+| `test-review-compare.sh` | every planted review defect fails its held-out check but passes the committed tests, the comparison scores replies with the review script's own parsers, and the scorer counts a dry run with fake reviewers correctly |
 | `handoff/smoke-handoff.sh`, `handoff/test-precompact.sh`, `handoff/test-token-floor.sh` | handoff artifact lifecycle, pre-compaction capture, token floor |
 
 **Isolation is a hard requirement for new suites.** Use `mktemp -d` for both the

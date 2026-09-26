@@ -13,44 +13,53 @@ python3 /path/to/LLM-Orchestrator/scripts/lib/orch-review.py wait <run-dir> --se
 Repeat `wait` until it reports that the run finished. The rules are in
 `docs/specs/review-design.md`.
 
-## Which provider runs which seat
+## Which reviewer runs
 
-- **Standard** runs one contract seat on Codex (`codex exec`).
-- **Full** runs the contract seat on Codex and the adversarial seat on Claude
-  (`claude -p`), because the adversarial seat runs on the provider that did not
-  write the change. The refuter is always Claude.
+The reviewers are the built-in ones: Claude Code's `/code-review` and
+`codex review`.
 
-Full therefore needs both CLIs installed and signed in (`codex login status`,
-`claude auth status --json`). If either is missing, the review is
-`INCOMPLETE`. A missing provider is never replaced by another provider, model
-or brief.
+- **Standard** runs `/code-review` when `claude` is installed, because the
+  review should come from the provider that did not write the change. Without
+  `claude` it runs `codex review` and records `same_provider`.
+- **Full** runs one `/code-review` and one `codex review`. With only `codex`
+  installed it runs `codex review` twice, each in its own copy, and the verdict
+  line says both reviews came from one provider.
+- The prover and the refuter run on Claude when it is installed, else on Codex
+  (`codex exec`).
 
-## Models and effort
+A CLI that is installed but not signed in (`codex login status`,
+`claude auth status --json`) makes the review `INCOMPLETE`. A missing or failed
+reviewer is never replaced by another provider or model.
 
-- Claude seats run `--model opus --effort high`. The served model is read from
-  the assistant messages and must be an Opus model.
-- Codex seats pass no `-m`: they use the `model` in `$CODEX_HOME/config.toml`
-  (`~/.codex` by default) at `model_reasoning_effort="high"`. The served model
-  and effort are read from the session rollout file. If `config.toml` names no
-  model, the served model is recorded but not compared.
+## What the script checks
+
+- `/code-review` runs `--model opus --effort high --safe-mode --restricted`
+  with no MCP servers and Claude Code's Bash sandbox. Its tool calls are in the
+  session transcript, which the script reads (the sandbox settings and a probe
+  that must show a refused write) and then deletes by its exact session id.
+  Every model in the result's `modelUsage` must be an Opus model.
+- `codex review --uncommitted` runs read-only with MCP servers, apps and
+  plugins off, and the spec instruction as `developer_instructions`. The script
+  finds the review's rollout under `$CODEX_HOME/sessions` and checks the served
+  model (against `config.toml`'s `model`, when set), effort `high`, the
+  `read-only` sandbox, and that no MCP tool ran.
 
 `review.json` records the requested and served model and effort of every
-launch.
+launch, and the served sandbox or probe result.
 
-## Where the seats run
+## Where the work runs
 
-Each seat runs in its own disposable clone of the repository with the change.
-The Codex seat runs with `-s workspace-write`, so it can write inside its
-clone. The Claude seat runs with no MCP servers and only the Read, Grep, Glob
-and Bash tools; its Bash is not confined to the clone, so the script compares
-a fingerprint of the real checkout before and after, and a change gives
-`INCOMPLETE`.
+Each reviewer, prover and refuter runs in its own disposable clone whose HEAD
+is the merge-base, so the whole change is uncommitted there. The script
+compares a fingerprint of the real checkout before and after, and a change
+gives `INCOMPLETE`.
 
 Proposed fixes are run by the script itself under
 `codex sandbox -P :workspace -C <copy> --`, which allows writes only in the copy
 and the system temporary directory and blocks network access. This was checked
 on macOS; on Linux Codex uses a different sandbox, and if it cannot start, the
-finding is left unreproduced and stays blocking.
+finding is left unreproduced and stays blocking. Without `codex`, a sandboxed
+Claude runner runs them instead.
 
 ## Signing in from a Codex sandbox
 

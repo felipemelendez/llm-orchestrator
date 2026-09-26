@@ -189,8 +189,10 @@ Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or
 
 ## Reviews from Codex
 
-On Full work the review script runs one seat on Codex and one on Claude,
-through your existing Claude login. See [codex-provider.md](codex-provider.md).
+The review script runs the built-in reviewers: on Standard, Claude Code's
+`/code-review` when `claude` is installed (else `codex review`); on Full, both,
+or `codex review` twice when only Codex is installed. See
+[codex-provider.md](codex-provider.md).
 
 ## Tests
 

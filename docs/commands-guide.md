@@ -30,7 +30,7 @@ description: One-line summary of what the command does. Triggers, not workflow.
 
 A command is a workflow wrapper. The skill is the discipline. Most commands open by invoking one skill, then call out to others as needed.
 
-Example: `/llm-orchestrator:review` invokes `requesting-code-review`, which starts `scripts/lib/orch-review.py` and waits for its verdict.
+Example: `/llm-orchestrator:review` invokes `requesting-code-review`, which starts `scripts/lib/orch-review.py` (it runs the built-in `/code-review` and `codex review`, then proves and decides) and waits for its verdict.
 
 ## When to add a command
 

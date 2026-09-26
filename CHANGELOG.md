@@ -7,6 +7,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ### Changed
 
+- The review now uses the built-in reviewers (T22, `docs/specs/review-design.md`).
+  `orch-review.py` runs Claude Code's `/code-review` and `codex review` in
+  merge-base copies instead of its own seats, checks what each ran on (the
+  kept `/code-review` transcript for the sandbox and probe, then deletes that
+  session by its exact id; the `codex review` rollout for model, effort,
+  read-only sandbox and the instruction), and parses their replies; a reply it
+  cannot parse is a dropout. A new prover ranks each finding under fixed floors
+  and writes its repro; a reviewer finding never becomes a note, and a mild one
+  keeps the verdict at `READY-WITH-FIXES` at most. The refuter can drop a
+  finding only with a failure scenario and a drop check the script re-runs on
+  a fresh copy. One installed CLI is enough: Standard then runs the writer's
+  own reviewer, and Full runs it twice, both recorded as `same_provider`. With
+  Claude only, fixes run in a sandboxed Claude runner. Removed: the contract
+  and adversarial briefs, `seat-schema.json`, parts, `not_checked`, notes, and
+  the `--brief`, `--adversarial-provider`, `--split` and `--no-refuter`
+  options. The review comparison scores replies with the script's own parsers
+  and has built-in arms; its `code-review` arm now gets its spec sentence in
+  the `-p` text, which the appended system prompt never delivered.
 - The review has a new finding kind, `test-gap`: behaviour the tests do not
   cover. `orch-review.py` ranks it mild unless it carries a repro (then it
   keeps its rank and is run like a defect), and counts the lowered ranks;
