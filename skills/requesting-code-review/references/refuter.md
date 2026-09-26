@@ -17,8 +17,10 @@ catastrophic findings):
   - `drop_check`: `{command, expected_output}`. The script runs `command`
     itself on a fresh, unpatched copy of the reviewed change. The drop counts
     only when it exits 0 and every non-empty line of `expected_output` appears
-    as a whole line of its output. Write a command that runs the reviewer's
-    scenario and prints what shows it works.
+    as a whole line of its output. The command must run exactly the scenario
+    you quoted, with the reviewer's inputs, and print what shows it works.
+    The script checks the quote and the output, not whether the command tests
+    that scenario, so a check of anything else is a wrong drop.
   Your own runs count for nothing, because your copy is writable. A drop
   without both, or whose check fails, counts as `UNRESOLVED`.
 - `UNRESOLVED`: you could not settle it; say why in `explanation`.

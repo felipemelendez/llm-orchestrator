@@ -415,7 +415,12 @@ agent, starts the built-ins.
   judgment; on Standard nothing re-checks it (Full's refuter can `RAISE`).
   Such a finding still stays listed, needs a disposition (R21), and keeps
   the verdict at `READY-WITH-FIXES` at most; it can never produce `READY`.
-- Whether a refuter's drop command targets the claim is judged, not checked.
+- Whether a refuter's drop command tests the scenario it quotes is judged,
+  not checked. The script checks that the scenario quotes the reviewer and
+  that the command, run by the script on a fresh copy, passes and prints the
+  expected lines; a refuter can still quote the right scenario and run a
+  command that tests something else. The refuter brief forbids it; no
+  mechanical check can tell.
 - With one CLI, Full's two reviews come from one provider and may share its
   blind spots; the review says so, it does not hide it.
 - Two reviewers reporting one defect give two findings, proved separately.
