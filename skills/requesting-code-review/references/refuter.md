@@ -12,7 +12,8 @@ catastrophic findings):
 - `PROMOTED`: the finding holds, or you cannot show that it does not.
 - `DROPPED`: the claimed failure does not happen. A drop needs two things:
   - `scenario`: the reviewer's stated failure scenario, quoted from their
-    words.
+    words: at least four words, exactly as they wrote them (case and spacing
+    aside). A scenario of your own does not count.
   - `drop_check`: `{command, expected_output}`. The script runs `command`
     itself on a fresh, unpatched copy of the reviewed change. The drop counts
     only when it exits 0 and every non-empty line of `expected_output` appears

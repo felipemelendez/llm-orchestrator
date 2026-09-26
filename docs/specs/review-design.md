@@ -422,6 +422,48 @@ agent, starts the built-ins.
 - Linux sandboxes, nested runs from a Codex session, and T5's other open
   items are still not verified.
 
+## Build notes (T22, 2026-09-26)
+
+Where the build is stricter than the text above, or fills a gap in it. Each
+choice can only turn a review toward `INCOMPLETE` or `NOT-READY`, never toward
+`READY`.
+
+- **Preflight.** A CLI that is installed but not signed in fails the preflight,
+  even when the plan would not use it; the fix is to sign in or take it off
+  `PATH`.
+- **R12.** A result whose rank the prover gave as unknown (replaced by
+  `serious`) and that has neither `repro` nor `not_runnable` also gives
+  `INCOMPLETE`, as does a serious `test-gap` without either, although step 2
+  then lowers it.
+- **R8 step 1.** With `--allow-test-changes`, a `test-tampering` finding may
+  be mild only with a `mild_reason`, like the kinds listed there.
+- **R8 step 2, R10.** A `test-gap` whose experiment did not run (the sandbox
+  or runner failed, or receipt 1 timed out) is never lowered.
+- **R5 cleanup.** Claude Code kept the session's temporary folder under
+  `/tmp/claude-<uid>/` in the live run, not under `$TMPDIR`; the script looks
+  in both, for the exact `<session-id>` only.
+- **R6.** `codex review` writes two start lines; the `trace_safe` one carries
+  `mcp_server_count=<n>` instead of `mcp_servers=""`. Either must show none; a
+  start line with neither fails.
+- **R7.** Zero findings count only when the reviewer read the change: a tool
+  call in the `/code-review` transcript or the `codex review` rollout names a
+  changed file, or a tool result shows its diff. A `codex review` reply with no
+  findings at `overall_confidence_score` 0 is a dropout. A fenced block that
+  starts as a JSON array but does not parse is a dropout, never skipped. A
+  reply that fails a consistency check keeps its parseable findings, marked
+  `from_dropout`.
+- **R8.** A Codex prover or refuter (`codex exec`) must be served effort
+  `high`, a `workspace-write` sandbox without network, and its own copy as
+  working directory, read from its rollout.
+- **R10.** The Claude runner runs each command inside a small Python wrapper
+  the script writes, instead of `sh -c '<cmd>'; echo ORCH-EXIT=$?`: it kills
+  the command's process group after 600 seconds and prints
+  `ORCH-EXIT=<n> ORCH-TIMED-OUT=<0|1>`. Any receipt the runner did not give as
+  asked (other text, other order, no marker) makes the runner a dropout.
+- **R15.** `scenario` must quote the reviewer's words (the `/code-review`
+  summary and failure scenario, or the `codex review` title and body): at
+  least four words, compared ignoring case, outer quotes and runs of spaces.
+
 ## Decided (Felipe, 2026-09-26)
 
 1. **One CLI is enough (R3).** Standard: the other provider's reviewer when
