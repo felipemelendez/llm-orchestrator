@@ -272,14 +272,18 @@ lacked. T10 tests the swap.
     raised to `serious`. Test tampering means a test was deleted or skipped,
     an assertion was weakened, a test was changed to match the code, or code
     special-cases test inputs.
-  - A `test-gap` finding is lowered to `mild`. A test gap is behavior the
-    tests do not cover, or a test that would still pass with its mechanism
-    removed, with no wrong result shown; the harm ranking makes that mild.
-    When the uncovered code is also wrong, the seat reports that as its own
-    `defect`. A test that was never there is a gap, not tampering, so the
-    tampering rule above is unchanged. (The 2026-09-25 comparison found the
-    contract seat ranking coverage notes serious, which blocked changes that
-    had no demonstrated defect.)
+  - A test gap is behavior the tests do not cover, or a test that would
+    still pass with its mechanism removed. A `test-gap` finding with no
+    `repro` shows no wrong result, so the harm ranking makes it mild: the
+    script lowers it to `mild` and sets `rank_lowered`. A `test-gap` finding
+    with a `repro` claims a failing command, so the script keeps its rank,
+    sets `gap_with_repro`, and runs and judges it like a `defect`; it can
+    block. When the uncovered code is also wrong, the seat reports that as
+    its own `defect`. A test that was never there is a gap. If the change
+    weakened or rewrote the test, it is tampering, not a test gap, and the
+    tampering rule above applies unchanged. (The 2026-09-25 comparison found
+    the contract seat ranking coverage notes serious, which blocked changes
+    that had no demonstrated defect.)
   - A rank outside the allowed values becomes `serious`.
 
   Raised, lowered and replaced ranks are counted.

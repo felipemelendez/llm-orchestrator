@@ -100,13 +100,14 @@ spec gaps the set did not plant, or minor notes that the tests do not cover
 something. None of the 80 was wrong.
 
 **Conclusion.** `full` did not detect more than `/code-review` or `codex
-review`, and took three to five and a half times as long. What it adds is a run: 512 of
-its 578 reported findings (89%) were reproduced by a failing command and a
-patch, and it blocks. It returned NOT-READY on all 78 complete runs, including
+review`, and took three to five and a half times as long. What it adds is a
+run: on its 78 complete runs, 477 of the 538 findings it reported (89%, every
+finding except notes and dropped ones) were reproduced by a failing command
+and a patch, and it blocks. It returned NOT-READY on all 78 complete runs, including
 all 13 complete clean cases, partly because it ranked notes that the tests do
 not cover something as serious. **Acted on:** such a note is now a `test-gap`
-finding, always mild (R13 in `docs/specs/review-design.md`); test tampering
-stays serious. Not yet run: the `full-swap`, `full-no-refuter`, `full-split`
+finding, mild unless it carries a failing command (R13 in
+`docs/specs/review-design.md`); test tampering stays serious. Not yet run: the `full-swap`, `full-no-refuter`, `full-split`
 and Standard arms.
 
 ## Field records (not A/B)

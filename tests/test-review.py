@@ -833,6 +833,17 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review["findings"][0]["status"], "mild")
         self.assertNotIn("contract-1-1", " ".join(review["incomplete_reasons"]))
 
+    def test_r13_a_test_gap_with_a_repro_keeps_its_rank_and_blocks(self):
+        # A failing command shows a wrong result, so the seat mislabelled a defect: it keeps its rank.
+        self.scenario["claude"]["seats"]["contract"] = seat(finding("serious", kind="test-gap"))
+        review = self.review("standard", "claude")
+        found = review["findings"][0]
+        self.assertEqual((found["rank"], found["rank_lowered"], found["gap_with_repro"]), ("serious", False, True))
+        self.assertTrue(found["reproduced"])
+        self.assertIn(found["status"], ("verified", "unverified"))
+        self.assertEqual(review["counts"]["lowered_ranks"], 0)
+        self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
+
     def test_r13_an_unknown_rank_becomes_serious_and_is_counted(self):
         self.scenario["claude"]["seats"]["contract"] = seat(finding("critical"), {"junk": True})
         review = self.review("standard", "claude")

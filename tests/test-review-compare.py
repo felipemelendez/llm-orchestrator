@@ -180,16 +180,29 @@ class Parsing(unittest.TestCase):
                   "failure_scenario": ""}]
         text = ("I found 3 issues in `api/listing.py` and `tests/test_listing.py`.\n\n"
                 "```json\n" + json.dumps(items, indent=2) + "\n```\n")
-        found = review_compare.text_findings(text)
+        found = review_compare.reply_findings(text)
         self.assertEqual([(f["file"], f["line"]) for f in found],
                          [("api/listing.py", 40), ("api/listing.py", 42), ("tests/test_listing.py", None)])
         self.assertIn("clamp_limit accepts limit=0", found[0]["text"])
         self.assertIn("loops forever", found[0]["text"])
         # An empty array is a review with no findings; the files named in the prose are not findings.
-        self.assertEqual(review_compare.text_findings("No issues in `api/listing.py`.\n```json\n[]\n```"), [])
+        self.assertEqual(review_compare.reply_findings("No issues in `api/listing.py`.\n```json\n[]\n```"), [])
         # A fenced array that is not a list of findings leaves the text rule in charge.
-        self.assertEqual([f["file"] for f in review_compare.text_findings("- bug in pkg/a.py:3\n```json\n[1, 2]\n```")],
+        self.assertEqual([f["file"] for f in review_compare.reply_findings("- bug in pkg/a.py:3\n```json\n[1, 2]\n```")],
                          ["pkg/a.py"])
+
+    def test_codex_output_only_goes_through_the_text_rule(self):
+        # codex review prints its exec log too; a JSON array a command printed there is not its findings.
+        log = ("exec print-fixture\n```json\n" + json.dumps([{"file": "pkg/z.py", "line": 9}]) + "\n```\n"
+               "- [P1] Off by one — pkg/a.py:12-14\n  Explanation.\n")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(run_dir, ignore_errors=True))
+        (run_dir / "meta.json").write_text(json.dumps({"exit": 0, "seconds": 1}))
+        (run_dir / "stdout.txt").write_text(log)
+        run = review_compare.read_run(run_dir, {"output": "codex-text"})
+        self.assertEqual(run["findings"], review_compare.text_findings(log))
+        self.assertNotIn(("pkg/z.py", 9), [(f["file"], f["line"]) for f in run["findings"]])
+        self.assertIn(("pkg/a.py", 12), [(f["file"], f["line"]) for f in run["findings"]])
 
     def test_matching_uses_file_and_nearby_lines(self):
         defect = {"symbol": "tax", "what": "Tax is charged before the discount.",

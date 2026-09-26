@@ -468,12 +468,15 @@ def json_findings(text):
     return None
 
 
-def text_findings(text):
-    """Split review output into findings: one per item of a fenced JSON findings array when the reply
-    has one, else one per list item or heading that names a file."""
+def reply_findings(text):
+    """Findings from a /code-review reply: one per item of its fenced JSON findings array, else the
+    text rule."""
     from_json = json_findings(text)
-    if from_json is not None:
-        return from_json
+    return from_json if from_json is not None else text_findings(text)
+
+
+def text_findings(text):
+    """Split free-text review output into findings: one per list item or heading that names a file."""
     blocks, current = [], []
     starts = re.compile(r"^\s*(?:[-*•]|\d+[.)]|#{1,6}\s|\[P\d\]|\*\*\d)")
     for line in text.splitlines():
@@ -555,9 +558,10 @@ def read_run(out_dir, arm):
         return run
     if arm["output"] == "claude-json":
         text, run["cost_usd"], run["tokens"] = parse_claude_json(stdout)
-    else:
+        run["findings"] = reply_findings(text)
+    else:  # codex prints its exec log too, so a JSON array there may be a command's output
         text, run["cost_usd"], run["tokens"] = parse_codex_text(stdout)
-    run["findings"] = text_findings(text)
+        run["findings"] = text_findings(text)
     if not text.strip():
         run["complete"] = False
     return run

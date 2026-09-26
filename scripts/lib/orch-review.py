@@ -58,10 +58,11 @@ test-gap), `confidence` (0.0 to 1.0), `claim` (the state, and the wrong result
 it gives), `evidence`, `repro` and `not_runnable`. Set unused fields to null.
 
 A `test-gap` is behavior the tests do not cover, with no wrong result shown.
-It is always mild. When the uncovered code is also wrong, report that as its
-own `defect` with its own rank. `test-tampering` is a test the change deleted,
-skipped, weakened or rewrote to match the code, or code that treats test
-inputs specially; a test that was never there is a `test-gap`, not tampering.
+It is mild. When the uncovered code is also wrong, report that as its own
+`defect` with its own rank and a `repro`. `test-tampering` is a test the change
+deleted, skipped, weakened or rewrote to match the code, or code that treats
+test inputs specially. A test that was never there is a `test-gap`; if the
+change weakened or rewrote the test, it is tampering, not a test-gap.
 
 `evidence` is one of:
 
@@ -470,15 +471,13 @@ class Review:
                      "file": item.get("file"), "line": item.get("line"), "claim": item.get("claim"),
                      "kind": item.get("kind"), "original_rank": rank, "rank": rank,
                      "rank_replaced": rank not in RANKS, "rank_raised": False, "rank_lowered": False,
+                     "gap_with_repro": False,
                      "evidence": item.get("evidence")}
             if found["rank_replaced"]:
                 found["rank"] = "serious"
             if (found["kind"] == "test-tampering" and found["rank"] == "mild"
                     and not self.options["allow_test_changes"]):
                 found["rank"], found["rank_raised"] = "serious", True
-            # A test-gap shows no wrong behavior, so it is mild; a defect it hides is its own finding.
-            if found["kind"] == "test-gap" and found["rank"] != "mild":
-                found["rank"], found["rank_lowered"] = "mild", True
             confidence = item.get("confidence")
             found["confidence"] = (float(confidence) if type(confidence) in (int, float) else None)
             found["evidence_valid"], found["evidence_reason"] = evidence_valid(
@@ -486,6 +485,13 @@ class Review:
             repro = item.get("repro")
             found["repro"] = (repro if isinstance(repro, dict) and isinstance(repro.get("command"), str)
                               and repro["command"].strip() and isinstance(repro.get("patch"), str) else None)
+            # R13: a test-gap without a repro shows no wrong result, so it is mild. One with a repro
+            # claims a failing command: it keeps its rank and is run and judged like a defect.
+            if found["kind"] == "test-gap" and found["rank"] != "mild":
+                if found["repro"]:
+                    found["gap_with_repro"] = True
+                else:
+                    found["rank"], found["rank_lowered"] = "mild", True
             not_runnable = item.get("not_runnable")
             found["not_runnable"] = (not_runnable if isinstance(not_runnable, str) and not_runnable.strip()
                                      and not found["repro"] else None)

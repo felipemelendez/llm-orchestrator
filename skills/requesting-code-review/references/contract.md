@@ -18,8 +18,9 @@ reviewer's findings.
   the mechanism in your copy, run the test, and put the code back. A test that
   still passes, or a requirement no test covers, is a mild `test-gap`
   finding. If the code it should cover is also wrong, report that as a
-  separate `defect` with the wrong result and its own rank. A test the change
-  deleted, skipped, weakened or rewrote to match the code is `test-tampering`.
+  separate `defect` with the wrong result and its own rank. If the change
+  weakened or rewrote the test, it is `test-tampering`, not a test-gap; so is
+  a test the change deleted or skipped.
 - **Run the tests.** Run the project's test command in your copy and read the
   summary. A failing or skipped test the change touches is a finding.
 
