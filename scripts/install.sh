@@ -587,19 +587,50 @@ case "${cmd}" in
       done
     ) || { echo "ERROR: could not list the files this install placed" >&2; exit 1; }
     new_record=$(printf '%s\n' "${new_record}" | LC_ALL=C sort -u)
+    claude_real=$(cd -P "${dest}/.claude" && pwd -P)
+
+    # plain_path <relative path>: true only for a relative path with no "." or
+    # ".." part whose every component below .claude/ is not a link, and whose
+    # real location is inside .claude/. Nothing reached through a link counts.
+    plain_path() {
+      local rel="$1" p="${dest}/.claude" part rest real
+      case "/${rel}/" in */../*|*/./*|//*) return 1 ;; esac
+      [[ -n "${rel}" && "${rel}" != /* ]] || return 1
+      rest="${rel}"
+      while [[ -n "${rest}" ]]; do
+        part="${rest%%/*}"
+        [[ "${rest}" == */* ]] && rest="${rest#*/}" || rest=""
+        p="${p}/${part}"
+        [[ -L "${p}" ]] && return 1
+      done
+      real=$(cd -P "$(dirname "${dest}/.claude/${rel}")" 2>/dev/null && pwd -P) || return 1
+      [[ "${real}" == "${claude_real}" || "${real}" == "${claude_real}/"* ]]
+    }
+
+    # The record lists only what this install actually placed: a regular file,
+    # reached through no link, byte-identical to the source. A path the copy
+    # could not write (a read-only file the project owns, say) is never
+    # recorded, so a later upgrade can never take it for the plugin's.
+    placed=""
+    while IFS= read -r rel; do
+      [[ -n "${rel}" ]] || continue
+      plain_path "${rel}" && [[ -f "${dest}/.claude/${rel}" ]] \
+        && cmp -s "${ROOT}/${rel}" "${dest}/.claude/${rel}" \
+        && placed="${placed}${rel}"$'\n'
+    done <<< "${new_record}"
 
     # remove_stale <relative path>: delete one file this plugin placed earlier
     # and no longer ships, then any folders that leaves empty. Only a plain
-    # relative path to a regular file inside .claude/ qualifies; a link, an
-    # absolute path or one with a ".." part is left alone.
+    # path (see plain_path) to a regular file qualifies; rmdir stops at the
+    # first folder that is not empty or is a link.
     remove_stale() {
       local rel="$1" d
-      case "/${rel}/" in */../*|*/./*|//*) return 0 ;; esac
-      [[ -n "${rel}" && "${rel}" != /* ]] || return 0
-      [[ -f "${dest}/.claude/${rel}" && ! -L "${dest}/.claude/${rel}" ]] || return 0
+      plain_path "${rel}" || return 0
+      [[ -f "${dest}/.claude/${rel}" ]] || return 0
       rm -f "${dest}/.claude/${rel}"
       d=$(dirname "${rel}")
       while [[ "${d}" != "." && "${d}" != "/" ]]; do
+        [[ -L "${dest}/.claude/${d}" ]] && break
         rmdir "${dest}/.claude/${d}" 2>/dev/null || break
         d=$(dirname "${d}")
       done
@@ -628,7 +659,7 @@ case "${cmd}" in
         printf '%s' "${unshipped}"
       fi
     fi
-    printf '%s\n' "${new_record}" > "${record}"
+    printf '%s' "${placed}" > "${record}"
 
     sed_inplace() {
       if sed --version >/dev/null 2>&1; then

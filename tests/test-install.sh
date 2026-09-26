@@ -229,6 +229,43 @@ upgrade_scene "an install made before the record existed" "$TMP/proj-up-legacy" 
   || fail "install record" "no .claude/.llm-orchestrator-files after --copy"
 
 # ------------------------------------------------------------
+# P12 — the cleanup never deletes a file the plugin did not place, and never
+# reaches through a link.
+# ------------------------------------------------------------
+section "--copy cleanup deletes only what it placed, never through a link (P12)"
+# Scene 1: the project owns a read-only file at a path the plugin ships. The
+# copy cannot place it (agents/ copy errors are tolerated), so it must not be
+# recorded as the plugin's; a later upgrade that retires the path leaves it.
+if [[ "$(id -u)" != "0" ]]; then
+  copy_tree "$TMP/src-ro"
+  printf 'plugin version\n' > "$TMP/src-ro/agents/orch-retired.md"
+  P="$TMP/proj-ro"; mkdir -p "$P/.claude/agents"
+  printf 'the project'"'"'s own\n' > "$P/.claude/agents/orch-retired.md"; chmod 444 "$P/.claude/agents/orch-retired.md"
+  bash "$TMP/src-ro/scripts/install.sh" --copy "$P" > "$TMP/ro1.out" 2>&1 || true
+  grep -qxF 'agents/orch-retired.md' "$P/.claude/.llm-orchestrator-files" 2>/dev/null \
+    && fail "unplaced file recorded" "agents/orch-retired.md is in the record though the copy could not place it" \
+    || ok "a file the copy could not place is not recorded"
+  bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ro2.out" 2>&1 || true
+  if [[ -f "$P/.claude/agents/orch-retired.md" ]] && grep -qF "the project's own" "$P/.claude/agents/orch-retired.md"; then
+    ok "retiring that path leaves the project's own file"
+  else fail "project file deleted" "agents/orch-retired.md is gone or changed after the upgrade"; fi
+  chmod 644 "$P/.claude/agents/orch-retired.md" 2>/dev/null || true
+else
+  ok "read-only scene skipped: root ignores file modes"
+fi
+# Scene 2: an installed skill folder later replaced by a link to a shared
+# skill. Retiring that skill must not delete the files behind the link.
+P="$TMP/proj-link"; mkdir -p "$P"
+bash "$TMP/src-old/scripts/install.sh" --copy "$P" > "$TMP/ln1.out" 2>&1 || fail "link scene: old install" "$(tail -3 "$TMP/ln1.out")"
+mkdir -p "$TMP/shared/old-skill"
+printf 'shared\n' > "$TMP/shared/old-skill/SKILL.md"
+rm -rf "$P/.claude/skills/old-skill"; ln -s "$TMP/shared/old-skill" "$P/.claude/skills/old-skill"
+bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ln2.out" 2>&1 || fail "link scene: new install" "$(tail -3 "$TMP/ln2.out")"
+[[ -f "$TMP/shared/old-skill/SKILL.md" ]] && ok "a retired skill whose folder is now a link: the file behind the link stays" \
+  || fail "deleted through a link" "$TMP/shared/old-skill/SKILL.md is gone"
+[[ -L "$P/.claude/skills/old-skill" ]] && ok "and the link itself is left alone" || fail "link removed" "skills/old-skill is no longer a link"
+
+# ------------------------------------------------------------
 # P4 — --check must fail on deletions and corruption
 # ------------------------------------------------------------
 section "--check blind spots (P4)"
