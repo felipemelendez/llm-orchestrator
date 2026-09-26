@@ -281,7 +281,7 @@ grep -qx 'keep-coding-instructions: true' "$STYLE" && ok "output style keeps Cla
 
 printf '\n%s== Status enum consistent across consumers ==%s\n' "$DIM" "$RESET"
 grep -q 'PARTIAL' "${ROOT}/scripts/lib/orch-protocol.sh" && ok "grader accepts PARTIAL" || fail "grader PARTIAL" "orch-protocol.sh"
-grep -q 'Status: PARTIAL' "${ROOT}/templates/dispatch-response.md" && ok "dispatch-response documents PARTIAL" || fail "dispatch-response PARTIAL" ""
+grep -q 'Status: PARTIAL' "${ROOT}/agents/orch-implementer.md" && ok "implementer agent documents PARTIAL" || fail "orch-implementer PARTIAL" ""
 grep -q 'Status: PARTIAL' "${ROOT}/templates/implementer-prompt.md" && ok "implementer prompt documents PARTIAL" || fail "implementer-prompt PARTIAL" ""
 # AGENTS.md is deliberately no longer a leg of this check: it was cut to the
 # role table alone (126 -> 24 lines) because it loads into every session, and
