@@ -26,13 +26,13 @@ Loaded on-demand via the `Skill` tool. The frontmatter `description` is the trig
 
 ### Hooks (`hooks/hooks.json`)
 
-We wire sixteen hook scripts across seven events; `hooks/hooks.json` is the source of truth:
+`hooks/hooks.json` is the source of truth for which scripts run on which event:
 - **SessionStart** — bootstrap the `using-orchestrator` core, plus the reply format in a cadence-enabled project. Loading CLAUDE.md stays Claude Code's own job.
 - **UserPromptSubmit** — per-turn protocol reminder (cadence-enabled projects only), research gate, handoff nudge.
 - **PreToolUse** — the safety guards: destructive git and verification bypass.
-- **PostToolUse / PostToolUseFailure** — evidence ledger, and opt-in skill telemetry.
-- **SubagentStop** — Status-block validator, researcher validator, retry cap, writer-mutex reaper.
-- **Stop** — protocol grader, verify gate, retry cap, retention pruning.
+- **PostToolUse** — opt-in skill telemetry.
+- **SubagentStop** — Status-block validator, completion check, researcher validator, retry cap, writer-mutex reaper.
+- **Stop** — completion check, lock verdict, retry cap, retention pruning, task-scratch cleanup.
 
 ### Settings (`templates/settings.json`)
 
@@ -99,7 +99,7 @@ If you maintain custom skills with high churn in their bodies, expect cache miss
 
 ## What we deliberately don't use
 
-- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log prompts or transcripts, and nothing is transmitted. Two local exceptions, both stated plainly rather than hidden behind "no capture": the evidence ledger (on by default under `standard`) records the first 400 characters of each verify-shaped command with its exit code and a substance verdict derived from the output; and skill telemetry (`ORCH_TELEMETRY=1`, off by default): it records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
+- **PostToolUse for output capture** — privacy risk and surveillance shape. We never log prompts or transcripts, and nothing is transmitted. The completion check reads the transcript Claude Code already keeps and records nothing. One local exception, stated plainly rather than hidden behind "no capture": skill telemetry (`ORCH_TELEMETRY=1`, off by default) records skill-invocation events — skill name + timestamp + project hash — and nothing more. Memory remains what the user opts into via `/remember`.
 - **Background MCP observers** — same reason.
 
 ## Native equivalents and division of labor
