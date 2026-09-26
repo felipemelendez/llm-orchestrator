@@ -52,53 +52,21 @@ print(json.dumps({'hook_event_name':'SubagentStop','session_id':'reap-test','age
 held()  { [[ -d "$1/.orch-active" ]]; }
 mkwt()  { mkdir -p "$1/.orch-active"; }
 
-printf '%s== mutex map: ownership is keyed on agent_id ==%s\n' "$DIM" "$RESET"
-# Mutation-found gap: deleting the agent_id read left every check green,
-# because NO test exercised the mutex-map path at all — the map is the
-# reaper's PRIMARY and strongest ownership proof (PostToolUse only records a
-# claim for a command that SUCCEEDED, so a lost mkdir race records nothing).
-# Without the agent_id match the reaper releases whatever any agent claimed,
-# which puts two writers in one tree — the failure this hook exists to prevent.
-fire_as() { # fire_as <agent_id> <cwd> <last_assistant_message>
-  python3 -c "
-import json, sys
-print(json.dumps({'hook_event_name':'SubagentStop','session_id':'reap-test','agent_id':sys.argv[1],
-                  'cwd':sys.argv[2],'last_assistant_message':sys.argv[3]}))" "$1" "$2" "$3" \
-  | bash "$HOOK" 2>&1
-}
-# The map lives under the project hash of the repo the hook resolves from.
-map_for() { # map_for <repo-dir>
-  local h="default"
-  h=$(cd "$1" && bash -c '. "'"$ROOT"'/scripts/lib/orch-project.sh"; orch_project_hash' 2>/dev/null) || h="default"
-  printf '%s/state/%s/mutex-map.reap-test.tsv' "$ORCH_HOME" "$h"
-}
+printf '%s== a leftover mutex map is not evidence ==%s\n' "$DIM" "$RESET"
+# The reaper once also read a per-session "mutex map" of claims. Its only
+# writer, the evidence hook, was deleted, so the reader went too. A map an old
+# version left on disk must not release anything.
 W="$TMP/map"; mkdir -p "$W"
 ( cd "$W" && git init -q && git config user.email t@t.t && git config user.name t \
   && echo s > s.txt && git add s.txt && git commit -qm s ) >/dev/null 2>&1
-mkwt "$W/.worktrees/agent-one"; mkwt "$W/.worktrees/agent-two"
-MAP="$(map_for "$W")"; mkdir -p "$(dirname "$MAP")"
-printf 'claim\ta1\t%s\t%s\n' "$W/.worktrees/agent-one/.orch-active" "$(date +%s)" >  "$MAP"
-printf 'claim\ta2\t%s\t%s\n' "$W/.worktrees/agent-two/.orch-active" "$(date +%s)" >> "$MAP"
-OUT=$(cd "$W" && fire_as a1 "$W" 'Status: DONE
+mkwt "$W/.worktrees/agent-one"
+H=$(cd "$W" && bash -c '. "'"$ROOT"'/scripts/lib/orch-project.sh"; orch_project_hash' 2>/dev/null) || H="default"
+MAP="$ORCH_HOME/state/$H/mutex-map.reap-test.tsv"; mkdir -p "$(dirname "$MAP")"
+printf 'claim\ta1\t%s\t%s\n' "$W/.worktrees/agent-one/.orch-active" "$(date +%s)" > "$MAP"
+OUT=$(cd "$W" && fire "$W" 'Status: DONE
 Summary: finished')
-held "$W/.worktrees/agent-one" && fail "own mapped claim not reaped" "$OUT" \
-  || ok "agent a1's own mapped claim is released"
-held "$W/.worktrees/agent-two" && ok "agent a2's claim is NOT released by a1's stop (no cross-agent reap)" \
-  || fail "cross-agent reap" "a1's stop released a LIVE sibling's mutex — two writers in one tree. $OUT"
-
-printf '\n%s== mutex map: a released claim is not re-reaped ==%s\n' "$DIM" "$RESET"
-W2="$TMP/map2"; mkdir -p "$W2"
-( cd "$W2" && git init -q && git config user.email t@t.t && git config user.name t \
-  && echo s > s.txt && git add s.txt && git commit -qm s ) >/dev/null 2>&1
-mkwt "$W2/.worktrees/done-already"
-MAP2="$(map_for "$W2")"; mkdir -p "$(dirname "$MAP2")"
-printf 'claim\ta1\t%s\t%s\n'   "$W2/.worktrees/done-already/.orch-active" "$(date +%s)" >  "$MAP2"
-printf 'release\ta1\t%s\t%s\n' "$W2/.worktrees/done-already/.orch-active" "$(date +%s)" >> "$MAP2"
-OUT=$(cd "$W2" && fire_as a1 "$W2" 'Status: DONE
-Summary: finished')
-held "$W2/.worktrees/done-already" \
-  && ok "a claim already released is left alone (a later claimant's mutex is safe)" \
-  || fail "released claim re-reaped" "$OUT"
+held "$W/.worktrees/agent-one" && ok "a claim in an old mutex map releases nothing" \
+  || fail "old mutex map reaped" "$OUT"
 
 printf '\n%s== a named sibling is never reaped ==%s\n' "$DIM" "$RESET"
 W="$TMP/a"; mkwt "$W/.worktrees/mine"; mkwt "$W/.worktrees/sibling"
@@ -142,17 +110,6 @@ W="$TMP/f"; mkwt "$W/.worktrees/only"; : > "$W/.worktrees/only/.orch-active/owne
 OUT=$(fire "$W" 'Status: DONE
 Summary: finished in .worktrees/only')
 held "$W/.worktrees/only" && ok "non-empty mutex refused (inspect by hand)" || fail "removed non-empty mutex" "$OUT"
-
-# REMOVED: the end-to-end case that drove the real orch-evidence-ledger.sh.
-# It asserted the LEDGER wrote honest claims into the mutex map — that a
-# politely losing `mkdir X || echo BLOCKED` recorded nothing, and that the
-# winner's claim was recorded and later reaped. The ledger is gone (retired to
-# a stub that exits 0), so nothing writes the map in production and there is no
-# ledger behaviour left to assert. The reaper still READS the map, and the
-# handwritten-map cases at the top of this file pin that reading: own claim
-# reaped, another agent's claim never reaped, a released claim not re-reaped.
-# The reaper's other evidence sources — the agent's CWD and a single
-# unambiguous mention in a success-shaped message — are covered below.
 
 printf '\n%s== no worktree named → nothing reaped, state reported ==%s\n' "$DIM" "$RESET"
 W="$TMP/g"; mkwt "$W/.worktrees/only"
