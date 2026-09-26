@@ -123,10 +123,6 @@ def emit(k, v):
             emit(k + "." + kk, vv)
     elif isinstance(v, bool):
         print("B\t%s\t%s" % (k, "true" if v else "false"))
-    elif v is None:
-        print("S\t%s\t" % k)
-    else:
-        print("S\t%s\t%s" % (k, v))
 for k, v in d.items():
     emit(k, v)
 PYEOF
@@ -171,23 +167,6 @@ cfg_bool() { # <key> — rc 0 when the key is the boolean true
   fi
   [ -f "$CFG_FILE" ] || return 1
   grep -qE "\"$1\"[[:space:]]*:[[:space:]]*true([[:space:],}]|$)" "$CFG_FILE" 2>/dev/null
-}
-
-cfg_scalar() { # <key>  (dotted for nested)
-  cfg_load
-  if [ -n "$CFG_DUMP" ] && [ -s "$CFG_DUMP" ]; then
-    awk -F'\t' -v k="$1" '($1=="S" || $1=="B") && $2==k {print $3; found=1; exit} END{if(!found) exit 1}' "$CFG_DUMP" && return 0
-  fi
-  [ -f "$CFG_FILE" ] || return 1
-  local k v
-  k="${1##*.}"
-  # sed -E: BSD sed has no \| alternation, so the scalar fallback must be ERE.
-  v=$(sed -n -E "s/.*\"${k}\"[[:space:]]*:[[:space:]]*\"([^\"]*)\".*/\\1/p" "$CFG_FILE" | head -1)
-  if [ -z "$v" ]; then
-    v=$(sed -n -E "s/.*\"${k}\"[[:space:]]*:[[:space:]]*(true|false|-?[0-9][0-9.]*).*/\\1/p" "$CFG_FILE" | head -1)
-  fi
-  [ -n "$v" ] || return 1
-  printf '%s\n' "$v"
 }
 
 cfg_array() { # <key> — one element per line
