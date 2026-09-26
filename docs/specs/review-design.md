@@ -2,14 +2,15 @@
 
 Status: T5's design (approved 2026-09-25, ticket T4, built in T5), revised by
 ticket T22 on 2026-09-26 after two blind reviews and live checks of both
-built-in reviewers. Awaits Felipe's approval.
+built-in reviewers. Felipe's decisions of 2026-09-26 are listed under
+"Decided"; the revision awaits his approval of the whole.
 
 **What T22 changes.** The reviewers are now the built-in ones: Claude Code's
 `/code-review` and `codex review`. Our seats, their briefs, their schema,
 parts and the T10-only options go. A new "prover" ranks each finding under
 fixed floors and writes its repro. The sandboxed fix experiments, the refuter,
 the decision, the outcome log and the safety rules stay, with a stricter drop
-rule. A person with only one of the two CLIs can run Standard.
+rule. A person with only one of the two CLIs can run Standard and Full.
 
 ## Goal
 
@@ -58,7 +59,7 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
 ## Providers
 
-- **R3.** Recommended design, pending Felipe's approval (open question 1):
+- **R3.** Decided by Felipe on 2026-09-26:
   - **Standard** runs one reviewer, from the provider that did not write the
     change when it is installed: `codex review` on Claude Code,
     `/code-review` on Codex. Otherwise it runs the writer's own and records
@@ -67,14 +68,20 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
     `codex review` was the stronger measured reviewer (130/134 found, 1.3
     false findings per run, 6 of 14 clean cases with no finding by R7's
     parser; `/code-review`: 125/134, 5.8, 0 of 14).
-  - **Full** runs both reviewers and needs both CLIs.
+  - **Full** runs two independent reviews. With both CLIs: one
+    `/code-review` and one `codex review`. With one CLI: that provider's
+    built-in twice, each in its own fresh copy and its own session, neither
+    seeing the other's reply; `same_provider: true` is recorded, and the
+    verdict line and `wait`'s summary say plainly that both reviews came
+    from one provider.
   - The **prover and refuter** run on Claude when it is installed, else on
     Codex (T5's `codex exec` launch, R6 of T5: `-s workspace-write`, schema,
     MCP off, served model from the rollout).
   - **Experiments** run in `codex sandbox` when Codex is installed, else in a
     Claude runner launch (R10).
-  - Lost with one CLI: the second opinion (Standard reviews its own
-    provider's work), a Claude refuter on Codex-only, and on Claude-only an
+  - Lost with one CLI: the second provider's view (Standard reviews its
+    own provider's work, and Full's two reviews share one provider's blind
+    spots), a Claude prover and refuter on Codex-only, and on Claude-only an
     experiment runner that costs a model call.
 - **R4.** Both reviewers get the comparison's instruction: "The change must
   implement the spec in `<copy>/.git/orch-review/spec.md`. Read it, and
@@ -114,8 +121,18 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
     They are in its transcript,
     `$CLAUDE_CONFIG_DIR/projects/*/<session-id>/subagents/agent-*.jsonl`
     (`~/.claude` by default), so the run keeps session persistence and names
-    its session. The script reads that transcript, then deletes that
-    session's files. No transcript: dropout.
+    its session. No transcript: dropout.
+  - **Deleting the kept session.** After reading it, the script deletes
+    only that session's files: under `projects/`, it lists the directories
+    one level down and needs exactly one to hold an entry named exactly
+    `<session-id>`; it then removes `<that dir>/<session-id>.jsonl` and
+    `<that dir>/<session-id>/`, and the same `<session-id>/` under the
+    session's temporary folder (`$TMPDIR/claude-<uid>/<that dir name>/`,
+    seen live). It uses no wildcard beyond that listing, removes a parent
+    directory only when it is left empty, and never touches another
+    session. A failure to delete, or a match count other than one, is
+    recorded in `review.json` `cleanup` and printed by `wait` as a warning;
+    it does not change the verdict.
   - **Sandbox proof.** In `-p` mode, settings that fail validation are
     silently ignored, so the sandbox must be shown. The transcript must hold a
     `sandbox_instructions` attachment whose configuration lists the run
@@ -171,7 +188,8 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
   A dropout makes the review `INCOMPLETE` and is never replaced; its parsed
   findings are kept, marked `from_dropout`, and not proved. Ids are
-  `code-review-<n>` and `codex-review-<n>`. Both parsers live in
+  `code-review-<n>` and `codex-review-<n>`; when one built-in runs twice,
+  `code-review-1-<n>` and `code-review-2-<n>` (or `codex-review-...`). Both parsers live in
   `orch-review.py`; `review_compare.py` loads it with
   `importlib.util.spec_from_file_location` (as `orch-review.py` loads
   `orch-task-resources.py`), and counts a run whose reply a parser rejects as
@@ -283,8 +301,7 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 **Stays:** `run`, `wait`, `record`; preflight, fingerprints, clones,
 `review.copy_ignored`, `review.setup`, the reduced environment, the Claude
 launch with sandbox and probe, `run_codex` and `codex_mcp_servers` (now only
-for a Codex prover or refuter, R3; they go if Felipe rejects R3's one-CLI
-design), evidence checks, experiments, refuter, decision, outcome log;
+for a Codex prover or refuter, R3), evidence checks, experiments, refuter, decision, outcome log;
 `references/refuter.md`, `refuter-schema.json`, `security-lens.md`.
 
 **Add:** `references/prover.md`, `prover-schema.json`, the two parsers, the
@@ -336,7 +353,11 @@ agent, starts the built-ins.
   and without the probe or the `sandbox_instructions` attachment), prover, refuter and runner
   streams, `codex review` stdout, stderr log and rollout in a fake
   `CODEX_HOME`, `codex sandbox` run directly. One case per rule, including:
-  provider choice with one or both CLIs and `same_provider`; the exact flags;
+  provider choice with one or both CLIs and `same_provider`; Full with one
+  CLI runs that built-in twice in separate copies and sessions, neither
+  given the other's reply, and says so in the verdict line; the kept
+  session is deleted by its exact id only, another session's files are
+  untouched, and a failed delete is reported; the exact flags;
   both parsers on the recorded shapes; an empty array before a full one;
   prose-only, conflicting or count-mismatched Codex replies; a missing or
   failed probe; an extra `modelUsage` key; every floor and their order; a
@@ -348,7 +369,9 @@ agent, starts the built-ins.
 - **Live checks** (run 2026-09-26 with Felipe's approval; see Verified).
 - **Comparison, paid, only when Felipe asks.** Arms `full-builtin` (`--path
   full --writer claude`) and `standard-builtin` (`--path standard --writer
-  claude`); `standard-builtin-codex` (`--writer codex`) is listed, not run.
+  claude`); listed, not run: `standard-builtin-codex` (`--writer codex`) and
+  `full-builtin-single` (`--path full --writer claude` with a `PATH` that
+  holds `claude` but not `codex`).
   Also scored: planted serious defects that end blocking, prover rank
   against planted rank, floors applied, share reproduced, clean-case
   verdicts (old `full`: 0 of 13 passed), `INCOMPLETE` rate and reasons,
@@ -369,29 +392,29 @@ agent, starts the built-ins.
 - A mild `style`, `scope-creep` or `test-gap` label is the prover's
   judgment; on Standard nothing re-checks it (Full's refuter can `RAISE`).
 - Whether a refuter's drop command targets the claim is judged, not checked.
+- With one CLI, Full's two reviews come from one provider and may share its
+  blind spots; the review says so, it does not hide it.
 - Two reviewers reporting one defect give two findings, proved separately.
 - Linux sandboxes, nested runs from a Codex session, and T5's other open
   items are still not verified.
 
-## Open questions for Felipe
+## Decided (Felipe, 2026-09-26)
 
-1. **One-CLI users (R3).** Recommend approving R3: Standard falls back to the
-   writer's own reviewer with `same_provider` recorded; Full needs both.
-2. **Reading `/code-review`'s transcript** (R5) means writing, then
-   deleting, one session's files under the person's `~/.claude/projects`.
-   Recommend accepting it: it is the only place the Bash calls and sandbox
-   configuration show. The alternative, `--tools Read,Grep,Glob,Agent` with
-   no Bash, needs no proof but loses the reviewer's own test runs.
-3. **Refuter on Standard.** Recommend not yet; decide from
-   `standard-builtin`.
-4. **Refuter drops** now need its own scenario test-run (R15). Recommend
-   accepting it; measure the drop rate in `full-builtin`.
-5. **Measure proof on replayed replies first:** fake reviewers print the
-   recorded replies, a real prover runs; about half the cost. Recommend yes,
-   then a small live pilot.
-6. **From T5:** the Claude alias, `opus` or `fable`.
-7. **Re-run the `code-review` arm** with the spec sentence in its `-p` text,
-   since it never received it. Recommend yes, with the new arms.
+1. **One CLI is enough (R3).** Standard: the other provider's reviewer when
+   installed, else the writer's own, with `same_provider`. Full: both
+   built-ins, or with one CLI that provider's built-in twice as independent
+   reviews, with `same_provider` stated in the verdict.
+2. **The kept `/code-review` session** is written, read and then deleted by
+   its exact id (R5); a failed delete is reported.
+3. **The Claude alias stays `opus`** (decided in T4).
+4. **No refuter on Standard** for now.
+5. **Refuter drops need its own scenario test-run** (R15).
+6. **The prover is measured on replayed replies first**, then a small live
+   pilot.
+7. **The `code-review` arm is re-run** with its spec sentence in the `-p`
+   text; the coordinator runs it.
+
+No open questions remain.
 
 ## Verified on 2026-09-26
 
