@@ -32,6 +32,9 @@
 #
 # NOTES
 #   Nothing here writes a file, runs a test command, or needs python3.
+#   The proposal never reads an existing cadence.json, but when the project
+#   already has an enabled one with a missing or other workflow, stderr names
+#   that file's error, so a clean proposal cannot hide it.
 #   Bash 3.2 compatible.
 
 set -uo pipefail
@@ -48,6 +51,16 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+
+# The one wording for a bad workflow, shared with orch-cadence-check.sh,
+# cadence-init.sh, orch-task-resources.py and orch-protocol.sh.
+WF_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
+EXISTING="$ROOT_DIR/docs/llm-orchestrator/cadence.json"
+if [ -z "$FORCE_PROFILE" ] && [ -f "$EXISTING" ] \
+   && grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "$EXISTING" 2>/dev/null \
+   && ! grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"' "$EXISTING" 2>/dev/null; then
+  echo "cadence-detect: the existing docs/llm-orchestrator/cadence.json $WF_FIX" >&2
+fi
 
 detect_profile() {
   local d="$ROOT_DIR"

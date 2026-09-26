@@ -410,6 +410,21 @@ if grep -qE '"(notes_dir|ticket_re)"' "$TMP/proposal.json"; then fail "detect un
 grep -q '"profile": "shell-suites"' "$TMP/proposal.json" && ok "tests/run-all.sh + tests/test-*.sh → shell-suites" || fail "detect shell-suites" "$(grep profile "$TMP/proposal.json")"
 DSNAP1="$TMP/dsnap1"; snapshot "$SS" "$DSNAP1"
 cmp -s "$DSNAP0" "$DSNAP1" && ok "the detector wrote nothing" || fail "detector wrote" "$(diff "$DSNAP0" "$DSNAP1" | head -5)"
+[[ ! -s "$TMP/derr" ]] && ok "no existing cadence.json: the detector says nothing on stderr" || fail "detect stderr" "$(cat "$TMP/derr")"
+# SCENE: the project already has an enabled cadence.json with no workflow, or
+# "legacy"; when the detector runs; expect the proposal (which says
+# "proportional") on stdout and the shared workflow error on stderr, so the
+# existing file's problem is never hidden behind a clean proposal.
+for WV in none legacy; do
+  DW="$TMP/detect-$WV"; mkdir -p "$DW/docs/llm-orchestrator"
+  if [[ "$WV" == "none" ]]; then printf '{ "enabled": true }\n' > "$DW/docs/llm-orchestrator/cadence.json"
+  else printf '{ "enabled": true, "workflow": "legacy" }\n' > "$DW/docs/llm-orchestrator/cadence.json"; fi
+  bash "$DETECT" --root "$DW" > "$TMP/dw.json" 2>"$TMP/dw.err"; RC=$?
+  if [[ "$RC" == "0" ]] && python3 -m json.tool "$TMP/dw.json" >/dev/null 2>&1 \
+     && grep -qF 'needs "workflow": "proportional"' "$TMP/dw.err" && grep -qF 'cadence-ruling.sh' "$TMP/dw.err"; then
+    ok "existing workflow $WV: the proposal still prints, and stderr names the existing file's error"
+  else fail "detect existing workflow $WV" "rc=$RC err=$(cat "$TMP/dw.err")"; fi
+done
 
 dprofile() { # dprofile <dir> -> the detected profile
   bash "$DETECT" --root "$1" 2>/dev/null | sed -n 's/.*"profile": "\([^"]*\)".*/\1/p' | head -1

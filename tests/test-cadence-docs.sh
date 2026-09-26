@@ -90,11 +90,12 @@ FM=$(grep -rIniE 'printed as (your|the) final message' "$ROOT/skills" "$ROOT/age
   || fail "final-message wording" "still written in: $(printf '%s\n' "$FM" | cut -d: -f1,2 | tr '\n' ' ')"
 
 printf '\n== One wording for the workflow error ==\n'
-# The error for a missing or other workflow is written in four places; each must
+# The error for a missing or other workflow is written in five places; each must
 # carry the same sentence, and it must say the fix is a ruling once the project
 # is armed (cadence.json is locked then).
 WF_SENTENCE='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
 for f in skills/cadence/scripts/orch-cadence-check.sh skills/cadence/scripts/cadence-init.sh \
+         skills/cadence/scripts/cadence-detect.sh \
          scripts/lib/orch-task-resources.py scripts/lib/orch-protocol.sh; do
   has "$ROOT/$f" "$WF_SENTENCE" && ok "$f carries the shared workflow error" \
     || fail "$f workflow error" "it does not carry: $WF_SENTENCE"
