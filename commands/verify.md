@@ -46,8 +46,7 @@ Next:
 - If failure: /llm-orchestrator:debug.
 ```
 
-(`Verify:` is a sub-section, never the top-level header — the protocol grader
-checks the first line for one of the six shapes.)
+(`Verify:` is a sub-section, never the top-level header.)
 
 Constraints:
 - Never claim "tests pass" without an actual run.

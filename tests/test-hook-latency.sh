@@ -126,9 +126,6 @@ check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-verify-gate.sh"         "$TRANSCRIPT_EVENT"
 ORCH_RETRY_CAP=1 check_latency "orch-retry-cap.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-stop.sh"                "$TRANSCRIPT_EVENT"
-# orch-protocol-grader.sh and orch-evidence-ledger.sh are no longer timed here: the
-# grader is deleted and the ledger is a retired, unregistered stub. Neither is a
-# hook hooks.json fires, so neither has a latency budget to defend.
 check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
 # The Codex twins: a Stop payload naming the same transcript (the check reads
 # it and finds no PASS label), and a PreToolUse Bash payload on a project with

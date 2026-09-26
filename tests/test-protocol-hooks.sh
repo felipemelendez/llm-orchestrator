@@ -502,7 +502,7 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
     env = dict(os.environ, ORCH_HOOK_PROFILE="strict", ORCH_HOME=str(pathlib.Path(tmp) / "private"))
     # CLAUDE_PROJECT_DIR would win over the event's cwd; drop it so the hook
     # starts from cwd (a subdirectory) and walks up to the project.
-    for key in ("ORCH_STRICT_STATUS", "ORCH_STRICT_PROTOCOL", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "ORCH_DISABLE_PROTOCOL_GRADER", "CLAUDE_PROJECT_DIR"):
+    for key in ("ORCH_STRICT_STATUS", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "CLAUDE_PROJECT_DIR"):
         env.pop(key, None)
 
     def grade(hook, reply, expected=0, cwd=child):
