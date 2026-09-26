@@ -227,5 +227,6 @@ to correct with the pilot, which prints each run's reported cost.
   the figure. Runs go one at a time, a minute or more each, so step 2 takes about
   three to six hours.
 
+Each orch-review run keeps its run directory in `review/` beside that run's results, because `orch-review.py` refuses one inside a temp dir; keep `--out` outside temp dirs.
 `orch-review.py` appends its outcome rows under `XDG_STATE_HOME`; the runner points
 that at `work/results/state/`, so eval runs stay out of the real outcome log.

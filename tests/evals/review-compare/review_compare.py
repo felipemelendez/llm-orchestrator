@@ -361,7 +361,11 @@ def run_one(arm, case, repo_src, out_dir, plugin_root, timeout):
     work = pathlib.Path(tempfile.mkdtemp(prefix="review-compare-"))
     repo = work / "repo"
     shutil.copytree(repo_src, repo, symlinks=True)
-    review_dir = work / "review"
+    # orch-review.py refuses a run directory in a temp dir (its sandboxes can write there), so it lives
+    # beside this run's results and is kept; a leftover one from an interrupted try is replaced.
+    review_dir = out_dir / "review"
+    shutil.rmtree(review_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
     values = {"plugin": str(plugin_root), "spec": case["spec"], "run_dir": str(review_dir),
               "python": sys.executable, "spec_note": SPEC_NOTE.format(spec=case["spec"])}
     # A TOML string for `codex -c`; codex 0.157.0 refuses a PROMPT together with --uncommitted.
