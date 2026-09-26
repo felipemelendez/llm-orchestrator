@@ -119,9 +119,10 @@ around that sentence.
 **The 2026-09-25/26 `code-review` arm never received its sentence.** It was given
 through `--append-system-prompt`, which does not reach the subagent
 `/code-review` reviews in (checked live on 2026-09-26: a required marker line
-and the spec path were ignored). Its numbers in `docs/MEASUREMENTS.md` are
-`/code-review` without the spec. The arm now carries the sentence in its `-p`
-text, and is to be re-run.
+and the spec path were ignored). Its first numbers in `docs/MEASUREMENTS.md`
+are `/code-review` without the spec. The arm now carries the sentence in its
+`-p` text; it was re-run that way on 2026-09-26 as `code-review-spec`, and the
+spec made no measurable difference to detection (`docs/MEASUREMENTS.md`).
 
 | arm | command |
 |---|---|
@@ -213,9 +214,9 @@ python3 $RC/review_compare.py build --out $RC/work/cases
 # 1. Pilot: two cases, the three main arms. Read $RC/work/results/runs/*/*/1/stdout.txt.
 python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
   --arms full-builtin,code-review,codex-review --case 'invoice-discounts--clean' --case 'invoice-discounts--02'
-# 2. Full with the built-ins, and /code-review again now that it gets its sentence, on all 83 cases.
+# 2. Full with the built-ins on all 83 cases (code-review with its sentence already ran, as code-review-spec).
 python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
-  --arms full-builtin,code-review --max-cost-usd 250
+  --arms full-builtin --max-cost-usd 250
 # 3. Standard with the built-ins.
 python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
   --arms standard-builtin --max-cost-usd 150
@@ -238,7 +239,7 @@ to correct with the pilot, which prints each run's reported cost.
 - `code-review` at `high`: about $0.17 to $0.60 per case (a live run cost $0.17).
 - `standard-builtin`: `codex review` plus prover launches, about $0.20 to $1.
 - Step 1 (2 cases × 3 arms): about $2 to $8.
-- Step 2 (83 cases × `full-builtin` and `code-review`): about $65 to $300.
+- Step 2 (83 cases × `full-builtin`): about $50 to $250.
 - `--max-cost-usd` stops starting new runs once the reported Claude cost reaches
   the figure. Runs go one at a time, a minute or more each, so step 2 takes several
   hours.

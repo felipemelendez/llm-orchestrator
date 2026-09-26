@@ -80,8 +80,8 @@ not show a refused write outside the copy.
 not reach the subagent `/code-review` reviews in (a required marker line and the
 spec path were ignored; the same text in the `-p` prompt was obeyed). So the
 `code-review` row below is `/code-review` without the spec, while `full` and
-`codex-review` had it. The arm now carries the sentence in its `-p` text and is
-to be re-run.
+`codex-review` had it. The arm now carries the sentence in its `-p` text; the
+re-run is the `code-review-spec` row and the paragraph after the table.
 
 Scored with the corrected scorer. The first scoring read each `/code-review`
 reply as one finding, because that reply puts its findings in a JSON array in a
@@ -94,6 +94,18 @@ reads one finding per array item.
 | `code-review` | 125/134 (93%) | 59/63 | 66/71 | 14/14 | 481 | 5.8 | 0/14 | 0.6 |
 | `codex-review` | 130/134 (97%) | 61/63 | 69/71 | 14/14 | 107 | 1.3 | 3/14 | 1.1 |
 | `full` (78 complete) | 123/126 (98%) | 59/61 | 64/65 | 14/14 | 258 | 3.3 | 0/13 | 3.3 |
+| `code-review-spec` | 124/134 (93%) | 60/63 | 64/71 | 14/14 | 514 | 6.2 | 0/14 | 0.6 |
+
+**`/code-review` with its spec sentence (2026-09-26).** The `code-review` arm
+was re-run on all 83 cases with the sentence in its `-p` text (arm
+`code-review-spec`, claude-opus-5-5, 83 of 83 runs exited 0, same scorer); 10
+findings pointed at a planted defect but described something else. Against the
+run without the spec, 4 defects were found only without it and 3 only with it,
+p = 1.0: the spec made no measurable difference to detection. It gave slightly
+more extra findings (more on 36 cases, fewer on 18, p = 0.02). Against
+`codex-review`, 2 found only by `code-review-spec` and 8 only by
+`codex-review`, p = 0.11; against `full`, 1 and 7, p = 0.07. None is a
+difference in detection.
 
 Paired on the defects both arms saw (exact McNemar): `full` against
 `code-review`, 6 found only by `full` and 1 only by `code-review`, p = 0.125;
