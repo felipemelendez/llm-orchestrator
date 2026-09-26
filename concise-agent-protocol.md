@@ -31,10 +31,9 @@ remaining validation; BLOCKED names the unavailable prerequisite. NOT APPLICABLE
 states why no meaningful automated check applies and confirms manual diff
 inspection. It is never an executed pass and cannot clear failed, unknown,
 stale or required validation. Use PARTIAL/BLOCKED when the task remains unfinished.
-This vocabulary is checked by
-the separate evidence gate. Missing/legacy workflow retains the original
-`Verify:` contract below, and so do subagent `Status:` returns in a project
-without an enabled cadence.
+This vocabulary is checked by the separate evidence gate. A project without an
+enabled cadence keeps the `Verify:` contract below, and so do its subagent
+`Status:` returns.
 
 ### 1. Changed — default response for code edits
 
@@ -188,30 +187,11 @@ The two schedules are not interchangeable, and the split follows Anthropic's cur
 
 Anything an agent needs *once* — skill precedence, the working rules, the routing table — belongs in the `using-orchestrator` eager block or the skill body, not here. Repeating it per turn buys nothing on Claude 5 models and teaches the agent that this corpus repeats itself, which is what trains skimming.
 
-### Recovery core — SessionStart, post-compaction only
+### Recovery core and turn nudge
 
-Injected once per session, and again after a compaction (`scripts/hooks/session-start.sh`).
-
-<!-- orch-turn-reminder-start -->
-LLM Orchestrator — the protocol still applies after this compaction boundary:
-- Unless project instructions set a reply format, open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
-- When two skills both match: process → implementation → verification (decide how, then build, then check).
-- Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.
-<!-- orch-turn-reminder-end -->
-
-### Turn nudge — UserPromptSubmit, every turn
-
-Budget: 233 bytes. `tests/test-protocol-drift.sh` enforces the ceiling.
-
-<!-- orch-turn-nudge-start -->
-LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. "Changed:" REQUIRES a "Verify:" line (real command + output). Lead with the outcome.
-<!-- orch-turn-nudge-end -->
-
-### Proportional recovery and turn reminders
-
-The hooks select these blocks only from an enabled proportional project config.
-The turn nudge's budget is 273 bytes. Shape acceptance does not attest
-that verification ran.
+The recovery core is injected after a compaction (`scripts/hooks/session-start.sh`),
+the turn nudge on every prompt (`scripts/hooks/user-prompt-submit.sh`). The turn
+nudge's budget is 273 bytes. Shape acceptance does not attest that verification ran.
 
 <!-- orch-proportional-reminder-start -->
 LLM Orchestrator — the protocol still applies after this compaction boundary:

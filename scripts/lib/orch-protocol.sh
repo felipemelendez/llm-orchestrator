@@ -29,14 +29,13 @@ _ORCH_PROTOCOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd
 # shellcheck source=scripts/lib/orch-project.sh
 [[ -f "${_ORCH_PROTOCOL_DIR}/orch-project.sh" ]] && source "${_ORCH_PROTOCOL_DIR}/orch-project.sh"
 
-# orch_protocol_workflow [hook-input-json]: prints "proportional" or "legacy"
-# for a project whose cadence.json has enabled: true, "error" when the file
-# exists but does not decode, and nothing when the cadence is absent or
-# disabled. Only "proportional" and "legacy" mean the cadence is on; "error"
-# lets the session-start verdict report the broken file. Without python3 the
-# file is read with grep instead: it counts as enabled when it contains
-# "enabled": true, and as proportional when it contains
-# "workflow": "proportional".
+# orch_protocol_workflow [hook-input-json]: prints "proportional" for a project
+# whose cadence.json has enabled: true and "workflow": "proportional", "error"
+# when it is enabled with any other workflow or none, "undecodable" when the
+# file does not decode, and nothing when the cadence is absent or disabled.
+# Only "proportional" means the cadence is on. The other two are errors the
+# hooks name with orch_protocol_config_error rather than acting as if there
+# were no cadence. Without python3 the file is read with grep instead.
 orch_protocol_workflow() { # [hook-input-json]
   local cfg
   declare -f orch_cadence_find >/dev/null 2>&1 || return 0
@@ -49,10 +48,10 @@ import json, sys
 try:
     config = json.load(open(sys.argv[1]))
 except (OSError, ValueError):
-    print("error")
+    print("undecodable")
     sys.exit(0)
 if isinstance(config, dict) and config.get("enabled") is True:
-    print("proportional" if config.get("workflow") == "proportional" else "legacy")
+    print("proportional" if config.get("workflow") == "proportional" else "error")
 PYEOF
     return 0
   fi
@@ -60,8 +59,21 @@ PYEOF
   if grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"' "${cfg}"; then
     printf 'proportional\n'
   else
-    printf 'legacy\n'
+    printf 'error\n'
   fi
+}
+
+# The one wording for a bad workflow, shared with orch-cadence-check.sh,
+# cadence-init.sh and orch-task-resources.py (tests/test-cadence-docs.sh).
+ORCH_WORKFLOW_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
+
+# orch_protocol_config_error <state>: the one line a hook shows for a config
+# that is an error ("error" or "undecodable"); nothing for any other state.
+orch_protocol_config_error() {
+  case "${1:-}" in
+    error)       printf 'cadence: docs/llm-orchestrator/cadence.json %s\n' "${ORCH_WORKFLOW_FIX}" ;;
+    undecodable) printf 'cadence: docs/llm-orchestrator/cadence.json does not decode; repair the JSON, through a ruling (cadence-ruling.sh) if the project is armed\n' ;;
+  esac
 }
 
 orch_protocol_is_proportional() { # [hook-input-json]

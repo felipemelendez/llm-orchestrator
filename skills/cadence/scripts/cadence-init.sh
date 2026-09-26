@@ -217,7 +217,7 @@ done
 # ---------- preflight ---------------------------------------------------------
 # Nothing below this block writes; nothing above it does either.
 
-for f in "$REF_DIR/laws.md" "$REF_DIR/handoff.md" "$REF_DIR/design-rulings.md" \
+for f in "$REF_DIR/laws.md" "$REF_DIR/design-rulings.md" \
          "$REF_DIR/traps.md" "$REF_DIR/commit-msg"; do
   [ -f "$f" ] || refuse "" "the skill's references are incomplete — $f is missing"
 done
@@ -235,7 +235,7 @@ GITIGNORE_F="$ROOT_DIR/$GITIGNORE_REL"
 # is as often a directory two levels up (docs/, .claude/, .githooks/) as the
 # named file, so every target is resolved, not only the ones that are links.
 for rel in AGENTS.md CLAUDE.md "$SETTINGS_REL" "$GITIGNORE_REL" "$LAWS_REL" \
-           docs/llm-orchestrator/HANDOFF_TEMPLATE.md docs/llm-orchestrator/DESIGN_RULINGS.md \
+           docs/llm-orchestrator/DESIGN_RULINGS.md \
            docs/llm-orchestrator/TRAPS.md "$CFG_REL" "$LOCK_REL" \
            .githooks/commit-msg .githooks/orch-cadence-check.sh; do
   t="$ROOT_PHYS/$rel"
@@ -512,9 +512,8 @@ if [ -n "$OPT_CONFIG" ]; then
   [ -f "$OPT_CONFIG" ] || refuse "" "--config names a file that does not exist: $OPT_CONFIG"
   CFG_SRC="$OPT_CONFIG"
 elif [ -f "$ROOT_DIR/$CFG_REL" ]; then
-  # Reinstalling instructions is not permission to migrate an existing policy.
-  # In particular a missing workflow must retain its legacy meaning. A
-  # migration supplies --config deliberately.
+  # Reinstalling instructions is not permission to migrate an existing policy;
+  # a change to it is supplied with --config deliberately.
   CFG_SRC="$ROOT_DIR/$CFG_REL"
 else
   [ -f "$SCRIPT_DIR/cadence-detect.sh" ] \
@@ -524,9 +523,11 @@ else
   CFG_SRC="$TMPD/detected.json"
 fi
 
+WORKFLOW_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
 if have_py; then
-  "$PY" - "$CFG_SRC" "$CFG_NEW" > "$TMPD/cfg.msg" 2>&1 <<'PYEOF'
-import json, sys
+  WORKFLOW_FIX="$WORKFLOW_FIX" "$PY" - "$CFG_SRC" "$CFG_NEW" > "$TMPD/cfg.msg" 2>&1 <<'PYEOF'
+import json, os, sys
+WORKFLOW_FIX = os.environ["WORKFLOW_FIX"]
 src, dst = sys.argv[1], sys.argv[2]
 try:
     with open(src) as fh:
@@ -541,18 +542,17 @@ if not isinstance(d, dict):
 # cadence that is off while the report says a project was armed.
 d["schema"] = 1
 d["enabled"] = True
-if d.get("workflow", "legacy") not in ("legacy", "proportional"):
-    print('invalid workflow: use "legacy" or "proportional" (omit only for legacy)')
+if d.get("workflow") != "proportional":
+    print(WORKFLOW_FIX)
     sys.exit(2)
 with open(dst, "w") as fh:
     json.dump(d, fh, indent=2)
     fh.write("\n")
-if d.get("workflow") == "proportional":
-    prod, tests, configs = (d.get(k) for k in
-        ("prod_globs", "test_globs", "verification_config_globs"))
-    if (not isinstance(prod, list) or not isinstance(tests, list)
-            or not prod + tests or not isinstance(configs, list)):
-        print("execution evidence scope is incomplete: configure prod_globs/test_globs covering actual source/tests, verification_config_globs, and a real runner.test_cmd. Until configured and checked, verification remains PENDING; initialization does not certify source.")
+prod, tests, configs = (d.get(k) for k in
+    ("prod_globs", "test_globs", "verification_config_globs"))
+if (not isinstance(prod, list) or not isinstance(tests, list)
+        or not prod + tests or not isinstance(configs, list)):
+    print("execution evidence scope is incomplete: configure prod_globs/test_globs covering actual source/tests, verification_config_globs, and a real runner.test_cmd. Until configured and checked, verification remains PENDING; initialization does not certify source.")
 PYEOF
   [ $? -eq 0 ] || refuse "$CFG_REL" "$(head -1 "$TMPD/cfg.msg")"
 else
@@ -562,10 +562,8 @@ else
     || refuse "$CFG_REL" "without python3 the config is copied verbatim and must already carry \"schema\": 1"
   grep -qE '"enabled"[[:space:]]*:[[:space:]]*true([[:space:],}]|$)' "$CFG_SRC" \
     || refuse "$CFG_REL" "without python3 the config is copied verbatim and must already carry \"enabled\": true"
-  if grep -qE '"workflow"[[:space:]]*:' "$CFG_SRC"; then
-    grep -qE '"workflow"[[:space:]]*:[[:space:]]*"(legacy|proportional)"[[:space:]]*([,}]|$)' "$CFG_SRC" \
-      || refuse "$CFG_REL" "invalid workflow: use \"legacy\" or \"proportional\" (omit only for legacy)"
-  fi
+  grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"[[:space:]]*([,}]|$)' "$CFG_SRC" \
+    || refuse "$CFG_REL" "$WORKFLOW_FIX"
   cp "$CFG_SRC" "$CFG_NEW" || refuse "$CFG_REL" "could not stage the config"
 fi
 
@@ -576,7 +574,7 @@ else
   echo "cadence-init: $ROOT_DIR"
 fi
 
-# ---------- 1. the four law documents ----------------------------------------
+# ---------- 1. the three law documents ---------------------------------------
 LAWS_CREATED=0
 [ "$DRY" = "1" ] || mkdir -p "$ROOT_DIR/docs/llm-orchestrator" || refuse "" "cannot create docs/llm-orchestrator under $ROOT_DIR"
 # The report line comes AFTER the write, never before it: `created <path>` for a
@@ -593,7 +591,6 @@ copy_doc() { # <reference> <relative destination>
   return 0
 }
 copy_doc laws.md           "$LAWS_REL"
-copy_doc handoff.md        docs/llm-orchestrator/HANDOFF_TEMPLATE.md
 copy_doc design-rulings.md docs/llm-orchestrator/DESIGN_RULINGS.md
 copy_doc traps.md          docs/llm-orchestrator/TRAPS.md
 

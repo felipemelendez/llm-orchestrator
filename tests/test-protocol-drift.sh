@@ -9,10 +9,11 @@
 #   1. canonical: six shapes + the full Status enum (incl. PARTIAL)
 #   2. BOTH injected blocks are EXTRACTED from canonical marked blocks, and the
 #      per-turn hook's embedded fallback is byte-identical to its source:
-#        - orch-turn-reminder — SessionStart's post-compaction recovery core
-#        - orch-turn-nudge    — UserPromptSubmit's every-turn distillation,
-#                               capped at its byte ceiling so it cannot re-bloat
-#                               into a second copy of the recovery core
+#        - orch-proportional-reminder — SessionStart's post-compaction core
+#        - orch-proportional-nudge    — UserPromptSubmit's every-turn
+#                                       distillation, capped at its byte
+#                                       ceiling so it cannot re-bloat into a
+#                                       second copy of the recovery core
 #      Both are injected only in a project whose cadence.json is enabled.
 #   3. the using-orchestrator FORMAT block and output-styles/orchestrator.md
 #      carry the six headers and the Verify: hard rule; the always-injected
@@ -50,87 +51,97 @@ grep -q 'DONE | DONE_WITH_CONCERNS | PARTIAL | BLOCKED | NEEDS_CONTEXT' "$CANON"
   && ok "canonical Status enum includes PARTIAL" || fail "canonical enum" "PARTIAL missing from enum line"
 
 printf '\n%s== post-compaction recovery core is single-sourced ==%s\n' "$DIM" "$RESET"
-BLOCK=$(awk '/<!-- orch-turn-reminder-start -->/{f=1;next} /<!-- orch-turn-reminder-end -->/{f=0} f' "$CANON")
+BLOCK=$(awk '/<!-- orch-proportional-reminder-start -->/{f=1;next} /<!-- orch-proportional-reminder-end -->/{f=0} f' "$CANON")
 [[ -n "$BLOCK" ]] && ok "canonical carries the marked recovery-core block" || fail "recovery core block" "markers missing or empty"
 for h in $HEADERS; do printf '%s' "$BLOCK" | grep -q "\"$h\"" || { fail "recovery core headers" "recovery block missing \"$h\""; break; }; done
-printf '%s' "$BLOCK" | grep -q 'REQUIRE a "Verify:"' && ok "recovery core states the Verify: hard rule" || fail "recovery Verify rule" "missing"
+printf '%s' "$BLOCK" | grep -q 'Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE' && ok "recovery core states the completion vocabulary" || fail "recovery vocabulary" "missing"
 # session-start.sh's compact path is the only consumer; it must read this marker.
-grep -q 'PROTOCOL_MARKER="orch-turn-reminder"' "${ROOT}/scripts/hooks/session-start.sh" \
+grep -q 'orch-proportional-reminder' "${ROOT}/scripts/hooks/session-start.sh" \
   && ok "session-start.sh compact path reads the recovery core" \
-  || fail "compact path wiring" "session-start.sh no longer extracts orch-turn-reminder"
+  || fail "compact path wiring" "session-start.sh no longer extracts orch-proportional-reminder"
+for m in orch-turn-reminder orch-turn-nudge; do
+  if grep -q "$m" "$CANON" "${ROOT}/scripts/hooks/session-start.sh" "${ROOT}/scripts/hooks/user-prompt-submit.sh"; then
+    fail "no second reply format" "$m is still named"; else ok "no $m block or reader is left"; fi
+done
 
 printf '\n%s== per-turn nudge is single-sourced and stays small ==%s\n' "$DIM" "$RESET"
-# The ceilings are the per-turn budgets. The nudge is paid on every turn in a
-# cadence-enabled project, so it may not grow past them.
-NUDGE_MAX=233
+# The ceiling is the per-turn budget. The nudge is paid on every turn in a
+# cadence-enabled project, so it may not grow past it.
 PNUDGE_MAX=273
-NUDGE=$(awk '/<!-- orch-turn-nudge-start -->/{f=1;next} /<!-- orch-turn-nudge-end -->/{f=0} f' "$CANON")
-[[ -n "$NUDGE" ]] && ok "canonical carries the marked turn-nudge block" || fail "nudge block" "markers missing or empty"
-for h in $HEADERS; do printf '%s' "$NUDGE" | grep -q "\"$h\"" || { fail "nudge headers" "nudge block missing \"$h\""; break; }; done
-printf '%s' "$NUDGE" | grep -q 'REQUIRES a "Verify:"' && ok "nudge states the Verify: hard rule" || fail "nudge Verify rule" "missing"
-# The nudge is billed on EVERY turn. A byte ceiling is the only thing that stops
-# it drifting back into a second copy of the recovery core, which is what the
-# Claude 5 context-engineering guidance says to stop paying for.
-NUDGE_BYTES=$(printf '%s' "$NUDGE" | wc -c | tr -d ' ')
-if (( NUDGE_BYTES <= NUDGE_MAX )); then
-  ok "nudge stays within its per-turn budget (${NUDGE_BYTES} <= ${NUDGE_MAX} bytes)"
+PNUDGE=$(awk '/<!-- orch-proportional-nudge-start -->/{f=1;next} /<!-- orch-proportional-nudge-end -->/{f=0} f' "$CANON")
+[[ -n "$PNUDGE" ]] && ok "canonical carries the marked turn-nudge block" || fail "nudge block" "markers missing or empty"
+for h in $HEADERS; do printf '%s' "$PNUDGE" | grep -q "\"$h\"" || { fail "nudge headers" "nudge block missing \"$h\""; break; }; done
+PBYTES=$(printf '%s' "$PNUDGE" | wc -c | tr -d ' ')
+if (( PBYTES <= PNUDGE_MAX )); then
+  ok "nudge stays within its per-turn budget (${PBYTES} <= ${PNUDGE_MAX} bytes)"
 else
-  fail "nudge budget" "${NUDGE_BYTES} bytes exceeds the ${NUDGE_MAX}-byte ceiling — trim it or move the text to the using-orchestrator eager block"
+  fail "nudge budget" "${PBYTES} bytes exceeds the ${PNUDGE_MAX}-byte ceiling — trim it or move the text to the using-orchestrator eager block"
 fi
-# The nudge must be a distillation, not the recovery core verbatim.
-[[ "$NUDGE" != "$BLOCK" ]] && ok "nudge is a distillation, not a copy of the recovery core" \
+[[ "$PNUDGE" != "$BLOCK" ]] && ok "nudge is a distillation, not a copy of the recovery core" \
   || fail "nudge duplication" "the per-turn block is byte-identical to the post-compaction core"
-# The skill-precedence ordering moved to the SessionStart eager block (paid once)
-# and must NOT come back per-turn.
-printf '%s' "$NUDGE" | grep -q 'systematic-debugging' \
+printf '%s' "$PNUDGE" | grep -q 'systematic-debugging' \
   && fail "nudge scope creep" "skill precedence belongs in the using-orchestrator eager block, not on every turn" \
   || ok "nudge carries no skill-routing text (that lives in the eager block)"
+printf '%s' "$PNUDGE" | grep -q 'applicability never clears failed or required checks' \
+  && ok "nudge says applicability never clears failed or required checks" \
+  || fail "nudge applicability" "missing"
+printf '%s' "$PNUDGE" | grep -q 'unless project instructions set a reply format' \
+  && ok "nudge yields to the project's own reply format" || fail "nudge project format" "missing"
 
 # Hook output (canonical present) vs hook output (canonical hidden → fallback)
 # must be identical — the embedded fallback may not drift from the source.
 extract_ctx() { python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])'; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
-# The legacy nudge is the fixture here; select it from a disposable project
-# with an enabled legacy cadence, not from whatever cadence policy the
-# launching checkout carries.
 cd "$TMP" || exit 1
-mkdir -p "$TMP/legacy/docs/llm-orchestrator" "$TMP/x/hooks" "$TMP/x/lib"
-printf '{"enabled":true}\n' > "$TMP/legacy/docs/llm-orchestrator/cadence.json"
-export CLAUDE_PROJECT_DIR="$TMP/legacy"
+mkdir -p "$TMP/x/hooks" "$TMP/x/lib"
 cp "${ROOT}/scripts/hooks/user-prompt-submit.sh" "$TMP/x/hooks/"
 cp "${ROOT}/scripts/lib/orch-protocol.sh" "${ROOT}/scripts/lib/orch-project.sh" "$TMP/x/lib/"
-LIVE=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
-FALLBACK=$(printf '{"session_id":"drift-test","prompt":"x"}' | ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
-if [[ -n "$LIVE" && "$LIVE" == "$FALLBACK" ]]; then
-  ok "hook fallback is byte-identical to the canonical block"
-else
-  fail "fallback drift" "the hook's embedded fallback differs from concise-agent-protocol.md's marked block — update the fallback"
-fi
-[[ "$LIVE" == "$NUDGE" ]] && ok "hook injects the canonical nudge verbatim" || fail "hook nudge" "hook output is not the marked nudge block"
 
-printf '\n%s== proportional reminders use actual project policy ==%s\n' "$DIM" "$RESET"
-PNUDGE=$(awk '/<!-- orch-proportional-nudge-start -->/{f=1;next} /<!-- orch-proportional-nudge-end -->/{f=0} f' "$CANON")
-PBYTES=$(printf '%s' "$PNUDGE" | wc -c | tr -d ' ')
-[[ -n "$PNUDGE" && "$PBYTES" -le "$PNUDGE_MAX" ]] && ok "proportional nudge stays within ${PNUDGE_MAX} bytes (${PBYTES})" || fail "proportional nudge budget" "$PBYTES bytes"
-printf '%s' "$NUDGE" | grep -q 'Lead with the outcome\.' && ok "legacy nudge says to lead with the outcome" || fail "legacy nudge outcome" "missing"
-printf '%s' "$PNUDGE" | grep -q 'applicability never clears failed or required checks' \
-  && ok "proportional nudge says applicability never clears failed or required checks" \
-  || fail "proportional nudge applicability" "missing"
-for n in "$NUDGE" "$PNUDGE"; do
-  printf '%s' "$n" | grep -q 'unless project instructions set a reply format' \
-    || { fail "nudge yields to the project's format" "a nudge lacks the project-format clause"; break; }
-done
+printf '\n%s== the reminders use actual project policy ==%s\n' "$DIM" "$RESET"
 mkdir -p "$TMP/project/docs/llm-orchestrator"
 printf '{"enabled":true,"workflow":"proportional"}\n' > "$TMP/project/docs/llm-orchestrator/cadence.json"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$TMP/project")
 PLIVE=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" | extract_ctx)
 PFALLBACK=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "$TMP/x/hooks/user-prompt-submit.sh" | extract_ctx)
-[[ "$PLIVE" == "$PNUDGE" && "$PFALLBACK" == "$PNUDGE" ]] && ok "proportional live and installed fallback reminders match canonical" || fail "proportional reminder drift" "$PLIVE / $PFALLBACK"
+[[ "$PLIVE" == "$PNUDGE" && "$PFALLBACK" == "$PNUDGE" ]] && ok "the live nudge and the installed fallback both match canonical" || fail "reminder drift" "$PLIVE / $PFALLBACK"
 PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":"compact"}))' "$TMP/project")
 PCOMPACT=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$TMP/project" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | python3 -c 'import json,sys; print(json.load(sys.stdin)["hookSpecificOutput"]["additionalContext"])')
 if printf '%s' "$PCOMPACT" | grep -q 'Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE' && ! printf '%s' "$PCOMPACT" | grep -q 'REQUIRE a "Verify:"'; then
-  ok "proportional compaction chooses the shared completion vocabulary"
-else fail "proportional compaction vocabulary" "$PCOMPACT"; fi
+  ok "compaction uses the shared completion vocabulary"
+else fail "compaction vocabulary" "$PCOMPACT"; fi
+
+printf '\n%s== an enabled cadence without "workflow": "proportional" is an error, not a format ==%s\n' "$DIM" "$RESET"
+# SCENE: an enabled cadence.json with no workflow, or with "legacy"; when a
+# session starts and a prompt is sent; expect no reply-format rule, and the
+# session-start verdict, the per-turn hook and the handoff nudge each naming
+# the one-line fix — never silently acting as if no cadence were there.
+for WV in none legacy; do
+  WD="$TMP/wf-$WV"; mkdir -p "$WD/docs/llm-orchestrator"
+  if [[ "$WV" == "none" ]]; then printf '{"enabled": true}\n' > "$WD/docs/llm-orchestrator/cadence.json"
+  else printf '{"enabled": true, "workflow": "legacy"}\n' > "$WD/docs/llm-orchestrator/cadence.json"; fi
+  PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$WD")
+  RAW=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$WD" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh")
+  CTX=$(printf '%s' "$RAW" | extract_ctx)
+  if [[ "$(printf '%s\n' "$CTX" | grep -c .)" == "1" ]] && printf '%s' "$CTX" | grep -q 'needs "workflow": "proportional"' \
+     && ! printf '%s' "$CTX" | grep -qE 'Changed:|Verification: PASS'; then
+    ok "workflow ${WV}: the per-turn hook injects the one-line error and no format rule"
+  else fail "workflow ${WV}: per-turn hook" "$RAW"; fi
+  NT="$TMP/nudge-$WV.jsonl"
+  printf '{"type":"assistant","message":{"role":"assistant","content":"x","usage":{"input_tokens":5000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' > "$NT"
+  PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x","session_id":"nudge-"+sys.argv[3],"transcript_path":sys.argv[2]}))' "$WD" "$NT" "$WV")
+  CTX=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$WD" ORCH_HOME="$TMP/home" ORCH_CONTEXT_HANDOFF_TOKENS=1 bash "${ROOT}/scripts/hooks/orch-handoff-nudge.sh" | extract_ctx)
+  if printf '%s' "$CTX" | grep -q 'needs "workflow": "proportional"' && printf '%s' "$CTX" | grep -q 'handoff'; then
+    ok "workflow ${WV}: the handoff nudge names the error too"
+  else fail "workflow ${WV}: handoff nudge" "$CTX"; fi
+  for src in startup compact; do
+    PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":sys.argv[2]}))' "$WD" "$src")
+    CTX=$(printf '%s' "$PIN" | CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$WD" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | extract_ctx)
+    if printf '%s' "$CTX" | grep -q 'needs "workflow": "proportional"' \
+       && ! printf '%s' "$CTX" | grep -qE 'Changed:|Verification: PASS|shape header'; then
+      ok "workflow ${WV}: session start (${src}) names the fix and carries no reply-format rule"
+    else fail "workflow ${WV}: session start (${src})" "$(printf '%s' "$CTX" | head -3)"; fi
+  done
+done
 
 printf '\n%s== a project without an enabled cadence gets no format rule ==%s\n' "$DIM" "$RESET"
 mkdir -p "$TMP/plain"
@@ -170,7 +181,16 @@ both_hooks() { # <label> <project-dir> <expect on|off> [PATH override]
 }
 MALFORMED="$TMP/malformed"; mkdir -p "$MALFORMED/docs/llm-orchestrator"
 printf '{"enabled": true, "workflow": "proportional",\n' > "$MALFORMED/docs/llm-orchestrator/cadence.json"
-both_hooks "malformed cadence.json" "$MALFORMED" off
+# A config nobody can read is an error: no reply-format rule anywhere, and the
+# per-turn hook names the error in one line instead of staying silent.
+MRAW=$(printf '{"prompt":"x"}' | ( cd "$MALFORMED" && CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" ) | extract_ctx)
+if [[ "$(printf '%s\n' "$MRAW" | grep -c .)" == "1" ]] && printf '%s' "$MRAW" | grep -q 'does not decode' \
+   && ! printf '%s' "$MRAW" | grep -qE 'Changed:|Verification: PASS'; then
+  ok "malformed cadence.json: the per-turn hook names the error in one line, with no format rule"
+else fail "malformed per-turn" "$MRAW"; fi
+MSTART=$(printf '{"source":"startup"}' | ( cd "$MALFORMED" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" 2>/dev/null ) | extract_ctx)
+case "$MSTART" in *"$FORMAT_MARK"*) fail "malformed start" "session start carries the reply-format rule" ;;
+  *) ok "malformed cadence.json: session start carries no reply-format rule" ;; esac
 MCTX=$(printf '{"source":"startup"}' | ( cd "$MALFORMED" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" ) | extract_ctx)
 case "$MCTX" in *"does not decode"*) ok "malformed cadence.json: the session-start verdict still reports the error" ;;
   *) fail "malformed verdict" "$(printf '%s' "$MCTX" | head -1)" ;; esac

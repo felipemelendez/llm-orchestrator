@@ -257,7 +257,7 @@ Implementation reference with code links and the layer-stack diagram: [`ARCHITEC
 
 **What it is.** A project that opts in gets three things both people and agents can read: a rulebook (`docs/llm-orchestrator/LAWS.md`), a config that says how to run its tests (`cadence.json`), and a lock over both. The Simple, Standard and Full paths, and the completion rule, are described above under [What happens when cadence is enabled?](#what-happens-when-cadence-is-enabled). On Full work a third reviewer, the refuter, judges every serious or catastrophic finding the two reviewers reported. Passing results are reused as long as the code they covered has not changed, so nothing is rerun for show.
 
-Projects initialized before this release keep the older fixed sequence (brief review, implementer, two blind reviewers, refuter, fixer, gate, landing with five report files) until they migrate. It is described in full in the cadence skill's [`CADENCE.md`](./skills/cadence/CADENCE.md).
+The older fixed sequence (brief review, implementer, two blind reviewers, refuter, fixer, gate, landing with five report files) was removed. A `cadence.json` without `"workflow": "proportional"` is refused with that one-line fix. The full text is the cadence skill's [`CADENCE.md`](./skills/cadence/CADENCE.md).
 
 **Why.** Cadence keeps low-risk changes quick and gives risky changes independent review, with real checks before anything is called done. The stage-by-stage counts from one operator's use, and what those counts cannot show, are in [`docs/MEASUREMENTS.md`](./docs/MEASUREMENTS.md); the claims the design rests on, with their sources, are in [`docs/cadence-evidence.md`](./docs/cadence-evidence.md).
 

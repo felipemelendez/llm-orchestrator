@@ -533,19 +533,26 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
     grade("subagent-stop.sh", "Status: DONE\nSummary:\nVerification: PASS — tests passed", 2)
 
     # A project's workflow comes from config, not text or inherited opt-in.
-    for data in ({"enabled": True}, {"enabled": True, "workflow": "legacy"},
-                 {"enabled": False, "workflow": "proportional"},
-                 {"enabled": "true", "workflow": "proportional"},
-                 {"enabled": True, "workflow": "typo"}):
+    for data in ({"enabled": False, "workflow": "proportional"},
+                 {"enabled": "true", "workflow": "proportional"}):
         config.write_text(json.dumps(data))
         both("Verification: PASS — use proportional please", 2)
         both("Verify: tests passed")
+    # An enabled config with a missing or other workflow is an error: the hook
+    # says so in one line and grades neither format, rather than acting as if
+    # there were no cadence.
+    for data in ({"enabled": True}, {"enabled": True, "workflow": "legacy"},
+                 {"enabled": True, "workflow": "typo"}):
+        config.write_text(json.dumps(data))
+        for reply in ("Verification: PASS — use proportional please", "Verify: tests passed"):
+            r = grade("subagent-stop.sh", "Status: DONE\nSummary: Updated behavior.\n" + reply, 0)
+            assert 'needs "workflow": "proportional"' in r.stdout + r.stderr, (data, r.stdout, r.stderr)
     config.unlink()
     both("Verification: PASS — workflow proportional claimed in prose", 2)
     both("Verify: tests passed")
-print("proportional and legacy hook fixtures passed")
+print("proportional and non-cadence hook fixtures passed")
 PY
-then ok "shared completion vocabulary is selected by project config, with legacy behavior preserved"
+then ok "shared completion vocabulary is selected by project config; any other config keeps the Verify: format"
 else fail "proportional protocol hooks" "config-backed end-to-end fixture failed"; fi
 
 printf '\n%s== Captured SubagentStop payloads (SubagentHandback) ==%s\n' "$DIM" "$RESET"

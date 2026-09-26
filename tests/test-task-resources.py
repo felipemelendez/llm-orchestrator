@@ -2,6 +2,7 @@
 """Filesystem, Git preservation and deterministic lifecycle concurrency checks."""
 
 import importlib.util
+import io
 import fcntl
 import json
 import multiprocessing
@@ -581,6 +582,16 @@ class LifecycleTests(unittest.TestCase):
         result = subprocess.run(command + ["retry", "--project", str(self.project)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["tasks"][0]["status"], "done")
+
+    def test_hook_names_the_fix_for_a_missing_or_legacy_workflow(self):
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        for value in ({"enabled": True}, {"enabled": True, "workflow": "legacy"}):
+            with self.subTest(value=value):
+                config.write_text(json.dumps(value))
+                with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                    MOD.hook_retry(self.manager.base, {"cwd": str(self.project)})
+                self.assertIn('needs "workflow": "proportional"', err.getvalue())
 
     def test_hook_requires_exact_proportional_opt_in(self):
         token = self.acquire()

@@ -40,13 +40,12 @@ def allowed(command):
         flags = {"--no-typecheck": 0, "--families": 1, "--config": 1}
     else:
         modes = 0
-        flags = {"--root": 1, "--base": 1, "--verdict": 0,
-                 "--version": 0, "--landing": 1, "--audit": 1}
+        flags = {"--root": 1, "--verdict": 0, "--version": 0, "--audit": 1}
     while args:
         option = args.pop(0)
         if option not in flags:
             return False
-        if option in ("--verdict", "--version", "--landing", "--audit"):
+        if option in ("--verdict", "--version", "--audit"):
             modes += 1
         if flags[option]:
             if not args or args[0].startswith("-"):

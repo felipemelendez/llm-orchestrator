@@ -29,7 +29,7 @@ INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 
 # The nudge's single source is concise-agent-protocol.md — the marked
-# "Turn nudge" block. Extract it at runtime; the embedded copy below is ONLY the
+# orch-proportional-nudge block. Extract it at runtime; the embedded copy below is ONLY the
 # fallback for a broken install (canonical file unreadable), and
 # tests/test-protocol-drift.sh fails if the two ever diverge.
 #
@@ -54,20 +54,19 @@ if [[ -f "$PROTOCOL_LIB" ]]; then
   source "$PROTOCOL_LIB"
   WORKFLOW=$(orch_protocol_workflow "$INPUT")
 fi
-# No enabled cadence, a cadence.json that does not decode, or no way to tell:
-# no reply-format rule and no reminder.
-[[ "${WORKFLOW}" == "proportional" || "${WORKFLOW}" == "legacy" ]] || exit 0
-MARKER="orch-turn-nudge"
-[[ "${WORKFLOW}" == "proportional" ]] && MARKER="orch-proportional-nudge"
-if [[ -f "${CANON}" ]]; then
+# A broken cadence.json: the one-line error instead of a reply-format rule.
+# No enabled cadence, or no way to tell: nothing at all.
+CONFIG_ERROR=""
+[[ "${WORKFLOW}" == "error" || "${WORKFLOW}" == "undecodable" ]] && CONFIG_ERROR=$(orch_protocol_config_error "${WORKFLOW}")
+[[ "${WORKFLOW}" == "proportional" || -n "${CONFIG_ERROR}" ]] || exit 0
+MARKER="orch-proportional-nudge"
+if [[ -n "${CONFIG_ERROR}" ]]; then
+  REMINDER="${CONFIG_ERROR}"
+elif [[ -f "${CANON}" ]]; then
   REMINDER=$(awk -v s="<!-- $MARKER-start -->" -v e="<!-- $MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON}" 2>/dev/null)
 fi
 if [[ -z "${REMINDER}" ]]; then
-  if [[ "$MARKER" == "orch-proportional-nudge" ]]; then
-    REMINDER='Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", "Status:" unless project instructions set a reply format. End with "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — why". PASS needs checks you ran; applicability never clears failed or required checks.'
-  else
-    REMINDER='LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:" or "Status:" unless project instructions set a reply format. "Changed:" REQUIRES a "Verify:" line (real command + output). Lead with the outcome.'
-  fi
+  REMINDER='Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", "Status:" unless project instructions set a reply format. End with "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — why". PASS needs checks you ran; applicability never clears failed or required checks.'
 fi
 
 # Native shell JSON escape — no python3 dependency.

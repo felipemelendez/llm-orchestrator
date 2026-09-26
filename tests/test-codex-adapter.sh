@@ -58,10 +58,10 @@ fi
 arm() {  # arm <dir> [lock_extra-json]
   mkdir -p "$1/docs/llm-orchestrator/notes" "$1/.claude" "$1/.githooks" "$1/src"
   if [[ -n "${2:-}" ]]; then
-    printf '{ "schema": 1, "enabled": true, "lock_extra": %s }\n' "$2" \
+    printf '{ "schema": 1, "enabled": true, "workflow": "proportional", "lock_extra": %s }\n' "$2" \
       > "$1/docs/llm-orchestrator/cadence.json"
   else
-    printf '{ "schema": 1, "enabled": true }\n' > "$1/docs/llm-orchestrator/cadence.json"
+    printf '{ "schema": 1, "enabled": true, "workflow": "proportional" }\n' > "$1/docs/llm-orchestrator/cadence.json"
   fi
   printf '# Laws\n' > "$1/docs/llm-orchestrator/LAWS.md"
   printf 'abc  docs/llm-orchestrator/LAWS.md\n' > "$1/docs/llm-orchestrator/LOCK.sha256"
@@ -348,7 +348,8 @@ GATE="$ROOT/skills/cadence/scripts/orch-cadence-gate.sh"
 bash_pin 0 "bash '$CHECK' --root '$CAD' --verdict" 'the installed checker can read its config'
 bash_pin 0 "'$CHECK' --version" 'direct checker invocation'
 bash_pin 0 "bash '$CHECK' --audit HEAD --root '$CAD'" 'read-only committed audit'
-bash_pin 0 "bash '$CHECK' --root '$CAD' --landing FTAPP-123" 'read-only landing check'
+bash_pin 2 "bash '$CHECK' --root '$CAD' --landing FTAPP-123" 'the removed landing mode is not a trusted read'
+bash_pin 2 "bash '$CHECK' --root '$CAD' --base HEAD --verdict" 'the removed --base option is not a trusted read'
 bash_pin 0 "bash '$GATE' '/tmp/task tree' HEAD --config '$CAD/docs/llm-orchestrator/cadence.json'" 'the disposable gate can read its config'
 bash_pin 2 "bash '$CHECK' --root '$CAD' --lock" 'lock rewriting remains blocked'
 bash_pin 2 "bash '$CHECK' --verdict; rm '$CAD/docs/llm-orchestrator/LAWS.md'" 'verification cannot prefix a write'

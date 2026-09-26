@@ -61,8 +61,9 @@ proposes the configuration and drafts rulebook text for your approval.
 **Step 2 — confirm the config.** The assistant shows you a proposed
 `docs/llm-orchestrator/cadence.json`. Check two things: the test command is
 the one you actually use, and the folders listed as production code and tests
-are right. New projects get `workflow: proportional`; older projects keep their
-existing workflow until you migrate them on purpose. If the initializer could
+are right. It sets `workflow: proportional`, the only workflow; a
+`cadence.json` without it, or with another value, is refused with the one-line
+fix. If the initializer could
 not recognize your stack, it says so and leaves the test command for you to
 fill in; until it is filled in, the assistant reports verification as pending
 rather than passed.
@@ -181,7 +182,7 @@ cd /path/to/llm-orchestrator
 ./scripts/install.sh --copy ~/myproject
 ```
 
-This copies `skills/`, `commands/`, `agents/`, `templates/`, `output-styles/`, `hooks/`, `scripts/` (including `scripts/lib/orch-lock.sh`), and this document (to `.claude/docs/install.md`) into `~/myproject/.claude/`. Hook paths in the copied `hooks/hooks.json` are rewritten to absolute — and the installer verifies that every rewritten command path exists on disk before claiming so; if verification fails, the install fails. A starter `settings.json` is seeded from `templates/settings.json` (permissions block plus the ORCH env knobs) unless one already exists.
+This copies `skills/`, `commands/`, `agents/`, `templates/`, `output-styles/`, `hooks/`, `scripts/` (including `scripts/lib/orch-lock.sh`), and this document (to `.claude/docs/install.md`) into `~/myproject/.claude/`. Hook paths in the copied `hooks/hooks.json` are rewritten to absolute — and the installer verifies that every rewritten command path exists on disk before claiming so; if verification fails, the install fails. A starter `settings.json` is seeded from `templates/settings.json` (permissions block plus the ORCH env knobs) unless one already exists. The installer records every file it places, with a SHA-256 of its content, in `.claude/.llm-orchestrator-files`. Running `--copy` again removes a recorded file the plugin no longer ships only while its content is unchanged; a file you edited is kept and listed for you to delete if it is not yours, and nothing else in `.claude/` is touched. Nothing is ever removed through a link. A copy made before that record existed has nothing removed: the installer lists the files in the plugin's skill folders that it no longer ships, for you to delete, and writes the record so every later upgrade cleans itself. With neither `shasum` nor `sha256sum` available, it writes no record and removes nothing. One known limit: a file of yours that is byte-identical to one the plugin ships is recorded as the plugin's, and removed if the plugin later retires it; since its content is the plugin's own, nothing unique is lost.
 
 ### Wiring hooks for a `--copy` install
 

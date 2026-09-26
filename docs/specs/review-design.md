@@ -11,8 +11,9 @@ providers, then a refuter when a serious finding exists. One Python script,
 proposed fixes itself and decides the verdict last, from files it wrote or
 read itself. The agent starts it once, so no step can be skipped.
 
-Out of scope: the spec review before coding, the fix itself, and the legacy
-procedure (T6).
+Out of scope: the spec review before coding and the fix itself. The cadence
+has no other review procedure: a `cadence.json` without `"workflow":
+"proportional"` is a configuration error.
 
 ## Why one script
 
@@ -431,8 +432,8 @@ lacked. T10 tests the swap.
     `review.setup`.
 
   These keys are optional, and `cadence-init.sh` writes none of them. The
-  legacy steps 2 and 2b, and `reviewer-spec.md`, `reviewer-plain.md` and
-  `refuter.md` (with its `review-diff.js` paragraph), stay for T6.
+  cadence's own `reviewer-spec.md`, `reviewer-plain.md` and `refuter.md` are
+  deleted; `CADENCE.md` points at the briefs above.
 - `agents/orch-spec-reviewer.md`: kept only for brainstorming's review of a
   spec document. Its description says so, and its `review-diff.js` and
   workflow text goes. It keeps its Issues block, which

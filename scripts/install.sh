@@ -274,7 +274,7 @@ case "${cmd}" in
              skills/cadence/SKILL.md skills/cadence/CADENCE.md \
              skills/cadence/scripts/orch-cadence-gate.sh skills/cadence/scripts/orch-cadence-check.sh \
              skills/cadence/scripts/cadence-detect.sh skills/cadence/scripts/cadence-init.sh \
-             skills/cadence/references/commit-msg skills/cadence/references/cadence-state.md \
+             skills/cadence/references/commit-msg skills/cadence/references/laws.md \
              templates/cadence-global-block.md scripts/lib/orch-task-resources.py \
              skills/cadence/scripts/orch-task-resources.py \
              scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
@@ -527,6 +527,20 @@ case "${cmd}" in
     # would bake relative hook paths into hooks.json.
     dest="$(cd "${dest}" && pwd)"
     mkdir -p "${dest}/.claude" "${dest}/.claude/scripts/hooks" "${dest}/.claude/scripts/lib" "${dest}/.claude/scripts/verification" "${dest}/.claude/docs"
+    # The install record: one "<sha256>  <path>" line per file this install
+    # placed. The next --copy removes a recorded file the plugin no longer
+    # ships only while its content still has the recorded hash, so an upgrade
+    # leaves no stale briefs, hooks or libs behind and never deletes a file the
+    # person changed. Nothing outside the record is ever removed: .claude/ also
+    # holds the project's own skills, commands and settings.
+    record="${dest}/.claude/.llm-orchestrator-files"
+    hasher=""
+    if command -v shasum >/dev/null 2>&1; then hasher="shasum -a 256"
+    elif command -v sha256sum >/dev/null 2>&1; then hasher="sha256sum"; fi
+    old_record=""
+    if [[ -f "${record}" && ! -L "${record}" ]]; then
+      old_record=$(cat "${record}")
+    fi
     cp -R "${ROOT}/skills" "${dest}/.claude/"
     cp -R "${ROOT}/commands" "${dest}/.claude/"
     cp -R "${ROOT}/templates" "${dest}/.claude/"
@@ -563,6 +577,116 @@ case "${cmd}" in
     # dispatching-subagents points at this for model/effort guidance; without it
     # the reference dangles in every --copy install.
     cp "${ROOT}/docs/anthropic-ecosystem.md" "${dest}/.claude/docs/" 2>/dev/null || true
+
+    # The files this install placed, from the same list the copies above use.
+    new_record=$(
+      cd "${ROOT}" || exit 1
+      for d in skills commands templates agents output-styles hooks; do
+        [[ -d "${d}" ]] && find "${d}" -type f
+      done
+      for f in scripts/hooks/*.sh scripts/hooks/*.py scripts/statusline.sh scripts/protocol-lint.sh \
+               scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh scripts/lib/* \
+               concise-agent-protocol.md docs/install.md docs/anthropic-ecosystem.md; do
+        [[ -f "${f}" ]] && printf '%s\n' "${f}"
+      done
+    ) || { echo "ERROR: could not list the files this install placed" >&2; exit 1; }
+    new_record=$(printf '%s\n' "${new_record}" | LC_ALL=C sort -u)
+    claude_real=$(cd -P "${dest}/.claude" && pwd -P)
+
+    # plain_path <relative path>: true only for a relative path with no "." or
+    # ".." part whose every component below .claude/ is not a link, and whose
+    # real location is inside .claude/. Nothing reached through a link counts.
+    plain_path() {
+      local rel="$1" p="${dest}/.claude" part rest real
+      case "/${rel}/" in */../*|*/./*|//*) return 1 ;; esac
+      [[ -n "${rel}" && "${rel}" != /* ]] || return 1
+      rest="${rel}"
+      while [[ -n "${rest}" ]]; do
+        part="${rest%%/*}"
+        [[ "${rest}" == */* ]] && rest="${rest#*/}" || rest=""
+        p="${p}/${part}"
+        [[ -L "${p}" ]] && return 1
+      done
+      real=$(cd -P "$(dirname "${dest}/.claude/${rel}")" 2>/dev/null && pwd -P) || return 1
+      [[ "${real}" == "${claude_real}" || "${real}" == "${claude_real}/"* ]]
+    }
+
+    # hash_list <dir>: "<sha256>  <path>" for each relative path on stdin that
+    # is a regular file under <dir>, in one hasher run.
+    hash_list() {
+      local dir="$1"
+      ( cd "${dir}" || exit 1
+        while IFS= read -r rel; do [[ -n "${rel}" && -f "${rel}" ]] && printf '%s\0' "${rel}"; done \
+          | xargs -0 ${hasher} 2>/dev/null ) || true
+    }
+    shipped() { printf '%s\n' "${new_record}" | grep -qxF -- "$1"; }
+
+    # remove_stale <relative path>: delete one file this plugin placed earlier
+    # and no longer ships, then any folders that leaves empty. Only a plain
+    # path (see plain_path) to a regular file qualifies; rmdir stops at the
+    # first folder that is not empty or is a link.
+    remove_stale() {
+      local rel="$1" d
+      plain_path "${rel}" || return 0
+      [[ -f "${dest}/.claude/${rel}" ]] || return 0
+      rm -f "${dest}/.claude/${rel}"
+      d=$(dirname "${rel}")
+      while [[ "${d}" != "." && "${d}" != "/" ]]; do
+        [[ -L "${dest}/.claude/${d}" ]] && break
+        rmdir "${dest}/.claude/${d}" 2>/dev/null || break
+        d=$(dirname "${d}")
+      done
+    }
+
+    kept=""
+    if [[ -z "${hasher}" ]]; then
+      # No way to prove a file is unchanged: delete nothing, record nothing.
+      echo "Note: neither shasum nor sha256sum was found, so no install record was written and nothing was removed."
+    else
+      if [[ -n "${old_record}" ]]; then
+        while IFS= read -r line; do
+          [[ "${line}" =~ ^([0-9a-f]{64})\ \ (.+)$ ]] || continue
+          want="${BASH_REMATCH[1]}"; rel="${BASH_REMATCH[2]}"
+          shipped "${rel}" && continue
+          plain_path "${rel}" && [[ -f "${dest}/.claude/${rel}" ]] || continue
+          have=$(printf '%s\n' "${rel}" | hash_list "${dest}/.claude" | awk '{print $1}')
+          if [[ -n "${have}" && "${have}" == "${want}" ]]; then
+            remove_stale "${rel}"
+          else
+            kept="${kept}  ${dest}/.claude/${rel}"$'\n'
+          fi
+        done <<< "${old_record}"
+      else
+        # An install made before the record existed: nothing proves which
+        # files this plugin put there, so nothing is removed. The files in the
+        # plugin's own skill folders that it no longer ships are listed.
+        for sk in "${ROOT}"/skills/*/; do
+          sk=$(basename "${sk}")
+          [[ -d "${dest}/.claude/skills/${sk}" && ! -L "${dest}/.claude/skills/${sk}" ]] || continue
+          while IFS= read -r rel; do
+            [[ -n "${rel}" ]] || continue
+            shipped "${rel}" || kept="${kept}  ${dest}/.claude/${rel}"$'\n'
+          done < <(cd "${dest}/.claude" && find "skills/${sk}" -type f)
+        done
+      fi
+      if [[ -n "${kept}" ]]; then
+        echo "Note: nothing proves the plugin placed these files unchanged, so they were kept. The plugin no longer ships them; delete them if you did not add them yourself:"
+        printf '%s' "${kept}"
+      fi
+
+      # The record lists only what this install placed: a file reached through
+      # no link whose content hashes the same as the source. A file identical
+      # to the plugin's own holds nothing unique, so recording it loses nothing.
+      plain=""
+      while IFS= read -r rel; do
+        [[ -n "${rel}" ]] || continue
+        plain_path "${rel}" && plain="${plain}${rel}"$'\n'
+      done <<< "${new_record}"
+      src_h=$(printf '%s' "${plain}" | hash_list "${ROOT}")
+      dst_h=$(printf '%s' "${plain}" | hash_list "${dest}/.claude")
+      LC_ALL=C comm -12 <(printf '%s\n' "${src_h}" | LC_ALL=C sort) \
+                        <(printf '%s\n' "${dst_h}" | LC_ALL=C sort) | grep -E '^[0-9a-f]{64}  ' > "${record}" || true
+    fi
 
     sed_inplace() {
       if sed --version >/dev/null 2>&1; then

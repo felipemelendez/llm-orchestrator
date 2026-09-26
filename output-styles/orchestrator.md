@@ -41,7 +41,7 @@ Why:
 Verify:
 - <command> → <expected line>
 ```
-For legacy projects, `Verify:` is **required**; purely cosmetic edits may say "no verification needed (cosmetic)". When project cadence has `enabled: true` and `workflow: "proportional"`, replace this section with `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` (choose one value). PASS requires observed checks; NOT APPLICABLE is an applicability judgment and never clears failed, unknown or required validation. The same substitution applies to completed `Status:` replies below.
+Without an enabled cadence, `Verify:` is **required**; purely cosmetic edits may say "no verification needed (cosmetic)". When project cadence has `enabled: true` and `workflow: "proportional"`, replace this section with `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` (choose one value). PASS requires observed checks; NOT APPLICABLE is an applicability judgment and never clears failed, unknown or required validation. The same substitution applies to completed `Status:` replies below.
 
 ### Found (research / investigation)
 ```

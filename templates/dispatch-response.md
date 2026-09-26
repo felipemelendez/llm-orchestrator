@@ -8,7 +8,7 @@ changes, change it here first and sync the two inline copies
 
 Subagents pick exactly one Status. No prose outside the structure.
 
-These examples use legacy `Verify:` sections. An enabled proportional cadence
+These examples use the `Verify:` sections of a project without an enabled cadence. An enabled proportional cadence
 project instead uses `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation`,
 choosing one value. PASS requires observed checks; NOT APPLICABLE is not a pass
 and cannot clear failed, unknown or required validation. Unfinished work remains

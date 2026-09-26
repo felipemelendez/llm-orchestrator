@@ -175,6 +175,113 @@ else
 fi
 
 # ------------------------------------------------------------
+# P11 — a --copy upgrade leaves nothing the plugin no longer ships, and never
+# touches what the project put in .claude/ itself.
+# ------------------------------------------------------------
+section "--copy upgrade removes what the plugin stopped shipping (P11)"
+copy_tree "$TMP/src-old"
+mkdir -p "$TMP/src-old/skills/old-skill"
+printf 'x\n' > "$TMP/src-old/skills/cadence/references/fixer.md"
+printf -- '---\nname: old-skill\ndescription: Use when never.\n---\nold\n' > "$TMP/src-old/skills/old-skill/SKILL.md"
+printf 'x\n' > "$TMP/src-old/commands/old-command.md"
+printf 'x\n' > "$TMP/src-old/scripts/lib/old-lib.py"
+printf 'x\n' > "$TMP/src-old/scripts/hooks/old-hook.sh"
+upgrade_scene() { # <label> <project> <drop-manifest 0|1>
+  local label="$1" proj="$2" f
+  mkdir -p "$proj/.claude/skills/my-skill" "$proj/.claude/commands" "$proj/.claude/scripts"
+  printf 'mine\n' > "$proj/.claude/skills/my-skill/SKILL.md"
+  printf 'mine\n' > "$proj/.claude/commands/mine.md"
+  printf 'mine\n' > "$proj/.claude/scripts/mine.sh"
+  bash "$TMP/src-old/scripts/install.sh" --copy "$proj" > "$TMP/up-old.out" 2>&1 \
+    || fail "$label: old install" "$(tail -3 "$TMP/up-old.out")"
+  [[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] || fail "$label: fixture" "the old install did not place fixer.md"
+  [[ "$3" == "1" ]] && rm -f "$proj/.claude/.llm-orchestrator-files"
+  bash "$ROOT/scripts/install.sh" --copy "$proj" > "$TMP/up-new.out" 2>&1 \
+    || fail "$label: new install" "$(tail -3 "$TMP/up-new.out")"
+  if [[ "$3" == "0" ]]; then
+    if [[ ! -e "$proj/.claude/skills/cadence/references/fixer.md" ]]; then
+      ok "$label: a file removed from a shipped skill is gone"
+    else fail "$label: stale skill file" "skills/cadence/references/fixer.md survived the upgrade"; fi
+  else
+    # With no record the installer cannot prove it put a file there, so it
+    # removes nothing and lists what the plugin no longer ships instead.
+    if [[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] \
+       && grep -qF 'skills/cadence/references/fixer.md' "$TMP/up-new.out" && grep -qi 'delete' "$TMP/up-new.out"; then
+      ok "$label: nothing is removed; the file the plugin no longer ships is listed for the person to delete"
+    else fail "$label: no-record listing" "kept=$([[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] && echo yes || echo no) out=$(tail -5 "$TMP/up-new.out")"; fi
+    grep -qF 'skills/my-skill' "$TMP/up-new.out" && fail "$label: listing" "the project's own skill was listed" \
+      || ok "$label: the project's own skill is not listed"
+  fi
+  for f in skills/my-skill/SKILL.md commands/mine.md scripts/mine.sh; do
+    [[ -f "$proj/.claude/$f" ]] && ok "$label: the project's own $f is kept" \
+      || fail "$label: own file" "$f was removed"
+  done
+}
+upgrade_scene "with the install record" "$TMP/proj-up" 0
+for f in skills/old-skill/SKILL.md commands/old-command.md scripts/lib/old-lib.py scripts/hooks/old-hook.sh; do
+  [[ ! -e "$TMP/proj-up/.claude/$f" ]] && ok "with the install record: $f, no longer shipped, is gone" \
+    || fail "with the install record: stale $f" "it survived the upgrade"
+done
+[[ ! -d "$TMP/proj-up/.claude/skills/old-skill" ]] && ok "with the install record: the emptied skill folder is gone" \
+  || fail "empty skill dir" "skills/old-skill is still there"
+upgrade_scene "an install made before the record existed" "$TMP/proj-up-legacy" 1
+[[ -f "$TMP/proj-up-legacy/.claude/.llm-orchestrator-files" ]] && ok "the upgrade writes the install record" \
+  || fail "install record" "no .claude/.llm-orchestrator-files after --copy"
+
+# ------------------------------------------------------------
+# P12 — the cleanup never deletes a file the plugin did not place, and never
+# reaches through a link.
+# ------------------------------------------------------------
+section "--copy cleanup deletes only what it placed, never through a link (P12)"
+# Scene 1: the project owns a read-only file at a path the plugin ships. The
+# copy cannot place it (agents/ copy errors are tolerated), so it must not be
+# recorded as the plugin's; a later upgrade that retires the path leaves it.
+if [[ "$(id -u)" != "0" ]]; then
+  copy_tree "$TMP/src-ro"
+  printf 'plugin version\n' > "$TMP/src-ro/agents/orch-retired.md"
+  P="$TMP/proj-ro"; mkdir -p "$P/.claude/agents"
+  printf 'the project'"'"'s own\n' > "$P/.claude/agents/orch-retired.md"; chmod 444 "$P/.claude/agents/orch-retired.md"
+  bash "$TMP/src-ro/scripts/install.sh" --copy "$P" > "$TMP/ro1.out" 2>&1 || true
+  grep -qxF 'agents/orch-retired.md' "$P/.claude/.llm-orchestrator-files" 2>/dev/null \
+    && fail "unplaced file recorded" "agents/orch-retired.md is in the record though the copy could not place it" \
+    || ok "a file the copy could not place is not recorded"
+  bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ro2.out" 2>&1 || true
+  if [[ -f "$P/.claude/agents/orch-retired.md" ]] && grep -qF "the project's own" "$P/.claude/agents/orch-retired.md"; then
+    ok "retiring that path leaves the project's own file"
+  else fail "project file deleted" "agents/orch-retired.md is gone or changed after the upgrade"; fi
+  chmod 644 "$P/.claude/agents/orch-retired.md" 2>/dev/null || true
+else
+  ok "read-only scene skipped: root ignores file modes"
+fi
+# Scene 2: an installed skill folder later replaced by a link to a shared
+# skill. Retiring that skill must not delete the files behind the link.
+P="$TMP/proj-link"; mkdir -p "$P"
+bash "$TMP/src-old/scripts/install.sh" --copy "$P" > "$TMP/ln1.out" 2>&1 || fail "link scene: old install" "$(tail -3 "$TMP/ln1.out")"
+mkdir -p "$TMP/shared/old-skill"
+printf 'shared\n' > "$TMP/shared/old-skill/SKILL.md"
+rm -rf "$P/.claude/skills/old-skill"; ln -s "$TMP/shared/old-skill" "$P/.claude/skills/old-skill"
+bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ln2.out" 2>&1 || fail "link scene: new install" "$(tail -3 "$TMP/ln2.out")"
+[[ -f "$TMP/shared/old-skill/SKILL.md" ]] && ok "a retired skill whose folder is now a link: the file behind the link stays" \
+  || fail "deleted through a link" "$TMP/shared/old-skill/SKILL.md is gone"
+[[ -L "$P/.claude/skills/old-skill" ]] && ok "and the link itself is left alone" || fail "link removed" "skills/old-skill is no longer a link"
+
+# Scene 3: the person edits a file the plugin placed. When the plugin retires
+# that path, the edited file holds their own content: it is kept and listed.
+P="$TMP/proj-edit"; mkdir -p "$P"
+bash "$TMP/src-old/scripts/install.sh" --copy "$P" > "$TMP/ed1.out" 2>&1 || fail "edit scene: old install" "$(tail -3 "$TMP/ed1.out")"
+printf 'my own notes\n' > "$P/.claude/commands/old-command.md"
+bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ed2.out" 2>&1 || fail "edit scene: new install" "$(tail -3 "$TMP/ed2.out")"
+if [[ -f "$P/.claude/commands/old-command.md" ]] && grep -qF 'my own notes' "$P/.claude/commands/old-command.md"; then
+  ok "a retired file the person edited is kept"
+else fail "edited file deleted" "commands/old-command.md is gone or changed"; fi
+grep -qF 'commands/old-command.md' "$TMP/ed2.out" && grep -qF 'did not add' "$TMP/ed2.out" \
+  && ok "and it is listed for the person to delete if it is not theirs" || fail "edited file not listed" "$(tail -5 "$TMP/ed2.out")"
+[[ ! -e "$P/.claude/scripts/lib/old-lib.py" ]] && ok "an unchanged retired file in the same upgrade is still removed" \
+  || fail "unchanged retired file" "scripts/lib/old-lib.py survived"
+head -1 "$P/.claude/.llm-orchestrator-files" | grep -qE '^[0-9a-f]{64}  [^ ]' \
+  && ok "the record stores a content hash per file" || fail "record format" "$(head -1 "$P/.claude/.llm-orchestrator-files")"
+
+# ------------------------------------------------------------
 # P4 — --check must fail on deletions and corruption
 # ------------------------------------------------------------
 section "--check blind spots (P4)"
@@ -286,7 +393,7 @@ for cadence_entry in commands/cadence-init.md \
                      skills/cadence/scripts/cadence-detect.sh \
                      skills/cadence/scripts/cadence-init.sh \
                      skills/cadence/references/commit-msg \
-                     skills/cadence/references/cadence-state.md; do
+                     skills/cadence/references/laws.md; do
   if [[ -f "$TMP/src/$cadence_entry" ]]; then
     mv "$TMP/src/$cadence_entry" "$TMP/keep.a"
     expect_check_fail "--check fails when ${cadence_entry} is deleted"
