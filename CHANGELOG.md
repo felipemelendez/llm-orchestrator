@@ -33,6 +33,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   defects and scores defects found, false findings and cost. Both have free
   checks in `tests/`; the paid commands and cost estimates are in
   `tests/evals/README.md`.
+- Removed what nothing used any more: `templates/dispatch-response.md` is no
+  longer shipped or copied by `install.sh --copy` (the Status blocks live in
+  `templates/implementer-prompt.md` and `agents/orch-implementer.md`); the old
+  release-notes pages `docs/release-v0.8.0.md` and `docs/release-v0.9.0.md`
+  are gone, their content is in this changelog; and the worktree reaper no
+  longer reads mutex-map files an older version left behind.
 
 ### Fixed
 
