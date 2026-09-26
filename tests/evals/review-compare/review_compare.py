@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import fnmatch
+import importlib.util
 import json
 import math
 import os
@@ -30,6 +31,10 @@ HERE = pathlib.Path(__file__).resolve().parent
 TEMPLATES = HERE / "templates"
 ARMS_FILE = HERE / "arms.json"
 PLUGIN_ROOT = HERE.parents[2]
+# The reviewers' replies are parsed by the review script's own parsers (R7 of docs/specs/review-design.md).
+_ORCH = importlib.util.spec_from_file_location("orch_review", PLUGIN_ROOT / "scripts" / "lib" / "orch-review.py")
+orch = importlib.util.module_from_spec(_ORCH)
+_ORCH.loader.exec_module(orch)
 RANKS = ("serious", "mild")
 KINDS = ("defect", "test-tampering")
 LINE_SLACK = 3
@@ -286,16 +291,11 @@ def command_check(args):
 # ---------------------------------------------------------------- run
 
 
-# Every arm gets this sentence, or (for orch-review.py) the same spec file through --spec.
-SPEC_NOTE = ("The change must implement the spec in {spec}. Read it, and report every place where the "
-             "change does not meet it, as well as any other defect.")
-BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
-            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")
-PROVIDER_ENV = {
-    "claude": ("CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
-               "CLAUDE_CODE_OAUTH_TOKEN"),
-    "codex": ("CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"),
-}
+# Every arm gets this sentence, or (for orch-review.py) the same spec file through --spec, which the
+# script gives its reviewers in the same words.
+SPEC_NOTE = orch.REVIEW_INSTRUCTION
+BASE_ENV = orch.BASE_ENV
+PROVIDER_ENV = orch.PROVIDER_ENV
 
 
 def load_arms():
@@ -308,7 +308,7 @@ def codex_home():
 
 def codex_mcp_off():
     """Arguments that turn off every MCP server in config.toml, and the apps and plugins features,
-    as orch-review.py does for its Codex seat."""
+    as orch-review.py does for its codex review."""
     import tomllib
     try:
         servers = tomllib.loads((codex_home() / "config.toml").read_text()).get("mcp_servers") or {}
@@ -331,13 +331,32 @@ def expand(argv, values):
     return out
 
 
+def path_without(names, out_dir):
+    """PATH with the named programs hidden: each PATH folder that holds one of them is replaced by a
+    folder of links to everything else in it."""
+    parts = []
+    for n, folder in enumerate(os.environ.get("PATH", "").split(os.pathsep)):
+        if folder and any((pathlib.Path(folder) / name).exists() for name in names):
+            shadow = out_dir / "path-without" / str(n)
+            shadow.mkdir(parents=True, exist_ok=True)
+            for entry in pathlib.Path(folder).iterdir():
+                if entry.name not in names and not os.path.lexists(shadow / entry.name):
+                    (shadow / entry.name).symlink_to(entry)
+            parts.append(str(shadow))
+        else:
+            parts.append(folder)
+    return os.pathsep.join(parts)
+
+
 def arm_env(arm, out_dir):
-    """orch-review.py narrows each seat's environment itself; the native arms get the same narrowing."""
+    """orch-review.py narrows each launch's environment itself; the native arms get the same narrowing."""
     if arm["provider"] == "orch-review":
         env = dict(os.environ)
     else:
         keep = BASE_ENV + PROVIDER_ENV[arm["provider"]]
         env = {k: os.environ[k] for k in keep if k in os.environ}
+    if arm.get("without"):
+        env["PATH"] = path_without(arm["without"], out_dir)
     if arm["provider"] == "codex":
         # At codex_otel=info, codex logs the MCP servers it started.
         env["RUST_LOG"] = "warn,codex_otel=info"
@@ -383,6 +402,11 @@ def run_one(arm, case, repo_src, out_dir, plugin_root, timeout):
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "stdout.txt").write_text(stdout)
     (out_dir / "stderr.txt").write_text(stderr[-20000:])
+    if arm["output"] == "codex-review":
+        # The findings are in the review's rollout, named by a conversation id early in the full log.
+        path, _, _, _ = orch.review_rollout(stderr, codex_home())
+        if path:
+            shutil.copy(path, out_dir / "rollout.jsonl")
     if (review_dir / "review.json").is_file():
         shutil.copy(review_dir / "review.json", out_dir / "review.json")
     meta = {"arm": arm["name"], "case": case["id"], "exit": code, "seconds": seconds}
@@ -402,9 +426,6 @@ def command_run(args):
         if name not in arms:
             print(f"review_compare: unknown arm {name!r}; see arms.json", file=sys.stderr)
             return 2
-        if arms[name].get("unavailable"):
-            print(f"review_compare: arm {name!r} cannot run: {arms[name]['unavailable']}", file=sys.stderr)
-            return 2
     plugin_root = pathlib.Path(args.plugin_root).resolve()
     if any(arms[n]["provider"] == "orch-review" for n in chosen) \
             and not (plugin_root / "scripts" / "lib" / "orch-review.py").is_file():
@@ -412,8 +433,6 @@ def command_run(args):
               "the orch-review arms need the review script (ticket T5) merged", file=sys.stderr)
         return 2
     cases = [c for c in key["cases"] if not args.case or any(fnmatch.fnmatch(c["id"], g) for g in args.case)]
-    if args.large_only:
-        cases = [c for c in cases if c["diff_lines"] > 150]
     results = pathlib.Path(args.out).resolve()
     spent = 0.0
     for case in cases:
@@ -440,63 +459,6 @@ def command_run(args):
 # ---------------------------------------------------------------- parse arm output
 
 
-FILE = re.compile(r"(?P<file>[\w./-]*[\w-]+\.(?:py|md|json|toml|ya?ml|txt|csv|cfg|ini))\b"
-                  r"(?:(?::|,? lines? |#L)(?P<line>\d+))?")
-
-
-FENCED_ARRAY = re.compile(r"```[\w-]*[ \t]*\n\s*(\[.*?\])\s*```", re.S)
-TEXT_FIELDS = ("title", "summary", "description", "body", "failure_scenario")
-
-
-def json_findings(text):
-    """Findings from a fenced JSON array of objects that name a file, as /code-review writes them;
-    None when the reply holds no such array. An empty array is a review with no findings."""
-    for block in FENCED_ARRAY.finditer(text):
-        try:
-            items = json.loads(block[1])
-        except json.JSONDecodeError:
-            continue
-        if not all(isinstance(i, dict) and isinstance(i.get("file"), str) for i in items):
-            continue
-        out = []
-        for item in items:
-            line = item.get("line")
-            line = int(line) if isinstance(line, int) or (isinstance(line, str) and line.isdigit()) else None
-            words = " ".join(str(item[k]) for k in TEXT_FIELDS if item.get(k))
-            out.append({"file": item["file"], "line": line, "text": words.strip()[:1000]})
-        return out
-    return None
-
-
-def reply_findings(text):
-    """Findings from a /code-review reply: one per item of its fenced JSON findings array, else the
-    text rule."""
-    from_json = json_findings(text)
-    return from_json if from_json is not None else text_findings(text)
-
-
-def text_findings(text):
-    """Split free-text review output into findings: one per list item or heading that names a file."""
-    blocks, current = [], []
-    starts = re.compile(r"^\s*(?:[-*•]|\d+[.)]|#{1,6}\s|\[P\d\]|\*\*\d)")
-    for line in text.splitlines():
-        if starts.match(line) and current:
-            blocks.append("\n".join(current))
-            current = []
-        current.append(line)
-    if current:
-        blocks.append("\n".join(current))
-    out = []
-    for block in blocks:
-        located = [m for m in FILE.finditer(block)]
-        if not located:
-            continue
-        match = next((m for m in located if m["line"]), located[0])
-        out.append({"file": match["file"], "line": int(match["line"]) if match["line"] else None,
-                    "text": block.strip()[:1000]})
-    return out
-
-
 def token_total(usage):
     """Tokens not read from a cache. Cached input and reasoning output are parts of the input and
     output counts in Codex usage, so adding them would count those tokens twice."""
@@ -516,9 +478,23 @@ def parse_claude_json(stdout):
     return str(result.get("result") or ""), result.get("total_cost_usd"), token_total(usage)
 
 
-def parse_codex_text(stdout):
+def codex_tokens(stdout):
     match = re.search(r"tokens used\s*[:\n]\s*([\d,]+)", stdout, re.I)
-    return stdout, None, int(match[1].replace(",", "")) if match else None
+    return int(match[1].replace(",", "")) if match else None
+
+
+def codex_rollout(out_dir):
+    """The review rollout kept beside the run, or the one the kept log still names."""
+    kept = out_dir / "rollout.jsonl"
+    if kept.is_file():
+        return orch.stream_events(kept)
+    stderr = (out_dir / "stderr.txt").read_text() if (out_dir / "stderr.txt").is_file() else ""
+    _, events, _, _ = orch.review_rollout(stderr, codex_home())
+    return events
+
+
+def scored_findings(findings):
+    return [{"file": f["file"], "line": f["line"], "text": (f.get("words") or "")[:1000]} for f in findings]
 
 
 def unverified(finding):
@@ -533,37 +509,49 @@ def read_run(out_dir, arm):
     meta = json.loads((out_dir / "meta.json").read_text())
     stdout = (out_dir / "stdout.txt").read_text() if (out_dir / "stdout.txt").is_file() else ""
     run = {"meta": meta, "complete": meta["exit"] == 0, "findings": [], "cost_usd": None,
-           "tokens": None, "verdict": None}
+           "tokens": None, "verdict": None, "reason": None if meta["exit"] == 0 else f"exit {meta['exit']}"}
     if meta.get("mcp_servers"):
-        run["complete"] = False
+        run["complete"], run["reason"] = False, "codex started an MCP server"
     if arm["output"] == "review-json":
         path = out_dir / "review.json"
         if not path.is_file():
-            run["complete"] = False
+            run["complete"], run["reason"] = False, "no review.json"
             return run
         review = json.loads(path.read_text())
         run["verdict"] = review.get("verdict")
-        run["complete"] = run["complete"] and review.get("verdict") != "INCOMPLETE"
+        if review.get("verdict") == "INCOMPLETE":
+            run["complete"] = False
+            run["reason"] = "; ".join(review.get("incomplete_reasons") or ["INCOMPLETE"])
         launches = review.get("launches", [])
         costs = [l.get("cost_usd") for l in launches if isinstance(l.get("cost_usd"), (int, float))]
         run["cost_usd"] = round(sum(costs), 4) if costs else None
         run["tokens"] = sum(token_total(l.get("tokens")) or 0 for l in launches) or None
         for f in review.get("findings", []):
-            if f.get("status") in ("note", "dropped"):
+            if f.get("status") == "dropped":
                 continue
             line = f.get("line")
+            text = " ".join(str(part) for part in (f.get("words"), f.get("claim")) if part)
             run["findings"].append({"file": f.get("file") or "", "line": line if isinstance(line, int) else None,
-                                    "text": str(f.get("claim") or "")[:1000], "rank": f.get("rank"),
+                                    "text": text[:1000], "rank": f.get("rank"),
                                     "provider": f.get("provider"), "unverified": unverified(f)})
         return run
     if arm["output"] == "claude-json":
         text, run["cost_usd"], run["tokens"] = parse_claude_json(stdout)
-        run["findings"] = reply_findings(text)
-    else:  # codex prints its exec log too, so a JSON array there may be a command's output
-        text, run["cost_usd"], run["tokens"] = parse_codex_text(stdout)
-        run["findings"] = text_findings(text)
-    if not text.strip():
+        findings, problem = orch.code_review_findings(text)
+    else:  # codex review: the findings are the review rollout's final message (R7)
+        run["tokens"] = codex_tokens(stdout)
+        events = codex_rollout(out_dir)
+        if events is None:
+            findings, problem = None, "no review rollout for this run"
+        else:
+            meta_payload = next((e.get("payload") for e in events if e.get("type") == "session_meta"), {}) or {}
+            findings, problem = orch.codex_review_findings(orch.rollout_message(events), stdout,
+                                                           meta_payload.get("cwd") or "/")
+    if findings is None:  # a reply the parser rejects is an incomplete run of the arm
         run["complete"] = False
+        run["reason"] = run["reason"] or problem
+    else:
+        run["findings"] = scored_findings(findings)
     return run
 
 
@@ -661,9 +649,11 @@ def command_score(args):
         if case_id not in key or arm_name not in arms or not (run_dir / "meta.json").is_file():
             continue
         run = read_run(run_dir, arms[arm_name])
-        entry = per_arm.setdefault(arm_name, {"runs": [], "found": {}, "false": {}, "incomplete": 0})
+        entry = per_arm.setdefault(arm_name, {"runs": [], "found": {}, "false": {}, "incomplete": 0,
+                                              "incomplete_runs": []})
         if not run["complete"]:
             entry["incomplete"] += 1
+            entry["incomplete_runs"].append({"case": case_id, "attempt": int(attempt), "reason": run["reason"]})
         found, false, location_only, credited = score_run(run, key[case_id])
         entry["runs"].append({"case": case_id, "attempt": int(attempt), "complete": run["complete"],
                               "found": found, "false": false, "location_only": location_only,
@@ -692,6 +682,7 @@ def command_score(args):
         false_count = sum(len(r["false"]) for r in complete)
         report["arms"][name] = {
             "runs": len(entry["runs"]), "incomplete": entry["incomplete"],
+            "incomplete_runs": entry["incomplete_runs"],
             "defects_found": sum(hit for _, hit in planted), "defects_planted": len(planted),
             "by_rank": {rank: share(sum(h for d, h in planted if defects[d]["rank"] == rank),
                                     sum(defects[d]["rank"] == rank for d, _ in planted)) for rank in RANKS},
@@ -744,6 +735,8 @@ def print_report(report):
               f"{a['clean_runs_with_no_finding']:>4}/{a['clean_runs']:<4} "
               f"{cell(a['cost_usd_per_run']):>7} {cell(a['tokens_per_run']):>8} "
               f"{cell(a['minutes_per_run']):>5} {a['incomplete']:>10}")
+        for row in a["incomplete_runs"]:
+            print(f"    incomplete, left out of detection: {row['case']} try {row['attempt']}: {row['reason']}")
         for provider, row in sorted(a["unverified_serious_by_provider"].items()):
             print(f"    unverified serious findings from {provider}: {row['unverified']}, "
                   f"of which {row['real']} matched a planted defect")
@@ -772,7 +765,6 @@ def main(argv=None):
     run.add_argument("--arms", required=True, help="comma-separated arm names from arms.json")
     run.add_argument("--out", required=True, help="results directory; finished runs are skipped")
     run.add_argument("--case", action="append", help="case id glob (repeatable)")
-    run.add_argument("--large-only", action="store_true", help="only changes over 150 lines")
     run.add_argument("--tries", type=int, default=1)
     run.add_argument("--timeout", type=int, default=3600, help="seconds per run")
     run.add_argument("--max-cost-usd", type=float, help="stop starting runs once reported cost reaches this")
