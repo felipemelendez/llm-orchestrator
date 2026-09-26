@@ -523,7 +523,7 @@ else
   CFG_SRC="$TMPD/detected.json"
 fi
 
-WORKFLOW_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line'
+WORKFLOW_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
 if have_py; then
   WORKFLOW_FIX="$WORKFLOW_FIX" "$PY" - "$CFG_SRC" "$CFG_NEW" > "$TMPD/cfg.msg" 2>&1 <<'PYEOF'
 import json, os, sys

@@ -87,7 +87,9 @@ AGENT_TYPE=$(printf '%s' "${INPUT}" | grep -oE '"agent_type"[[:space:]]*:[[:spac
 SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 VERIFY_LABEL='Verify:'
 VERIFY_GUIDANCE='Verify: needs a real command and its real output, not an assertion.'
-if orch_protocol_is_proportional "$INPUT"; then
+WORKFLOW_STATE=$(orch_protocol_workflow "$INPUT")
+CONFIG_ERROR=$(orch_protocol_config_error "${WORKFLOW_STATE}")
+if [[ "${WORKFLOW_STATE}" == "proportional" ]]; then
   VERIFY_LABEL='Verification:'
   VERIFY_GUIDANCE='Verification: uses PASS, PENDING, BLOCKED or NOT APPLICABLE, followed by an em dash and explanation. The evidence gate validates truth; NOT APPLICABLE is not an executed pass and cannot clear failed, unknown or required validation.'
 fi
@@ -121,6 +123,22 @@ emit() { # emit <warn-text> → warn or block per strict/dry-run, then exit
   printf '{"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":%s}}\n' "${esc}"
   exit 0
 }
+
+# --- A broken cadence.json: say so, grade nothing -----------------------------
+# Neither completion format is right for a project whose config is an error, so
+# the hook names the error once and grades nothing. It warns and never blocks:
+# the subagent cannot repair the project's config.
+if [[ -n "${CONFIG_ERROR}" ]]; then
+  WARN="orch-subagent-stop: ${CONFIG_ERROR}; the subagent's report format was not checked."
+  if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+    printf 'orch-dry-run[orch-subagent-stop]: would warn (stderr) — %s\n' "${WARN}" >&2
+    exit 0
+  fi
+  echo "${WARN}" >&2
+  printf '{"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":%s}}\n' \
+    "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+  exit 0
+fi
 
 # --- Check 1: empty return = premature termination --------------------------
 # Only when emptiness is a real observation: the harness sent the

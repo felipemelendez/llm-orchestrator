@@ -112,15 +112,27 @@ else fail "compaction vocabulary" "$PCOMPACT"; fi
 
 printf '\n%s== an enabled cadence without "workflow": "proportional" is an error, not a format ==%s\n' "$DIM" "$RESET"
 # SCENE: an enabled cadence.json with no workflow, or with "legacy"; when a
-# session starts and a prompt is sent; expect no reply-format rule and no
-# nudge, and a session-start verdict that names the one-line fix.
+# session starts and a prompt is sent; expect no reply-format rule, and the
+# session-start verdict, the per-turn hook and the handoff nudge each naming
+# the one-line fix — never silently acting as if no cadence were there.
 for WV in none legacy; do
   WD="$TMP/wf-$WV"; mkdir -p "$WD/docs/llm-orchestrator"
   if [[ "$WV" == "none" ]]; then printf '{"enabled": true}\n' > "$WD/docs/llm-orchestrator/cadence.json"
   else printf '{"enabled": true, "workflow": "legacy"}\n' > "$WD/docs/llm-orchestrator/cadence.json"; fi
   PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x"}))' "$WD")
   RAW=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$WD" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh")
-  [[ -z "$RAW" ]] && ok "workflow ${WV}: the per-turn hook injects nothing" || fail "workflow ${WV}: per-turn hook" "$RAW"
+  CTX=$(printf '%s' "$RAW" | extract_ctx)
+  if [[ "$(printf '%s\n' "$CTX" | grep -c .)" == "1" ]] && printf '%s' "$CTX" | grep -q 'needs "workflow": "proportional"' \
+     && ! printf '%s' "$CTX" | grep -qE 'Changed:|Verification: PASS'; then
+    ok "workflow ${WV}: the per-turn hook injects the one-line error and no format rule"
+  else fail "workflow ${WV}: per-turn hook" "$RAW"; fi
+  NT="$TMP/nudge-$WV.jsonl"
+  printf '{"type":"assistant","message":{"role":"assistant","content":"x","usage":{"input_tokens":5000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":1}}}\n' > "$NT"
+  PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"prompt":"x","session_id":"nudge-"+sys.argv[3],"transcript_path":sys.argv[2]}))' "$WD" "$NT" "$WV")
+  CTX=$(printf '%s' "$PIN" | CLAUDE_PROJECT_DIR="$WD" ORCH_HOME="$TMP/home" ORCH_CONTEXT_HANDOFF_TOKENS=1 bash "${ROOT}/scripts/hooks/orch-handoff-nudge.sh" | extract_ctx)
+  if printf '%s' "$CTX" | grep -q 'needs "workflow": "proportional"' && printf '%s' "$CTX" | grep -q 'handoff'; then
+    ok "workflow ${WV}: the handoff nudge names the error too"
+  else fail "workflow ${WV}: handoff nudge" "$CTX"; fi
   for src in startup compact; do
     PIN=$(python3 -c 'import json,sys; print(json.dumps({"cwd":sys.argv[1],"source":sys.argv[2]}))' "$WD" "$src")
     CTX=$(printf '%s' "$PIN" | CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$WD" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" | extract_ctx)
@@ -169,7 +181,16 @@ both_hooks() { # <label> <project-dir> <expect on|off> [PATH override]
 }
 MALFORMED="$TMP/malformed"; mkdir -p "$MALFORMED/docs/llm-orchestrator"
 printf '{"enabled": true, "workflow": "proportional",\n' > "$MALFORMED/docs/llm-orchestrator/cadence.json"
-both_hooks "malformed cadence.json" "$MALFORMED" off
+# A config nobody can read is an error: no reply-format rule anywhere, and the
+# per-turn hook names the error in one line instead of staying silent.
+MRAW=$(printf '{"prompt":"x"}' | ( cd "$MALFORMED" && CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" ) | extract_ctx)
+if [[ "$(printf '%s\n' "$MRAW" | grep -c .)" == "1" ]] && printf '%s' "$MRAW" | grep -q 'does not decode' \
+   && ! printf '%s' "$MRAW" | grep -qE 'Changed:|Verification: PASS'; then
+  ok "malformed cadence.json: the per-turn hook names the error in one line, with no format rule"
+else fail "malformed per-turn" "$MRAW"; fi
+MSTART=$(printf '{"source":"startup"}' | ( cd "$MALFORMED" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" 2>/dev/null ) | extract_ctx)
+case "$MSTART" in *"$FORMAT_MARK"*) fail "malformed start" "session start carries the reply-format rule" ;;
+  *) ok "malformed cadence.json: session start carries no reply-format rule" ;; esac
 MCTX=$(printf '{"source":"startup"}' | ( cd "$MALFORMED" && CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$MALFORMED" ORCH_HOME="$TMP/home" bash "${ROOT}/scripts/hooks/session-start.sh" ) | extract_ctx)
 case "$MCTX" in *"does not decode"*) ok "malformed cadence.json: the session-start verdict still reports the error" ;;
   *) fail "malformed verdict" "$(printf '%s' "$MCTX" | head -1)" ;; esac

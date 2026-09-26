@@ -27,6 +27,11 @@ import time
 import uuid
 
 
+# The one wording for a bad workflow, shared with orch-cadence-check.sh,
+# cadence-init.sh and orch-protocol.sh (tests/test-cadence-docs.sh).
+WORKFLOW_FIX = ('needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed')
+
+
 class Unsafe(Exception):
     pass
 
@@ -656,8 +661,7 @@ def hook_retry(state_dir=None, payload=None):
         if not config["enabled"]:
             return
         if config.get("workflow") != "proportional":
-            raise Unsafe('docs/llm-orchestrator/cadence.json needs "workflow": "proportional" '
-                         '(the legacy workflow was removed); add or fix that one line')
+            raise Unsafe("docs/llm-orchestrator/cadence.json " + WORKFLOW_FIX)
         if not canonical(state_dir or Manager.default_base()).exists():
             return
         manager = Manager(state_dir)

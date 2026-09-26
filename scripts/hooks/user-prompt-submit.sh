@@ -54,11 +54,15 @@ if [[ -f "$PROTOCOL_LIB" ]]; then
   source "$PROTOCOL_LIB"
   WORKFLOW=$(orch_protocol_workflow "$INPUT")
 fi
-# No enabled cadence, a cadence.json that does not decode, or no way to tell:
-# no reply-format rule and no reminder.
-[[ "${WORKFLOW}" == "proportional" ]] || exit 0
+# A broken cadence.json: the one-line error instead of a reply-format rule.
+# No enabled cadence, or no way to tell: nothing at all.
+CONFIG_ERROR=""
+[[ "${WORKFLOW}" == "error" || "${WORKFLOW}" == "undecodable" ]] && CONFIG_ERROR=$(orch_protocol_config_error "${WORKFLOW}")
+[[ "${WORKFLOW}" == "proportional" || -n "${CONFIG_ERROR}" ]] || exit 0
 MARKER="orch-proportional-nudge"
-if [[ -f "${CANON}" ]]; then
+if [[ -n "${CONFIG_ERROR}" ]]; then
+  REMINDER="${CONFIG_ERROR}"
+elif [[ -f "${CANON}" ]]; then
   REMINDER=$(awk -v s="<!-- $MARKER-start -->" -v e="<!-- $MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON}" 2>/dev/null)
 fi
 if [[ -z "${REMINDER}" ]]; then

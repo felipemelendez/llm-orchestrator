@@ -202,6 +202,10 @@ cfg_array() { # <key> — one element per line
   return 0
 }
 
+# The one wording for a bad workflow, shared with cadence-init.sh,
+# orch-task-resources.py and orch-protocol.sh (tests/test-cadence-docs.sh).
+WF_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
+
 cfg_workflow() { # [validated] rc 0 when the workflow is "proportional"
   local w="INVALID"
   cfg_load
@@ -212,7 +216,7 @@ cfg_workflow() { # [validated] rc 0 when the workflow is "proportional"
     w="proportional"
   fi
   if [ "$w" != "proportional" ]; then
-    echo "CADENCE: $CFG_REL needs \"workflow\": \"proportional\" (the legacy workflow was removed); add or fix that one line"
+    echo "CADENCE: $CFG_REL $WF_FIX"
     return 1
   fi
   if [ "${1:-}" = "validated" ] && [ ! -s "$CFG_DUMP" ]; then
