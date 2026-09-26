@@ -18,7 +18,7 @@ preconditions below are for projects without an enabled cadence.
 
 Before this skill runs:
 - `/llm-orchestrator:verify` has been run; tests pass.
-- `/llm-orchestrator:review` has been run; verdict is yes or with-fixes already addressed.
+- `/llm-orchestrator:review` has been run; the verdict is `READY`, or `READY-WITH-FIXES` with the mild findings already handled.
 - **Regression check passes.** Run:
   ```bash
   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
@@ -92,7 +92,7 @@ Found:
 - Branch: feat/x
 - Worktree: .worktrees/feat-x (LLM Orchestrator-created)
 - Tests: 142 passed
-- Review: yes
+- Review: READY
 Options:
 - 1. Merge into main
 - 2. Push and open PR

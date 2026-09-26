@@ -30,7 +30,7 @@ description: One-line summary of what the command does. Triggers, not workflow.
 
 A command is a workflow wrapper. The skill is the discipline. Most commands open by invoking one skill, then call out to others as needed.
 
-Example: `/llm-orchestrator:review` invokes `requesting-code-review`, which dispatches subagents for spec-compliance then code-quality, plus an optional third security pass when the diff touches security-sensitive code.
+Example: `/llm-orchestrator:review` invokes `requesting-code-review`, which starts `scripts/lib/orch-review.py` and waits for its verdict.
 
 ## When to add a command
 
@@ -67,7 +67,7 @@ The validator checks the `description:` field on every command. Body validation 
 | `/llm-orchestrator:plan`            | Turn an approved spec into a checklist-shaped plan.                     |
 | `/llm-orchestrator:worktree`        | Create an isolated git worktree.                                        |
 | `/llm-orchestrator:dispatch`        | Run a focused subagent with a constructed context envelope.             |
-| `/llm-orchestrator:review`          | Two-stage review (spec + code quality), plus an optional security pass on sensitive diffs. |
+| `/llm-orchestrator:review`          | `[base] [--full]`: runs `orch-review.py` (Standard by default, Full with `--full`) and reports its verdict. Saves no file in the repository. |
 | `/llm-orchestrator:debug`           | Root-cause debugging.                                                   |
 | `/llm-orchestrator:verify`          | Run tests/lint/typecheck and report evidence.                           |
 | `/llm-orchestrator:finish`          | Decide between merge / PR / keep / discard.                             |

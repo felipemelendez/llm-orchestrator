@@ -18,7 +18,7 @@
 #   A6 lock_extra, the absolute-path spelling, the case fold, the basename
 #   A7 apply_patch headers in every position
 #   A9 hygiene: the size ceiling, no reference to the deleted guard, HOME clean
-#   A10 .codex-plugin/plugin.json names the cadence skill and only Codex hooks
+#   A10 .codex-plugin/plugin.json names the cadence and review skills and only Codex hooks
 #
 # Bash 3.2 compatible. Exits non-zero on any failure.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -359,18 +359,6 @@ bash_pin 2 "bash /tmp/orch-cadence-check.sh --verdict" 'an unrecognized same-nam
 bash_pin 2 "bash '$CHECK' --verdict --lock" 'a read mode cannot authorize a write mode'
 bash_pin 2 "bash '$GATE' /tmp/tree HEAD --config '$CAD/docs/llm-orchestrator/cadence.json' --unknown" 'unknown gate options are refused'
 
-section "A17 — the trusted read-only Claude provider can read locked inputs"
-PROVIDER="$ROOT/scripts/providers/claude-review.py"
-REVIEW="python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$TMP/review.jsonl' --receipt '$TMP/receipt.json'"
-bash_pin 0 "$REVIEW" 'the documented provider config is a read input'
-bash_pin 0 "$REVIEW --context-file docs/llm-orchestrator/LAWS.md" 'locked review context remains read-only'
-bash_pin 2 "$REVIEW --claude-bin /tmp/untrusted" 'a substituted executable gets no read-only exemption'
-bash_pin 2 "$REVIEW --unknown" 'unknown provider options get no exemption'
-bash_pin 2 "$REVIEW; rm '$CAD/docs/llm-orchestrator/LAWS.md'" 'provider cannot prefix a locked-file write'
-bash_pin 2 "python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$CAD/docs/llm-orchestrator/LAWS.md' --receipt '$TMP/receipt.json'" 'provider output cannot target a locked input'
-bash_pin 2 "python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$TMP/review.jsonl' --receipt '$CAD/docs/llm-orchestrator/LOCK.sha256'" 'provider receipt cannot target the lock'
-bash_pin 2 "python3 /tmp/claude-review.py run --config '$CAD/docs/llm-orchestrator/cadence.json'" 'same-named arbitrary provider is refused'
-
 # ------------------------------------------------------------
 section "A9 — hygiene"
 lines=$(wc -l < "$ADAPTER" | tr -d ' ')
@@ -402,8 +390,18 @@ extra = set(m) - {"name", "version", "description", "homepage", "repository",
                   "license", "skills", "hooks"}
 if extra:
     problems.append("unexpected keys %s" % sorted(extra))
-if m.get("skills") != "./skills/cadence":
-    problems.append("skills is %r, not ./skills/cadence" % m.get("skills"))
+want_skills = ["./skills/cadence", "./skills/requesting-code-review"]
+if m.get("skills") != want_skills:
+    problems.append("skills is %r, not %r" % (m.get("skills"), want_skills))
+for skill in want_skills:
+    if not os.path.isfile(os.path.join(root, skill, "SKILL.md")):
+        problems.append("%s has no SKILL.md" % skill)
+# The review skill runs scripts/lib/orch-review.py from the plugin root, which
+# Codex copies whole into its plugin cache.
+for needed in ("scripts/lib/orch-review.py", "scripts/lib/orch-task-resources.py",
+               "scripts/lib/orch-signals.sh", "skills/cadence/references/laws.md"):
+    if not os.path.isfile(os.path.join(root, needed)):
+        problems.append("the review needs %s" % needed)
 hooks = m.get("hooks", {}).get("hooks") if isinstance(m.get("hooks"), dict) else None
 if not isinstance(hooks, dict):
     problems.append("hooks is not an inline hooks object")
@@ -430,9 +428,9 @@ print("\n".join(problems))
 PY
 )
 if [[ -f "$MANIFEST" && -z "$manifest_out" ]]; then
-  ok "the Codex manifest names the cadence skill and only the three Codex hooks"
+  ok "the Codex manifest names the cadence and review skills and only the three Codex hooks"
 else
-  fail "the Codex manifest names the cadence skill and only the three Codex hooks" "${manifest_out:-missing $MANIFEST}"
+  fail "the Codex manifest names the cadence and review skills and only the three Codex hooks" "${manifest_out:-missing $MANIFEST}"
 fi
 
 # ------------------------------------------------------------

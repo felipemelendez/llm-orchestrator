@@ -107,7 +107,6 @@ Invoke a row's skill when its trigger clearly matches. Questions and small edits
 | Needs branch isolation                                           | `using-git-worktrees`              |
 | Dependent or shared-file task                                    | `dispatching-subagents`            |
 | 3+ truly independent tasks, no shared files                      | `dispatching-parallel-agents`      |
-| Fan-out already chosen — script it or run it inline?             | `using-workflows`                  |
 | Diff is ready for review                                         | `requesting-code-review`           |
 | Reviewer returned issues                                         | `receiving-code-review`            |
 | Branch green, deciding what to do                                | `finishing-a-branch`               |
@@ -132,7 +131,7 @@ The roster covers, by role:
 
 - a read-only explorer for audits, "what files handle X", and grep-sweeps;
 - an implementer that runs one plan task at a time;
-- a spec reviewer and a code reviewer for the two-stage review, plus an optional security reviewer;
+- a spec reviewer for a written spec document (code review is `orch-review.py`, started by `requesting-code-review`, not an agent);
 - a debugger for root-cause investigation;
 - a researcher that verifies external API claims against current sources.
 

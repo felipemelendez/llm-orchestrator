@@ -131,20 +131,19 @@ while IFS= read -r dir; do
     dispatching-subagents)         limit=2202  ;;
     using-orchestrator)            limit=1535  ;;
     dispatching-parallel-agents)   limit=1389  ;;
-    requesting-code-review)        limit=1249  ;;
     test-driven-development)       limit=1247  ;;
     research-classifier)           limit=1094  ;;
     brainstorming)                 limit=1087  ;;
     writing-plans)                 limit=1068  ;;
     using-git-worktrees)           limit=1018  ;;
     managing-memory)               limit=1012  ;;
-    using-workflows)               limit=981   ;;
     systematic-debugging)          limit=972   ;;
     verification-before-completion) limit=942   ;;
     executing-plans)               limit=903   ;;
     writing-skills)                limit=847   ;;
     finishing-a-branch)            limit=769   ;;
-    receiving-code-review)         limit=664   ;;
+    requesting-code-review)        limit=647   ;;
+    receiving-code-review)         limit=619   ;;
     *)                              limit=500  ;;
   esac
   if (( body_words > limit )); then
@@ -280,7 +279,7 @@ REQUIRED_SKILLS="using-orchestrator brainstorming writing-plans executing-plans 
 dispatching-subagents dispatching-parallel-agents test-driven-development \
 systematic-debugging verification-before-completion requesting-code-review \
 receiving-code-review using-git-worktrees finishing-a-branch writing-skills \
-using-workflows research-classifier managing-memory handing-off-to-fresh-context"
+research-classifier managing-memory handing-off-to-fresh-context"
 for req in $REQUIRED_SKILLS; do
   if [[ ! -f "$ROOT/skills/$req/SKILL.md" ]]; then
     echo "FAIL: core skill missing: skills/$req/SKILL.md (deletion must be deliberate — update REQUIRED_SKILLS in the same commit)"
@@ -332,8 +331,8 @@ done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* command
 # down, so a change to a pin shows up in the same commit where a reviewer sees it.
 #
 # Policy (Felipe, 2026-09-21): opus everywhere; the explorer is sonnet (2026-09-25).
-# It was fable everywhere except orch-security-reviewer, which was already opus
-# because Fable's safety classifiers fire on benign security-review work. The same
+# It was fable everywhere except the security reviewer agent (since removed), which
+# was already opus because Fable's safety classifiers fire on benign security-review work. The same
 # thing kept happening beyond security work — a Codex review of this repo's own
 # hook refused an ordinary audit brief as a "cybersecurity risk", and the Fable
 # review route was rate-limited out entirely — so the exception became the rule.
@@ -356,11 +355,11 @@ while IFS= read -r agent_file; do
     echo "      Change the policy list in tests/validate-skills.sh in this same commit and say why."
     fail=1
   fi
-  # Effort (Felipe, 2026-09-25): the three reviewers run at high, because a
+  # Effort (Felipe, 2026-09-25): the reviewer agent runs at high, because a
   # reviewer that stops early misses findings; every other agent inherits the
   # session's level.
   case "$agent_name" in
-    orch-spec-reviewer|orch-code-reviewer|orch-security-reviewer) want_effort=high ;;
+    orch-spec-reviewer) want_effort=high ;;
     *) want_effort="" ;;
   esac
   got_effort=$(awk '/^---$/{c++; next} c==1 && /^effort:/{print $2; exit}' "$agent_file")

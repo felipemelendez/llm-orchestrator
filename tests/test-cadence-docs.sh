@@ -93,12 +93,22 @@ printf '\n== Every cadence reference is linked, and every link resolves ==\n'
 REFS="$ROOT/skills/cadence/references"
 for f in "$REFS"/*; do
   b=$(basename "$f")
-  if grep -rqF "references/$b" "$ROOT/skills" "$ROOT/commands" 2>/dev/null \
+  # Linked from the cadence skill's own pages, named by its full path, or read
+  # by the init. A same-named file in another skill does not count.
+  if grep -qF "(references/$b)" "$SKILL" "$FULL" 2>/dev/null \
+     || grep -rqF "skills/cadence/references/$b" "$ROOT/skills" "$ROOT/commands" "$ROOT/scripts" 2>/dev/null \
      || grep -qF "\$REF_DIR/$b" "$INIT"; then ok "references/$b is read by the skill, a command or the init"
   else fail "references/$b" "nothing links or reads it"; fi
 done
-for l in $(grep -ohE '\(references/[^)]+\)' "$SKILL" "$FULL" | tr -d '()' | sort -u); do
+# Every relative link in the skill's two pages, the review briefs in
+# requesting-code-review included, must name a file that exists.
+for l in $(grep -ohE '\]\([^)#:]+' "$SKILL" "$FULL" | sed 's/^](//' | sort -u); do
   [ -f "$ROOT/skills/cadence/$l" ] && ok "$l exists" || fail "$l" "linked from the skill but missing"
+done
+# The review briefs are requesting-code-review's; the cadence keeps no copy.
+for n in contract.md adversarial.md refuter.md security-lens.md; do
+  has "$FULL" "../requesting-code-review/references/$n" && ok "CADENCE.md links the $n review brief" \
+    || fail "the $n review brief" "CADENCE.md does not link ../requesting-code-review/references/$n"
 done
 
 printf '\n== Two layers, not three, and no deleted guard ==\n'

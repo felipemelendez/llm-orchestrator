@@ -1,6 +1,6 @@
 ---
 name: dispatching-subagents
-description: Use when running plan tasks one at a time with a two-stage review each — for tasks with dependencies, sensitive code, or shared files.
+description: Use when running plan tasks one at a time with a review after each — for tasks with dependencies, sensitive code, or shared files.
 ---
 
 # Dispatching subagents (sequential, per-task review)
@@ -23,7 +23,7 @@ The plan file is the only task state: flip each task's `### N. <name>  - [ ]` he
    - `NEEDS_CONTEXT` → answer the `Ask:` via `SendMessage` to that agentId. The agent resumes with everything it already read and reasoned; a cold re-dispatch pays to re-derive all of it. The resume returns in the background — never spawn a duplicate while waiting.
    - `PARTIAL` → its Stop-if fired. Record `Progress:`, then resume with unblocking guidance (the partial work and context survive) — unless the transcript shows repeated failed attempts (a retry-cap warning), in which case re-dispatch fresh with `Progress:`/`Remaining:` pasted into the new envelope: a context polluted by failures hurts more than a cold start costs.
 
-3. **Review in two stages**, each in a fresh subagent so no context reviews its own reasoning. First `orch-spec-reviewer` (`templates/spec-reviewer-prompt.md`) — paste the spec, the plan task, and the diff since this task's first commit. Not `HEAD~1`: a task is often several commits, and `HEAD~1` silently reviews only the last one. Only after the spec verdict clears, `orch-code-reviewer` (`templates/code-reviewer-prompt.md`) with the diff and the relevant CLAUDE.md section. Reviewers tag every finding with a confidence; you demote anything below 0.8 into `Notes:` — the threshold lives in your filter, never in the reviewer's instructions, because a reviewer told to withhold loses recall. Verdict routing per stage: `Ready: yes` → proceed; Critical or Important findings, or `Ready: no` → the fix loop; Minor only → record in the plan file and proceed.
+3. **Review the task** with `requesting-code-review`: `orch-review.py` with `--base` at the commit before this task's first commit, so the review covers the whole task. Not `HEAD~1`: a task is often several commits, and `HEAD~1` silently reviews only the last one. Standard is the default; use `--path full` when the task is Full work. The reviewers work in their own clones and never see the implementer's report. Verdict routing: `READY` → proceed; `NOT-READY` → the fix loop; `READY-WITH-FIXES` → record the mild findings in the plan file and proceed; `INCOMPLETE` → fix the cause it names and run the review again.
 
 4. **Tick and continue.** Flip the task's plan heading checkbox, start the next task without asking the user.
 
@@ -46,7 +46,7 @@ Bounded at **three rounds per task**. The failure this bound prevents is a singl
 - Rounds 1–2: resume the same implementer by agentId with the open findings pasted verbatim — it keeps the files it read and the reasoning it formed.
 - Round 3: a *fresh* implementer one model tier up ("a prior implementer attempted this task twice; you own it now"). Two failed resumes is evidence the context is not the problem.
 
-Re-review only the fix: diff from the head the previous review saw, not the task base. Each open finding comes back exactly `ADDRESSED` or `NOT ADDRESSED` — attempted is not addressed; the specific defect has to be gone. New breakage introduced by the fix diff joins the open list; anything the reviewer notices on untouched code is recorded but does not extend the loop — fresh material on old code is how a bounded loop becomes an unbounded one.
+Re-review only the fix: run the review with `--base` at the head the previous review saw, not the task base. An open finding is addressed only when the specific defect is gone — its failing check now passes — not when a fix was attempted. New breakage introduced by the fix diff joins the open list; anything the reviewer notices on untouched code is recorded but does not extend the loop — fresh material on old code is how a bounded loop becomes an unbounded one.
 
 At the cap, stop dispatching and adjudicate. Every still-open finding gets one written disposition in the plan file: `parked — contested — ruling: <why the code stands>` when the finding is wrong or arguable and you can say why; `parked — real, not load-bearing — ruling: deferred` when it's real but nothing later builds on it; or `BLOCKED` when it's real *and* load-bearing (a later task depends on it, or it exposes a plan defect) — stop and report to the user with the finding, the plan text it collides with, and the fix history. Adjudicate only at the cap — adjudicating early to end a loop is pre-judging with a different name — and never drop a finding silently; the written line per finding is the point of this section.
 
@@ -62,7 +62,7 @@ Run the whole set without pausing. Legitimate stops: all tasks done, an unresolv
 
 ## Model and effort
 
-Agents ship with role-appropriate models (see `docs/anthropic-ecosystem.md`); effort deliberately inherits the session preference. Override only when a dispatch gives you a reason, on the axis that matches the failure: the agent didn't *know* enough → raise the model; it didn't *try* hard enough (skipped a file, didn't run the tests, stopped early) → raise the effort. The Agent tool takes a per-invocation `model` but no `effort`, so a one-off effort change routes through a workflow script or `ultrathink` in the prompt. Never dispatch a reviewer on a weaker model than the implementer it reviews.
+Agents ship with role-appropriate models (see `docs/anthropic-ecosystem.md`); effort deliberately inherits the session preference. Override only when a dispatch gives you a reason, on the axis that matches the failure: the agent didn't *know* enough → raise the model; it didn't *try* hard enough (skipped a file, didn't run the tests, stopped early) → raise the effort. The Agent tool takes a per-invocation `model` but no `effort`, so a one-off effort change routes through `ultrathink` in the prompt. Never dispatch a reviewer on a weaker model than the implementer it reviews.
 
 ## Dispatch hygiene
 

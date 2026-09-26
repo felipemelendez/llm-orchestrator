@@ -191,7 +191,7 @@ fire "$CLAIM" "$R"
   && ok "(b2) a raw argv record (no shell wrapper) → silent" \
   || fail "(b2) raw argv" "rc=$RC out=$OUT"
 
-R=$(mk 'turn:t1' 'ran:0:python3 tests/test-claude-provider.py')
+R=$(mk 'turn:t1' 'ran:0:python3 tests/test-review.py')
 fire "$CLAIM" "$R"
 { [[ $RC -eq 0 ]] && silent; } \
   && ok "(b3) a direct python test script, the form LAWS.md names → silent" \

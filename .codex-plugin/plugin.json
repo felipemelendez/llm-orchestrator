@@ -1,11 +1,11 @@
 {
   "name": "llm-orchestrator",
   "version": "0.11.0",
-  "description": "The Codex part of LLM Orchestrator: the cadence skill, the file guard and the completion check.",
+  "description": "The Codex part of LLM Orchestrator: the cadence and review skills, the file guard and the completion check.",
   "homepage": "https://github.com/felipemelendez/llm-orchestrator",
   "repository": "https://github.com/felipemelendez/llm-orchestrator",
   "license": "MIT",
-  "skills": "./skills/cadence",
+  "skills": ["./skills/cadence", "./skills/requesting-code-review"],
   "hooks": {
     "hooks": {
       "PreToolUse": [

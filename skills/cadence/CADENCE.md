@@ -21,13 +21,14 @@ they cannot supply a required independent review or gate.
    Independently review the contract and resolve material gaps before coding.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
-3. Obtain two fresh independent reviews with different briefs, neither seeing
-   the other review or the implementer's conclusions. Honour requested providers.
-   A provider dropout is not a completed review or permission to substitute.
-4. Compare findings and record their disposition in the conversation/PR or
-   temporary task evidence. Use a refuter only for substantive disagreement or
-   a one-sided serious/catastrophic finding. Missing reviews are not agreement.
-   Agreed findings still require resolution; do not create a third general review.
+3. Run the Full review with `requesting-code-review` (`orch-review.py run
+   --path full`). It runs two blind reviewers with different briefs on two
+   providers and, when a serious or catastrophic finding exists, the refuter.
+   A provider dropout gives `INCOMPLETE`, never a completed review or a
+   substitute.
+4. Handle the findings with `receiving-code-review` and record a disposition
+   for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
+   the cause and run a new review. Do not add a third general review.
 5. Fix material issues, verify affected fixes and independently assess the final
    change. Use the deterministic gate and targeted probes where they test the
    affected contracts; inspect individual outcomes, not merely its final exit.
@@ -36,9 +37,11 @@ they cannot supply a required independent review or gate.
    design/runbook updates. Finish task-owned temporary resources after consumers
    stop and deliverables are preserved; explain concrete preservation reasons.
 
-The review briefs are [references/reviewer-spec.md](references/reviewer-spec.md),
-[references/reviewer-plain.md](references/reviewer-plain.md) and
-[references/refuter.md](references/refuter.md); read them for their lenses.
+The review script sends each seat its brief from `requesting-code-review`:
+[contract](../requesting-code-review/references/contract.md),
+[adversarial](../requesting-code-review/references/adversarial.md),
+[refuter](../requesting-code-review/references/refuter.md) and, when the diff
+touches security, the [security lens](../requesting-code-review/references/security-lens.md).
 If repeated findings show the design is wrong, revisit the contract rather than
 repeating the same review indefinitely.
 
@@ -72,11 +75,22 @@ enforcement also requires the harness's actual enablement and trust.
 | File | What it holds |
 |---|---|
 | `docs/llm-orchestrator/LAWS.md` | the constitution: mission, promises, harm ranking, rulings, standing constraints, model seats, the standard of work, the handoff law |
-| `docs/llm-orchestrator/cadence.json` | the switch, the workflow, the runner profile, the path classes, `lock_extra` |
+| `docs/llm-orchestrator/cadence.json` | the switch, the workflow, the runner profile, the path classes, `lock_extra`, and the optional review keys below |
 | `docs/llm-orchestrator/LOCK.sha256` | the manifest of locked content |
 | `docs/llm-orchestrator/DESIGN_RULINGS.md` | design rulings, append-only, dated |
 | `docs/llm-orchestrator/TRAPS.md` | traps and procedures learned, append-only, dated |
 | `.githooks/commit-msg`, `.githooks/orch-cadence-check.sh` | the git layer, versioned in the project |
+
+Two optional `cadence.json` keys prepare the review copies; `cadence-init.sh`
+writes neither:
+
+- `review.copy_ignored`: a list of ignored paths (for example `node_modules`)
+  copied into each review copy, copy-on-write where the file system supports it.
+- `review.setup`: a shell command run in each review copy after that, for
+  projects whose ignored dependencies cannot simply be copied (an editable
+  install, or a virtualenv with absolute paths). A copy whose tracked and
+  untracked files then differ from the real checkout makes the review
+  `INCOMPLETE`.
 
 Templates for the three markdown files: [references/laws.md](references/laws.md)
 (with a filled-in [example](references/laws-example.md)),
