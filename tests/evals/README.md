@@ -134,9 +134,12 @@ other credentials (AWS, GitHub tokens) are not passed. A `codex-review` run whos
 log shows an MCP server started is counted as incomplete.
 
 `review_compare.py score` reads `review.json` for the orch-review arms (every
-finding except notes and dropped ones) and the reply text for the other two (one
-finding per list item or heading that names a file). Every arm is scored by the
-same rule:
+finding except notes and dropped ones) and the reply text for the other two.
+From a reply it takes one finding per item when the reply holds a fenced JSON
+array of findings that name a file, as `/code-review` writes them (its `file`,
+`line`, `summary` and `failure_scenario` fields); otherwise one finding per list
+item or heading that names a file, as `codex review` writes them. Every arm is
+scored by the same rule:
 
 - A finding points at a planted defect when it names the defect's file and a
   line within 3 lines of the defect's lines, or names the file with no line and
@@ -165,19 +168,24 @@ Limits of the comparison:
 
 - A finding counts as false whenever it does not point at a planted defect, so a
   real problem the set did not plant is counted as wrong. Read the false findings
-  before concluding.
+  before concluding. The 2026-09-25/26 run showed this matters: the clean cases
+  hold real bugs the set did not plant, and an audit of 80 sampled false
+  findings found almost all of them true (unplanted bugs, spec gaps, and minor
+  notes on missing tests), none wrong. The FALSE counts overstate noise.
 - The claim match is a word-overlap rule. It can credit a vague finding that
   shares two words with the description, and miss a correct one worded
   differently. Read the location-only findings.
 - A finding that names no file is not counted at all.
 - Two defects in the same case are not independent, and McNemar treats them as
   if they were. With one try per case there is one sample per defect.
-- Not verified without a paid run: that `/code-review` works in `-p` mode under
-  `--safe-mode` with the appended sentence, that `codex review` passes
+- Checked by the 2026-09-25/26 run: `/code-review` answers in `-p` mode under
+  `--safe-mode` with the appended sentence, and the layout of both outputs (see
+  the scoring paragraph above). The first scoring missed the `/code-review`
+  JSON array and read each reply as one finding; the scorer now reads the array.
+  Not checked from the outputs: that `codex review` passes
   `developer_instructions` to its reviewer (0.157.0 accepts the key: a signed-out
-  `--strict-config` run rejected an unknown key and loaded this one), that it logs
-  its MCP servers, and the exact layout of
-  both outputs. The pilot in step 1 checks these before the main spend.
+  `--strict-config` run rejected an unknown key and loaded this one), and that it
+  logs its MCP servers.
 
 The orch-review arms need `scripts/lib/orch-review.py` (ticket T5) merged; `run`
 refuses them until it exists. Run from the repository root. `run` skips runs that

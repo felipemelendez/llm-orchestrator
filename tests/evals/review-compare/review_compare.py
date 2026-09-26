@@ -444,6 +444,37 @@ FILE = re.compile(r"(?P<file>[\w./-]*[\w-]+\.(?:py|md|json|toml|ya?ml|txt|csv|cf
                   r"(?:(?::|,? lines? |#L)(?P<line>\d+))?")
 
 
+FENCED_ARRAY = re.compile(r"```[\w-]*[ \t]*\n\s*(\[.*?\])\s*```", re.S)
+TEXT_FIELDS = ("title", "summary", "description", "body", "failure_scenario")
+
+
+def json_findings(text):
+    """Findings from a fenced JSON array of objects that name a file, as /code-review writes them;
+    None when the reply holds no such array. An empty array is a review with no findings."""
+    for block in FENCED_ARRAY.finditer(text):
+        try:
+            items = json.loads(block[1])
+        except json.JSONDecodeError:
+            continue
+        if not all(isinstance(i, dict) and isinstance(i.get("file"), str) for i in items):
+            continue
+        out = []
+        for item in items:
+            line = item.get("line")
+            line = int(line) if isinstance(line, int) or (isinstance(line, str) and line.isdigit()) else None
+            words = " ".join(str(item[k]) for k in TEXT_FIELDS if item.get(k))
+            out.append({"file": item["file"], "line": line, "text": words.strip()[:1000]})
+        return out
+    return None
+
+
+def reply_findings(text):
+    """Findings from a /code-review reply: one per item of its fenced JSON findings array, else the
+    text rule."""
+    from_json = json_findings(text)
+    return from_json if from_json is not None else text_findings(text)
+
+
 def text_findings(text):
     """Split free-text review output into findings: one per list item or heading that names a file."""
     blocks, current = [], []
@@ -527,9 +558,10 @@ def read_run(out_dir, arm):
         return run
     if arm["output"] == "claude-json":
         text, run["cost_usd"], run["tokens"] = parse_claude_json(stdout)
-    else:
+        run["findings"] = reply_findings(text)
+    else:  # codex prints its exec log too, so a JSON array there may be a command's output
         text, run["cost_usd"], run["tokens"] = parse_codex_text(stdout)
-    run["findings"] = text_findings(text)
+        run["findings"] = text_findings(text)
     if not text.strip():
         run["complete"] = False
     return run

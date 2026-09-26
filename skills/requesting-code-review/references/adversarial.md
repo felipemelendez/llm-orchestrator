@@ -26,5 +26,10 @@ Report each of these as a `test-tampering` finding:
 - a test was changed to match the code instead of the specification;
 - the code treats test inputs specially.
 
+A test that would not notice a removed mechanism, or behavior no test covers,
+is a mild `test-gap`; report any wrong result you found there as its own
+`defect`. If the change weakened or rewrote that test, it is tampering, not a
+test-gap.
+
 Report every weakness you find with its confidence; the script filters
 low-confidence findings, so do not hold anything back.

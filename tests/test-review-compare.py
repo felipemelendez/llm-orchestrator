@@ -67,13 +67,12 @@ FAKE_CLAUDE = "#!/usr/bin/env python3\n" + TREE_HASH + textwrap.dedent("""\
     with open(here / 'calls.jsonl', 'a') as log:
         log.write(json.dumps({'tool': 'claude', 'argv': sys.argv[1:], 'env': sorted(os.environ)}) + '\\n')
     plan = json.loads((here / 'plan.json').read_text())[tree_hash()]['code-review']
-    shapes = ['{file}:{line}', '{file}, line {line}', '{file}#L{line}']
-    lines = ['## Code review', '']
-    for n, f in enumerate(plan):
-        where = shapes[n % 3].format(**f) if f.get('line') else f['file']
-        lines.append(f'{n + 1}. **Bug** in ' + where + ': ' + f['claim'])
-        lines.append('   More detail on a second line.')
-    print(json.dumps({'result': '\\n'.join(lines) or 'No issues found.', 'total_cost_usd': 0.5,
+    # /code-review answers with a sentence or two, then its findings as a JSON array in a fenced block.
+    items = [{'file': f['file'], 'line': f.get('line'), 'summary': f['claim'],
+              'failure_scenario': 'More detail on what goes wrong.'} for f in plan]
+    reply = (f'I found {len(items)} issues in the change to billing/invoice.py.\\n\\n'
+             '```json\\n' + json.dumps(items, indent=2) + '\\n```\\n')
+    print(json.dumps({'result': reply, 'total_cost_usd': 0.5,
                       'usage': {'input_tokens': 300, 'cache_read_input_tokens': 1000, 'output_tokens': 40}}))
     """)
 
@@ -171,6 +170,39 @@ class Parsing(unittest.TestCase):
         found = review_compare.text_findings(text)
         self.assertEqual([(f["file"], f["line"]) for f in found],
                          [("pkg/a.py", 12), ("pkg/b.py", 7), ("pkg/c.py", 3), ("pkg/d.py", None)])
+
+    def test_a_fenced_json_array_gives_one_finding_per_item(self):
+        items = [{"file": "api/listing.py", "line": 40, "summary": "clamp_limit accepts limit=0",
+                  "failure_scenario": "paginate(range(5), limit=0) loops forever"},
+                 {"file": "api/listing.py", "line": "42", "summary": "MAX_LIMIT is never applied",
+                  "failure_scenario": "limit=1000 returns every item"},
+                 {"file": "tests/test_listing.py", "summary": "no test covers the cursor",
+                  "failure_scenario": ""}]
+        text = ("I found 3 issues in `api/listing.py` and `tests/test_listing.py`.\n\n"
+                "```json\n" + json.dumps(items, indent=2) + "\n```\n")
+        found = review_compare.reply_findings(text)
+        self.assertEqual([(f["file"], f["line"]) for f in found],
+                         [("api/listing.py", 40), ("api/listing.py", 42), ("tests/test_listing.py", None)])
+        self.assertIn("clamp_limit accepts limit=0", found[0]["text"])
+        self.assertIn("loops forever", found[0]["text"])
+        # An empty array is a review with no findings; the files named in the prose are not findings.
+        self.assertEqual(review_compare.reply_findings("No issues in `api/listing.py`.\n```json\n[]\n```"), [])
+        # A fenced array that is not a list of findings leaves the text rule in charge.
+        self.assertEqual([f["file"] for f in review_compare.reply_findings("- bug in pkg/a.py:3\n```json\n[1, 2]\n```")],
+                         ["pkg/a.py"])
+
+    def test_codex_output_only_goes_through_the_text_rule(self):
+        # codex review prints its exec log too; a JSON array a command printed there is not its findings.
+        log = ("exec print-fixture\n```json\n" + json.dumps([{"file": "pkg/z.py", "line": 9}]) + "\n```\n"
+               "- [P1] Off by one — pkg/a.py:12-14\n  Explanation.\n")
+        run_dir = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(run_dir, ignore_errors=True))
+        (run_dir / "meta.json").write_text(json.dumps({"exit": 0, "seconds": 1}))
+        (run_dir / "stdout.txt").write_text(log)
+        run = review_compare.read_run(run_dir, {"output": "codex-text"})
+        self.assertEqual(run["findings"], review_compare.text_findings(log))
+        self.assertNotIn(("pkg/z.py", 9), [(f["file"], f["line"]) for f in run["findings"]])
+        self.assertIn(("pkg/a.py", 12), [(f["file"], f["line"]) for f in run["findings"]])
 
     def test_matching_uses_file_and_nearby_lines(self):
         defect = {"symbol": "tax", "what": "Tax is charged before the discount.",

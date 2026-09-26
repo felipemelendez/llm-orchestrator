@@ -16,7 +16,11 @@ reviewer's findings.
 - **Tests that test nothing.** For each test the change adds or relies on,
   ask which test would still pass with its mechanism removed. Try it: remove
   the mechanism in your copy, run the test, and put the code back. A test that
-  still passes is a finding.
+  still passes, or a requirement no test covers, is a mild `test-gap`
+  finding. If the code it should cover is also wrong, report that as a
+  separate `defect` with the wrong result and its own rank. If the change
+  weakened or rewrote the test, it is `test-tampering`, not a test-gap; so is
+  a test the change deleted or skipped.
 - **Run the tests.** Run the project's test command in your copy and read the
   summary. A failing or skipped test the change touches is a finding.
 
