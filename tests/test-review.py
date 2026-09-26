@@ -306,11 +306,19 @@ def review():
         events.append({"type": "turn_context", "payload": {
             "model": spec.get("served_model", config.get("served_model", "gpt-test")),
             "effort": spec.get("effort", "high"), "sandbox_policy": {"type": spec.get("sandbox", "read-only")}}})
-        if not spec.get("no_read"):
+        if spec.get("read_fails"):
+            events.append({"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "c1",
+                           "input": 'text(await tools.exec_command({cmd:"cat missing/calc.py"}));'}})
+            events.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "c1",
+                           "output": [{"type": "input_text", "text": "Script completed\\nOutput:\\n"},
+                                      {"type": "input_text", "text": json.dumps(
+                                          {"exit_code": 1, "output": "cat: missing/calc.py: No such file"})}]}})
+        elif not spec.get("no_read"):
             events.append({"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "c1",
                            "input": 'text(await tools.exec_command({cmd:"git diff HEAD"}));'}})
             events.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "c1",
-                           "output": [{"type": "input_text", "text": json.dumps({"output": diff})}]}})
+                           "output": [{"type": "input_text", "text": "Script completed\\nOutput:\\n"},
+                                      {"type": "input_text", "text": json.dumps({"exit_code": 0, "output": diff})}]}})
         events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": message}})
         rollout(conversation, events)
     for conversation in [parent, helper, *reviews]:
@@ -1078,6 +1086,33 @@ class ReviewTests(unittest.TestCase):
         self.assert_incomplete(self.review("standard", "claude"), "confidence 0")
         self.reviewer("codex", codex_finding(priority=2), no_read=True)  # a finding is kept, read or not
         self.assertEqual(self.review("standard", "claude")["verdict"], "READY-WITH-FIXES")
+
+    def test_r7_a_failed_read_is_not_evidence(self):
+        self.reviewer("claude", no_read=True, commands=[{"command": "cat missing/calc.py"}])
+        self.assert_incomplete(self.review(), "did not read the change")
+        self.reviewer("codex", read_fails=True)
+        self.assert_incomplete(self.review("standard", "claude"), "did not read the change")
+
+    def test_r7_honest_reads_of_quoted_or_relative_paths_count(self):
+        # git diff quotes non-ASCII paths ("caf\303\251.py"), and `cd src && cat lib.py` names src/lib.py
+        # by its basename; neither is a missing review.
+        self.git("checkout", "--", "calc.py")
+        (self.project / "café.py").write_text("x = 1\n")
+        self.reviewer("claude", no_read=True, commands=[{"command": "git diff HEAD"}])
+        self.assertEqual(self.review()["verdict"], "READY")
+        self.reviewer("codex")
+        self.assertEqual(self.review("standard", "claude")["verdict"], "READY")
+        (self.project / "café.py").unlink()
+        (self.project / "src").mkdir()
+        (self.project / "src/lib.py").write_text("y = 2\n")
+        self.reviewer("claude", no_read=True, commands=[{"command": "cd src && cat lib.py"}])
+        self.assertEqual(self.review()["verdict"], "READY")
+
+    def test_r7_an_unclosed_fence_is_a_dropout(self):
+        reply = "```json\n[]\n```\n\nMore findings:\n```json\n[\n  {\"file\": \"calc.py\", \"line\": 2}\n"
+        self.assertTrue(MOD.code_review_findings(reply)[1])
+        self.scenario["claude"]["code-review"] = {"reply": reply}
+        self.assert_incomplete(self.review(), "code-review: dropout")
 
     def test_r7_a_truncated_array_after_an_empty_one_is_a_dropout(self):
         reply = "```json\n[]\n```\n\n```json\n[\n  {\"file\": \"calc.py\", \"line\": 2, \"summary\": \"add\n```\n"

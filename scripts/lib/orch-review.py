@@ -1256,6 +1256,8 @@ def code_review_findings(text):
             continue
         if isinstance(value, list):
             arrays.append(value)
+    if "```" in FENCE.sub("", text):  # a truncated reply: a fence that never closes may hold findings
+        problems.append("a ``` fence is opened and never closed")
     if not arrays and not problems:
         return None, "the reply has no fenced JSON array of findings"
     items = [item for value in arrays for item in value]
@@ -1328,35 +1330,114 @@ def codex_review_findings(message, stdout, root):
     return findings, None
 
 
-def read_the_change(inputs, outputs, changed):
-    """R7: evidence that a reviewer read the change: a tool call that names a changed file, or a tool
-    result that shows a changed file's diff."""
-    return any(name in text for text in inputs for name in changed) or any(
-        f"diff --git a/{name}" in text for text in outputs for name in changed)
+def git_unquote(text):
+    """A path as Git prints it with core.quotePath: C-style escapes and octal bytes, UTF-8 decoded."""
+    out, i = bytearray(), 0
+    simple = {"n": b"\n", "t": b"\t", '"': b'"', "\\": b"\\", "a": b"\a", "b": b"\b", "f": b"\f", "r": b"\r",
+              "v": b"\v"}
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text):
+            if re.fullmatch(r"[0-7]{3}", text[i + 1:i + 4]):
+                out.append(int(text[i + 1:i + 4], 8))
+                i += 4
+                continue
+            if text[i + 1] in simple:
+                out += simple[text[i + 1]]
+                i += 2
+                continue
+        out += text[i].encode()
+        i += 1
+    return out.decode(errors="replace")
+
+
+DIFF_HEADER = re.compile(r'^diff --git (?:"a/((?:[^"\\]|\\.)*)"|a/(.*?) b/)', re.M)
+
+
+def diff_paths(text):
+    """The changed paths named by `diff --git` headers in a command's output, Git's quoting undone."""
+    return {git_unquote(quoted) if quoted else plain for quoted, plain in DIFF_HEADER.findall(text)}
+
+
+def names_file(text, path):
+    """The text names the file: by its path, a path relative to any directory, or its basename."""
+    return bool(re.search(r"(?<![\w.-])" + re.escape(os.path.basename(path)) + r"(?![\w-])", text))
+
+
+def read_the_change(calls, changed):
+    """R7: evidence that a reviewer read the change. Only a call that succeeded counts (no error result,
+    exit code 0 where the log shows one): its input names a changed file, or its output holds a
+    `diff --git` header for one (as `git diff` or `git show` print it)."""
+    return any(ok and (any(names_file(given, path) for path in changed) or diff_paths(printed) & set(changed))
+               for given, printed, ok in calls)
 
 
 def claude_tool_texts(events):
-    inputs, outputs = [], []
+    """(input, output, succeeded) for each tool call in a Claude transcript."""
+    calls, by_id = [], {}
     for event in events:
         message = event.get("message") if isinstance(event.get("message"), dict) else {}
         for block in message.get("content") if isinstance(message.get("content"), list) else []:
             if isinstance(block, dict) and block.get("type") == "tool_use":
-                inputs.append(json.dumps(block.get("input"), ensure_ascii=False))
-            elif isinstance(block, dict) and block.get("type") == "tool_result":
-                outputs.append(json.dumps(block.get("content"), ensure_ascii=False))
-    return inputs, outputs
+                by_id[block.get("id")] = len(calls)
+                calls.append([json.dumps(block.get("input"), ensure_ascii=False), "", False])
+            elif (isinstance(block, dict) and block.get("type") == "tool_result"
+                  and block.get("tool_use_id") in by_id):
+                content = block.get("content")
+                if isinstance(content, list):
+                    content = "\n".join(part.get("text", "") for part in content if isinstance(part, dict))
+                call = calls[by_id[block["tool_use_id"]]]
+                call[1] = content if isinstance(content, str) else ""
+                call[2] = block.get("is_error") is not True
+    return [tuple(call) for call in calls]
+
+
+EXIT_CODE = re.compile(r'"exit_code"\s*:\s*(-?\d+)|Exit code:\s*(-?\d+)')
+
+
+def codex_output_text(output):
+    """The text of a Codex tool output, with any JSON-encoded command result unpacked."""
+    parts = output if isinstance(output, list) else [output]
+    texts = []
+    for part in parts:
+        text = part.get("text") if isinstance(part, dict) else part
+        if not isinstance(text, str):
+            continue
+        texts.append(text)
+        try:
+            inner = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(inner, dict):
+            texts += [str(inner.get(key)) for key in ("output", "stdout", "stderr") if inner.get(key) is not None]
+    return "\n".join(texts)
 
 
 def codex_tool_texts(events):
-    inputs, outputs = [], []
+    """(input, output, succeeded) for each tool call in a Codex rollout, paired by call_id."""
+    calls, by_id = [], {}
     for event in events or []:
         payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
         kind = payload.get("type")
         if kind in ("custom_tool_call", "function_call", "local_shell_call"):
-            inputs.append(json.dumps(payload, ensure_ascii=False))
-        elif kind in ("custom_tool_call_output", "function_call_output", "local_shell_call_output"):
-            outputs.append(json.dumps(payload, ensure_ascii=False))
-    return inputs, outputs
+            given = payload.get("input") if kind == "custom_tool_call" else payload.get("arguments")
+            if isinstance(given, str):
+                try:
+                    given = json.dumps(json.loads(given), ensure_ascii=False)
+                except ValueError:
+                    pass
+            else:
+                given = json.dumps(given if given is not None else payload.get("action"), ensure_ascii=False)
+            by_id[payload.get("call_id")] = len(calls)
+            calls.append([given, "", False])
+        elif kind in ("custom_tool_call_output", "function_call_output", "local_shell_call_output") \
+                and payload.get("call_id") in by_id:
+            output = payload.get("output")
+            raw = json.dumps(output, ensure_ascii=False) if not isinstance(output, str) else output
+            codes = [int(a or b) for a, b in EXIT_CODE.findall(raw.replace('\\"', '"'))]
+            call = calls[by_id[payload["call_id"]]]
+            call[1] = codex_output_text(output)
+            call[2] = all(code == 0 for code in codes)
+    return [tuple(call) for call in calls]
 
 
 NOT_READ = "the reviewer did not read the change: no tool call names a changed file, so zero findings is no review"
@@ -1416,7 +1497,7 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed):
     init, result, served = claude_result(events)
     task = next((e.get("task_id") for e in events if e.get("type") == "system"
                  and e.get("subtype") == "task_started" and e.get("description") == "/code-review"), None)
-    transcript, calls, all_calls, missing, tool_inputs, tool_outputs = [], [], [], None, [], []
+    transcript, calls, all_calls, missing, tool_calls = [], [], [], None, []
     folder, problem = session_folder(session)
     if problem:
         missing = f"no /code-review transcript: {problem}"
@@ -1433,9 +1514,7 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed):
             for other in [folder / f"{session}.jsonl", *sorted((folder / session).glob("subagents/agent-*.jsonl"))]:
                 other_events = stream_events(other)
                 all_calls += bash_calls(other_events)
-                texts = claude_tool_texts(other_events)
-                tool_inputs += texts[0]
-                tool_outputs += texts[1]
+                tool_calls += claude_tool_texts(other_events)
     write_json(launch_dir / "commands.json", calls)
     reply = result.get("result") if result else None
     findings, parse_problem = code_review_findings(reply)
@@ -1452,7 +1531,7 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed):
         "the transcript's sandbox_instructions do not deny reading the run directory and allow writing the copy",
         None if probe_passed(calls, probe, target) else "the sandbox check did not show a refused write outside the copy",
         f"the reply is not parsed: {parse_problem}" if parse_problem else None,
-        NOT_READ if findings == [] and not read_the_change(tool_inputs, tool_outputs, changed) else None)
+        NOT_READ if findings == [] and not read_the_change(tool_calls, changed) else None)
     fields["session_cleanup"] = delete_session(session)
     return finish_launch(fields, None, launch_dir)
 
@@ -1505,7 +1584,7 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed)
         f"the served sandbox is {', '.join(sandboxes) or 'missing'}, not read-only" if sandboxes != ["read-only"] else None,
         None if developer else "no developer message carries the instruction",
         f"the reply is not parsed: {problem}" if problem else None,
-        NOT_READ if findings == [] and not read_the_change(*codex_tool_texts(events), changed) else None)
+        NOT_READ if findings == [] and not read_the_change(codex_tool_texts(events), changed) else None)
     return finish_launch(fields, None, launch_dir)
 
 
