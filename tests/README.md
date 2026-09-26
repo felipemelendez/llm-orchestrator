@@ -78,12 +78,12 @@ Six sections:
 
 1. **Structural** — delegates to `install.sh --check` and `validate-skills.sh`.
 2. **Hooks** — runs each hook with realistic inputs:
-   - SessionStart → valid JSON, loads the using-orchestrator meta-skill body
+   - SessionStart → valid JSON, loads the using-orchestrator meta-skill body; finishes on its own when its input is a terminal
    - UserPromptSubmit → valid JSON, reminder mentions the protocol
    - PreToolUse guard → blocks `--no-verify` (exit 2), allows clean commits (exit 0)
    - SubagentStop → accepts both markdown and JSONL transcripts with a `Status:` block, warns (exit 0) when missing
    - Stop hook → prunes `memory/.trash/` older than retention
-3. **Portable lock** — sources `scripts/lib/orch-lock.sh`, runs 10 concurrent writers, expects 10 lines; tests `append_line` for shell-injection safety.
+3. **Portable lock** — sources `scripts/lib/orch-lock.sh`, runs 10 concurrent writers, expects 10 lines; tests `append_line` for shell-injection safety. The writers get a long lock wait, so a busy machine slows the check instead of failing it.
 4. **Classifier** — runs the `/remember` section classifier on 10 canonical facts (`pnpm not npm` → Conventions; `Sara owns auth` → People; `we picked tRPC over GraphQL` → Decisions; etc.). Each fact must land in the expected section.
 5. **--copy install** — runs `install.sh --copy` against a fresh git project, verifies every required file landed (`scripts/lib/orch-lock.sh`, `settings.json`, `output-styles/`, `concise-agent-protocol.md`, etc.), checks the generated `settings.json` is valid JSON, checks `hooks.json` paths are absolute, re-runs SessionStart from the copied install.
 6. **Documentation** — no stale `OrchestraKit`/`OK_` identifiers remain, README has the Quick Start block, no auto-loading `.mcp.json` is present (only `.mcp.json.example`).
@@ -123,8 +123,9 @@ Add to `test-portability.sh` when:
 ## The full suite
 
 `./tests/run-all.sh` runs all of these. `tests/smoke.sh` runs the structural checks and
-shells out to several of them; each is also runnable on its own, and every one exits
-non-zero on failure.
+shells out to several of them, but not `test-hook-latency.sh`: a timing check run twice
+on a busy machine measures the machine. Each suite is also runnable on its own, and every
+one exits non-zero on failure.
 
 | Suite | Covers |
 |---|---|
