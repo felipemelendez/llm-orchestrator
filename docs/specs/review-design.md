@@ -1,621 +1,398 @@
 # Spec: one review design for Standard and Full
 
-Status: approved by Felipe on 2026-09-25 (ticket T4) and built in ticket T5.
+Status: T5's design (approved 2026-09-25, ticket T4, built in T5), revised by
+ticket T22 on 2026-09-26. The revision awaits Felipe's approval.
+
+**What T22 changes.** The reviewers are now the built-in ones: Claude Code's
+`/code-review` and `codex review`. Our own seats, their briefs, their schema,
+parts and the T10-only options go. A new Claude "prover" ranks each finding
+and writes its repro. Everything after that stays: the sandboxed fix
+experiments, the refuter, the decision, the outcome log and the safety rules.
 
 ## Goal
 
-One review design for both paths and both harnesses. Standard runs one
-reviewer. Full runs two blind reviewers with different briefs on two
-providers, then a refuter when a serious finding exists. One Python script,
-`scripts/lib/orch-review.py`, runs every step in a fixed order. It runs the
-proposed fixes itself and decides the verdict last, from files it wrote or
-read itself. The agent starts it once, so no step can be skipped.
+The 2026-09-25/26 comparison (`docs/MEASUREMENTS.md`) found that our two
+seats detect no more planted defects than `/code-review` or `codex review`,
+and take three to five times as long. What ours added was proof (89% of its
+findings reproduced by a failing command and a patch) and a blocking
+decision. So the built-ins find, and `scripts/lib/orch-review.py` proves,
+decides and records. It still runs every step in a fixed order and decides
+last, from files it wrote. The agent starts it once.
 
-Out of scope: the spec review before coding and the fix itself. The cadence
-has no other review procedure: a `cadence.json` without `"workflow":
-"proportional"` is a configuration error.
-
-## Why one script
-
-A Workflow script cannot run commands or read files. The checks that decide
-whether a review counts would have to run after it returns, so the verdict
-would come before them. It also runs only on Claude Code.
-
-`orch-review.py` starts `claude -p` and `codex exec` itself and runs on both
-harnesses. `codex review` and Codex custom agents are not used as seats.
-`codex review` uses Codex's own review brief, and custom agents cannot run in
-a chosen copy. Neither would give the GPT seat the same brief, in the same
-kind of copy, as the Claude seat.
+Out of scope: the spec review before coding, and the fix itself.
 
 ## Running it
 
 ```
 python3 scripts/lib/orch-review.py run --detach --path standard|full
     --writer claude|codex --base <ref> --spec <file> --run-dir <new dir>
-    [--brief contract|adversarial] [--adversarial-provider claude|codex]
-    [--split] [--no-refuter] [--allow-test-changes]
+    [--allow-test-changes]
 python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 ```
 
-- **R1.** On both harnesses the agent starts `run --detach`, then repeats
-  `wait` until it reports that the run finished. `run` refuses an existing
-  run directory, and one inside the repository or inside any temporary
-  directory (`$TMPDIR`, the system temporary directory, `/tmp`, `/var/tmp`,
-  and on macOS the per-user temporary directory), because both sandboxes
-  leave those writable. `--detach` starts the same script again in the
-  background as `run --child`, which reads its options from `run.json`. A
-  run that crashes leaves no `review.json`: the skill reports it as
-  incomplete, and a new run starts from the beginning.
-  `--allow-test-changes` says the task may change tests (R13).
+- **R1.** Unchanged: `run --detach`, then `wait` until finished. `run`
+  refuses an existing run directory, and one inside the repository or any
+  temporary directory. A run that crashes leaves no `review.json` and is
+  reported as incomplete. `--allow-test-changes` as in R13.
 - **R2.** The skill sets `--writer`: `claude` on Claude Code, `codex` on
-  Codex. The last four options exist only for T10.
+  Codex. `--brief`, `--adversarial-provider`, `--split` and `--no-refuter`
+  are removed.
 
 ## Steps
 
-1. **Preflight.** Each CLI the path needs is installed and signed in
-   (`claude auth status --json`, `codex login status`). Full, and any path
-   whose writer is Codex, needs `codex`. On Standard on Claude Code a
-   missing `codex` does not stop the run; fix experiments then cannot start
-   their sandbox, and R10 applies (the finding is not reproduced and stays
-   blocking). The
-   project has a `LAWS.md` with a harm ranking, or the shipped
-   `skills/cadence/references/laws.md` template's ranking is used. No
-   submodule, checked recursively with `git submodule foreach --recursive
-   git status --porcelain`, has uncommitted changes. A reviewed tree that
-   contains a submodule at all ends the run as `INCOMPLETE` before any seat
-   starts: copies do not hold submodule contents, and filling them would
-   need the network or a copy of the real module store. Any failure ends the
-   run as `INCOMPLETE`, and nothing is substituted.
-2. **Fingerprint.** Every tracked and untracked, non-ignored file of the
-   real checkout is added to a temporary index (`GIT_INDEX_FILE=<tmp>`,
-   `git read-tree HEAD`, `git add -A`), and `git write-tree` is recorded.
-   That tree id is the reviewed state.
-3. **Copies.** Each copy is a disposable local clone in task-owned scratch,
-   registered in `scripts/lib/orch-task-resources.py` as a new resource
-   kind, `clone`:
-   - It is made with `git clone --local --no-hardlinks --no-checkout`, then
-     `git read-tree -u --reset <tree>`. The copy has its own `.git` with its
-     own copies of the object files (no hardlinks, so nothing in the copy can
-     change the real repository's objects), its HEAD at the real HEAD, the
-     uncommitted change, the project's `.git/info/exclude`, and no remote.
-   - The paths listed in `cadence.json` `review.copy_ignored` are then
-     copied in, using copy-on-write where the file system supports it, and
-     `review.setup` runs if it is set.
-   - The copy's own fingerprint must equal the one from step 2 when it is
-     created.
-   - Removal: the task helper deletes a `clone` only when it is owned by
-     this task, has no `.orch-active` mutex, and its `.git` holds no ref,
-     stash or worktree beyond those recorded when the clone was made.
-     Otherwise it keeps the clone and reports why. (Today
-     `orch-task-resources.py` refuses to remove any copy that contains a
-     repository.)
+1. **Preflight.** As in T5, except that every path now needs both CLIs
+   installed and signed in (`claude auth status --json`, `codex login
+   status`): the prover and refuter are Claude, experiments run in `codex
+   sandbox`, and one reviewer is always the other provider (R3). The harm
+   ranking, submodule and `review.setup` checks are unchanged. `git
+   merge-base <base> HEAD` must exist. Any failure: `INCOMPLETE`.
+2. **Fingerprint.** Unchanged: the tree id of every tracked and untracked,
+   non-ignored file, written from a temporary index.
+3. **Copies.** Unchanged (`clone` resource kind, `--no-hardlinks`, copy
+   fingerprint must match), with one change: the copy's HEAD is set to the
+   merge-base (`git update-ref --no-deref HEAD <merge-base>`) before `git
+   read-tree -u --reset <tree>`. The whole change, committed and not, is then
+   the copy's uncommitted change, which is what both built-ins review with no
+   target. The spec file is copied to `<copy>/.git/orch-review/spec.md`,
+   which is in no diff and no fingerprint. Every reviewer, prover, refuter and
+   experiment gets a fresh copy.
+4. **Reviewers** run in parallel (R3 to R6).
+5. **Parse** each reply into findings (R7).
+6. **Prove.** Prover launches, then the fix experiments (R8 to R13).
+7. **Refuter.** Full only (R14 to R16).
+8. **Fingerprint again**, and the submodule check.
+9. **Decide** (R17), write `review.json`, append the outcome row (R20).
 
-   Each seat launch, each fix experiment and the refuter get a fresh copy.
-4. **Parts.** By default each seat reviews the whole change in one launch.
-   `--split` (T10 only) groups whole files in diff order into parts of at
-   most 150 changed lines; a file over 150 lines is its own part. Each part
-   is then reviewed in its own launch, with the list of all changed files
-   and their line counts.
-5. **Seats.** All seat launches run in parallel (R3 to R7).
-6. **Validate, and run the fixes** (R8 to R13).
-7. **Refuter.** Full only, under R14.
-8. **Fingerprint again.** Recompute step 2 on the real checkout, and repeat
-   the recursive submodule check from step 1.
-9. **Decide** (R17), write `review.json`, append the review row (R20).
+## The reviewers
 
-## Seats, providers and models
+- **R3.** Standard runs one reviewer: the provider that did not write the
+  change. On Claude Code that is `codex review`; on Codex it is
+  `/code-review`. Reasons: a model approved 31.7% of its own
+  behavior-changing errors (arXiv:2605.21537), and on Claude Code this also
+  picks the stronger measured reviewer (`codex review`: 130/134 found, 1.3
+  false findings per run, 3 of 14 clean cases silent; `/code-review`:
+  125/134, 5.8, 0 of 14). Full runs both. There is no `--brief`: a built-in
+  uses its own review brief.
+- **R4.** Both reviewers get the same extra instruction, as in the
+  comparison: "The change must implement the spec in
+  `<copy>/.git/orch-review/spec.md`. Read it, and report every place where
+  the change does not meet it, as well as any other defect." When the diff
+  matches `ORCH_SIG_SECURITY_DIFF`, the text of `references/security-lens.md`
+  follows it.
+- **R5. Claude reviewer.** In the copy, stdin closed:
 
-- **R3.** Standard: one seat, with the contract brief, on the writer's
-  provider, and no refuter.
-- **R4.** Full: a contract seat and an adversarial seat. Neither sees the
-  other's findings or the implementer's report. The adversarial seat runs on
-  the provider that did not write the change (GPT on Claude Code, Claude on
-  Codex); the contract seat runs on the other. The refuter is always Claude.
-- **R5.** Claude launch: `claude -p --output-format stream-json --verbose
-  --model opus --effort high --json-schema <schema> --safe-mode --restricted
-  --tools Read,Grep,Glob,Bash --allowedTools Read,Grep,Glob,Bash
-  --permission-mode dontAsk --permission-prompts none --strict-mcp-config
-  --mcp-config '{"mcpServers":{}}' --no-session-persistence`. It runs in the
-  copy, with the prompt on stdin. It starts with no MCP servers, so the
-  person's connectors (for example claude.ai Slack or Gmail) are neither
-  visible nor usable. If the stream's `system` `init` event has a non-empty
-  `mcp_servers`, or the stream has no `init` event, the launch is a dropout
-  (R7).
-  - It also passes `--settings` with Claude Code's Bash sandbox:
-    `enabled`, `failIfUnavailable: true`, `allowUnsandboxedCommands: false`,
-    no `excludedCommands`, `filesystem.allowWrite` only the copy,
-    `filesystem.denyRead` the run directory and the usual credential folders
-    (`~/.aws`, `~/.ssh`, `~/.gnupg`, `~/.config/gh`, `~/.config/gcloud`,
-    `~/.azure`, `~/.kube`, `~/.docker`, `~/.netrc`, `~/.codex`, `~/.claude`),
-    and `network.allowedDomains: []` with `strictAllowlist`. A Bash call
-    that asks for `dangerouslyDisableSandbox` makes the launch a dropout. If
-    the sandbox cannot start, `claude` stops, and the launch is a dropout.
-  - The prompt starts with a sandbox check: the seat must first run
-    `touch <run dir>/launches/<launch>/sandbox-probe 2>&1 && echo
-    ORCH-SANDBOX-OFF || echo ORCH-SANDBOX-ON`. Unless its stream shows that
-    command as its first Bash call, with `ORCH-SANDBOX-ON` and no
-    `ORCH-SANDBOX-OFF`, and the file
-    does not exist afterwards, the launch is a dropout. The result is
-    recorded as `sandbox_check`.
-  - The served model is the assistant messages' `model` field. It must
-    belong to the model family of the requested alias.
-- **Environment.** Every seat, the refuter and every fix experiment start
-  with a reduced environment: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
-  `TMPDIR`, the locale, `TERM`, `TZ` and the XDG config, cache and data
-  directories, plus only the variables the provider's CLI uses to reach its
-  model (Claude: `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`,
-  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`;
-  Codex: `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`).
-  `codex sandbox` (the preflight probe and fix experiments) reaches no
-  model and gets only `CODEX_HOME`, because it reads its permission
-  profiles from the configuration there.
-  Cloud credentials and tokens such as `AWS_*` and `GITHUB_TOKEN` are left
-  out. A Claude seat that needs Bedrock or Vertex credentials therefore
-  cannot sign in and drops out.
-- **R6.** GPT launch: `codex exec --json -s workspace-write -C <copy>
-  -c model_reasoning_effort="high" <MCP off> --output-schema <schema> -o
-  <file> -`, with `RUST_LOG=warn,codex_otel=info`.
-  - It never uses `--ephemeral` and never passes `-m`.
-  - `<MCP off>` is `-c mcp_servers.<name>.enabled=false` for each server in
-    `$CODEX_HOME/config.toml`, then `--disable apps --disable plugins`. So
-    the person's MCP servers, apps and plugins are neither visible nor
-    usable. (`-c mcp_servers={}` does not do this: it is merged with the
-    configured servers.)
-  - At `codex_otel=info`, codex logs a `codex.conversation_starts` line with
-    `mcp_servers="<names>"`. If that list is not empty, or the line is
-    missing, the launch is a dropout (R7).
-  - The requested model is `model` in `$CODEX_HOME/config.toml`
-    (`CODEX_HOME` defaults to `~/.codex`), the CLI's default.
-  - The served model and effort are the `model` and `effort` fields of
-    `$CODEX_HOME/sessions/**/rollout-*-<thread_id>.jsonl`. `thread_id` comes
-    from the stream's `thread.started` event.
-  - If `config.toml` names no model, the served model is recorded but not
-    compared.
-- **R7.** A launch is a **dropout** when any of these holds:
-  - it exits nonzero, or runs longer than 3600 seconds;
-  - it has no final result of its role's shape (`findings` and
-    `not_checked` for a seat, `verdicts` for the refuter);
-  - no served model can be read;
-  - the served model differs from the requested one.
+  ```
+  claude -p "/code-review high" --model opus --effort high --safe-mode
+    --append-system-prompt <instruction> --output-format json
+    --permission-mode dontAsk --allowedTools Read,Grep,Glob,Bash,Agent
+    --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+    --no-session-persistence --settings <T5's Bash sandbox>
+  ```
 
-  A dropout is never replaced by another provider, model or brief.
+  These are the comparison's flags, which ran 83 times, plus T5's
+  `--settings` Bash sandbox (writes only in the copy, no network,
+  `failIfUnavailable`, `denyRead` of the run directory and credential
+  folders). `--safe-mode` turns off the person's plugins, hooks, CLAUDE.md
+  and MCP servers but keeps built-in skills, so `/code-review` runs.
+  - Served model: the keys of the final result's `modelUsage`. At least one
+    must be in the `opus` family; all are recorded. Claude reports no served
+    effort, so `review.json` records effort as requested only.
+  - It cannot run T5's sandbox probe: `/code-review` takes no prompt of ours
+    (see Limits).
+- **R6. Codex reviewer.** In the copy, stdin closed, with
+  `RUST_LOG=warn,codex_otel=info`:
 
-**Configuration.**
+  ```
+  codex review --uncommitted -c model_reasoning_effort="high"
+    -c sandbox_mode="read-only" -c developer_instructions=<instruction as TOML string>
+    <MCP off: -c mcp_servers.<name>.enabled=false for each configured server,
+     --disable apps --disable plugins>
+  ```
 
-- Models are always the alias (`opus`) or the CLI default, at effort
-  `high`; there is no override. The review records requested and served
-  values.
-- The seat prompt carries `runner.test_cmd`. When that field is empty, the
-  prompt says "no test command is configured; find and run the project's
-  tests".
-- The seat prompt carries the "Harm ranking" section of the project's
-  `LAWS.md`, or of the shipped template `skills/cadence/references/laws.md`
-  when the project has no `LAWS.md`.
+  `codex review` has no `-m`, `-s`, `-C`, `--json` or `--output-schema`, and
+  refuses a prompt together with `--uncommitted`, so the instruction goes in
+  `developer_instructions` and the sandbox in `sandbox_mode`. Its reviewer
+  only reads and runs commands, so read-only fits (it ran the tests
+  read-only in the comparison).
+  - The thread id is `conversation.id=` in the stderr log. The rollout
+    `$CODEX_HOME/sessions/**/rollout-*-<id>.jsonl` gives, from its
+    `turn_context`, the served `model`, `effort` and `sandbox_policy`. The
+    requested model is `model` in `config.toml` (not compared when absent);
+    effort must be `high`; `sandbox_policy.type` must be `read-only`; and a
+    developer message must carry the instruction.
+  - `codex review` logs no `codex.conversation_starts` line (none in 83
+    runs), so T5's "MCP servers started" check cannot be used. Instead, a
+    `codex.tool_result` log line with `mcp_tool=true` makes it a dropout.
+- **Environment.** T5's reduced environment for every launch, unchanged.
+- **R7. Dropouts and parsing.** A reviewer is a dropout when it exits
+  nonzero, runs over 3600 seconds, has no served model, or fails a check in
+  R5 or R6, or when its reply cannot be parsed:
+  - `/code-review`: the reply is the result's `result` text, which must not
+    be `is_error`. Its findings are the items of the first fenced JSON array
+    whose items are all objects with a string `file` (the scorer's
+    `json_findings`; 83 of 83 comparison replies had one). `line` is kept when
+    it is an integer; `summary` and `failure_scenario` are the claim. An empty
+    array is zero findings. No such array: dropout.
+  - `codex review`: stdout. A finding is a line
+    `- [P<n>] <title> — <path>:<start>-<end>` and the indented lines under
+    it (249 of 249 such lines in the comparison matched). The path is made
+    relative to the copy (compared after resolving symlinks, since macOS
+    reports `/private/var/...`); the line is `<start>`; `P<n>` is kept as
+    `priority`. Empty stdout, or any `[P<n>]` that is not on such a line, is
+    a dropout. A reply with no `[P<n>]` line is zero findings only when no
+    line that starts with a list marker or heading names a path with a line
+    number; otherwise it is a dropout.
 
-**Why GPT holds the adversarial brief on Claude Code.** The adversarial seat
-looks for what the writer missed, and a model approved 31.7% of its own
-behavior-changing errors (arXiv:2605.21537). Two results count against this
-choice:
+  A dropout makes the review `INCOMPLETE`, is never replaced by another
+  provider or model, and its parsed findings are kept, marked
+  `from_dropout`, and not proved. Finding ids are `code-review-<n>` and
+  `codex-review-<n>`. The two parsers live in `orch-review.py`, and
+  `review_compare.py` imports them, so the scorer and the review read replies
+  the same way.
 
-- the one cross-model study found that Codex reviewing Claude's code lowered
-  the pass rate from 91.4% to 82.8% when the reviewers could not run tests
-  (arXiv:2607.21656);
-- different models give the same wrong answer about 60% of the time when
-  both are wrong (arXiv:2506.07962).
+## Rank and proof
 
-In this design, fixes are run and evidence is checked, which the first study
-lacked. T10 tests the swap.
+- **R8. The prover.** Built-ins give no rank, kind or repro. For each
+  reviewer, its findings go in batches of at most 10 to Claude prover
+  launches, up to 4 at a time. A launch is T5's Claude launch unchanged:
+  `claude -p --output-format stream-json --verbose --model opus --effort high
+  --json-schema <prover schema> --safe-mode --restricted --tools
+  Read,Grep,Glob,Bash ...`, the Bash sandbox, no MCP, and the sandbox probe
+  as its first Bash call. Its brief (`references/prover.md`) carries the
+  spec, the harm ranking, `runner.test_cmd` (or "find and run the project's
+  tests"), the diff, and each finding's id, file, line, priority and the
+  reviewer's words. It returns one result per id: `rank`, `kind` (`defect |
+  spec-gap | scope-creep | test-tampering | test-gap`), `confidence`,
+  `claim`, `evidence`, and for serious or catastrophic either `repro
+  {command, patch}` or `not_runnable`.
+  - The prover ranks the consequence **if the claim is true**, by the harm
+    ranking. Whether it is true is settled by the experiment and the
+    refuter, not by the prover. It cannot drop a finding or add one; an id it
+    did not receive is ignored and counted.
+  - A `codex review` finding marked `[P0]` or `[P1]` is at least `serious`.
+    The brief says so, and a lower rank is raised and counted (`rank_floor`).
+  - A prover dropout (T5's rules for Claude launches: exit, timeout, no
+    result of the schema's shape, served model, failed probe, MCP loaded), or
+    a result missing for any id, makes the review `INCOMPLETE`.
+- **R9. Evidence.** Unchanged: `file-line` must match the reviewed line;
+  `test-run` must match a completed command in the prover's own stream.
+- **R10. Fix experiments.** Unchanged: receipt 1, `git apply`, receipt 2,
+  each under `codex sandbox -P :workspace -C <copy>`, 600 seconds, process
+  group killed. Reproduced means receipt 1 failed and receipt 2 passed.
+- **R11.** Unchanged. A `mild` finding with invalid evidence or confidence
+  below 0.8 is a `note`. A serious or catastrophic one is `verified` (valid
+  evidence, and reproduced or `not_runnable`) or `unverified`. Both block.
+- **R12.** A serious or catastrophic prover result with neither `repro` nor
+  `not_runnable` makes the review `INCOMPLETE`. Exceptions: a rank the script
+  raised (test tampering under R13, or the `[P0]`/`[P1]` floor) stays
+  `unverified` and blocking. An unknown rank becomes `serious`, with no
+  exception.
+- **R13.** T5's `not_checked` list is removed: the built-ins report none.
+  The test rules stay, applied to the prover's `kind`:
+  - When the task does not allow test changes, `test-tampering` is raised to
+    `serious`. Tampering: a test deleted or skipped, an assertion weakened, a
+    test changed to match the code, or code that special-cases test inputs.
+  - A `test-gap` without `repro` is lowered to `mild` (`rank_lowered`). With
+    a `repro` it keeps its rank (`gap_with_repro`) and is run and judged like
+    a `defect`. A test that was never there is a gap; one the change weakened
+    or rewrote is tampering.
 
-## Findings and evidence
-
-- **R8.** A seat returns `{findings, not_checked}`.
-  - A finding has `file`, `line`, `rank` (`catastrophic | serious | mild`),
-    `kind` (`defect | spec-gap | scope-creep | test-tampering | test-gap`),
-    `confidence`, `claim` and `evidence`.
-  - A `serious` or `catastrophic` finding also has either `repro {command,
-    patch}` or `not_runnable` (a reason). `command` shows the failure;
-    `patch` is the proposed fix as a unified diff.
-  - The script gives each finding the id `<seat>-<part>-<n>` (part `1`
-    without `--split`).
-- **R9.** Evidence is one of two kinds:
-  - `file-line {file, line, quote}` is valid when that line exists in the
-    copy and `quote` equals it, ignoring spaces at either end.
-  - `test-run {command, output}` is valid when the seat's own event stream
-    shows a completed command with exactly that text, and every line of
-    `output` appears as a whole line of that command's output. `output` must
-    have at least one non-empty line. A command started in the background
-    (`run_in_background`, or a result that says "Command running in
-    background with ID:") has not finished and is not evidence.
-- **R10. Fix experiments are run by the script, not by a model.** For each
-  `repro`:
-  1. The script runs `command` in a fresh copy and records receipt 1.
-  2. It applies `patch` with `git apply`.
-  3. It runs `command` again and records receipt 2.
-
-  All three run as `codex sandbox -P :workspace -C <copy> -- <cmd>`. This
-  allows writes in the copy and in the system temporary directory, which
-  stays writable, and refuses writes anywhere else. Without `-P` the
-  sandbox refuses to start. This is
-  chosen over accepting only commands that start with `runner.test_cmd`,
-  because a test command can still write anywhere the person can, and many
-  projects have no `test_cmd`; the sandbox limits writes whatever the
-  command is. If the sandbox cannot start, the experiment is not run, the
-  receipt says so, and the finding is not reproduced.
-
-  A receipt holds the command, exit code, output, duration and the copy's
-  fingerprint. The finding is **reproduced** when receipt 1 fails and
-  receipt 2 passes. A patch that does not apply, or a run longer than 600
-  seconds, is recorded in the receipt. When a command ends or times out,
-  the script kills its whole process group, so nothing it started in the
-  background keeps running. The patch reaches `git apply -` on stdin, which
-  `codex sandbox` passes through (verified).
-- **R11.** A `mild` finding becomes a `note` when its evidence is invalid or
-  its confidence is below 0.8 or missing. A `serious` or `catastrophic`
-  finding never becomes a note:
-  - it is `verified` when its evidence is valid and it was either reproduced
-    or marked `not_runnable`;
-  - otherwise it is `unverified`.
-
-  Both states block, and both go to the refuter.
-- **R12.** A `serious` or `catastrophic` finding with neither `repro` nor
-  `not_runnable` makes the review `INCOMPLETE`. The exception is a `mild`
-  test-tampering finding the script raised to `serious` under R13: its seat
-  was not asked for a repro, so it stays `unverified` and blocking. A rank
-  outside the allowed values that the script replaced with `serious` has no
-  exception: without `repro` or `not_runnable`, it makes the review
-  `INCOMPLETE`.
-- **R13.** Each `not_checked` item is `{category, text}`, with `category`
-  one of `tests-not-run`, `files-not-read` or `claim-unverified`. Seats list
-  only what they did not check. Every item is returned verbatim and makes
-  the review `INCOMPLETE`.
-  - When the task does not allow test changes, a `test-tampering` finding is
-    raised to `serious`. Test tampering means a test was deleted or skipped,
-    an assertion was weakened, a test was changed to match the code, or code
-    special-cases test inputs.
-  - A test gap is behavior the tests do not cover, or a test that would
-    still pass with its mechanism removed. A `test-gap` finding with no
-    `repro` shows no wrong result, so the harm ranking makes it mild: the
-    script lowers it to `mild` and sets `rank_lowered`. A `test-gap` finding
-    with a `repro` claims a failing command, so the script keeps its rank,
-    sets `gap_with_repro`, and runs and judges it like a `defect`; it can
-    block. When the uncovered code is also wrong, the seat reports that as
-    its own `defect`. A test that was never there is a gap. If the change
-    weakened or rewrote the test, it is tampering, not a test gap, and the
-    tampering rule above applies unchanged. (The 2026-09-25 comparison found
-    the contract seat ranking coverage notes serious, which blocked changes
-    that had no demonstrated defect.)
-  - A rank outside the allowed values becomes `serious`.
-
-  Raised, lowered and replaced ranks are counted.
+  Raised, floored, lowered and replaced ranks are counted.
 
 ## The refuter
 
-- **R14.** The refuter runs on Full when both seats are complete and at
-  least one finding is `serious` or `catastrophic`.
-  - It gets every non-note finding from both seats, with their receipts.
-  - It returns one verdict per serious or catastrophic finding: `PROMOTED`,
-    `DROPPED` or `UNRESOLVED`.
-  - A finding with no verdict is `unjudged`. An unjudged finding, or a
-    refuter dropout, makes the review `INCOMPLETE`.
-  - `--no-refuter` skips the refuter (T10 only), and the review is marked
-    `experimental`.
-- **R15.** A reproduced finding and a `not_runnable` finding can never be
-  dropped. For any other finding, `DROPPED` is valid only when it cites the
-  seat's own receipt 1 and receipt 1 passed (finished within 600 seconds with
-  exit 0): the claimed failure did not happen. A patch that did not apply,
-  or a receipt 2 that failed, proves nothing. A finding whose experiment did
-  not run cannot be dropped: the refuter can only promote it or leave it
-  `unresolved`, and both block. A quoted line is never enough, because a
-  refuter can quote the defective line itself and argue that it is
-  intended. An invalid `DROPPED` counts as `UNRESOLVED`.
-- **R16.** The refuter may lower a rank only where R15 would allow a drop,
-  with the same evidence (a passing receipt 1). A reproduced or `not_runnable` finding keeps its
-  rank. The refuter never raises a rank, and a verdict other than
-  `PROMOTED`, `DROPPED` or `UNRESOLVED` changes nothing: the finding is
-  `unjudged`. A finding lowered to `mild` then follows the `mild` rule of
-  R11: it is a `note` when its evidence is invalid or its confidence is
-  below 0.8.
+- **R14 to R16.** Unchanged, with "both seats" read as "every reviewer and
+  prover launch". Full only; it runs when every reviewer and prover launch is
+  complete and a serious or catastrophic finding exists. It is Claude
+  (`opus`, `high`) in a fresh copy, and sees each non-note finding with the
+  reviewer's words, the prover's result and the receipts. A reproduced or
+  `not_runnable` finding can never be dropped; `DROPPED` needs the finding's
+  own passing receipt 1; rank goes down only on the same evidence; an
+  unjudged finding or a refuter dropout gives `INCOMPLETE`. Standard has no
+  refuter, as in T5.
 
 ## The decision
 
-- **R17.** One function decides, after steps 1 to 8, from the files in the
-  run directory only.
-  - The verdict is `INCOMPLETE` if any of these holds:
-    - a run file the decision needs (`run.json`, `preflight.json`,
-      `fingerprint-start.json`, `parts.json`, `fingerprint-end.json`,
-      `findings.json`, and `refuter.json` when the refuter ran) is missing
-      or unreadable, or a step raised an error (`errors.json`);
-    - the preflight failed;
-    - a seat part or a needed refuter run is missing or a dropout;
-    - a finding is unjudged;
-    - R12 or R13 applies;
-    - the real checkout's fingerprint at step 8 differs from step 2, or a
-      seat, refuter or repro copy's fingerprint at creation differs from
-      step 2 (seat copies may change while seats work, and repro copies
-      change when the patch is applied; receipt 2 records that
-      fingerprint);
-    - a submodule is dirty at step 8, or the reviewed tree contains a
-      submodule.
-  - Otherwise it is `NOT-READY` if any finding is blocking.
-  - Otherwise it is `READY-WITH-FIXES` if any finding is `mild`.
-  - Otherwise it is `READY`.
-- **R18.** Each finding has exactly one status:
-  - `note`;
-  - `mild`: valid evidence and a confidence of at least 0.8;
-  - `verified` or `unverified`: serious or worse, before the refuter or
-    without one;
-  - `promoted`, `dropped`, `unresolved` or `unjudged`: serious or worse,
-    after the refuter.
-
-  The blocking statuses are `verified`, `unverified`, `promoted`,
-  `unresolved` and `unjudged`.
-- **R19.** `review.json` holds:
-  - the verdict and every reason for `INCOMPLETE`;
-  - for each launch, the provider, the brief, and the requested and served
-    model and effort;
-  - every finding with its status, receipts and the refuter's evidence;
-  - the `not_checked` items;
-  - the counts: raw findings, notes, invalid evidence, below the floor,
-    raised, lowered or replaced ranks, and patches that did not apply.
-
-  Nothing a seat returned is left out. The findings of a seat that dropped
-  out are kept, marked `from_dropout`, and not run as experiments.
+- **R17.** One function decides from the run directory's files only.
+  `INCOMPLETE` when: a needed run file is missing or unreadable, or
+  `errors.json` exists; the preflight failed; a reviewer, prover or needed
+  refuter launch is missing or a dropout; a finding is unjudged; R12
+  applies; the real checkout's fingerprint changed, or a copy's fingerprint
+  at creation differs; a submodule is dirty or present. Otherwise
+  `NOT-READY` if any finding blocks, `READY-WITH-FIXES` if any is `mild`,
+  else `READY`. A missing reviewer is never agreement.
+- **R18.** Statuses unchanged; blocking: `verified`, `unverified`,
+  `promoted`, `unresolved`, `unjudged`.
+- **R19.** `review.json` holds the verdict and every reason for
+  `INCOMPLETE`; per launch the role (reviewer, prover, refuter), provider,
+  requested and served model and effort, and for `codex review` its served
+  sandbox policy; every finding with the reviewer's own words, its
+  `priority`, the prover's result, its status and receipts; the counts (raw,
+  notes, invalid evidence, below the floor, raised, floored, lowered or
+  replaced ranks, patches that did not apply, ids the prover added). Nothing
+  a reviewer returned is left out.
 
 ## After the review
 
-- **R20.** Every run, including an `INCOMPLETE` one, appends one review row
-  to
-  `${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/review-outcomes.jsonl`.
-  The row holds the run id, date, repository name, path, writer, providers
-  and briefs, requested and served models, parts, diff lines, verdict,
-  incomplete reasons, counts, duration and reported cost. It holds no claim
-  text or code.
-- **R21.** The agent handles the findings with `receiving-code-review`, then
-  runs `orch-review.py record <run-dir> --dispositions <file>`. The file
-  gives every finding one disposition:
-  - `fixed`, with the check that failed before and passes after;
-  - `refuted`, with a `file-line` quote under R9 that `record` checks
-    against the reviewed files. A `test-run` is not accepted here:
-    `record` has no event stream to check it against;
-  - `ignored`, with a reason. A blocking finding may be `ignored` only when
-    the person said so.
+- **R20.** Unchanged: every run appends one row to
+  `${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/review-outcomes.jsonl`,
+  now naming reviewers instead of briefs, with no claim text or code.
+- **R21.** Unchanged: `record <run-dir> --dispositions <file>`, one
+  disposition per finding id: `fixed` with the check; `refuted`, with a
+  `file-line` quote that `record` checks; `ignored` with a reason, and for a
+  blocking finding only when the person said so. It rejects omissions.
 
-  `record` appends one row per finding: run id, finding id, seat, provider,
-  rank, kind, status and disposition. It rejects a file that leaves any
-  finding out.
+## What stays, what goes
 
-## What the script cannot do
+**Stays:** `orch-review.py` `run`, `wait` and `record`; preflight,
+fingerprints, clones, `review.copy_ignored` and `review.setup`, the reduced
+environment, the Claude launch with sandbox and probe (now used by the
+prover and refuter), evidence checks, fix experiments, refuter, decision,
+outcome log; `references/refuter.md`, `refuter-schema.json`,
+`security-lens.md`.
 
-- Ask the person anything while it runs.
-- Fix the change. Fixing stays with the agent.
-- Stop a GPT seat from reading the run directory. The Codex
-  `workspace-write` sandbox limits writes, not reads, so a GPT seat could
-  read the other seat's findings while both run.
-- Review a change whose tree contains a submodule. It stops at step 1.
-- Make copied ignored dependencies safe. An editable install or an absolute
-  path in a virtualenv can make tests in the copy import the real checkout's
-  code. Such projects need `review.setup`.
-- Decide by a fixed rule whether two findings describe the same defect. The
-  refuter judges each finding.
+**Add:** `references/prover.md` and `prover-schema.json`; the two reply
+parsers; the reviewer launches (R5, R6); the prover step.
 
-## What T5 builds
+**Remove** (nothing unused stays):
 
-**Add**
+- `references/contract.md`, `adversarial.md`, `seat-schema.json`.
+- In `orch-review.py`: `SEAT_RULES`, `seat_prompt`, parts and `PART_LINES`,
+  the `codex exec` seat launch (`run_codex`) and its MCP-start check,
+  `not_checked` handling, and the options `--brief`,
+  `--adversarial-provider`, `--split`, `--no-refuter` with their
+  `experimental` marker.
+- In `tests/test-review.py`: the cases for seats, briefs, parts, `codex
+  exec`, `not_checked`, and the four removed options.
+- In `tests/evals/review-compare/arms.json`: `full` (its command would now
+  run the new design under the old name, and `run` would skip it as already
+  done), `full-swap`, `full-no-refuter`, `full-split`, `standard-contract`,
+  `standard-adversarial`, `full-effort-unset`. Their results stay in
+  `docs/MEASUREMENTS.md`; the raw results stay in the ignored `work/`.
 
-- `scripts/lib/orch-review.py` (`run`, `wait`, `record`). It takes over the
-  model checks in `scripts/providers/claude-review.py`.
-- The `clone` resource kind and its removal rule in
-  `scripts/lib/orch-task-resources.py` (step 3).
-- In `skills/requesting-code-review/references/`:
-  - `contract.md`: spec compliance, and "which test would still pass with
-    its mechanism removed", from `reviewer-spec.md`;
-  - `adversarial.md`: `reviewer-plain.md` plus the test-tampering list;
-  - `refuter.md`: the laws from `skills/cadence/references/refuter.md`
-    plus R14 to R16;
-  - `security-lens.md`: the checklist from `orch-security-reviewer.md`,
-    added to both seat briefs when the diff matches
-    `ORCH_SIG_SECURITY_DIFF`;
-  - the JSON schemas.
-- `tests/test-review.py` and its `.sh` shim, using fake `claude` and `codex`
-  binaries and fake rollouts, with one case per rule. The cases include:
-  - the refuter runs when a serious finding exists and is skipped otherwise;
-  - a missing seat gives `INCOMPLETE`, never `READY`;
-  - a dropout is never replaced, and a served-model mismatch is a dropout;
-  - a serious finding with invalid evidence stays blocking;
-  - an invented `DROPPED` leaves the finding blocking;
-  - a patch that does not apply leaves the finding unverified;
-  - a write to the real checkout gives `INCOMPLETE`;
-  - a dirty submodule gives `INCOMPLETE`.
+**Change:**
 
-  These tests replace `tests/test-review-diff-behavior.sh`,
-  `tests/validate-workflows.sh` and the other workflow tests named in T5's
-  "Done when". The coordinator updates that list.
+- `skills/requesting-code-review/SKILL.md`: which reviewers run, that every
+  path needs both CLIs, the removed options. Its section "The native
+  `/code-review`" goes: it is now a reviewer.
+- `skills/receiving-code-review/SKILL.md`: the example ids become
+  `code-review-1`, `codex-review-2`.
+- `references/refuter.md`: "two reviewers" becomes the reviewers and the
+  prover; it sees the reviewer's words and the prover's result.
+- `skills/cadence/CADENCE.md` lines 40 to 43 link the prover, refuter and
+  security lens; `tests/test-cadence-docs.sh:121` checks those names.
+- `scripts/install.sh:271`: `seat-schema.json` becomes `prover-schema.json`.
+- `scripts/lib/orch-signals.sh:103`: the comment says the lens is appended to
+  the reviewers' instruction.
+- `ARCHITECTURE.md:209`, `AGENTS.md`, `README.md`, `docs/codex.md`,
+  `docs/codex-provider.md`, `docs/commands-guide.md`, `tests/README.md`,
+  `tests/evals/README.md` ("The review comparison"): the new shape.
+- `commands/review.md`: unchanged in use (`[base] [--full]`).
 
-**Change**
+**Claude Code path:** the agent runs the skill, which runs the script with
+`--writer claude`. **Codex path:** skill only, as in T5; the agent runs the
+same script with `--writer codex`. On both, the script, not the agent, starts
+the built-ins.
 
-- `skills/requesting-code-review/SKILL.md`: R1, R2 and the verdicts.
-- `skills/receiving-code-review/SKILL.md`: harm ranks and R21.
-- `commands/review.md`: `/llm-orchestrator:review [base] [--full]`, which
-  saves no file in the repository.
-- `skills/cadence/SKILL.md` and `CADENCE.md`:
-  - the proportional Full steps 3 and 4 point to `requesting-code-review`;
-  - the "separate workflow" paragraph goes;
-  - "The project files" documents `review.copy_ignored` and
-    `review.setup`.
+## How we will know it works
 
-  These keys are optional, and `cadence-init.sh` writes none of them. The
-  cadence's own `reviewer-spec.md`, `reviewer-plain.md` and `refuter.md` are
-  deleted; `CADENCE.md` points at the briefs above.
-- `agents/orch-spec-reviewer.md`: kept only for brainstorming's review of a
-  spec document. Its description says so, and its `review-diff.js` and
-  workflow text goes. It keeps its Issues block, which
-  `scripts/hooks/subagent-stop.sh` still expects.
-- `scripts/lib/codex-cadence-read-command.py:66` and
-  `tests/test-codex-adapter.sh` section A17 (lines 400 to 409): remove the
-  `claude-review.py` exemption and its cases. `orch-review.py run` needs no
-  exemption, because its command line names no locked path (it finds
-  `LAWS.md` and `cadence.json` itself).
-- `tests/test-codex-verify-gate.sh:150`: use `python3 tests/test-review.py`
-  as the example command.
-- Remove the deleted names from `scripts/hooks/subagent-stop.sh`,
-  `scripts/install.sh`, `docs/install.md:177`, `templates/dispatch-prompt.md`
-  (drop the code-reviewer role), `tests/validate-skills.sh`,
-  `tests/test-install.sh`, `tests/smoke.sh` and
-  `tests/test-protocol-hooks.sh`.
-- Update the description of the old review in `docs/codex.md`,
-  `docs/codex-provider.md`, `ARCHITECTURE.md` (Layer 6, the security review,
-  the workflows entries), `README.md`, `docs/commands-guide.md`,
-  `docs/manual-testing.md`, `docs/anthropic-ecosystem.md`,
-  `examples/walkthrough.md`, `AGENTS.md`, `CLAUDE.md`,
-  `templates/scaffold-AGENTS.md` and `tests/README.md`.
-- Do the same in the skills and commands that name the old stages:
-  `dispatching-*`, `executing-plans`, `finishing-a-branch`,
-  `using-orchestrator`, and `commands/dispatch.md`, `finish.md`, `verify.md`
-  and `skills.md`.
-- `tests/evals/cases/reviewer-confidence-anchoring/`: update the text
-  only; do not run it.
+- **Tests, free.** `tests/test-review.py` rewritten around fake programs on
+  `PATH`. Fake `claude` answers `-p "/code-review high"` with a scripted
+  `--output-format json` result, and prover or refuter launches with a
+  scripted stream. Fake `codex` answers `review` with scripted stdout, a
+  stderr log line with `conversation.id=` and a rollout in a fake
+  `CODEX_HOME`, and runs `sandbox` commands directly. One case per rule,
+  including: Standard on Claude Code runs only `codex review`, on Codex only
+  `/code-review`; Full runs both; the exact flags of R5 and R6; both parsers
+  on the comparison's reply shapes; an unparseable reply, an `is_error`
+  result, a stray `[P1]`, and a bare list with no `[P<n>]` each give
+  `INCOMPLETE`; served model, effort or sandbox mismatch is a dropout; an
+  `mcp_tool=true` line is a dropout; a missing instruction in the rollout is
+  a dropout; a prover that skips an id gives `INCOMPLETE`; the `[P1]` floor;
+  the copy's HEAD is the merge-base and its uncommitted change is the whole
+  change; plus T5's kept cases (evidence, experiments, refuter, fingerprints,
+  submodules, `record`).
+- **Scorer, free.** `tests/test-review-compare.py` covers the shared
+  parsers; re-score the recorded comparison with them and note in
+  `docs/MEASUREMENTS.md` any change to the `codex-review` counts.
+- **Comparison, paid, only when Felipe asks.** Two new arms, `full-builtin`
+  (`--path full --writer claude`) and `standard-builtin` (`--path standard
+  --writer claude`, so `codex review` plus proof). Scored as before, and
+  also: planted serious defects that end blocking, the prover's rank against
+  the planted rank, the share reproduced, verdicts on clean cases (the old
+  `full` passed 0 of 13), `INCOMPLETE` rate and reasons, minutes and cost.
+  Detection should match the built-ins' own arms; the question is whether
+  proof keeps real defects blocking and stops blocking clean changes.
 
-**Delete**
+## Limits
 
-- The `workflows/` directory, `skills/using-workflows/`,
-  `tests/test-review-diff-behavior.sh`, `tests/validate-workflows.sh`,
-  `tests/test-validate-workflows.sh`, `tests/test-workflow-distribution.sh`
-  and `tests/lib/check-workflow-script.mjs`.
-- `agents/orch-code-reviewer.md` and `agents/orch-security-reviewer.md`.
-- `templates/code-reviewer-prompt.md`, `security-reviewer-prompt.md`,
-  `spec-reviewer-prompt.md` and `review.md`.
-- `scripts/providers/claude-review.py` and `tests/test-claude-provider.*`.
+- `/code-review`'s Bash runs under the `--settings` sandbox, but that cannot
+  be probed from inside it, and whether `/code-review`'s own steps obey it is
+  not yet tried. The prover and refuter keep the probe.
+- The `codex review` read-only sandbox limits writes, not reads: it can read
+  the run directory, including the other reviewer's reply.
+- No MCP start log for `codex review`: MCP servers are turned off by flags,
+  and only their use (`mcp_tool=true`) is detected.
+- The parsers follow the reply shapes seen on 2026-09-25/26 (claude 2.1.28x,
+  codex 0.156/0.157). A shape change gives `INCOMPLETE`, never `READY`, until
+  the parser is updated.
+- Two reviewers reporting one defect give two findings, each proved on its
+  own; no fixed rule merges them.
+- Linux sandboxes, nested runs from a Codex session, and T5's other open
+  items are still not verified.
 
-**Proposed ruling.** `LAWS.md` and `cadence.json` are protected, and both
-still list `workflows/`. Felipe applies this text:
+## Open questions for Felipe
 
-`Ruling 4 (<date>, Felipe): the plugin ships no Workflow scripts. In LAWS.md section 2, "agents/, commands/, templates/, workflows/ and output-styles/" becomes "agents/, commands/, templates/ and output-styles/". In docs/llm-orchestrator/cadence.json, "workflows" is removed from src_roots and "workflows/**" from prod_globs. LOCK.sha256 is re-recorded by cadence-ruling.sh.`
+1. **Standard with only one CLI installed.** Every path now needs both
+   `claude` and `codex`. Recommend: keep it; without both, preflight gives
+   `INCOMPLETE` and names the missing CLI. No quiet fallback to the writer's
+   own provider.
+2. **Refuter on Standard.** `/code-review` averaged 5.8 findings per run
+   that were not planted defects (most were true, per the audit), so on Codex
+   Standard more serious findings may stay `unverified` and block.
+   Recommend: no refuter on Standard for now; decide from the
+   `standard-builtin` numbers.
+3. **The `[P0]`/`[P1]` floor.** Recommend: keep it; it stops the prover
+   ranking a finding Codex called urgent as mild, and costs one rule.
+4. **Measure proof on replayed replies first.** A test-only replay (fake
+   reviewers that print the recorded 2026-09-25/26 replies, a real prover)
+   would measure the proof step on the exact findings already scored, for
+   about half the cost. Recommend: yes, then a small live pilot of both
+   new arms.
+5. **Still open from T5:** whether the Claude alias is `opus` or `fable`.
 
+## Verified on 2026-09-26 (no model called)
 
-## What T10 measures
+- `claude --help` (2.1.283) lists every flag in R5 and R8; `--safe-mode`
+  keeps "built-in tools and plugins".
+- `codex review --help` (codex-cli 0.156.1; T5 verified 0.157.0) lists
+  `-c`, `--strict-config`, `--enable`, `--disable`, `--uncommitted`,
+  `--base`, `--commit`, `--title` and a PROMPT, and no `-m`, `-s`, `-C`,
+  `--json` or `--output-schema`. `codex sandbox --help` still lists `-P`, `-C`.
+- With a signed-out `CODEX_HOME`: `codex review --uncommitted "<prompt>"` is
+  refused with a usage error; under `--strict-config`, `-c
+  sandbox_mode="read-only"` and `"workspace-write"` are accepted and an
+  unknown key is rejected; the run then fails with exit 1, empty stdout and
+  the error on stderr (the request was refused as unauthorized; no model
+  answered).
+- From the comparison's recorded outputs (83 runs each): every
+  `/code-review` reply parses with `json_findings`, every `modelUsage` names
+  only `claude-opus-5-5`, no subagent was spawned; 249 of 249 `[P<n>]` lines
+  match the R7 header (P1 54, P2 190, P3 5), and the silent clean replies
+  have no `[P<n>]`; every stderr has `conversation.id=`, none has
+  `codex.conversation_starts`, and all 295 tool results have
+  `mcp_tool=false`.
+- One recorded `codex review` rollout: `turn_context` has model
+  `gpt-6-astra`, effort `high` (config default `xhigh`, so the override
+  applies), sandbox `read-only` with no `sandbox_mode` in `config.toml`,
+  approval `never`; a developer message carries the spec sentence.
+- A clone made as in step 3, with HEAD moved to the merge-base, shows a
+  committed change, a modified file and an untracked file together as its
+  uncommitted change, and its index tree equals the fingerprint.
 
-Use the same real diffs with about 100 or more planted defects and the same
-prompt wording in every arm. Compare paired results with McNemar's test.
-Score defects found by rank, false findings, tokens and minutes:
+Not verified: `/code-review` under the `--settings` sandbox; that `-c
+sandbox_mode` changes what `codex review` serves (R6 checks the rollout
+anyway); an empty-array `/code-review` reply (no clean case was silent).
 
-1. Full against the built-in `/code-review` and against `codex review`.
-2. The provider swap (`--adversarial-provider`).
-3. With and without the refuter (`--no-refuter`).
-4. Parts of 150 lines against the whole change (`--split`).
-5. Standard with each brief (`--brief`).
-6. Serious findings left `unverified`, per provider, and how many of them
-   were real.
-7. A case where the tests contradict the spec (test tampering, R13).
-
-The outcome log also gives a running measure at no cost: the share of
-findings fixed per seat, provider and rank, the refuter's drop rate, and the
-dropout rate per provider.
-
-## Verified and not verified
-
-Verified on 2026-09-25:
-
-- `claude --help` (2.1.282) lists every flag in R5.
-- `codex exec --help` and `codex login --help` (0.157.0) list every flag and
-  command in R6 and step 1.
-- A local 0.157.0 `codex exec` rollout contains `"model":"gpt-6-astra"` and
-  `"effort":"high"`.
-- Run from inside a Claude Code session, `claude -p "<prompt>" --model opus
-  --tools Bash --permission-mode dontAsk --output-format json` ran a Bash
-  command with no prompt, returned `modelUsage` naming `claude-opus-5-5`,
-  and reported no permission denials.
-- On macOS, `codex sandbox -P :workspace -C <copy> -- <cmd>` (0.157.0)
-  allowed writes inside the copy and the system temporary directory,
-  refused a write to `$HOME` ("Operation not permitted"), and refused to
-  start without `-P`. Under it, `sh -c "curl https://example.com"` failed
-  with curl exit 6 (could not resolve host), so network access is blocked.
-- `claude -p ... --output-format stream-json --verbose` shows each Bash call
-  as an assistant `tool_use` block with `input.command`, and its result as a
-  user `tool_result` block with the output text and `is_error`. The final
-  `result` event carries `modelUsage` with the served model. R9 reads these.
-- With `--strict-mcp-config --mcp-config '{"mcpServers":{}}'`, the
-  `system` `init` event has `mcp_servers: []` and lists no claude.ai
-  connectors. Without these flags, a nested `claude -p` loaded the person's
-  connectors.
-- `codex exec --json -s read-only --skip-git-repo-check` (0.157.0) emits
-  `item.completed` events of type `command_execution` with the fields
-  `command`, `aggregated_output`, `exit_code` and `status`. R9 reads these.
-- `codex exec` (0.157.0) with `RUST_LOG=warn,codex_otel=info` writes a
-  `codex.conversation_starts` log line to stderr naming the MCP servers it
-  started: nine on this machine (`notion, codex_apps, node_repl,
-  playwright, cua_repl, atlassian-rovo, figma, context7, atlassian`). With
-  `-c mcp_servers={}` plus `--disable apps --disable plugins`, seven
-  remained. With `-c mcp_servers.<name>.enabled=false` for each server in
-  `config.toml` plus `--disable apps --disable plugins`, the list was empty,
-  no MCP startup was logged, and the rollout still showed the configured
-  default model (`gpt-6-astra`).
-- The full R5 flag set together, in a live Full review: the `init` event had
-  `mcp_servers: []` and the tools `Bash, Glob, Grep, Read, StructuredOutput`,
-  and the final `result` event carried the answer as a `structured_output`
-  object.
-- `claude -p` (2.1.282) with the R5 `--settings` sandbox, run in a scratch
-  copy: `touch inside.txt` succeeded, `touch $HOME/...` failed with
-  "Operation not permitted", and `curl https://example.com` failed with
-  "CONNECT tunnel failed, response 403" and a `sandbox_violations` note
-  ("host is not on the allow list").
-- A live Full review on 2026-09-25 with the Claude sandbox, the reduced
-  environment and the sandbox check, on a planted off-by-one defect: both
-  Claude launches (contract seat and refuter) ran the check and got
-  "Operation not permitted" and `ORCH-SANDBOX-ON`, served `claude-opus-5-5`;
-  the GPT seat served `gpt-6-astra` at `high`; all three serious findings
-  reproduced (receipt 1 exit 1, receipt 2 exit 0) and were promoted;
-  verdict `NOT-READY`, no incomplete reasons, clones removed.
-- `printf <patch> | codex sandbox -P :workspace -C <copy> -- git apply -`
-  (0.157.0) applied the patch, so stdin reaches the sandboxed command.
-- `git clone --local --no-checkout`, followed by `git read-tree -u --reset
-  <tree>` with a tree written from a temporary index that held tracked and
-  untracked changes, gave the clone the full uncommitted content. A local
-  clone brings the loose objects with it.
-
-Not verified:
-
-- whether a project's own `.codex/config.toml` can add MCP servers that
-  `<MCP off>` does not name; if one starts, R6 makes the launch a dropout;
-- what `workspace-write` allows outside `-C`;
-- the same sandbox on Linux, where Codex uses a different sandbox
-  mechanism: whether it starts and limits writes and network the same way. If it does
-  not start, R10 applies and the finding is not reproduced;
-- that the agent's shell on Codex allows a 540-second `wait`;
-- what Claude Code does when its Bash sandbox cannot start with
-  `failIfUnavailable: true` (the docs say it stops; not tried), and whether
-  the sandbox limits a seat the same way on Linux.
-
-## Decided (pending Felipe's confirmation)
-
-1. One Python script replaces the Workflow script. `workflows/`,
-   `using-workflows` and their tests are deleted, with Ruling 4 above.
-2. On Full, the refuter runs whenever a serious finding exists, not only
-   when the reviewers disagree.
-3. The refuter is always Claude (`opus`, `high`).
-4. The GPT seat may write inside its own copy (`workspace-write`).
-5. The outcome log lives outside Git, in the user's state folder.
-6. Security is a section added to both briefs, and the separate security
-   reviewer is removed.
-
-Still open: whether the Claude alias is `opus` or `fable`.
-
-## Sources
-
-- Reddy et al., arXiv:2605.21537: a model approved 31.7% of its own
-  behavior-changing errors.
-- Xiang et al., arXiv:2607.21656: the pass rate fell from 91.4% to 82.8%
-  when Codex reviewed Claude's code without running tests.
-- Kim et al., arXiv:2506.07962: different models give the same wrong answer
-  about 60% of the time when both are wrong.
-- Qiu and Gill, arXiv:2608.18167: reviewer plus critic scored 43/57, against
-  34 to 36 for one or two reviewers. On SWE-PRBench, the critic prompt that
-  forced evidence-backed disagreement scored best (F1 0.533), and the
-  version without it scored worst (0.457).
-- Jin and Chen, arXiv:2603.00539: executing the proposed fix filters out
-  false findings.
-- Kumar et al., arXiv:2606.15689: F1 0.657 on small diffs, and 0.043 on
-  diffs over 150 lines.
-- OpenAI, "A Practical Approach to Verifying Code at Scale": reviewers need
-  the repository and the ability to run code.
-- `docs/MEASUREMENTS.md` record two: the plain-language seat found 10 of 21
-  catastrophic defects alone (one operator, no control arm).
+Sources: T5's (arXiv:2605.21537, 2607.21656, 2506.07962, 2608.18167,
+2603.00539, 2606.15689) and `docs/MEASUREMENTS.md`, 2026-09-25/26.
