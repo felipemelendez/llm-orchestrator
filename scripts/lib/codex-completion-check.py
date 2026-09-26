@@ -47,6 +47,8 @@ import shlex
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+CONTINUE = ("Your next message replaces this one as the final answer, so repeat your full answer "
+            "with the corrected Verification line.")
 
 
 def shared():
@@ -246,8 +248,9 @@ def main():
               + shared_check.NOTE, file=sys.stderr)
         return 0
     # Codex's only route to the agent. It is a continuation, not a rejection,
-    # and stop_hook_active makes it a single one.
-    print(json.dumps({"decision": "block", "reason": shared_check.NOTE}))
+    # and stop_hook_active makes it a single one. The reply to it becomes the
+    # turn's final answer, so the agent is told to repeat that answer in full.
+    print(json.dumps({"decision": "block", "reason": shared_check.NOTE + " " + CONTINUE}))
     return 0
 
 

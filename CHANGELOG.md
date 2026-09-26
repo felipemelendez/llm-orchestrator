@@ -7,6 +7,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ### Changed
 
+- On Codex, the completion check's continuation now also tells the agent to
+  repeat its full answer with the corrected Verification line. The reply to
+  it becomes the turn's final answer, so an agent that answered with the line
+  alone lost its answer (`codex exec -o` saved only that line).
 - The review has a new finding kind, `test-gap`: behaviour the tests do not
   cover. `orch-review.py` ranks it mild unless it carries a repro (then it
   keeps its rank and is run like a defect), and counts the lowered ranks;
