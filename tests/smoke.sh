@@ -115,6 +115,9 @@ trap cleanup EXIT
 # ------------------------------------------------------------
 if should_run structural; then
   section "Structural"
+  # tests/test-hook-latency.sh is not repeated here. It measures time, so run a
+  # second time inside this suite on a busy machine it failed for the machine,
+  # not the hooks. run-all.sh and CI run it once, on its own.
   check_out "install --check passes" "OK" "${ROOT}/scripts/install.sh" --check
   check_out "validate-skills passes" "OK:" "${ROOT}/tests/validate-skills.sh"
   check_out "installer + packaging contract tests pass" "PASS: test-install" \
@@ -139,8 +142,6 @@ if should_run structural; then
             bash "${ROOT}/tests/handoff/test-precompact.sh"
   check_out "telemetry + dry-run tests pass" "PASS: test-telemetry" \
             bash "${ROOT}/tests/test-telemetry.sh"
-  check_suite "hook latency budget tests pass" "PASS: test-hook-latency" \
-            bash "${ROOT}/tests/test-hook-latency.sh"
   check_suite "verify-gate tests pass" "PASS: test-verify-gate" \
             bash "${ROOT}/tests/test-verify-gate.sh"
   check_suite "retry-cap tests pass" "PASS: test-retry-cap" \
@@ -170,7 +171,7 @@ if should_run hooks; then
   # CLAUDE_PROJECT_DIR points at scratch, a project with no cadence, independent
   # of the launching checkout's own cadence policy.
   CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$SMOKE_TMP/mem" \
-    bash "${ROOT}/scripts/hooks/session-start.sh" > $SMOKE_TMP/out.json 2>&1
+    bash "${ROOT}/scripts/hooks/session-start.sh" < /dev/null > $SMOKE_TMP/out.json 2>&1
 
   check "SessionStart emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "SessionStart loads using-orchestrator skill" "Using LLM Orchestrator" \
@@ -182,6 +183,31 @@ if should_run hooks; then
 
   check "SessionStart without a cadence carries no reply-format rule" \
     bash -c "! grep -q 'Changed:' $SMOKE_TMP/out.json"
+
+  # Run by hand in a terminal, the hook's input is that terminal, which never
+  # ends. The hook must not wait for it. It runs in a pseudo-terminal here and
+  # is killed after 20 seconds; exit 0 only when it finished on its own.
+  check "SessionStart does not wait on a terminal for input" \
+    env CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$SMOKE_TMP/mem" \
+    python3 -c '
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("bash", ["bash", sys.argv[1]])
+deadline = time.time() + 20
+while time.time() < deadline:
+    if select.select([fd], [], [], 0.1)[0]:
+        try:
+            os.read(fd, 65536)
+        except OSError:
+            pass
+    done, status = os.waitpid(pid, os.WNOHANG)
+    if done:
+        sys.exit(0)
+os.kill(pid, 9)
+os.waitpid(pid, 0)
+sys.exit(1)
+' "${ROOT}/scripts/hooks/session-start.sh"
 
   # UserPromptSubmit — silent without an enabled cadence
   printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
@@ -271,6 +297,11 @@ if should_run lock; then
   # at the syscall level on their own — so stubbing with_lock to a no-op still
   # produced 10 lines and the check could not detect a missing lock. With a
   # rewrite in the middle, an unserialised interleaving loses lines.
+  # The writers queue for one lock, so the last waits for all the others. The
+  # default 10-second wait is enough on an idle machine and not on a busy one,
+  # where a timed-out writer drops its line and the check fails for the wrong
+  # reason. This check is about serialisation, not speed: wait up to 120s.
+  export ORCH_LOCK_TIMEOUT=120
   for i in 1 2 3 4 5 6 7 8 9 10; do
     ( with_lock "$TF" bash -c "c=\$(cat '$TF' 2>/dev/null || true); sleep 0.05; { [ -n \"\$c\" ] && printf '%s\n' \"\$c\"; echo line-$i; } > '$TF'" ) &
   done
@@ -306,6 +337,7 @@ if should_run lock; then
   else fail "append_under_section concurrent" "expected 5, got $COUNT"; fi
 
   rm -f "$TF" "$TF.lock" "$TF.lockdir" "$TF2" "$TF2.lock" "$TF2.lockdir"
+  unset ORCH_LOCK_TIMEOUT
 fi
 
 # ------------------------------------------------------------
@@ -398,7 +430,7 @@ if should_run install; then
 
   # Re-run SessionStart from the copied install
   CLAUDE_PLUGIN_ROOT="$SMOKE_TMP/proj/.claude" ORCH_HOME="$SMOKE_TMP/proj-mem" \
-    bash $SMOKE_TMP/proj/.claude/scripts/hooks/session-start.sh > $SMOKE_TMP/out.json 2>&1
+    bash $SMOKE_TMP/proj/.claude/scripts/hooks/session-start.sh < /dev/null > $SMOKE_TMP/out.json 2>&1
   check "SessionStart from --copy emits valid JSON" \
         python3 -m json.tool $SMOKE_TMP/out.json
   rm -rf $SMOKE_TMP/proj-mem
@@ -509,7 +541,7 @@ print('ok')
   fi
 
   # Hook output JSON must include hookEventName field
-  OUT=$(CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/fmt" bash "$ROOT/scripts/hooks/session-start.sh" 2>/dev/null)
+  OUT=$(CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/fmt" bash "$ROOT/scripts/hooks/session-start.sh" < /dev/null 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
