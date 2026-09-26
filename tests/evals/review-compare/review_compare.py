@@ -547,7 +547,7 @@ def read_run(out_dir, arm):
             meta_payload = next((e.get("payload") for e in events if e.get("type") == "session_meta"), {}) or {}
             findings, problem = orch.codex_review_findings(orch.rollout_message(events), stdout,
                                                            meta_payload.get("cwd") or "/")
-    if findings is None:  # a reply the parser rejects is an incomplete run of the arm
+    if problem:  # a reply the parser rejects is an incomplete run of the arm, left out of detection
         run["complete"] = False
         run["reason"] = run["reason"] or problem
     else:

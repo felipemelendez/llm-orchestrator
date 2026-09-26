@@ -142,6 +142,8 @@ def code_review():
     probe = re.search(r"run exactly this command with your Bash tool: (.+?)$", prompt, re.M)
     probe_mode = spec.get("probe", "sandboxed")
     commands = list(spec.get("commands", []))
+    if not spec.get("no_read"):
+        commands.insert(0, {"command": "git diff HEAD"})
     if probe and probe_mode != "skip":
         command = probe.group(1)
         if probe_mode == "sandboxed":
@@ -179,7 +181,9 @@ def code_review():
     if spec.get("lock_session"):
         (project / session / "subagents").chmod(0o500)
     emit({"type": "system", "subtype": "task_started", "task_id": task, "description": "/code-review"})
-    if not spec.get("no_init"):
+    if spec.get("init_without_mcp"):
+        emit({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": session})
+    elif not spec.get("no_init"):
         emit({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": session,
               "mcp_servers": spec.get("mcp_servers", [])})
     emit({"type": "assistant", "message": {"model": "<synthetic>", "content": [{"type": "text", "text": reply}]}})
@@ -285,7 +289,9 @@ def review():
              for f in spec.get("findings", [])]
     correctness = spec.get("correctness", "patch is incorrect" if items else "patch is correct")
     message = spec.get("message", json.dumps({"findings": items, "overall_correctness": correctness,
-                                              "overall_explanation": "Explained.", "overall_confidence_score": 0.8}))
+                                              "overall_explanation": "Explained.",
+                                              "overall_confidence_score": spec.get("confidence", 0.8)}))
+    diff = subprocess.run(["git", "diff", "HEAD"], cwd=cwd, capture_output=True, text=True).stdout
     parent, helper = str(uuid.uuid4()), str(uuid.uuid4())
     reviews = [str(uuid.uuid4()) for _ in range(spec.get("review_rollouts", 1))]
     rollout(parent, [{"type": "session_meta", "payload": {"id": parent, "source": "exec", "cwd": cwd}},
@@ -300,6 +306,11 @@ def review():
         events.append({"type": "turn_context", "payload": {
             "model": spec.get("served_model", config.get("served_model", "gpt-test")),
             "effort": spec.get("effort", "high"), "sandbox_policy": {"type": spec.get("sandbox", "read-only")}}})
+        if not spec.get("no_read"):
+            events.append({"type": "response_item", "payload": {"type": "custom_tool_call", "call_id": "c1",
+                           "input": 'text(await tools.exec_command({cmd:"git diff HEAD"}));'}})
+            events.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "c1",
+                           "output": [{"type": "input_text", "text": json.dumps({"output": diff})}]}})
         events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": message}})
         rollout(conversation, events)
     for conversation in [parent, helper, *reviews]:
@@ -337,8 +348,10 @@ def model_launch():
     for number, (command, output, code, item) in enumerate(run_commands(spec, cwd)):
         emit({"type": "item.completed", "item": {"id": f"item_{number}", "type": "command_execution",
               "command": "/bin/zsh -lc " + shlex.quote(command), "aggregated_output": output, "exit_code": code}})
+    policy = {"type": spec.get("sandbox", "workspace-write"), "network_access": spec.get("network", False)}
     rollout(thread, [{"type": "turn_context", "payload": {
-        "model": spec.get("served_model", config.get("served_model", "gpt-test")), "effort": "high"}}])
+        "model": spec.get("served_model", config.get("served_model", "gpt-test")), "effort": spec.get("effort", "high"),
+        "sandbox_policy": policy, "cwd": spec.get("cwd", cwd)}}])
     output = model_output(role, spec, prompt)
     if not spec.get("no_result"):
         Path(args[args.index("-o") + 1]).write_text(json.dumps(output))
@@ -740,6 +753,24 @@ class ReviewTests(unittest.TestCase):
         self.reviewer("claude", commands=[{"command": "cat deps/lib.py"}])
         self.assertEqual(self.review()["verdict"], "READY")
 
+    def test_step3_copy_ignored_never_writes_through_a_symlink(self):
+        # The reviewers' scene: a tracked symlink `deps` points outside; copying `deps/lib.txt` into the copy
+        # resolves to the person's own file, cp fails, and the fallback deleted the original.
+        outside = self.root / "outside-deps"
+        outside.mkdir()
+        (outside / "lib.txt").write_text("the person's original\n")
+        (self.project / "deps").symlink_to(outside)
+        self.git("add", "deps")
+        self.git("commit", "-qm", "a tracked symlink")
+        (self.project / "calc.py").write_text("def add(a, b):\n    return a - b\n")
+        for name in ("deps/lib.txt", "deps"):
+            with self.subTest(name=name):
+                self.config({"review": {"copy_ignored": [name]}})
+                review = self.review()
+                self.assert_incomplete(review, "outside the copy")
+                self.assertEqual((outside / "lib.txt").read_text(), "the person's original\n")
+                self.assertTrue((self.project / "deps").is_symlink())
+
     def test_step3_a_failing_setup_gives_incomplete(self):
         self.config({"review": {"setup": "exit 3"}})
         self.assert_incomplete(self.review(), "setup")
@@ -821,6 +852,10 @@ class ReviewTests(unittest.TestCase):
         self.assert_incomplete(self.review(), "MCP")
         self.reviewer("claude", no_init=True)
         self.assert_incomplete(self.review(), "init")
+
+    def test_r5_an_init_event_without_the_mcp_servers_key_is_a_dropout(self):
+        self.reviewer("claude", init_without_mcp=True)
+        self.assert_incomplete(self.review(), "MCP")
 
     def test_r5_every_model_usage_key_must_be_in_the_opus_family(self):
         self.reviewer("claude", model_usage={"claude-opus-5-5": {}, "claude-haiku-4-5": {}})
@@ -949,11 +984,17 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("an admin of org B", found[0]["words"])
         self.assertEqual(MOD.code_review_findings("No problems.\n\n```json\n[]\n```\n"), ([], None))
         for bad in ("No problems found in the change.", "```json\n[1, 2]\n```",
-                    "```json\n[{\"line\": 3}]\n```", "```json\n[]\n```\n```json\n[{\"file\": 3}]\n```"):
+                    "```json\n[{\"line\": 3}]\n```", "```json\n[]\n```\n```json\n[{\"file\": 3}]\n```",
+                    # a truncated array after an empty one: skipping it would leave zero findings (READY)
+                    "```json\n[]\n```\n```json\n[\n  {\"file\": \"calc.py\", \"line\": 2,\n```\n"):
             with self.subTest(bad=bad):
                 found, problem = MOD.code_review_findings(bad)
-                self.assertIsNone(found)
+                self.assertEqual(found or [], [])
                 self.assertTrue(problem)
+        found, problem = MOD.code_review_findings("```json\n" + json.dumps(items) + "\n```\n```json\n[1]\n```")
+        self.assertTrue(problem)
+        self.assertEqual(len(found), 2)  # the well-shaped findings are kept for review.json
+        self.assertEqual(MOD.code_review_findings("```toml\n[tool.x]\nkey = 1\n```\n```json\n[]\n```"), ([], None))
 
     def test_r7_the_codex_parser_on_the_recorded_shapes(self):
         copy = self.root / "copy"
@@ -977,11 +1018,17 @@ class ReviewTests(unittest.TestCase):
                "missing key": (json.dumps({"findings": []}), ""),
                "finding without a location": (json.dumps(dict(reply, findings=[{"title": "[P1] x", "body": "y"}])),
                                               stdout)}
+        bad["no findings at confidence 0"] = (json.dumps(dict(clean, overall_confidence_score=0.0,
+                                                              overall_explanation="I could not access the files.")),
+                                              "No issues.\n")
         for name, (message, out) in bad.items():
             with self.subTest(name):
                 found, problem = MOD.codex_review_findings(message, out, copy)
-                self.assertIsNone(found)
                 self.assertTrue(problem)
+                if name in ("findings but correct", "count differs"):
+                    self.assertEqual(len(found), 1)  # kept for review.json, marked from_dropout
+                else:
+                    self.assertEqual(found or [], [])
 
     def test_r7_a_prose_only_codex_reply_is_incomplete(self):
         self.reviewer("codex", message="The patch looks correct; I found nothing to flag.")
@@ -989,13 +1036,23 @@ class ReviewTests(unittest.TestCase):
         self.assert_incomplete(review, "codex-review: dropout")
         self.assertNotEqual(review["verdict"], "READY")
 
-    def test_r7_a_conflicting_or_count_mismatched_codex_reply_is_incomplete(self):
+    def test_r7_a_conflicting_or_count_mismatched_codex_reply_is_incomplete_and_keeps_its_findings(self):
         for behavior in ({"correctness": "patch is incorrect"},
                          {"findings": [codex_finding()], "correctness": "patch is correct"},
                          {"findings": [codex_finding()], "stdout_count": 2}):
             with self.subTest(behavior=behavior):
                 self.reviewer("codex", **behavior)
-                self.assert_incomplete(self.review("standard", "claude"), "codex-review: dropout")
+                review = self.review("standard", "claude")
+                self.assert_incomplete(review, "codex-review: dropout")
+                kept = [(f["id"], f["from_dropout"], f["status"]) for f in review["findings"]]
+                self.assertEqual(kept, [("codex-review-1", True, "unjudged")] if behavior.get("findings") else [])
+
+    def test_r7_a_wrong_shape_array_keeps_the_well_shaped_findings(self):
+        reply = ("```json\n" + json.dumps([code_finding()]) + "\n```\n```json\n[1, 2]\n```\n")
+        self.scenario["claude"]["code-review"] = {"reply": reply}
+        review = self.review()
+        self.assert_incomplete(review, "code-review: dropout")
+        self.assertEqual([(f["id"], f["from_dropout"]) for f in review["findings"]], [("code-review-1", True)])
 
     def test_r7_a_prose_only_or_wrong_shape_code_review_reply_is_incomplete(self):
         for reply in ("I found no problems in the change.", "```json\n[1, 2]\n```"):
@@ -1010,6 +1067,39 @@ class ReviewTests(unittest.TestCase):
         review = self.review()
         self.assertEqual([f["id"] for f in review["findings"]], ["code-review-1", "code-review-2"])
         self.assertEqual(review["verdict"], "READY-WITH-FIXES")
+
+    def test_r7_zero_findings_count_only_when_the_reviewer_read_the_change(self):
+        # The reviewers' scene: "No review was performed" with an empty array gave READY.
+        self.scenario["claude"]["code-review"] = {"reply": "No review was performed.\n```json\n[]\n```", "no_read": True}
+        self.assert_incomplete(self.review(), "did not read the change")
+        self.reviewer("codex", no_read=True)
+        self.assert_incomplete(self.review("standard", "claude"), "did not read the change")
+        self.reviewer("codex", confidence=0.0)
+        self.assert_incomplete(self.review("standard", "claude"), "confidence 0")
+        self.reviewer("codex", codex_finding(priority=2), no_read=True)  # a finding is kept, read or not
+        self.assertEqual(self.review("standard", "claude")["verdict"], "READY-WITH-FIXES")
+
+    def test_r7_a_truncated_array_after_an_empty_one_is_a_dropout(self):
+        reply = "```json\n[]\n```\n\n```json\n[\n  {\"file\": \"calc.py\", \"line\": 2, \"summary\": \"add\n```\n"
+        self.scenario["claude"]["code-review"] = {"reply": reply}
+        self.assert_incomplete(self.review(), "code-review: dropout")
+
+    def test_r7_a_reviewer_past_its_time_limit_is_a_dropout_and_its_processes_are_killed(self):
+        from unittest import mock
+        self.reviewer("codex", sleep=60)
+        (self.root / "scenario.json").write_text(json.dumps(self.scenario))
+        copy = self.root / "timed-copy"
+        subprocess.run(["git", "clone", "-q", str(self.project), str(copy)], check=True, env=self.env())
+        launch = self.root / "timed-launch"
+        launch.mkdir()
+        original = MOD.LAUNCH_TIMEOUT
+        self.addCleanup(setattr, MOD, "LAUNCH_TIMEOUT", original)
+        MOD.LAUNCH_TIMEOUT = 2
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, self.env(), clear=True):
+            fields = MOD.run_codex_review(copy, "instruction", launch, "gpt-test", [], ["calc.py"])
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertEqual((fields["status"], fields["reason"]), ("dropout", "timed out after 2 seconds"))
 
     def test_r7_exits_errors_and_timeouts_are_dropouts(self):
         self.assertEqual(MOD.LAUNCH_TIMEOUT, 3600)
@@ -1067,6 +1157,19 @@ class ReviewTests(unittest.TestCase):
             with self.subTest(behavior=behavior):
                 self.scenario["claude"]["prover"] = behavior
                 self.assert_incomplete(self.review(), fragment)
+
+    def test_r8_a_codex_prover_must_be_served_high_effort_in_a_workspace_write_sandbox_of_its_copy(self):
+        # The reviewers' scene: a danger-full-access, low-effort Codex prover was accepted.
+        self.reviewer("codex", codex_finding(priority=2))
+        for behavior in ({"effort": "low"}, {"sandbox": "danger-full-access"}, {"network": True},
+                         {"cwd": "/somewhere/else"}):
+            with self.subTest(behavior=behavior):
+                self.scenario["codex"]["prover"] = behavior
+                self.assert_incomplete(self.review("standard", "codex", path_bin=self.only("codex")),
+                                       "prover-1: dropout")
+        self.scenario["codex"]["prover"] = {}
+        self.assertEqual(self.review("standard", "codex", path_bin=self.only("codex"))["verdict"],
+                         "READY-WITH-FIXES")
 
     def test_r8_step_1_floors(self):
         cases = [("defect", mild("defect"), "serious", True),
@@ -1255,8 +1358,8 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(found["receipts"]["1"]["fingerprint"], review["tree"])
         runner = self.calls("claude", "runner")[0]
         self.assertTrue(runner["patch"])
-        self.assertIn(f"2. sh -c '{CHECK}'; echo ORCH-EXIT=$?", runner["prompt"])
-        self.assertIn("3. sh -c 'git apply --whitespace=nowarn .git/orch-review/patch.diff'; echo ORCH-EXIT=$?",
+        self.assertIn("2. " + MOD.runner_line(CHECK), runner["prompt"])
+        self.assertIn("3. " + MOD.runner_line("git apply --whitespace=nowarn .git/orch-review/patch.diff"),
                       runner["prompt"])
         pairs = {runner["argv"][i]: runner["argv"][i + 1] for i in range(len(runner["argv"]) - 1)}
         self.assertEqual(pairs["--tools"], "Bash")
@@ -1264,17 +1367,18 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual([l["role"] for l in review["launches"]].count("runner"), 1)
         self.assertEqual(self.calls("codex"), [])
 
-    def test_r10_a_runner_receipt_fails_when_the_call_order_or_marker_differs(self):
+    def test_r10_a_runner_receipt_error_makes_the_runner_a_dropout(self):
+        # The reviewers' scene: no marker, the runner stayed complete, and a serious test-gap was lowered to mild.
         self.reviewer("claude", code_finding())
-        self.prove({"code-review-1": proof()})
+        self.prove({"code-review-1": proof(kind="test-gap")})
         for behavior in ({"alter": 1}, {"swap": True}, {"no_marker": True}):
             with self.subTest(behavior=behavior):
                 self.scenario["claude"]["runner"] = behavior
                 review = self.review("standard", "claude", path_bin=self.only("claude"))
                 found = review["findings"][0]
                 self.assertFalse(found["reproduced"])
-                self.assertEqual(found["status"], "unverified")
-                self.assertNotEqual(review["verdict"], "READY")
+                self.assertEqual((found["rank"], found["rank_lowered"]), ("serious", False))
+                self.assert_incomplete(review, "runner-code-review-1: dropout")
 
     def test_r10_a_runner_dropout_gives_incomplete(self):
         self.reviewer("claude", code_finding())
@@ -1284,6 +1388,35 @@ class ReviewTests(unittest.TestCase):
                 self.scenario["claude"]["runner"] = behavior
                 self.assert_incomplete(self.review("standard", "claude", path_bin=self.only("claude")),
                                        "runner-code-review-1: dropout")
+
+    def test_r10_a_test_gap_whose_experiment_did_not_run_is_never_lowered(self):
+        self.scenario["codex"]["sandbox"] = False
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof(kind="test-gap")})
+        found = self.review()["findings"][0]
+        self.assertEqual((found["rank"], found["rank_lowered"], found["status"]), ("serious", False, "unverified"))
+
+    def test_r10_the_runner_line_enforces_the_time_limit_itself(self):
+        copy = self.root / "wrapped"
+        copy.mkdir()
+        for name, command, timeout, code, timed_out in (
+                ("timed out", "sleep 30 & echo $! > child.pid; sleep 30", 2, 137, True),
+                ("exited", "echo hello; exit 3", 600, 3, False)):
+            with self.subTest(name):
+                started = time.monotonic()
+                done = subprocess.run(["sh", "-c", MOD.runner_line(command, timeout)], cwd=copy,
+                                      capture_output=True, text=True, timeout=60)
+                self.assertLess(time.monotonic() - started, 15)
+                marker = MOD.runner_marker(done.stdout)
+                self.assertEqual(marker, (code, timed_out))
+                if name == "timed out":
+                    child = int((copy / "child.pid").read_text())
+                    deadline = time.monotonic() + 5
+                    while MOD.alive(child) and time.monotonic() < deadline:
+                        time.sleep(0.1)
+                    self.assertFalse(MOD.alive(child))
+                else:
+                    self.assertIn("hello", done.stdout)
 
     def test_r10_a_passing_receipt_1_never_drops_or_lowers_a_defect(self):
         self.reviewer("claude", code_finding())
@@ -1405,11 +1538,15 @@ class ReviewTests(unittest.TestCase):
         review = self.review("full", "claude")
         self.assertEqual([f["status"] for f in review["findings"]], ["unresolved", "unresolved"])
 
+    ZERO = 'python3 -c "import calc; print(\'add(0, 0) =\', calc.add(0, 0))"'
+
     def test_r15_a_valid_drop_check_run_by_the_script_drops_the_finding(self):
-        self.reviewer("codex", codex_finding())
+        # The reviewer claims add(0, 0) returns 1; the code returns 0, and the script's own run shows it.
+        self.reviewer("codex", codex_finding(title="add of zeros is off", body="add(0, 0) returns 1, not 0."))
         self.prove({"codex-review-1": proof(repro={"command": CHECK, "patch": "not a patch\n"})})
-        self.refute(verdict("codex-review-1", "DROPPED", scenario="add(2, 2) returns 0",
-                            drop_check=self.drop()))
+        # The quote is matched ignoring case, outer quotes and extra spaces.
+        self.refute(verdict("codex-review-1", "DROPPED", scenario='"ADD(0, 0)  returns 1"',
+                            drop_check=self.drop(command=self.ZERO, expected="add(0, 0) = 0")))
         review = self.review("full", "claude")
         found = self.found(review, "codex-review-1")
         self.assertEqual(found["status"], "dropped")
@@ -1418,13 +1555,24 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(review["verdict"], "READY")
         self.assertEqual([f["id"] for f in review["findings"]], ["codex-review-1"])  # still listed
 
+    def test_r15_a_drop_that_tests_another_scenario_is_unresolved(self):
+        # The reviewers' scene: the bug is add(2, 2) returns 0; the refuter "drops" it by testing add(0, 0).
+        self.reviewer("codex", codex_finding())
+        self.prove({"codex-review-1": proof(repro={"command": CHECK, "patch": "not a patch\n"})})
+        for scenario in ("add(0, 0) returns 0", "returns 0"):
+            with self.subTest(scenario=scenario):
+                self.refute(verdict("codex-review-1", "DROPPED", scenario=scenario,
+                                    drop_check=self.drop(command=self.ZERO, expected="add(0, 0) = 0")))
+                review = self.review("full", "claude")
+                self.assertEqual(self.status(review, "codex-review-1"), "unresolved")
+
     def test_r15_an_invalid_drop_is_unresolved(self):
         cases = {"no scenario": dict(scenario=None, drop_check=self.drop()),
-                 "no drop check": dict(scenario="s", drop_check=None),
-                 "check fails": dict(scenario="s", drop_check=self.drop(command="exit 1")),
-                 "line not in output": dict(scenario="s", drop_check=self.drop(expected="sum not ok")),
-                 "partial line": dict(scenario="s", drop_check=self.drop(expected="sum")),
-                 "empty expected output": dict(scenario="s", drop_check=self.drop(expected="\n \n"))}
+                 "no drop check": dict(scenario="add(2, 2) returns 0", drop_check=None),
+                 "check fails": dict(scenario="add(2, 2) returns 0", drop_check=self.drop(command="exit 1")),
+                 "line not in output": dict(scenario="add(2, 2) returns 0", drop_check=self.drop(expected="sum not ok")),
+                 "partial line": dict(scenario="add(2, 2) returns 0", drop_check=self.drop(expected="sum")),
+                 "empty expected output": dict(scenario="add(2, 2) returns 0", drop_check=self.drop(expected="\n \n"))}
         for name, fields in cases.items():
             with self.subTest(name):
                 self.reviewer("codex", codex_finding())
@@ -1437,14 +1585,14 @@ class ReviewTests(unittest.TestCase):
     def test_r15_a_passing_receipt_1_alone_cannot_drop(self):
         self.reviewer("codex", codex_finding())
         self.prove({"codex-review-1": proof(repro={"command": "true", "patch": FIX})})
-        self.refute(verdict("codex-review-1", "DROPPED", scenario="s", explanation="receipt 1 passed"))
+        self.refute(verdict("codex-review-1", "DROPPED", scenario="add(2, 2) returns 0", explanation="receipt 1 passed"))
         review = self.review("full", "claude")
         self.assertEqual(self.status(review, "codex-review-1"), "unresolved")
 
     def test_r15_the_drop_check_runs_on_a_fresh_unpatched_copy_not_the_refuters(self):
         self.reviewer("codex", codex_finding())
         self.prove({"codex-review-1": proof(repro={"command": CHECK, "patch": "not a patch\n"})})
-        self.refute(verdict("codex-review-1", "DROPPED", scenario="s",
+        self.refute(verdict("codex-review-1", "DROPPED", scenario="add(2, 2) returns 0",
                             drop_check=self.drop(command="cat refuter-was-here.txt", expected="probe")),
                     write_copy=["refuter-was-here.txt"])
         review = self.review("full", "claude")
@@ -1456,14 +1604,15 @@ class ReviewTests(unittest.TestCase):
         self.assertNotEqual(refuter_cwd, drop_cwd)
 
     def test_r15_a_drop_check_runs_through_the_runner_on_claude_only(self):
-        self.reviewer("claude", code_finding())
+        self.reviewer("claude", code_finding(scenario="add(0, 0) returns 1"))
         unproved = proof(repro={"command": CHECK, "patch": "not a patch\n"})
         self.prove({"code-review-1-1": unproved, "code-review-2-1": unproved})
-        self.refute(*[verdict(f"code-review-{n}-1", "DROPPED", scenario="s", drop_check=self.drop()) for n in (1, 2)])
+        self.refute(*[verdict(f"code-review-{n}-1", "DROPPED", scenario="add(0, 0) returns 1",
+                              drop_check=self.drop(command=self.ZERO, expected="add(0, 0) = 0")) for n in (1, 2)])
         review = self.review("full", "claude", path_bin=self.only("claude"))
         self.assertEqual([f["status"] for f in review["findings"]], ["dropped", "dropped"], review["incomplete_reasons"])
         self.assertEqual([f["drop_receipt"]["via"] for f in review["findings"]], ["claude-runner"] * 2)
-        self.assertEqual(review["verdict"], "READY")
+        self.assertEqual(review["verdict"], "READY", review["incomplete_reasons"])
 
     def test_r15_a_drop_receipt_from_another_tree_is_not_valid(self):
         self.test_r15_a_valid_drop_check_run_by_the_script_drops_the_finding()

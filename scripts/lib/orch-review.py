@@ -381,10 +381,13 @@ class Review:
         shutil.copyfile(preflight["spec_path"], copy / SPEC_IN_COPY)
         for name in preflight["copy_ignored"]:
             source = self.project / name
-            if not source.exists():
+            if not os.path.lexists(source):
                 continue
+            problem = unsafe_copy_target(name, source, copy)
+            if problem:
+                return copy, None, problem
             (copy / name).parent.mkdir(parents=True, exist_ok=True)
-            copy_on_write(source, copy / name)
+            copy_on_write(source, copy / name, copy)
         if preflight["setup"]:
             try:
                 setup = subprocess.run(["sh", "-c", preflight["setup"]], cwd=copy, stdin=subprocess.DEVNULL,
@@ -418,6 +421,7 @@ class Review:
         try:
             copy, fingerprint, problem = self.make_copy(preflight, directory)
             record["copy_fingerprint"] = fingerprint
+            changed = [item["file"] for item in state["files"]]
             instruction = REVIEW_INSTRUCTION.format(spec=copy / SPEC_IN_COPY)
             if state["security"]:
                 instruction += "\n\n" + (REFERENCES / "security-lens.md").read_text()
@@ -425,12 +429,12 @@ class Review:
             if problem or fingerprint != self.tree:
                 record["reason"] = problem or "the copy does not match the fingerprint"
             elif planned["provider"] == "claude":
-                record.update(run_code_review(copy, instruction, directory, self.run_dir))
+                record.update(run_code_review(copy, instruction, directory, self.run_dir, changed))
                 self.sessions.append(dict(record.pop("session_cleanup"), launch=record["name"]))
             else:
                 codex = preflight["providers"]["codex"]
                 record.update(run_codex_review(copy, instruction, directory, codex.get("requested_model"),
-                                               codex.get("mcp_servers", [])))
+                                               codex.get("mcp_servers", []), changed))
         except (resources.Unsafe, Failure, OSError) as error:
             record["reason"] = f"the launch could not start: {error}"
         return self.close_launch(directory, record)
@@ -567,8 +571,12 @@ class Review:
         if found["prover_result"] is None:
             return
         first = found["receipts"].get("1", {})
-        failing = bool(first.get("ran") and not first.get("timed_out") and first.get("exit_code") not in (0, None))
-        if found["kind"] == "test-gap" and not failing and found["rank"] != "mild":
+        ran = bool(first.get("ran") and not first.get("timed_out") and first.get("exit_code") is not None)
+        failing = ran and first["exit_code"] != 0
+        # A test-gap is lowered when no command was given, or when its command ran and passed; never when
+        # its experiment did not run (R8 step 2, R10).
+        if (found["kind"] == "test-gap" and not failing and found["rank"] != "mild"
+                and (not found["repro"] or ran)):
             found["floors"].append({"step": 2, "from": found["rank"], "to": "mild",
                                     "reason": "a test-gap without a failing receipt 1 claims only missing coverage"})
             found["rank"], found["rank_lowered"] = "mild", True
@@ -803,10 +811,29 @@ def claude_config_dir():
     return Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
 
-def copy_on_write(source, target):
+def unsafe_copy_target(name, source, copy):
+    """Why a review.copy_ignored path must not be copied, or None. Its place in the copy must be a new
+    path inside the copy (not reached through a symlink leading out), and never the source itself."""
+    target = copy / name
+    root = copy.resolve()
+    if (not nested(target.parent.resolve(), root) or os.path.lexists(target)
+            or target.resolve() == source.resolve()):
+        return (f"review.copy_ignored {name!r} would write outside the copy or over a file already in it "
+                "(a symlink in the path leads out); nothing was copied")
+    return None
+
+
+def copy_on_write(source, target, copy):
+    """Copy one copy_ignored path into the copy. Only what cp created at `target`, a new path inside
+    the copy (checked by unsafe_copy_target), is ever removed before the plain retry."""
     flags = ["-cR"] if sys.platform == "darwin" else ["-R", "--reflink=auto"]
     if subprocess.run(["cp", *flags, str(source), str(target)], capture_output=True).returncode:
-        shutil.rmtree(target, ignore_errors=True) if target.is_dir() else target.unlink(missing_ok=True)
+        if not nested(target.parent.resolve(), copy.resolve()):
+            raise Failure(f"refusing to remove {target}: it is outside the copy")
+        if target.is_symlink() or target.is_file():
+            target.unlink()
+        elif target.is_dir():
+            shutil.rmtree(target)
         subprocess.run(["cp", "-R", str(source), str(target)], check=True, capture_output=True)
 
 
@@ -969,6 +996,8 @@ def finish_launch(fields, output, launch_dir):
     if not fields.get("reason"):
         fields["reason"] = None
         fields["status"] = "complete"
+    else:
+        fields["status"] = "dropout"
     return fields
 
 
@@ -993,8 +1022,9 @@ def claude_checks(code, init, result, served, calls):
         return f"exits nonzero ({code})"
     if init is None:
         return "the stream has no system init event, so its MCP servers are unknown"
-    if init.get("mcp_servers"):
-        return "loaded MCP servers"
+    if init.get("mcp_servers", None) != []:
+        return ("loaded MCP servers" if init.get("mcp_servers")
+                else "the init event does not show an empty MCP server list (mcp_servers: [])")
     if not result or result.get("is_error") is not False or result.get("subtype") != "success":
         return "no final result"
     if not served:
@@ -1039,11 +1069,48 @@ def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
     return finish_launch(fields, output, launch_dir)
 
 
-def runner_line(line):
-    return "sh -c '" + line.replace("'", "'\"'\"'") + "'; echo ORCH-EXIT=$?"
+RUNNER_WRAPPER = """import os, signal, subprocess, sys, threading
+late = []
+p = subprocess.Popen(["sh", "-c", sys.argv[1]], stderr=subprocess.STDOUT, start_new_session=True)
+def stop():
+    late.append(1)
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except OSError:
+        pass
+timer = threading.Timer(TIMEOUT, stop)
+timer.start()
+code = p.wait()
+timer.cancel()
+try:
+    os.killpg(p.pid, signal.SIGKILL)
+except OSError:
+    pass
+print("ORCH-EXIT=%d ORCH-TIMED-OUT=%d" % (code if code >= 0 else 128 - code, 1 if late else 0), flush=True)
+"""
 
 
-EXIT_MARKER = re.compile(r"^ORCH-EXIT=(\d+)\s*$")
+def shell_quote(text):
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def runner_line(line, timeout=None):
+    """R10: one experiment command for the Claude runner. A small wrapper the script wrote runs it in its
+    own process group, kills the group after the time limit, and prints the exit code and whether it
+    timed out, so the limit does not rest on the runner obeying it."""
+    body = RUNNER_WRAPPER.replace("TIMEOUT", str(REPRO_TIMEOUT if timeout is None else timeout))
+    return f"python3 -c {shell_quote('exec(' + json.dumps(body) + ')')} {shell_quote(line)}"
+
+
+EXIT_MARKER = re.compile(r"^ORCH-EXIT=(\d+) ORCH-TIMED-OUT=([01])\s*$")
+
+
+def runner_marker(text):
+    """The wrapper's marker, as (exit code, timed out), or None when it is missing. The wrapper prints it
+    after the command and its whole process group have ended, so the last one is the wrapper's."""
+    marks = [EXIT_MARKER.match(line) for line in (text or "").splitlines()]
+    marks = [match for match in marks if match]
+    return (int(marks[-1].group(1)), marks[-1].group(2) == "1") if marks else None
 
 
 def run_runner(copy, lines, launch_dir, run_dir, fingerprint):
@@ -1071,15 +1138,18 @@ def run_runner(copy, lines, launch_dir, run_dir, fingerprint):
         item = {"ran": False, "command": line, "call": command, "fingerprint": fingerprint if n == 1 else None,
                 "timed_out": False, "via": "claude-runner"}
         text = call.get("output") if isinstance(call.get("output"), str) else None
-        tail = text.rstrip("\n").splitlines()[-1:] if text else []
-        marker = EXIT_MARKER.match(tail[0]) if tail else None
+        marker = runner_marker(text)
         if call.get("command") != command:
             item["reason"] = "the runner's call is not the given line, or not in its place"
         elif not marker:
             item["reason"] = "the runner's result has no ORCH-EXIT marker"
         else:
-            body = text.rstrip("\n").splitlines()[:-1]
-            item.update(ran=True, exit_code=int(marker.group(1)), output=clip("\n".join(body)))
+            printed = text.splitlines()
+            last = max(n for n, row in enumerate(printed) if EXIT_MARKER.match(row))
+            body = printed[:last] + printed[last + 1:]
+            item.update(ran=True, exit_code=marker[0], timed_out=marker[1], output=clip("\n".join(body)))
+            if marker[1]:
+                item["reason"] = f"ran longer than {REPRO_TIMEOUT} seconds"
         receipts.append(item)
     fields = {"served_model": served, "served_effort": [], "exit_code": code,
               "cost_usd": result.get("total_cost_usd") if result else None,
@@ -1087,7 +1157,8 @@ def run_runner(copy, lines, launch_dir, run_dir, fingerprint):
     fields["reason"] = first_reason(
         claude_checks(code, init, result, served, calls),
         None if probe_passed(calls, probe, target) else "the sandbox check did not show a refused write outside the copy",
-        None if len(calls) <= len(lines) + 1 else "the runner ran a command it was not given")
+        None if len(calls) <= len(lines) + 1 else "the runner ran a command it was not given",
+        next((f"receipt {n}: {item['reason']}" for n, item in enumerate(receipts, 1) if not item["ran"]), None))
     return finish_launch(fields, None, launch_dir), receipts
 
 
@@ -1166,33 +1237,40 @@ def sandbox_attached(events, run_dir, copy):
 
 
 FENCE = re.compile(r"```[^\n`]*\n(.*?)```", re.S)
+JSON_ARRAY_START = re.compile(r'^\[\s*(?:[\[{\]"\d-]|true\b|false\b|null\b)')
 
 
 def code_review_findings(text):
-    """R7: the findings of a /code-review reply, or (None, why) when it is not positively parsed."""
+    """R7: (findings, problem) for a /code-review reply. The findings are None when nothing parses; with
+    a problem, the well-shaped findings are still returned so they are kept, marked from_dropout."""
     if not isinstance(text, str):
         return None, "the reply has no text"
-    arrays = []
+    arrays, problems = [], []
     for block in FENCE.finditer(text):
+        body = block.group(1).strip()
         try:
-            value = json.loads(block.group(1).strip())
+            value = json.loads(body)
         except ValueError:
+            if JSON_ARRAY_START.match(body):  # an array that does not parse is never skipped
+                problems.append("a fenced block that starts as a JSON array does not parse")
             continue
         if isinstance(value, list):
             arrays.append(value)
-    if not arrays:
+    if not arrays and not problems:
         return None, "the reply has no fenced JSON array of findings"
-    if not all(isinstance(item, dict) and isinstance(item.get("file"), str) for value in arrays for item in value):
-        return None, "a fenced JSON array is not a list of findings that each name a file"
+    items = [item for value in arrays for item in value]
+    shaped = [item for item in items if isinstance(item, dict) and isinstance(item.get("file"), str)]
+    if len(shaped) != len(items):
+        problems.append("a fenced JSON array is not a list of findings that each name a file")
     findings = []
-    for item in (item for value in arrays for item in value):
+    for item in shaped:
         line = item.get("line")
         words = [str(item[key]) for key in ("summary", "failure_scenario") if isinstance(item.get(key), str)
                  and item[key].strip()]
         findings.append({"file": item["file"], "line": line if type(line) is int else None,
                          "summary": item.get("summary"), "failure_scenario": item.get("failure_scenario"),
                          "priority": None, "words": "\n".join(words), "raw": item})
-    return findings, None
+    return findings, "; ".join(problems) or None
 
 
 CODEX_REVIEW_KEYS = ("findings", "overall_correctness", "overall_explanation", "overall_confidence_score")
@@ -1218,12 +1296,6 @@ def codex_review_findings(message, stdout, root):
     items, correctness = reply["findings"], reply["overall_correctness"]
     if not isinstance(items, list):
         return None, "findings is not a list"
-    if correctness not in ("patch is correct", "patch is incorrect"):
-        return None, f"overall_correctness is {correctness!r}"
-    if not items and correctness != "patch is correct":
-        return None, "no findings, but the patch is called incorrect"
-    if items and correctness != "patch is incorrect":
-        return None, "findings, but the patch is called correct"
     findings = []
     for item in items:
         location = item.get("code_location") if isinstance(item, dict) else None
@@ -1240,10 +1312,54 @@ def codex_review_findings(message, stdout, root):
                          "title": item["title"], "body": item["body"], "priority": priority,
                          "confidence_score": item.get("confidence_score"),
                          "words": f"{item['title']}\n{item['body']}", "raw": item})
+    # The consistency checks below make the reply a dropout, but its findings are kept (R7, R19).
+    score = reply["overall_confidence_score"]
+    if correctness not in ("patch is correct", "patch is incorrect"):
+        return findings, f"overall_correctness is {correctness!r}"
+    if not items and correctness != "patch is correct":
+        return findings, "no findings, but the patch is called incorrect"
+    if items and correctness != "patch is incorrect":
+        return findings, "findings, but the patch is called correct"
+    if not items and (type(score) not in (int, float) or score <= 0):
+        return findings, "no findings at confidence 0: the reviewer did not stand behind a review"
     if stdout is not None and len(PRIORITY_LINE.findall(stdout)) != len(findings):
-        return None, (f"stdout lists {len(PRIORITY_LINE.findall(stdout))} [P<n>] lines, "
-                      f"the final message {len(findings)} findings")
+        return findings, (f"stdout lists {len(PRIORITY_LINE.findall(stdout))} [P<n>] lines, "
+                          f"the final message {len(findings)} findings")
     return findings, None
+
+
+def read_the_change(inputs, outputs, changed):
+    """R7: evidence that a reviewer read the change: a tool call that names a changed file, or a tool
+    result that shows a changed file's diff."""
+    return any(name in text for text in inputs for name in changed) or any(
+        f"diff --git a/{name}" in text for text in outputs for name in changed)
+
+
+def claude_tool_texts(events):
+    inputs, outputs = [], []
+    for event in events:
+        message = event.get("message") if isinstance(event.get("message"), dict) else {}
+        for block in message.get("content") if isinstance(message.get("content"), list) else []:
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                inputs.append(json.dumps(block.get("input"), ensure_ascii=False))
+            elif isinstance(block, dict) and block.get("type") == "tool_result":
+                outputs.append(json.dumps(block.get("content"), ensure_ascii=False))
+    return inputs, outputs
+
+
+def codex_tool_texts(events):
+    inputs, outputs = [], []
+    for event in events or []:
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        kind = payload.get("type")
+        if kind in ("custom_tool_call", "function_call", "local_shell_call"):
+            inputs.append(json.dumps(payload, ensure_ascii=False))
+        elif kind in ("custom_tool_call_output", "function_call_output", "local_shell_call_output"):
+            outputs.append(json.dumps(payload, ensure_ascii=False))
+    return inputs, outputs
+
+
+NOT_READ = "the reviewer did not read the change: no tool call names a changed file, so zero findings is no review"
 
 
 def review_rollout(stderr, home):
@@ -1284,7 +1400,7 @@ def codex_log_mcp(stderr):
     return None
 
 
-def run_code_review(copy, instruction, launch_dir, run_dir):
+def run_code_review(copy, instruction, launch_dir, run_dir, changed):
     """R5: Claude Code's /code-review, proved from its stream and its kept subagent transcript."""
     target, probe = sandbox_probe(launch_dir)
     session = str(uuid.uuid4())
@@ -1300,7 +1416,7 @@ def run_code_review(copy, instruction, launch_dir, run_dir):
     init, result, served = claude_result(events)
     task = next((e.get("task_id") for e in events if e.get("type") == "system"
                  and e.get("subtype") == "task_started" and e.get("description") == "/code-review"), None)
-    transcript, calls, all_calls, missing = [], [], [], None
+    transcript, calls, all_calls, missing, tool_inputs, tool_outputs = [], [], [], None, [], []
     folder, problem = session_folder(session)
     if problem:
         missing = f"no /code-review transcript: {problem}"
@@ -1315,7 +1431,11 @@ def run_code_review(copy, instruction, launch_dir, run_dir):
             shutil.copyfile(path, launch_dir / "transcript.jsonl")
             calls = bash_calls(transcript)
             for other in [folder / f"{session}.jsonl", *sorted((folder / session).glob("subagents/agent-*.jsonl"))]:
-                all_calls += bash_calls(stream_events(other))
+                other_events = stream_events(other)
+                all_calls += bash_calls(other_events)
+                texts = claude_tool_texts(other_events)
+                tool_inputs += texts[0]
+                tool_outputs += texts[1]
     write_json(launch_dir / "commands.json", calls)
     reply = result.get("result") if result else None
     findings, parse_problem = code_review_findings(reply)
@@ -1331,12 +1451,13 @@ def run_code_review(copy, instruction, launch_dir, run_dir):
         None if sandbox_attached(transcript, run_dir, copy) else
         "the transcript's sandbox_instructions do not deny reading the run directory and allow writing the copy",
         None if probe_passed(calls, probe, target) else "the sandbox check did not show a refused write outside the copy",
-        f"the reply is not parsed: {parse_problem}" if parse_problem else None)
+        f"the reply is not parsed: {parse_problem}" if parse_problem else None,
+        NOT_READ if findings == [] and not read_the_change(tool_inputs, tool_outputs, changed) else None)
     fields["session_cleanup"] = delete_session(session)
     return finish_launch(fields, None, launch_dir)
 
 
-def run_codex_review(copy, instruction, launch_dir, requested, servers):
+def run_codex_review(copy, instruction, launch_dir, requested, servers, changed):
     """R6: `codex review`, proved from its stderr log and the review's rollout."""
     argv = ["codex", "review", "--uncommitted", "-c", f'model_reasoning_effort="{EFFORT}"',
             "-c", 'sandbox_mode="read-only"', "-c", "developer_instructions=" + json.dumps(instruction),
@@ -1383,7 +1504,8 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers):
         f"the served effort is {', '.join(efforts) or 'missing'}, not {EFFORT}" if efforts != [EFFORT] else None,
         f"the served sandbox is {', '.join(sandboxes) or 'missing'}, not read-only" if sandboxes != ["read-only"] else None,
         None if developer else "no developer message carries the instruction",
-        f"the reply is not parsed: {problem}" if problem else None)
+        f"the reply is not parsed: {problem}" if problem else None,
+        NOT_READ if findings == [] and not read_the_change(*codex_tool_texts(events), changed) else None)
     return finish_launch(fields, None, launch_dir)
 
 
@@ -1437,7 +1559,10 @@ def run_codex(copy, prompt, schema, launch_dir, requested, servers, role):
                 if isinstance(value, int):
                     usage[key] = usage.get(key, 0) + value
     write_json(launch_dir / "commands.json", commands)
-    served, efforts = rollout_models(thread)
+    served, efforts, contexts = rollout_models(thread)
+    policies = [c.get("sandbox_policy") for c in contexts]
+    outside = [c.get("cwd") for c in contexts if not (isinstance(c.get("cwd"), str)
+                                                      and os.path.realpath(c["cwd"]) == os.path.realpath(copy))]
     output = parse_json_text(result_path.read_text()) if result_path.is_file() else None
     mismatched = [model for model in served if requested is not None and model != requested]
     mcp = codex_mcp_servers(launch_dir / "stderr.log")
@@ -1450,23 +1575,30 @@ def run_codex(copy, prompt, schema, launch_dir, requested, servers, role):
         None if answer_shape_valid(output, role) else "no final result",
         "no served model" if not served else None,
         "the served model differs from the requested one: " + ", ".join(mismatched) if mismatched else None,
+        f"the served effort is {', '.join(efforts) or 'missing'}, not {EFFORT}" if efforts != [EFFORT] else None,
+        None if policies and all(isinstance(policy, dict) and policy.get("type") == "workspace-write"
+                                 and policy.get("network_access") is not True for policy in policies)
+        else f"the served sandbox is not workspace-write without network: {policies}",
+        f"it ran outside its copy: {outside}" if outside else None,
         "no MCP server list in the codex log, so an MCP server may have loaded" if mcp is None else None)
     return finish_launch(fields, output, launch_dir)
 
 
 def rollout_models(thread):
+    """The served models, efforts and turn contexts of a `codex exec` launch, from its rollout."""
     if not isinstance(thread, str) or not re.fullmatch(r"[0-9a-fA-F-]+", thread):
-        return [], []
-    models, efforts = [], []
+        return [], [], []
+    models, efforts, contexts = [], [], []
     for path in (codex_home() / "sessions").glob(f"**/rollout-*-{thread}.jsonl"):
         for event in stream_events(path):
             payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
             if event.get("type") == "turn_context":
+                contexts.append(payload)
                 if isinstance(payload.get("model"), str) and payload["model"] not in models:
                     models.append(payload["model"])
                 if isinstance(payload.get("effort"), str) and payload["effort"] not in efforts:
                     efforts.append(payload["effort"])
-    return models, efforts
+    return models, efforts, contexts
 
 
 def parse_json_text(text):
@@ -1494,6 +1626,15 @@ def drop_check_valid_shape(check):
             and any(line.strip() for line in check["expected_output"].splitlines()))
 
 
+def scenario_quoted(scenario, words):
+    """R15: the refuter's scenario quotes the reviewer's own failure scenario (at least 4 words, matched
+    ignoring case, outer quotes and runs of spaces), so its drop check tests the claim that was made."""
+    def normal(text):
+        return " ".join(str(text).lower().split())
+    quote = normal(str(scenario or "").strip().strip("\"'`\u201c\u201d"))
+    return len(quote.split()) >= 4 and quote in normal(words or "")
+
+
 def drop_check_needed(found, verdict):
     """R15, R16: a drop check runs only for a verdict that could drop or lower a finding."""
     if found["status"] not in ("verified", "unverified") or found["reproduced"] or found["not_runnable"]:
@@ -1501,7 +1642,8 @@ def drop_check_needed(found, verdict):
     if not drop_check_valid_shape(verdict["drop_check"]):
         return False
     lowering = verdict["rank"] in RANKS and lower_than(verdict["rank"], found["rank"])
-    return verdict["verdict"] == "DROPPED" or lowering
+    dropping = verdict["verdict"] == "DROPPED" and scenario_quoted(verdict["scenario"], found["words"])
+    return dropping or lowering
 
 
 def drop_proved(found, verdict, tree):
@@ -1550,8 +1692,8 @@ def adjudicate(findings, verdicts, tree):
                 if lower_than(new, found["rank"]):
                     found["rank_before_refuter"], found["rank"] = found["rank"], new
         if verdict["verdict"] == "DROPPED":
-            scenario = verdict.get("scenario")
-            found["status"] = "dropped" if proved and isinstance(scenario, str) and scenario.strip() else "unresolved"
+            quoted = scenario_quoted(verdict.get("scenario"), found.get("words"))
+            found["status"] = "dropped" if proved and quoted else "unresolved"
         elif found["rank"] == "mild":
             found["status"] = "mild"
             found["mild_reason"] = found["mild_reason"] or verdict.get("explanation") or \
