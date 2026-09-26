@@ -2,11 +2,6 @@
 # End-to-end tests for the actual hook script:
 #   scripts/hooks/subagent-stop.sh
 #
-# (The protocol-grader cases that used to live here went with
-# scripts/hooks/orch-protocol-grader.sh, which was deleted. The reply-shape
-# rules it enforced are documented and carried by the UserPromptSubmit
-# reminder; tests/test-protocol-drift.sh still pins those surfaces.)
-#
 # Drives the real hook executables with temp JSONL transcripts in both
 # content schemas (string and array-of-blocks). Validates:
 #
@@ -298,9 +293,7 @@ if [[ $rc -eq 0 ]]; then ok "(m) thinking+text multi-block → Status DONE extra
 else fail "(m) thinking+text multi-block" "expected exit 0, got $rc"; fi
 
 # (n) text+tool_use multi-block: a text block followed by a tool_use block.
-# Extraction must still see the text. This used to run the protocol grader on
-# a Changed:+Verify: reply; that hook is deleted, so the same schema is driven
-# through subagent-stop.sh instead.
+# Extraction must still see the text.
 python3 -c "
 import json
 text = 'Status: DONE\nSummary: text precedes a tool_use block'
@@ -380,9 +373,7 @@ printf '\n%s== ORCH_HOOK_PROFILE=strict actually blocks ==%s\n' "$DIM" "$RESET"
 # blocking", but nothing branched on it: blocking came only from the separate
 # ORCH_STRICT_* knobs, so setting the profile bought the documented word and
 # none of the behaviour. Measured before the fix: PROFILE=strict ALLOWED on
-# protocol-grader, verify-gate and subagent-stop; the explicit flag blocked on
-# all three. The protocol-grader half of this check went with that hook; the
-# subagent-stop half below is unchanged.
+# subagent-stop while the explicit flag blocked.
 write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
 PIPE_AGENT_TYPE="llm-orchestrator:orch-implementer"
 rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=strict || rc=$?
@@ -513,9 +504,7 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
         assert result.returncode == expected, (hook, reply, expected, result.returncode, result.stdout, result.stderr)
         return result
 
-    # This used to grade orch-protocol-grader.sh alongside subagent-stop.sh.
-    # The grader is deleted; subagent-stop is the only hook left that reads
-    # the completion vocabulary. Every vocabulary case below is unchanged.
+    # subagent-stop is the hook that reads the completion vocabulary.
     def both(line, expected=0):
         grade("subagent-stop.sh", "Status: DONE\nSummary: Updated behavior.\n" + line, expected)
 

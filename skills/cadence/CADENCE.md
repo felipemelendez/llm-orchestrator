@@ -67,8 +67,9 @@ commits remain reachable from a destination/ref retained by the whole cleanup.
 Keep task state for recovery when cleanup cannot safely finish.
 
 The commit and audit checks protect the rules and their numbered amendments;
-they do not attest that reviewers ran. The lock below is binding. Evidence hook
-enforcement also requires the harness's actual enablement and trust.
+they do not attest that reviewers ran. The lock below is binding. The hooks,
+the completion check among them, act only where the harness has them enabled
+and trusted.
 
 ## The project files
 

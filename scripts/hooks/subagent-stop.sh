@@ -49,7 +49,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-# Source the protocol grader library.
+# Source the protocol library (the Status-block and reply-shape graders).
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
 if [[ ! -f "${LIB}" ]]; then
