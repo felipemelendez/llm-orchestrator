@@ -149,8 +149,7 @@ risky changes get independent review, tests are remembered while the files
 they covered are unchanged, and a completion claim is checked against what
 actually ran. Onboarding was rewritten for a first-time reader.
 
-Start with the [release overview](docs/release-v0.9.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 
 ### Changed
 
@@ -198,8 +197,7 @@ verification process. Two reviewers check each code change independently, and
 Codex records actual test results before reporting verified completion.
 (0.9.0 sizes the reviews to the change.)
 
-Start with the [release overview](docs/release-v0.8.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 The implementation details follow.
 
 ### Added — Codex execution evidence and optional external reviews
