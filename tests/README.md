@@ -49,7 +49,7 @@ Checks per **agent** (`agents/<name>.md`):
 - `description` present
 - `model:` (if set) is one of `haiku | sonnet | opus | fable | inherit`, or a full model id
 
-Output: `OK: 19 skills, 15 commands, 7 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
+Output: `OK: 18 skills, 15 commands, 5 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
 
 ### `test-portability.sh` — shell portability scanner
 
@@ -129,15 +129,13 @@ non-zero on failure.
 | Suite | Covers |
 |---|---|
 | `validate-skills.sh` | skill/command/agent frontmatter, length cap, reference resolution |
-| `validate-workflows.sh` | `workflows/*.js` parse + `meta` shape (static only — it never executes a script) |
-| `test-review-diff-behavior.sh` | what `review-diff.js` actually RETURNS: dead-stage detection, the confidence floor, refutation, and the four ways a review can look clean when it isn't |
-| `test-workflow-distribution.sh` | `--copy` ships `workflows/`, and `--check` names it when missing |
+| `test-review.sh` (runs `test-review.py`) | `scripts/lib/orch-review.py`, one case per rule in `docs/specs/review-design.md`, with fake `claude` and `codex` programs: a missing seat or unchecked item gives `INCOMPLETE`, dropouts are never replaced, bad evidence keeps a serious finding blocking, a drop needs a passing receipt 1, a write to the real checkout gives `INCOMPLETE` |
 | `test-install.sh` | the installer's claims are true: `--copy` rewrites every hook command to an absolute existing path (positive property, independently asserted) and fails closed; `--check` fails on deleted/corrupted shipped files; docs wire every hook; no dead permission rules |
 | `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
 | `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
 | `test-verify-gate.sh` | what the Stop completion check warns about, and the prose it must stay out of |
 | `test-codex-verify-gate.sh` | the Codex twin: the same question asked of a Codex rollout, answered to the agent once and never to the person |
-| `test-codex-adapter.sh`, `test-claude-provider.sh` | the Codex file guard, and the optional Claude reviewer runner with a fake CLI |
+| `test-codex-adapter.sh` | the Codex file guard |
 | `test-install-global.sh` | `--global` and `--codex` under a temporary HOME: the block, the removal of what an earlier `--codex` wrote, the plugin's Stop command run for real, and (with `CODEX_BIN` set) a real plugin install listed by Codex |
 | `test-guard-no-verify.sh`, `test-destructive-git-guard.sh` | the two PreToolUse guards — both fail-open and false-positive directions |
 | `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |

@@ -20,13 +20,14 @@ they cannot supply a required independent review or gate.
    Independently review the contract and resolve material gaps before coding.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
-3. Obtain two fresh independent reviews with different briefs, neither seeing
-   the other review or the implementer's conclusions. Honour requested providers.
-   A provider dropout is not a completed review or permission to substitute.
-4. Compare findings and record their disposition in the conversation/PR or
-   temporary task evidence. Use a refuter only for substantive disagreement or
-   a one-sided serious/catastrophic finding. Missing reviews are not agreement.
-   Agreed findings still require resolution; do not create a third general review.
+3. Run the Full review with `requesting-code-review` (`orch-review.py run
+   --path full`). It runs two blind reviewers with different briefs on two
+   providers and, when a serious or catastrophic finding exists, the refuter.
+   A provider dropout gives `INCOMPLETE`, never a completed review or a
+   substitute.
+4. Handle the findings with `receiving-code-review` and record a disposition
+   for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
+   the cause and run a new review. Do not add a third general review.
 5. Fix material issues, verify affected fixes and independently assess the final
    change. Use the deterministic gate and targeted probes where they test the
    affected contracts; inspect individual outcomes, not merely its final exit.
@@ -202,10 +203,6 @@ merge and keep the higher rank. It never resolves toward the longer or the more
 confident report — length and certainty are not evidence — and re-ranks downward
 only with a citation, never upward without one.
 
-`workflows/review-diff.js` is a separate general review workflow with its own
-skeptic pass and JSON schema. It does not implement this cadence's blind pair
-or conditional-refuter dispatch; running it does not replace steps 2 and 2b.
-
 Template: [references/refuter.md](references/refuter.md).
 
 ## Step 3 — the union and the severity rule
@@ -341,7 +338,7 @@ It repeats on the new head until a pass reports nothing catastrophic or serious.
 | File | What it holds |
 |---|---|
 | `docs/llm-orchestrator/LAWS.md` | the constitution: mission, promises, harm ranking, rulings, standing constraints, model seats, the standard of work, the handoff law |
-| `docs/llm-orchestrator/cadence.json` | the switch, the runner profile, the path classes, `notes_dir`, `ticket_re`, `lock_extra` |
+| `docs/llm-orchestrator/cadence.json` | the switch, the runner profile, the path classes, `notes_dir`, `ticket_re`, `lock_extra`, and the optional review keys below |
 | `docs/llm-orchestrator/LOCK.sha256` | the manifest of locked content |
 | `docs/llm-orchestrator/HANDOFF_TEMPLATE.md` | the handoff shape: state only |
 | `docs/llm-orchestrator/DESIGN_RULINGS.md` | the controller's per-ticket design rulings, append-only, dated |
@@ -349,6 +346,17 @@ It repeats on the new head until a pass reports nothing catastrophic or serious.
 | `.githooks/commit-msg`, `.githooks/orch-cadence-check.sh` | the git layer, versioned in the project |
 | `<notes_dir>/<TICKET>_*_report.md` | the landing evidence |
 | `<notes_dir>/CADENCE_STATE.md` | the stage skips, append-only |
+
+Two optional `cadence.json` keys prepare the review copies; `cadence-init.sh`
+writes neither:
+
+- `review.copy_ignored`: a list of ignored paths (for example `node_modules`)
+  copied into each review copy, copy-on-write where the file system supports it.
+- `review.setup`: a shell command run in each review copy after that, for
+  projects whose ignored dependencies cannot simply be copied (an editable
+  install, or a virtualenv with absolute paths). A copy whose tracked and
+  untracked files then differ from the real checkout makes the review
+  `INCOMPLETE`.
 
 Templates for the four markdown files: [references/laws.md](references/laws.md),
 [references/handoff.md](references/handoff.md),

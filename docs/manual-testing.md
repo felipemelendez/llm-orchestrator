@@ -15,7 +15,7 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ```bash
 cd ~/LLM-Orchestrator
-./tests/validate-skills.sh        # → "OK: 19 skills, 15 commands, 7 agents"
+./tests/validate-skills.sh        # → "OK: 18 skills, 15 commands, 5 agents"
 ./tests/test-portability.sh       # → "7 portability checks passed."
 ./tests/test-lib-resolution.sh    # → "PASS: test-lib-resolution (5 checks)"
 ./tests/smoke.sh                  # → "81 checks passed, 1 skipped."
@@ -291,8 +291,7 @@ Run `/llm-orchestrator:plan`. **Pass:**
 
 **Watch for:**
 - Agent dispatches `orch-implementer` (you'll see Task tool calls in the conversation)
-- After implementer returns, agent dispatches `orch-spec-reviewer`
-- Then `orch-code-reviewer`
+- After implementer returns, the review runs through `requesting-code-review` (`orch-review.py run --detach`, then `wait`)
 - Plan file's `- [ ]` heading-level checkboxes ticked
 
 **Pass criteria:**

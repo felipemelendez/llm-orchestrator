@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Print the hooks and cadence skills a Codex app server lists for one folder.
+"""Print the hooks and the cadence and review skills a Codex app server lists for one folder.
 
 Usage: codex-app-server-list.py <codex binary> <cwd>
 
 One line per hook: `hook <event> <matcher> <source> <script>`, then one line
-per cadence skill: `skill <name> <path>`. Runs `codex app-server` with the
+per cadence or review skill: `skill <name> <path>`. Runs `codex app-server` with the
 caller's CODEX_HOME and makes no model call.
 """
 import json
@@ -48,5 +48,5 @@ for entry in hooks["data"]:
         print("hook-error", error.get("path"), error.get("message"))
 for entry in skills["data"]:
     for skill in entry["skills"]:
-        if skill["name"].rsplit(":", 1)[-1] == "cadence":
+        if skill["name"].rsplit(":", 1)[-1] in ("cadence", "requesting-code-review"):
             print("skill", skill["name"], skill["path"])

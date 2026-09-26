@@ -117,49 +117,10 @@ if should_run structural; then
   section "Structural"
   check_out "install --check passes" "OK" "${ROOT}/scripts/install.sh" --check
   check_out "validate-skills passes" "OK:" "${ROOT}/tests/validate-skills.sh"
-  # Asserts the "validated" wording, not a bare "OK:" — validate-workflows.sh
-  # also prints "OK: no workflows/ directory — nothing to validate", so a bare
-  # prefix match would pass vacuously on the very tree this suite exists to catch.
-  # A degraded run (node absent, Layer A skipped) is a SKIP, not a pass: booking
-  # a half-run validator as green is the exact reporter defect skipped() exists for.
-  VW_OUT=$("${ROOT}/tests/validate-workflows.sh" 2>&1)
-  VW_RC=$?
-  if [[ $VW_RC -ne 0 ]]; then
-    fail "validate-workflows passes" "$(printf '%s' "$VW_OUT" | head -1)"
-  elif printf '%s' "$VW_OUT" | grep -q "OK (degraded)"; then
-    skipped "validate-workflows full pass (node not installed — Layer A did not run)"
-  elif printf '%s' "$VW_OUT" | grep -q "workflow script(s) validated"; then
-    ok "validate-workflows passes"
-  else
-    fail "validate-workflows passes" "unexpected output: $(printf '%s' "$VW_OUT" | head -1)"
-  fi
-  # The validator's own falsifiability. Node-gated the same way as the
-  # behavior harness below: without node it prints SKIP:, which is announced
-  # rather than booked as a pass.
-  if command -v node >/dev/null 2>&1; then
-    check_out "workflow validator rejects injected defects" "PASS: test-validate-workflows" \
-              bash "${ROOT}/tests/test-validate-workflows.sh"
-  else
-    skipped "workflow validator mutation tests (node not installed)"
-  fi
   check_out "installer + packaging contract tests pass" "PASS: test-install" \
             bash "${ROOT}/tests/test-install.sh"
   check_out "lib-resolution contract tests pass" "PASS: test-lib-resolution" \
             bash "${ROOT}/tests/test-lib-resolution.sh"
-  check_out "workflows ship on --copy installs" "OK: workflow distribution" \
-            bash "${ROOT}/tests/test-workflow-distribution.sh"
-  # Node-gated: the behavior harness executes the workflow script. Without node
-  # the test exits 0 with "SKIP:", which check_out would report as a red ✗.
-  # Announced either way — a check that silently vanishes makes the total lie.
-  if command -v node >/dev/null 2>&1; then
-    check_out "review-diff behavior (dead stages, floor, refutation)" "OK: review-diff behavior" \
-              bash "${ROOT}/tests/test-review-diff-behavior.sh"
-  else
-    # NOT `ok` — counting a check that never ran as a pass is the same
-    # "reported clean while a stage did not run" shape this suite exists to
-    # catch, just relocated into the reporter.
-    skipped "review-diff behavior (node not installed)"
-  fi
   check_out "research-classifier curated examples pass" "classifier checks passed" \
             "${ROOT}/tests/test-research-classifier.sh"
   check_out "research-brief + orch-researcher contract pass" "All 42 brief/agent checks passed" \

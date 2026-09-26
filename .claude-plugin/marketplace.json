@@ -1,6 +1,6 @@
 {
   "name": "llm-orchestrator",
-  "description": "Agent orchestration toolkit for Claude Code. Concise responses, structured plans, isolated worktrees, two-stage reviews, project memory, evidence-based verification.",
+  "description": "Agent orchestration toolkit for Claude Code. Concise responses, structured plans, isolated worktrees, script-run reviews, project memory, evidence-based verification.",
   "owner": {
     "name": "Felipe Melendez"
   },

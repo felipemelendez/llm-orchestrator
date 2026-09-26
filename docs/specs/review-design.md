@@ -1,7 +1,6 @@
 # Spec: one review design for Standard and Full
 
-Status: proposed 2026-09-25 (ticket T4). Not built. T5 builds it only after
-Felipe approves this file.
+Status: approved by Felipe on 2026-09-25 (ticket T4) and built in ticket T5.
 
 ## Goal
 
@@ -33,14 +32,20 @@ kind of copy, as the Claude seat.
 python3 scripts/lib/orch-review.py run --detach --path standard|full
     --writer claude|codex --base <ref> --spec <file> --run-dir <new dir>
     [--brief contract|adversarial] [--adversarial-provider claude|codex]
-    [--split] [--no-refuter]
+    [--split] [--no-refuter] [--allow-test-changes]
 python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 ```
 
 - **R1.** On both harnesses the agent starts `run --detach`, then repeats
   `wait` until it reports that the run finished. `run` refuses an existing
-  run directory. A run that crashes leaves no `review.json`: the skill
-  reports it as incomplete, and a new run starts from the beginning.
+  run directory, and one inside the repository or inside any temporary
+  directory (`$TMPDIR`, the system temporary directory, `/tmp`, `/var/tmp`,
+  and on macOS the per-user temporary directory), because both sandboxes
+  leave those writable. `--detach` starts the same script again in the
+  background as `run --child`, which reads its options from `run.json`. A
+  run that crashes leaves no `review.json`: the skill reports it as
+  incomplete, and a new run starts from the beginning.
+  `--allow-test-changes` says the task may change tests (R13).
 - **R2.** The skill sets `--writer`: `claude` on Claude Code, `codex` on
   Codex. The last four options exist only for T10.
 
@@ -55,7 +60,10 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
    project has a `LAWS.md` with a harm ranking, or the shipped
    `skills/cadence/references/laws.md` template's ranking is used. No
    submodule, checked recursively with `git submodule foreach --recursive
-   git status --porcelain`, has uncommitted changes. Any failure ends the
+   git status --porcelain`, has uncommitted changes. A reviewed tree that
+   contains a submodule at all ends the run as `INCOMPLETE` before any seat
+   starts: copies do not hold submodule contents, and filling them would
+   need the network or a copy of the real module store. Any failure ends the
    run as `INCOMPLETE`, and nothing is substituted.
 2. **Fingerprint.** Every tracked and untracked, non-ignored file of the
    real checkout is added to a temporary index (`GIT_INDEX_FILE=<tmp>`,
@@ -64,15 +72,16 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 3. **Copies.** Each copy is a disposable local clone in task-owned scratch,
    registered in `scripts/lib/orch-task-resources.py` as a new resource
    kind, `clone`:
-   - It is made with `git clone --local --no-checkout`, then
-     `git read-tree -u --reset <tree>`. The copy has its own `.git`, its
-     HEAD at the real HEAD, and the uncommitted change.
+   - It is made with `git clone --local --no-hardlinks --no-checkout`, then
+     `git read-tree -u --reset <tree>`. The copy has its own `.git` with its
+     own copies of the object files (no hardlinks, so nothing in the copy can
+     change the real repository's objects), its HEAD at the real HEAD, the
+     uncommitted change, the project's `.git/info/exclude`, and no remote.
    - The paths listed in `cadence.json` `review.copy_ignored` are then
      copied in, using copy-on-write where the file system supports it, and
      `review.setup` runs if it is set.
    - The copy's own fingerprint must equal the one from step 2 when it is
      created.
-   - Submodules are present only at their recorded commits.
    - Removal: the task helper deletes a `clone` only when it is owned by
      this task, has no `.orch-active` mutex, and its `.git` holds no ref,
      stash or worktree beyond those recorded when the clone was made.
@@ -109,12 +118,51 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   copy, with the prompt on stdin. It starts with no MCP servers, so the
   person's connectors (for example claude.ai Slack or Gmail) are neither
   visible nor usable. If the stream's `system` `init` event has a non-empty
-  `mcp_servers`, the launch is a dropout (R7).
-  The served model is the assistant messages' `model` field. It must belong
-  to the model family of the requested alias.
+  `mcp_servers`, or the stream has no `init` event, the launch is a dropout
+  (R7).
+  - It also passes `--settings` with Claude Code's Bash sandbox:
+    `enabled`, `failIfUnavailable: true`, `allowUnsandboxedCommands: false`,
+    no `excludedCommands`, `filesystem.allowWrite` only the copy,
+    `filesystem.denyRead` the run directory and the usual credential folders
+    (`~/.aws`, `~/.ssh`, `~/.gnupg`, `~/.config/gh`, `~/.config/gcloud`,
+    `~/.azure`, `~/.kube`, `~/.docker`, `~/.netrc`, `~/.codex`, `~/.claude`),
+    and `network.allowedDomains: []` with `strictAllowlist`. A Bash call
+    that asks for `dangerouslyDisableSandbox` makes the launch a dropout. If
+    the sandbox cannot start, `claude` stops, and the launch is a dropout.
+  - The prompt starts with a sandbox check: the seat must first run
+    `touch <run dir>/launches/<launch>/sandbox-probe 2>&1 && echo
+    ORCH-SANDBOX-OFF || echo ORCH-SANDBOX-ON`. Unless its stream shows that
+    command as its first Bash call, with `ORCH-SANDBOX-ON` and no
+    `ORCH-SANDBOX-OFF`, and the file
+    does not exist afterwards, the launch is a dropout. The result is
+    recorded as `sandbox_check`.
+  - The served model is the assistant messages' `model` field. It must
+    belong to the model family of the requested alias.
+- **Environment.** Every seat, the refuter and every fix experiment start
+  with a reduced environment: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`,
+  `TMPDIR`, the locale, `TERM`, `TZ` and the XDG config, cache and data
+  directories, plus only the variables the provider's CLI uses to reach its
+  model (Claude: `CLAUDE_CONFIG_DIR`, `ANTHROPIC_API_KEY`,
+  `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`;
+  Codex: `CODEX_HOME`, `OPENAI_API_KEY`, `CODEX_API_KEY`, `OPENAI_BASE_URL`).
+  `codex sandbox` (the preflight probe and fix experiments) reaches no
+  model and gets only `CODEX_HOME`, because it reads its permission
+  profiles from the configuration there.
+  Cloud credentials and tokens such as `AWS_*` and `GITHUB_TOKEN` are left
+  out. A Claude seat that needs Bedrock or Vertex credentials therefore
+  cannot sign in and drops out.
 - **R6.** GPT launch: `codex exec --json -s workspace-write -C <copy>
-  -c model_reasoning_effort="high" --output-schema <schema> -o <file> -`.
+  -c model_reasoning_effort="high" <MCP off> --output-schema <schema> -o
+  <file> -`, with `RUST_LOG=warn,codex_otel=info`.
   - It never uses `--ephemeral` and never passes `-m`.
+  - `<MCP off>` is `-c mcp_servers.<name>.enabled=false` for each server in
+    `$CODEX_HOME/config.toml`, then `--disable apps --disable plugins`. So
+    the person's MCP servers, apps and plugins are neither visible nor
+    usable. (`-c mcp_servers={}` does not do this: it is merged with the
+    configured servers.)
+  - At `codex_otel=info`, codex logs a `codex.conversation_starts` line with
+    `mcp_servers="<names>"`. If that list is not empty, or the line is
+    missing, the launch is a dropout (R7).
   - The requested model is `model` in `$CODEX_HOME/config.toml`
     (`CODEX_HOME` defaults to `~/.codex`), the CLI's default.
   - The served model and effort are the `model` and `effort` fields of
@@ -123,8 +171,9 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   - If `config.toml` names no model, the served model is recorded but not
     compared.
 - **R7.** A launch is a **dropout** when any of these holds:
-  - it exits nonzero;
-  - it has no final result;
+  - it exits nonzero, or runs longer than 3600 seconds;
+  - it has no final result of its role's shape (`findings` and
+    `not_checked` for a seat, `verdicts` for the refuter);
   - no served model can be read;
   - the served model differs from the requested one.
 
@@ -173,7 +222,9 @@ lacked. T10 tests the swap.
   - `test-run {command, output}` is valid when the seat's own event stream
     shows a completed command with exactly that text, and every line of
     `output` appears as a whole line of that command's output. `output` must
-    have at least one non-empty line.
+    have at least one non-empty line. A command started in the background
+    (`run_in_background`, or a result that says "Command running in
+    background with ID:") has not finished and is not evidence.
 - **R10. Fix experiments are run by the script, not by a model.** For each
   `repro`:
   1. The script runs `command` in a fresh copy and records receipt 1.
@@ -193,7 +244,10 @@ lacked. T10 tests the swap.
   A receipt holds the command, exit code, output, duration and the copy's
   fingerprint. The finding is **reproduced** when receipt 1 fails and
   receipt 2 passes. A patch that does not apply, or a run longer than 600
-  seconds, is recorded in the receipt.
+  seconds, is recorded in the receipt. When a command ends or times out,
+  the script kills its whole process group, so nothing it started in the
+  background keeps running. The patch reaches `git apply -` on stdin, which
+  `codex sandbox` passes through (verified).
 - **R11.** A `mild` finding becomes a `note` when its evidence is invalid or
   its confidence is below 0.8 or missing. A `serious` or `catastrophic`
   finding never becomes a note:
@@ -203,7 +257,12 @@ lacked. T10 tests the swap.
 
   Both states block, and both go to the refuter.
 - **R12.** A `serious` or `catastrophic` finding with neither `repro` nor
-  `not_runnable` makes the review `INCOMPLETE`.
+  `not_runnable` makes the review `INCOMPLETE`. The exception is a `mild`
+  test-tampering finding the script raised to `serious` under R13: its seat
+  was not asked for a repro, so it stays `unverified` and blocking. A rank
+  outside the allowed values that the script replaced with `serious` has no
+  exception: without `repro` or `not_runnable`, it makes the review
+  `INCOMPLETE`.
 - **R13.** Each `not_checked` item is `{category, text}`, with `category`
   one of `tests-not-run`, `files-not-read` or `claim-unverified`. Seats list
   only what they did not check. Every item is returned verbatim and makes
@@ -228,24 +287,31 @@ lacked. T10 tests the swap.
   - `--no-refuter` skips the refuter (T10 only), and the review is marked
     `experimental`.
 - **R15.** A reproduced finding and a `not_runnable` finding can never be
-  dropped. For any other finding, `DROPPED` is valid only when it does one
-  of these:
-  - cites the seat's own receipt 1, and receipt 1 passed: the claimed
-    failure did not happen. A patch that did not apply, or a receipt 2 that
-    failed, proves nothing and cannot support a drop;
-  - gives a `file-line` quote that is valid under R9, and explains why that
-    line contradicts the claim.
-
-  An invalid `DROPPED` counts as `UNRESOLVED`.
+  dropped. For any other finding, `DROPPED` is valid only when it cites the
+  seat's own receipt 1 and receipt 1 passed (finished within 600 seconds with
+  exit 0): the claimed failure did not happen. A patch that did not apply,
+  or a receipt 2 that failed, proves nothing. A finding whose experiment did
+  not run cannot be dropped: the refuter can only promote it or leave it
+  `unresolved`, and both block. A quoted line is never enough, because a
+  refuter can quote the defective line itself and argue that it is
+  intended. An invalid `DROPPED` counts as `UNRESOLVED`.
 - **R16.** The refuter may lower a rank only where R15 would allow a drop,
-  with the same evidence. A reproduced or `not_runnable` finding keeps its
-  rank. The refuter never raises a rank.
+  with the same evidence (a passing receipt 1). A reproduced or `not_runnable` finding keeps its
+  rank. The refuter never raises a rank, and a verdict other than
+  `PROMOTED`, `DROPPED` or `UNRESOLVED` changes nothing: the finding is
+  `unjudged`. A finding lowered to `mild` then follows the `mild` rule of
+  R11: it is a `note` when its evidence is invalid or its confidence is
+  below 0.8.
 
 ## The decision
 
 - **R17.** One function decides, after steps 1 to 8, from the files in the
   run directory only.
   - The verdict is `INCOMPLETE` if any of these holds:
+    - a run file the decision needs (`run.json`, `preflight.json`,
+      `fingerprint-start.json`, `parts.json`, `fingerprint-end.json`,
+      `findings.json`, and `refuter.json` when the refuter ran) is missing
+      or unreadable, or a step raised an error (`errors.json`);
     - the preflight failed;
     - a seat part or a needed refuter run is missing or a dropout;
     - a finding is unjudged;
@@ -255,7 +321,8 @@ lacked. T10 tests the swap.
       step 2 (seat copies may change while seats work, and repro copies
       change when the patch is applied; receipt 2 records that
       fingerprint);
-    - a submodule is dirty at step 8.
+    - a submodule is dirty at step 8, or the reviewed tree contains a
+      submodule.
   - Otherwise it is `NOT-READY` if any finding is blocking.
   - Otherwise it is `READY-WITH-FIXES` if any finding is `mild`.
   - Otherwise it is `READY`.
@@ -278,7 +345,8 @@ lacked. T10 tests the swap.
   - the counts: raw findings, notes, invalid evidence, below the floor,
     raised or replaced ranks, and patches that did not apply.
 
-  Nothing a seat returned is left out.
+  Nothing a seat returned is left out. The findings of a seat that dropped
+  out are kept, marked `from_dropout`, and not run as experiments.
 
 ## After the review
 
@@ -293,7 +361,9 @@ lacked. T10 tests the swap.
   runs `orch-review.py record <run-dir> --dispositions <file>`. The file
   gives every finding one disposition:
   - `fixed`, with the check that failed before and passes after;
-  - `refuted`, with evidence under R9;
+  - `refuted`, with a `file-line` quote under R9 that `record` checks
+    against the reviewed files. A `test-run` is not accepted here:
+    `record` has no event stream to check it against;
   - `ignored`, with a reason. A blocking finding may be `ignored` only when
     the person said so.
 
@@ -305,11 +375,10 @@ lacked. T10 tests the swap.
 
 - Ask the person anything while it runs.
 - Fix the change. Fixing stays with the agent.
-- Keep Claude's Bash inside the copy. `--restricted` confines only the file
-  tools. Step 8 detects writes to tracked and untracked files of the real
-  checkout, but not writes to ignored files.
-- Cover uncommitted changes inside submodules. A dirty submodule stops the
-  review at step 1.
+- Stop a GPT seat from reading the run directory. The Codex
+  `workspace-write` sandbox limits writes, not reads, so a GPT seat could
+  read the other seat's findings while both run.
+- Review a change whose tree contains a submodule. It stops at step 1.
 - Make copied ignored dependencies safe. An editable install or an absolute
   path in a virtualenv can make tests in the copy import the real checkout's
   code. Such projects need `review.setup`.
@@ -458,6 +527,33 @@ Verified on 2026-09-25:
 - `codex exec --json -s read-only --skip-git-repo-check` (0.157.0) emits
   `item.completed` events of type `command_execution` with the fields
   `command`, `aggregated_output`, `exit_code` and `status`. R9 reads these.
+- `codex exec` (0.157.0) with `RUST_LOG=warn,codex_otel=info` writes a
+  `codex.conversation_starts` log line to stderr naming the MCP servers it
+  started: nine on this machine (`notion, codex_apps, node_repl,
+  playwright, cua_repl, atlassian-rovo, figma, context7, atlassian`). With
+  `-c mcp_servers={}` plus `--disable apps --disable plugins`, seven
+  remained. With `-c mcp_servers.<name>.enabled=false` for each server in
+  `config.toml` plus `--disable apps --disable plugins`, the list was empty,
+  no MCP startup was logged, and the rollout still showed the configured
+  default model (`gpt-6-astra`).
+- The full R5 flag set together, in a live Full review: the `init` event had
+  `mcp_servers: []` and the tools `Bash, Glob, Grep, Read, StructuredOutput`,
+  and the final `result` event carried the answer as a `structured_output`
+  object.
+- `claude -p` (2.1.282) with the R5 `--settings` sandbox, run in a scratch
+  copy: `touch inside.txt` succeeded, `touch $HOME/...` failed with
+  "Operation not permitted", and `curl https://example.com` failed with
+  "CONNECT tunnel failed, response 403" and a `sandbox_violations` note
+  ("host is not on the allow list").
+- A live Full review on 2026-09-25 with the Claude sandbox, the reduced
+  environment and the sandbox check, on a planted off-by-one defect: both
+  Claude launches (contract seat and refuter) ran the check and got
+  "Operation not permitted" and `ORCH-SANDBOX-ON`, served `claude-opus-5-5`;
+  the GPT seat served `gpt-6-astra` at `high`; all three serious findings
+  reproduced (receipt 1 exit 1, receipt 2 exit 0) and were promoted;
+  verdict `NOT-READY`, no incomplete reasons, clones removed.
+- `printf <patch> | codex sandbox -P :workspace -C <copy> -- git apply -`
+  (0.157.0) applied the patch, so stdin reaches the sandboxed command.
 - `git clone --local --no-checkout`, followed by `git read-tree -u --reset
   <tree>` with a tree written from a temporary index that held tracked and
   untracked changes, gave the clone the full uncommitted content. A local
@@ -465,13 +561,16 @@ Verified on 2026-09-25:
 
 Not verified:
 
-- the full R5 flag set together (`--safe-mode`, `--restricted`,
-  `--json-schema`, `--allowedTools`); the checks above used a smaller set;
+- whether a project's own `.codex/config.toml` can add MCP servers that
+  `<MCP off>` does not name; if one starts, R6 makes the launch a dropout;
 - what `workspace-write` allows outside `-C`;
 - the same sandbox on Linux, where Codex uses a different sandbox
   mechanism: whether it starts and limits writes and network the same way. If it does
   not start, R10 applies and the finding is not reproduced;
-- that the agent's shell on Codex allows a 540-second `wait`.
+- that the agent's shell on Codex allows a 540-second `wait`;
+- what Claude Code does when its Bash sandbox cannot start with
+  `failIfUnavailable: true` (the docs say it stops; not tried), and whether
+  the sandbox limits a seat the same way on Linux.
 
 ## Decided (pending Felipe's confirmation)
 

@@ -644,7 +644,7 @@ CODEX_ASKED="${CODEX_BIN:+1}"
 CODEX_BIN="${CODEX_BIN:-codex}"
 if CODEX_VERSION=$("$CODEX_BIN" --version 2>/dev/null) && [[ "$CODEX_VERSION" == codex-cli* ]]; then
   printf '  %s%s%s\n' "$DIM" "$CODEX_VERSION" "$RESET"
-  codex_lists() {  # codex_lists <home> -> hooks and cadence skills, one per line
+  codex_lists() {  # codex_lists <home> -> hooks and the cadence and review skills, one per line
     mkdir -p "$1/proj"
     env HOME="$1" CODEX_HOME="$1/.codex" python3 "$ROOT/tests/lib/codex-app-server-list.py" "$CODEX_BIN" "$1/proj"
   }
@@ -657,7 +657,8 @@ if CODEX_VERSION=$("$CODEX_BIN" --version 2>/dev/null) && [[ "$CODEX_VERSION" ==
 hook preToolUse apply_patch plugin codex-cadence-adapter.sh
 hook stop None plugin codex-verify-gate.sh
 hook stop None plugin orch-task-cleanup.sh
-skill llm-orchestrator:cadence"
+skill llm-orchestrator:cadence
+skill llm-orchestrator:requesting-code-review"
   once() {  # once <label> <home>
     local got
     got=$(codex_lists "$2" | sed -E 's|^(skill [^ ]+) .*|\1|')
@@ -665,7 +666,7 @@ skill llm-orchestrator:cadence"
   }
   HA=$(new_home)
   if plugin_install "$HA" && run_install "$HA" --codex; then
-    once "a fresh plugin install plus --codex lists each hook and the skill once, all from the plugin" "$HA"
+    once "a fresh plugin install plus --codex lists each hook and each skill once, all from the plugin" "$HA"
   else
     fail "a fresh plugin install plus --codex" "$OUT"
   fi
@@ -687,7 +688,7 @@ skill llm-orchestrator:cadence"
     [[ "$n" == "2" ]] && ok "before --codex, an earlier install and the plugin list the completion check twice" \
       || fail "before --codex the completion check is listed twice" "found $n"
     run_install "$HB" --codex >/dev/null 2>&1
-    once "after --codex, the upgrade lists each hook and the skill once, all from the plugin" "$HB"
+    once "after --codex, the upgrade lists each hook and each skill once, all from the plugin" "$HB"
   else
     fail "the plugin installs over an earlier --codex" "codex plugin add failed"
   fi

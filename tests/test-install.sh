@@ -20,8 +20,6 @@
 #       manifest included.
 #   P6  both hard-guard escape hatches are documented.
 #   P7  templates/settings.json contains no permission rules that cannot fire.
-#   P8  validate-workflows signals degraded mode when node is absent.
-#   P10 validate-workflows' empty-directory message states its actual scope.
 #
 # Bash 3.2 compatible. Exits non-zero on any failure.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -239,9 +237,9 @@ expect_check_fail "--check fails when .codex-plugin/plugin.json references a mis
 cp "$TMP/keep.a" "$TMP/src/.codex-plugin/plugin.json"
 
 # Referenced artifacts proven deletable-without-detection before the fix.
-mv "$TMP/src/workflows/review-diff.js" "$TMP/keep.a"
-expect_check_fail "--check fails when workflows/review-diff.js is deleted"
-mv "$TMP/keep.a" "$TMP/src/workflows/review-diff.js"
+mv "$TMP/src/scripts/lib/orch-review.py" "$TMP/keep.a"
+expect_check_fail "--check fails when scripts/lib/orch-review.py is deleted"
+mv "$TMP/keep.a" "$TMP/src/scripts/lib/orch-review.py"
 
 mv "$TMP/src/templates/settings.json" "$TMP/keep.a"
 expect_check_fail "--check fails when templates/settings.json is deleted"
@@ -382,45 +380,6 @@ if [[ -z "$PERM_OUT" ]]; then
   ok "templates/settings.json has no rules that cannot fire"
 else
   fail "templates/settings.json has no rules that cannot fire" "$PERM_OUT"
-fi
-
-# ------------------------------------------------------------
-# P8 + P10 — validate-workflows honesty
-# ------------------------------------------------------------
-section "validate-workflows (P8, P10)"
-
-# P10: only a nested *.js present — the message must state the actual scope
-# (top level of workflows/), not "contains no *.js".
-mkdir -p "$TMP/vw/tests/lib" "$TMP/vw/workflows/sub"
-cp "$ROOT/tests/validate-workflows.sh" "$TMP/vw/tests/"
-# The syntax/meta checker lives in tests/lib/ and the validator refuses to run
-# without it — correct, but this case is about the top-level-scope message.
-cp "$ROOT/tests/lib/check-workflow-script.mjs" "$TMP/vw/tests/lib/"
-printf 'export const meta = {};\n' > "$TMP/vw/workflows/sub/x.js"
-VW_OUT=$(bash "$TMP/vw/tests/validate-workflows.sh" 2>&1)
-VW_RC=$?
-if [[ $VW_RC -ne 0 ]] && printf '%s' "$VW_OUT" | grep -q "top level"; then
-  ok "empty-top-level message states its scope and fails"
-else
-  fail "empty-top-level message states its scope and fails" "rc=$VW_RC out=$VW_OUT"
-fi
-
-# P8: with node absent the success line must signal degraded mode and must NOT
-# read as the full-validation pass line.
-SHIM="$TMP/shim-bin"
-mkdir -p "$SHIM"
-for t in sh grep find sort head sed cat dirname uname; do
-  p=$(command -v "$t" 2>/dev/null) && ln -s "$p" "$SHIM/$t"
-done
-NODELESS_OUT=$(PATH="$SHIM" "$BASH" "$ROOT/tests/validate-workflows.sh" 2>&1)
-NODELESS_RC=$?
-if [[ $NODELESS_RC -eq 0 ]] \
-   && printf '%s' "$NODELESS_OUT" | grep -q "degraded" \
-   && ! printf '%s' "$NODELESS_OUT" | grep -q "workflow script(s) validated"; then
-  ok "node-less run signals degraded mode, not a full pass"
-else
-  fail "node-less run signals degraded mode, not a full pass" \
-       "rc=$NODELESS_RC out=$(printf '%s' "$NODELESS_OUT" | tail -1)"
 fi
 
 # ------------------------------------------------------------

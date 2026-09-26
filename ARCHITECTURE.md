@@ -1,6 +1,6 @@
 # Architecture
 
-LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell scripts + a few plain-text files in the user's home directory for memory. One optional, additive exception: `workflows/*.js` — deterministic orchestration scripts for Claude Code's `Workflow` tool. These run only inside that harness and are a *preferred accelerator* for exactly one layer — code review (Layer 6); the markdown path stays canonical, and Layer 4 is deliberately not scripted (see Layer 6's scope decision). The skills/commands/agent prompts (markdown) are portable to any harness that can read them; the hook-based **enforcement** (research gate, guards, shape checks, handoff nudge) is Claude Code-specific, except that Codex gets two of its pieces through the Codex plugin (`.codex-plugin/plugin.json`): the cadence file guard and the completion check — see "Why this shape" for the precise split. See the "Workflows" entry in the Component contract.
+LLM Orchestrator is folder-shaped. No runtime, no daemon, no compiled binary. The whole system is markdown + JSON + small shell and Python scripts + a few plain-text files in the user's home directory for memory. Code review (Layer 6) is one Python script, `scripts/lib/orch-review.py`, that runs on both Claude Code and Codex. The skills/commands/agent prompts (markdown) are portable to any harness that can read them; the hook-based **enforcement** (research gate, guards, shape checks, handoff nudge) is Claude Code-specific, except that Codex gets two of its pieces through the Codex plugin (`.codex-plugin/plugin.json`): the cadence file guard and the completion check — see "Why this shape" for the precise split.
 
 This document has two parts. The first part — **Ten layers** — is a failure-mode-oriented walkthrough of what the system does and why each piece exists. The second part — **Component contract** — is the implementation reference: file shapes, frontmatter rules, hook profiles, data flow.
 
@@ -29,11 +29,11 @@ Every task category has a defined workflow that produces a durable artifact:
 | Implementation of a spec | `writing-plans` skill               | `docs/llm-orchestrator/plans/...md`  |
 | Spec/plan review (inline self-review; subagent escalation for high-stakes) | `brainstorming` / `writing-plans` review step | issues fixed before implementation begins |
 | A bug fix                | `systematic-debugging` skill        | failing test + minimal fix           |
-| A code review            | `requesting-code-review` skill      | `docs/llm-orchestrator/reviews/...md`|
+| A code review            | `requesting-code-review` skill      | `review.json` in a run directory outside the repository |
 
 The spec file gets read by `/llm-orchestrator:plan` (which produces the plan file), the plan file gets read by `/llm-orchestrator:dispatch` (which executes it), and the plan file's checkboxes track state across `/clear`.
 
-19 first-party skills today, capped at ~40 by design — past that, discoverability collapses. Published skill-library research also reports that selection accuracy drops sharply once trigger descriptions become semantically confusable, so the binding constraint is distinct triggers, not the raw count.
+18 first-party skills today, capped at ~40 by design — past that, discoverability collapses. Published skill-library research also reports that selection accuracy drops sharply once trigger descriptions become semantically confusable, so the binding constraint is distinct triggers, not the raw count.
 
 ### Layer 3 — State machine for multi-step work
 
@@ -68,40 +68,21 @@ Branches 1–4 happen invisibly. You only ever see branch 5 — the tree is desi
 
 Branch 1 (and `NEEDS_CONTEXT`) is a **resume, not a redo**: the controller sends the missing context to the blocked agent's `agentId` via `SendMessage`, and the agent continues with its full working context — the files it already read, the exact point it stopped — instead of a cold re-dispatch that re-derives everything (redo-from-zero is itself the step-repetition failure mode, MAST FM-1.3). Resume is scoped narrowly on purpose: branch 4 *cannot* resume (SendMessage has no model parameter), and branches 2–3 re-dispatch fresh because the ground truth of the task changed. The `PARTIAL` status (a fired `Stop if:` with `Progress:`/`Remaining:`) routes the same way — resume with unblocking guidance by default, fresh dispatch with the progress pasted when the transcript shows a retry storm.
 
-### Layer 6 — Two-stage code review
+### Layer 6 — Code review by one script
 
-Every meaningful diff goes through two distinct review passes, each in a fresh subagent context to avoid implementer bias:
+`scripts/lib/orch-review.py` runs every review step in a fixed order and decides the verdict last, from files it wrote in the run directory. The agent starts it once (`run --detach`, then `wait` until it finishes), so no step can be skipped. The full rules are in `docs/specs/review-design.md`.
 
-**Stage 1 — Spec compliance.** `orch-spec-reviewer` reads the spec, the plan, and the diff. The question: does the diff match what was specified? The reviewer is explicitly told: "Do not trust the implementer's DONE claim. Read the diff against the spec yourself."
+- **Standard** runs one seat with the contract brief (does the change do what the spec says, and which test would still pass with its mechanism removed) on the provider that wrote the change.
+- **Full** runs a contract seat and an adversarial seat on two providers: the adversarial seat runs on the provider that did not write the change (GPT through `codex exec` on Claude Code, Claude through `claude -p` on Codex). Neither sees the other's findings or the implementer's report. When at least one finding is serious or catastrophic, a Claude refuter judges each of them.
+- **Security** is a lens added to both seat briefs when the diff matches `ORCH_SIG_SECURITY_DIFF` in `scripts/lib/orch-signals.sh`. There is no separate security reviewer.
 
-**Stage 2 — Code quality.** Only runs after Stage 1 passes. `orch-code-reviewer` reads the diff against project conventions. Correctness, safety, idiom, minimalism, test coverage.
+Each seat launch, each fix experiment and the refuter get a fresh disposable clone (the `clone` kind in `scripts/lib/orch-task-resources.py`) holding the committed and uncommitted change. The script records a fingerprint of the real checkout (a tree id of every tracked and untracked, non-ignored file) before and after, and the review is `INCOMPLETE` if it changed.
 
-Both reviewers are told to **report every finding and tag it with a confidence from 0.0 to 1.0** — explicitly not to be conservative. The controller (or `workflows/review-diff.js`) then demotes anything below 0.8 into a separate `Notes:` section; a demoted finding is never discarded. Two removals do happen, and both stay visible in the workflow's return: malformed non-object elements in a findings array are dropped and counted (`droppedFindings`, a loss that marks the review incomplete), and findings the skeptic pass refutes are returned in `refuted` with the reason that cleared them. The threshold lives in the filter, never in the reviewer: an instruction to withhold is followed literally and costs recall, which is why Anthropic's Opus 5 guidance says to "ask it to report everything and filter in a separate pass instead." Padding is countered by the concrete-evidence rule on Critical findings, not by suppression.
+Seats report every finding with a confidence and are told not to hold anything back. Each finding cites evidence the script checks: a `file-line` quote that must match the reviewed line, or a `test-run` whose command and output must appear in the seat's own event stream. A mild finding with invalid evidence or confidence below 0.8 becomes a note. A serious or catastrophic finding never becomes a note: it gives a failing command and a patch, or says why no command can show it. The script runs the command, applies the patch, and runs the command again, all under `codex sandbox -P :workspace -C <copy> --`, and records each run as a receipt. This executes the proposed fix as counterfactual evidence ([arXiv:2603.00539](https://arxiv.org/abs/2603.00539)). The refuter may drop a finding only by citing its passing receipt 1; a reproduced finding, a `not_runnable` finding and a finding whose experiment did not run cannot be dropped. Claude seats run their Bash in Claude Code's sandbox (writes only in their copy, no network), GPT seats in Codex's `workspace-write` sandbox, and every seat and experiment starts with a reduced environment that leaves out cloud credentials and tokens. The run directory must be outside the repository and outside every temporary directory, because both sandboxes can write there.
 
-Verdict routing is mechanical:
-- Critical issues → re-dispatch implementer immediately
-- Important issues → re-dispatch
-- Minor-only → record and carry forward (per the DONE_WITH_CONCERNS policy)
+The verdict is `INCOMPLETE` when anything the review needs is missing (a failed preflight, a seat dropout, a served model that differs from the requested one, an unchecked item, an unjudged finding); otherwise `NOT-READY` when a finding blocks, `READY-WITH-FIXES` when only mild findings remain, and `READY` otherwise. A dropout is never replaced by another provider or model. Every run appends a row without claim text or code to `${XDG_STATE_HOME:-~/.local/state}/llm-orchestrator/review-outcomes.jsonl`, and `orch-review.py record` adds what happened to each finding (fixed, refuted or ignored).
 
-**Execution substrate.** The review dimensions are independent and breadth-first, so when Claude
-Code's `Workflow` tool is present this layer prefers `workflows/review-diff.js` — Stage 1 still
-gates Stage 2 (early-exit on a spec mismatch), Stage 3 stays conditional on the
-`scripts/lib/orch-signals.sh` security signal (passed in, not re-derived), findings are
-confidence-filtered and adversarially verified before they surface. The canonical markdown stages
-remain the fallback. Routing lives in the `using-workflows` skill.
-
-**One workflow is the whole intended surface.** The full evidence is a dated scope-decision brief
-under `docs/llm-orchestrator/research/` (a local working directory, gitignored and not
-distributed); the operative reasons are recorded here.
-Layer 4 (parallel dispatch) is *not* a planned second script: `agent()` has no `cwd` option, so a
-scripted writer fan-out cannot be pinned to a pre-materialized worktree, and the native
-`isolation: 'worktree'` branches from the default branch rather than the parent's `HEAD`. The two
-other candidates were dropped too — Claude Code now bundles `/deep-research`, and a judge-panel
-script is speculative against guidance that reports removing over 80% of Claude Code's own system
-prompt with no measured loss. Review is kept because fresh-context verification is the one
-multi-agent boundary that current guidance still endorses, and because the docs name adversarial
-cross-checking as the thing a workflow adds beyond "run more agents". Honest status: correct
-(mutation-tested), not *measured* to improve review quality.
+The script cannot ask the person anything while it runs, and it does not fix the change; fixing stays with the agent (`receiving-code-review`). `/code-review` is a separate native check the person or the agent may also run.
 
 ### Layer 7 — Evidence-based completion
 
@@ -158,9 +139,9 @@ Projects with a missing or `legacy` workflow keep the older fixed sequence inste
 
 The gate script (`skills/cadence/scripts/orch-cadence-gate.sh`) makes its own throwaway copy of the tree, reverts each changed production file and requires the suite to go red; it never mutates the directory it is pointed at. The git gate (`orch-cadence-check.sh`) checks something narrower: that the policy files are intact and that any amendment carries a ruling. That is all it proves — not that tests ran, not that a reviewer read anything. A reply saying `Verification: PASS` is a claim, not evidence.
 
-**Task scratch.** `scripts/lib/orch-task-resources.py` owns the scratch directories and worktree copies a task uses, outside the repo. A consumer takes a lease before touching scratch and states, on release, that it and its children have stopped. The Stop hook (`scripts/hooks/orch-task-cleanup.sh`) may only retry cleanup of tasks already marked finished — age, process id, or a confident-sounding final message never count as "done". Finished records are kept seven days; unfinished ones are kept indefinitely.
+**Task scratch.** `scripts/lib/orch-task-resources.py` owns the scratch directories, file copies, worktrees and disposable clones a task uses, outside the repo. It deletes a clone only when the clone holds no ref, stash, commit or worktree beyond those it had when made. A consumer takes a lease before touching scratch and states, on release, that it and its children have stopped. The Stop hook (`scripts/hooks/orch-task-cleanup.sh`) may only retry cleanup of tasks already marked finished — age, process id, or a confident-sounding final message never count as "done". Finished records are kept seven days; unfinished ones are kept indefinitely.
 
-The general `workflows/review-diff.js` workflow is separate from this cadence. The lock over all of it is two layers and no more — see the Hooks entry in the Component contract, which states them once; `docs/install.md`'s "The lock's two layers" is the user-facing version. The cadence hooks (the session-start line, the dispatch guard, the cadence Stop verdict, and on Codex the file guard) are inert in a project without an enabled `cadence.json`; the completion check and the task-scratch cleanup are ordinary plugin hooks that run everywhere.
+The lock over all of it is two layers and no more — see the Hooks entry in the Component contract, which states them once; `docs/install.md`'s "The lock's two layers" is the user-facing version. The cadence hooks (the session-start line, the cadence Stop verdict, and on Codex the file guard) are inert in a project without an enabled `cadence.json`; the completion check and the task-scratch cleanup are ordinary plugin hooks that run everywhere.
 
 **Files.** `skills/cadence/SKILL.md` and `skills/cadence/CADENCE.md` (the text), `skills/cadence/references/*` (the seat briefs and the templates the init renders), `skills/cadence/scripts/{orch-cadence-gate.sh,orch-cadence-check.sh,cadence-detect.sh,cadence-init.sh,cadence-ruling.sh}`, `commands/cadence-init.md`, `scripts/hooks/{session-start.sh,orch-task-cleanup.sh}`, `scripts/lib/orch-task-resources.py`, `templates/cadence-global-block.md`, and in the opted-in project `docs/llm-orchestrator/{LAWS.md,cadence.json,LOCK.sha256}` plus `.githooks/{commit-msg,orch-cadence-check.sh}`. On Codex, `scripts/hooks/codex-cadence-adapter.sh` (with `scripts/lib/codex-cadence-read-command.py`) stands in for the deny rules, `scripts/hooks/codex-verify-gate.sh` for the completion check, `.codex-plugin/plugin.json` registers both and the cleanup when installed with `codex plugin add`, and `scripts/install.sh --codex` renders only the instructions block; `docs/codex.md` is the user-facing page.
 
@@ -172,7 +153,7 @@ The general `workflows/review-diff.js` workflow is separate from this cadence. T
 
 - *Termination contracts.* Every dispatched task carries `Done when:` (the observable end state — the only path to `DONE`) and `Stop if:` (the abort conditions — a fired one returns `PARTIAL` or `BLOCKED`, never more attempts). The plan template requires both per task; `writing-plans` enforces it; the templates paste them into every envelope. `subagent-stop.sh` then checks the shape of what came back: the report the subagent sent its caller. In auto mode that report is the `SubagentHandback` tool's message, read from the subagent's own transcript, because `last_assistant_message` then holds only the closing text ("Report delivered to caller."); otherwise it is `last_assistant_message`. `orch-researcher-validator.sh`, `orch-worktree-reaper.sh` and the completion check read the report the same way; the rules are in `scripts/lib/orch-subagent-report.py`. The strongest available check is an `agent`-type `Stop` hook that re-runs the suite itself: an agent cannot forge a run that happens after it stops. It is documented as an opt-in in `docs/install.md` rather than shipped, because it costs a subagent every turn.
 - *Retry-storm breaker.* `orch-retry-cap.sh` is ON by default (warn-only; `ORCH_RETRY_CAP=0` disables, `ORCH_STRICT_RETRY=1` blocks). On `Stop` it fingerprints the controller's replies (3 near-identical in a row → stuck loop). On `SubagentStop` it scans the agent's own transcript for the same tool call with the same arguments executed ≥3 times consecutively — the step-repetition shape itself, keyed on `agent_id`.
-- *Premature termination is failure.* A subagent that finishes with an empty final message used to pass silently; `subagent-stop.sh` now treats it as a failure signal. The six read-only agents carry `maxTurns` caps; the implementer deliberately does not (a hard cap would strand its writer mutex), and a SubagentStop **reaper** (`orch-worktree-reaper.sh`) releases a mutex abandoned by a dead implementer — but only on *proof of ownership*: the worktree the agent's own CWD sits inside, or failing that, the single worktree named in a success-shaped report. A message naming TWO worktrees reaps nothing — a success return names a sibling's tree just as routinely as a BLOCKED one, and releasing a live sibling's mutex puts two writers in one tree. Anything unprovable is reported, not reaped — a live sibling's mutex must never be released — and the controller frees true leftovers by hand once all implementers finish. A regular *file* at a mutex path (repo root included) is reported as **protocol corruption**, never listed as held: it is an improvised hold-marker no successful `mkdir` claimed, so no writer owns it and the operator removes it by hand (`rm`).
+- *Premature termination is failure.* A subagent that finishes with an empty final message used to pass silently; `subagent-stop.sh` now treats it as a failure signal. The four read-only agents carry `maxTurns` caps; the implementer deliberately does not (a hard cap would strand its writer mutex), and a SubagentStop **reaper** (`orch-worktree-reaper.sh`) releases a mutex abandoned by a dead implementer — but only on *proof of ownership*: the worktree the agent's own CWD sits inside, or failing that, the single worktree named in a success-shaped report. A message naming TWO worktrees reaps nothing — a success return names a sibling's tree just as routinely as a BLOCKED one, and releasing a live sibling's mutex puts two writers in one tree. Anything unprovable is reported, not reaped — a live sibling's mutex must never be released — and the controller frees true leftovers by hand once all implementers finish. A regular *file* at a mutex path (repo root included) is reported as **protocol corruption**, never listed as held: it is an improvised hold-marker no successful `mkdir` claimed, so no writer owns it and the operator removes it by hand (`rm`).
 
 Four further capabilities span multiple layers and are documented here rather than in a single layer:
 
@@ -180,13 +161,13 @@ Four further capabilities span multiple layers and are documented here rather th
 
 **Regression guard.** When a worktree is created (`using-git-worktrees` skill), `orch_regression_baseline` (`scripts/lib/orch-regression.sh`) runs the detected test suite and records the outcome to `~/.llm-orchestrator/toolchain/<hash>/baseline.md`. Before a branch is merged or a PR opened (`finishing-a-branch` skill), `orch_regression_check` re-runs the suite and compares against that baseline. If a previously-green test now fails, finishing is refused until the regression is fixed or the user explicitly overrides.
 
-**Security review (orch-security-reviewer).** An optional third review pass — `orch-security-reviewer` (Opus) — runs automatically after the two standard review stages when the diff matches security-sensitive tokens (auth, crypto, payments, secrets, jwt, oauth, tls/ssl). The reviewer looks specifically for injection risks, missing auth checks, exposed secrets, and unsafe dependency patterns. Like the code reviewer, it reports every finding with a confidence tag; the controller filters below 0.8 into `Notes:`.
+**Security review.** When the diff matches security-sensitive tokens (`ORCH_SIG_SECURITY_DIFF`: auth, crypto, payments, secrets, jwt, oauth, tls/ssl and similar), `orch-review.py` adds `skills/requesting-code-review/references/security-lens.md` to both seat briefs: injection, missing auth checks, exposed secrets, crypto misuse, unsafe deserialization, SSRF/CSRF and sensitive data in logs.
 
 **Convention detection.** The shell function `orch_detect_conventions` reads manifest and config files to detect coding conventions — naming patterns, linter, formatter, test runner, indentation hints. It is an on-demand helper (e.g., to seed or audit `./CLAUDE.md`) rather than auto-injected into every dispatch. Conventions are sourced from `./CLAUDE.md`; implementers read the pasted `## Conventions` section in the `## Project conventions` slot of `templates/implementer-prompt.md`. Detection results are cached per-project in `~/.llm-orchestrator/toolchain/<hash>/config.md`. `/llm-orchestrator:remember` writes to `## Conventions` in CLAUDE.md.
 
 **Architecture grounding (per-task, silent).** When brainstorming a non-trivial change on an existing codebase (skipped for greenfield projects and trivial edits), the brainstorming skill silently reads the recorded `## Decisions` and `## Conventions` sections of `./CLAUDE.md` and, on a cache hit from `orch_arch_cached "$PWD"`, the arch cache as well — then applies them as hard constraints on the spec. No questions are asked, no `orch-explorer` is dispatched, and no `/llm-orchestrator:remember` proposal is made during a task. Codebase study, the surfacing of decisions, and the proposal to record them happen once via `/llm-orchestrator:onboard` (see the paragraph below). On a cache miss, the brainstorming skill still applies whatever `## Decisions`/`## Conventions` exist in `./CLAUDE.md` silently, and at most emits one tip line suggesting the user run `/llm-orchestrator:onboard`.
 
-The recorded `## Decisions` section of CLAUDE.md flows downstream to both `templates/implementer-prompt.md` (the `## Decisions` slot, treated as hard constraints) and `templates/code-reviewer-prompt.md` / `agents/orch-code-reviewer.md` (checked explicitly: a diff that violates a recorded decision is raised as a Critical issue). Previously only `## Conventions` was fed to these downstream agents.
+The recorded `## Decisions` section of CLAUDE.md flows downstream to `templates/implementer-prompt.md` (the `## Decisions` slot, treated as hard constraints).
 
 **`/llm-orchestrator:onboard` — one-time capture front-end.** `/llm-orchestrator:onboard` (`commands/onboard.md`) is the user-facing entry point for the architecture-grounding pipeline. It is designed to run once per project, before the first feature task. Steps: (1) idempotency check via `orch_arch_cached "$PWD"` (`scripts/lib/orch-arch.sh`) — if already onboarded, it prints a notice and exits immediately; (2) read-only study via `orch-explorer` to map the stack, data layer, module boundaries, error-handling, and key dependencies, plus `orch_detect_conventions` for coding conventions; (3) drafts `## Decisions` and `## Conventions` content; (4) single approval gate — shows the draft and asks once "Write this to `./CLAUDE.md`? (yes / no)" — no other questions; (5) on approval, appends to `./CLAUDE.md` via `append_under_section` (never overwrites existing content) and calls `orch_arch_record` to mark the project onboarded. All per-task work after `/llm-orchestrator:onboard` reads the recorded decisions silently through the normal architecture-grounding path; the user is not asked again.
 
@@ -223,30 +204,14 @@ How the pieces fit together at the file level.
 ### Templates
 
 - File: `templates/<name>.md`.
-- Used by commands. Output lands at `docs/llm-orchestrator/{specs,plans,reviews,research,handoffs}/YYYY-MM-DD-<slug>.md` in the user's project, where it is committed as a version-controlled handoff. (In *this* repo, `.gitignore` keeps the internally-generated `specs/`, `plans/`, `handoffs/`, and `research/` local-only; only `reviews/` is committed — so never point a shipped skill at a file under the ignored four.)
+- Used by commands. Output lands at `docs/llm-orchestrator/{specs,plans,research,handoffs}/YYYY-MM-DD-<slug>.md` in the user's project, where it is committed as a version-controlled handoff. (In *this* repo, `.gitignore` keeps the internally-generated `specs/`, `plans/`, `handoffs/`, and `research/` local-only; only `reviews/` is committed — so never point a shipped skill at a file under the ignored four.)
 
-### Workflows (Claude-Code-only accelerator)
+### Review script
 
-- File: `workflows/<name>.js` — a deterministic script for Claude Code's `Workflow` tool. Plain
-  JavaScript only (no TypeScript, no imports; the nondeterministic time/random builtins throw at
-  runtime). Begins with a pure-literal `export const meta = {...}`.
-- A *preferred* substrate for exactly one layer: **Layer 6** (code review,
-  `workflows/review-diff.js`). Layer 4 is deliberately NOT a second script — see the scope decision
-  linked in Layer 6. It is never a hard dependency: the skill that prefers the workflow keeps its
-  canonical markdown path, and routing is the try-then-fallback heuristic in `using-workflows`.
-- Distribution is by directory: a plugin's `workflows/` at plugin root is auto-discovered and
-  namespaced `/<plugin>:<meta.name>`, so this script is reachable as
-  `/llm-orchestrator:review-diff`.
-- Reuses the existing `agents/orch-*.md` subagents via the `agentType` option (composed with a
-  structured `schema`); it adds no new agent roles.
-- Gate logic is never re-derived in JS — the controller computes it in shell (e.g.
-  `security_sensitive` from `scripts/lib/orch-signals.sh`) and passes it in via `args`.
-- Linter: `tests/validate-workflows.sh`. It compiles each script as an **async-function body** via
-  `tests/lib/check-workflow-script.mjs` — the grammar the engine runs, where top-level `return`
-  and `await` are legal — and validates the pure-literal `meta`, **plus** a static token scan for
-  the runtime-throw builtins a parse cannot catch. It deliberately does not use `node --check`:
-  on a `.js` file containing `export` (which every workflow must), `node --check` exits 0 whatever
-  the syntax.
+- File: `scripts/lib/orch-review.py`, with `run`, `wait` and `record`. Its briefs and JSON schemas are in `skills/requesting-code-review/references/` (`contract.md`, `adversarial.md`, `refuter.md`, `security-lens.md`, `seat-schema.json`, `refuter-schema.json`).
+- A run directory must be new and outside the repository. It holds the prompts, event streams, receipts, `review.json` and a `pid` file for `wait`.
+- Optional `cadence.json` keys: `review.copy_ignored` lists ignored paths (for example a dependency folder) copied into each clone, using copy-on-write where the file system supports it; `review.setup` is a shell command run in each clone. `cadence-init.sh` writes neither.
+- Tests: `tests/test-review.py` (through `tests/test-review.sh`), with fake `claude` and `codex` programs and fake rollouts, one case per rule.
 
 ### Context-handoff components
 
@@ -259,7 +224,7 @@ How the pieces fit together at the file level.
 
 ### Memory
 
-- **User-facing facts** live in Claude Code's native `./CLAUDE.md` (project) and `~/.claude/CLAUDE.md` (user). `/llm-orchestrator:remember` classifies on write into `## Conventions` / `## Decisions` / `## People` / `## Notes`. `/llm-orchestrator:forget` soft-deletes to `~/.llm-orchestrator/memory/.trash/`. Both go through `with_lock` (`scripts/lib/orch-lock.sh`, portable across macOS/Linux). The `## Decisions` section is fed into the implementer prompt and code-reviewer prompt so recorded architectural choices are visible at review time — not just at write time.
+- **User-facing facts** live in Claude Code's native `./CLAUDE.md` (project) and `~/.claude/CLAUDE.md` (user). `/llm-orchestrator:remember` classifies on write into `## Conventions` / `## Decisions` / `## People` / `## Notes`. `/llm-orchestrator:forget` soft-deletes to `~/.llm-orchestrator/memory/.trash/`. Both go through `with_lock` (`scripts/lib/orch-lock.sh`, portable across macOS/Linux). The `## Decisions` section is fed into the implementer prompt so recorded architectural choices bind the implementation.
 - **Plugin-internal state** lives at `~/.llm-orchestrator/memory/<project-hash>.md` — reserved for `## Research config` (aggressiveness knob) and `declined_mcp:` entries. Read at trigger time by `orch-research-gate.sh`, not at SessionStart.
 - **Research cache + brief index** live at `~/.llm-orchestrator/research/cache/<hash>/` and `~/.llm-orchestrator/research/briefs-index/<hash>.md`. Written by the SubagentStop validator after `orch-researcher` returns; read by the gate hook on the next compelled trigger.
 - `<project-hash>` = SHA-1 of (a) git remote origin URL, (b) repo root path, or (c) cwd, in that order. Resolved by `scripts/lib/orch-project.sh`.
@@ -346,7 +311,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 
 ## Why this shape
 
-- **Harness boundaries.** Skills and prompts are portable instructions — any harness that reads markdown gets the guidance. The enforcement is Claude Code's: its hooks own the session, the guards and dispatch. Codex gets two pieces of it, the cadence file guard and the completion check, and nothing else; `.codex-plugin/plugin.json` names only those hooks and the cadence skill, so adding the repository as a Codex plugin does not load the Claude Code hooks. The git layer (the `commit-msg` hook and `--audit` in CI) is the part that works without a harness at all, and it proves only that the policy files are intact and amendments carry a ruling — never that tests or reviews ran.
+- **Harness boundaries.** Skills and prompts are portable instructions — any harness that reads markdown gets the guidance. The enforcement is Claude Code's: its hooks own the session, the guards and dispatch. Codex gets two pieces of it, the cadence file guard and the completion check, and nothing else; `.codex-plugin/plugin.json` names only those hooks and the cadence and review skills, so adding the repository as a Codex plugin does not load the Claude Code hooks. The git layer (the `commit-msg` hook and `--audit` in CI) is the part that works without a harness at all, and it proves only that the policy files are intact and amendments carry a ruling — never that tests or reviews ran.
 - **One file per skill** keeps discovery cheap. `ls skills/` is the catalog.
 - **Plain-markdown memory** is grep-able, readable, editable, and trivially backed up.
 - **Single hooks.json** with calls to `scripts/hooks/*.sh` keeps logic out of inline `node -e` strings.
@@ -363,7 +328,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 5. Agent runs `/llm-orchestrator:worktree` to isolate.
 6. Agent runs `/llm-orchestrator:dispatch` per task → implementers return `Status:` blocks. Parallel where independent, sequential where dependent.
 6a. When context usage crosses `ORCH_CONTEXT_HANDOFF_TOKENS` (default 950000, ≈95% of the window) — or at any clean stage boundary the controller chooses — it regenerates the handoff artifact (`docs/llm-orchestrator/handoffs/<date>-<slug>.md`) and the user resumes in a fresh session — which runs the embedded verification baseline before continuing.
-7. Agent runs `/llm-orchestrator:review` → spec-reviewer then code-reviewer return `Issues:` blocks. BLOCKED recovery routes invisibly.
+7. Agent runs `/llm-orchestrator:review` → `orch-review.py` runs the seats and writes `review.json` with a verdict; the agent handles the findings with `receiving-code-review` and records each disposition.
 8. Agent invokes `verification-before-completion` before claiming done.
 9. Agent runs `/llm-orchestrator:finish` → merge / PR / keep / discard menu.
 10. Next session resumes via Claude Code's native `claude --continue` or starts fresh; project conventions persist via CLAUDE.md; research priors via the gate hook's cache + brief-index reads.
@@ -378,8 +343,7 @@ Claude Code itself, not by this plugin's SessionStart hook).
 | `docs/`                       | Install guide, manual testing, methodology       |
 | `skills/`, `commands/`        | Machine-readable artifacts the harness loads     |
 | `agents/`                     | Subagent definitions (`orch-implementer`, etc.)  |
-| `templates/`                  | Spec / plan / review templates committed per use |
-| `workflows/`                  | Claude-Code-only `Workflow` scripts; preferred accelerator for Layer 6, the whole intended surface (Layer 4 deliberately not scripted); markdown canonical |
+| `templates/`                  | Spec / plan / prompt templates                   |
 | `hooks/`, `scripts/`          | Glue + runtime guardrails                        |
 | `examples/`                   | Worked plan, review, and walkthrough examples     |
 | `docs/examples/`              | Illustrative response-shape examples             |

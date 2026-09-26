@@ -1,8 +1,8 @@
 # Codex
 
 LLM Orchestrator is built for Claude Code. If you use Codex, you can install a
-smaller part of it: the cadence skill and three small hooks. This page says
-what you get, how to install it, and what it never does.
+smaller part of it: the cadence skill, the review skill and three small
+hooks. This page says what you get, how to install it, and what it never does.
 
 ## What you get
 
@@ -25,13 +25,17 @@ what you get, how to install it, and what it never does.
      see a message from it.
   3. *Scratch cleanup.* Removes temporary files left behind by finished tasks.
 
-Everything else, such as planning, brainstorming, the reviewers and the merge
-queue, stays in Claude Code.
+Code review also runs on Codex: the `requesting-code-review` skill starts
+`scripts/lib/orch-review.py`, which works the same on both harnesses (see
+[codex-provider.md](codex-provider.md)). The plugin install below ships this
+skill and the script. Everything else, such as planning, brainstorming and the
+merge queue, stays in Claude Code.
 
 ## Install
 
 1. Clone this repository into a folder you will keep, and add it to Codex as
-   a plugin. The plugin installs the cadence skill and the three hooks.
+   a plugin. The plugin installs the cadence and review skills and the three
+   hooks.
 
    ```sh
    git clone https://github.com/felipemelendez/llm-orchestrator.git
@@ -121,9 +125,11 @@ Codex asks whether to trust each project and saves the answer in
 
 Codex looks for `.codex-plugin/plugin.json` before `.claude-plugin/plugin.json`,
 so the plugin install reads this repository's Codex manifest. That manifest
-loads the cadence skill and the three hooks, and none of the Claude Code hooks
-or skills. Codex `/import` also copies Claude Code plugins, and an imported
-copy of this plugin reads the Codex manifest too.
+loads the cadence and `requesting-code-review` skills and the three hooks, and
+none of the other Claude Code hooks or skills. Codex copies the whole plugin
+root into its plugin cache, so `scripts/lib/orch-review.py` is there too. Codex
+`/import` also copies Claude Code plugins, and an imported copy of this plugin
+reads the Codex manifest too.
 
 One route still brings the Claude Code hooks over. A `--copy` install wires
 them into a project's `.claude/settings.json`, and Codex offers to move hooks
@@ -181,10 +187,10 @@ Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or
   live session. One Codex turn that ends in PASS with no check is enough to see
   it work.
 
-## Optional: a Claude reviewer from Codex
+## Reviews from Codex
 
-On Full work, one of the two independent reviews can come from Claude through
-your existing Claude login. See [codex-provider.md](codex-provider.md).
+On Full work the review script runs one seat on Codex and one on Claude,
+through your existing Claude login. See [codex-provider.md](codex-provider.md).
 
 ## Tests
 
@@ -194,5 +200,5 @@ bash tests/test-codex-adapter.sh       # the file guard
 bash tests/test-install-global.sh      # the installer under a temporary HOME;
                                        # with CODEX_BIN set, a real plugin install
                                        # and Codex's own list of hooks and skills
-python3 tests/test-claude-provider.py  # the optional Claude reviewer, with a fake CLI
+python3 tests/test-review.py          # the review script, with fake claude and codex
 ```

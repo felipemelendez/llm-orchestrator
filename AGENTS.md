@@ -7,9 +7,7 @@ and matches the `name:` in `agents/orch-*.md`.
 |---|---|---|
 | `orch-explorer` | opus | Finds where code lives. Read-only; returns `Found:` with file:line refs. |
 | `orch-implementer` | opus | Does one task from a plan; returns a `Status:` block. |
-| `orch-spec-reviewer` | opus | Asks: does this diff do what the spec said? |
-| `orch-code-reviewer` | opus | Asks: is the code correct, safe and plain? |
-| `orch-security-reviewer` | opus | Checks a diff for security problems. Only when it touches auth, crypto, payments or secrets. |
+| `orch-spec-reviewer` | opus | Reviews a written spec document during brainstorming. Code review is `scripts/lib/orch-review.py`, not an agent. |
 | `orch-debugger` | opus | Finds the cause of a bug before anyone edits; returns `Found:`. |
 | `orch-researcher` | opus | Checks an API or version against current docs; returns VERIFIED, COULDN'T_VERIFY, CONTRADICTED or NOT_APPLICABLE. |
 

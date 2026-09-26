@@ -135,7 +135,7 @@ emit() { # emit <warn-text> → warn or block per strict/dry-run, then exit
 _STRIPPED="$(printf '%s' "${ASSISTANT_TEXT}" | tr -d '[:space:]')"
 if [[ -z "${_STRIPPED}" ]]; then
   case "${AGENT_TYPE}" in
-    *orch-implementer|*orch-explorer|*orch-debugger|*orch-researcher|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
+    *orch-implementer|*orch-explorer|*orch-debugger|*orch-researcher|*orch-spec-reviewer)
       if [[ "${HAS_LAM}" == "1" || ( -n "${TRANSCRIPT:-}" && -f "${TRANSCRIPT:-/nonexistent}" ) ]]; then
         emit "orch-subagent-stop: subagent '${AGENT_TYPE:-unknown}' finished with NO final message — premature termination. Do not treat this as success: return an explicit Status block (DONE with $VERIFY_LABEL, PARTIAL with Progress:/Remaining:, or BLOCKED with Need:) describing where the work stands."
       fi ;;
@@ -154,7 +154,7 @@ case "${AGENT_TYPE}" in
   *orch-researcher)
     : # orch-researcher-validator.sh owns the researcher's contract.
     ;;
-  *orch-explorer|*orch-debugger|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
+  *orch-explorer|*orch-debugger|*orch-spec-reviewer)
     GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_reply "" "$INPUT" 2>&1)
     if [[ $? -ne 0 ]]; then
       emit "orch-subagent-stop: ${AGENT_TYPE} finished without a protocol shape (${GRADE_OUTPUT}). Open the reply with the block your contract names (Found:/Issues:/Status:)."

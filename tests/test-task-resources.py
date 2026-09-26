@@ -142,6 +142,94 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue((copy / "new.py").exists())
         self.assertFalse((copy / "private.ignored").exists())
 
+    def clone(self):
+        token = self.acquire()
+        result = self.manager.create(self.task_id, token, "clone", tree=MOD.fingerprint(self.project))
+        self.release(token)
+        return Path(result["path"])
+
+    def new_task(self):
+        self.task = self.manager.start(self.project, "test")
+        self.task_id = self.task["id"]
+        self.scratch = Path(self.task["scratch"])
+
+    def test_fingerprint_covers_uncommitted_files_and_leaves_the_index_alone(self):
+        clean = MOD.fingerprint(self.project)
+        self.assertEqual(clean, self.git("rev-parse", "HEAD^{tree}").strip())
+        index = (self.project / ".git/index").read_bytes()
+        (self.project / "private.ignored").write_text("ignored\n")
+        self.assertEqual(MOD.fingerprint(self.project), clean)
+        (self.project / "new.py").write_text("new\n")
+        untracked = MOD.fingerprint(self.project)
+        self.assertNotEqual(untracked, clean)
+        (self.project / "source.py").write_text("edited\n")
+        self.assertNotIn(MOD.fingerprint(self.project), {clean, untracked})
+        self.assertEqual((self.project / ".git/index").read_bytes(), index)
+        self.assertIn("?? new.py", self.git("status", "--porcelain"))
+
+    def test_clone_holds_the_uncommitted_change_with_its_own_git_at_real_head(self):
+        (self.project / "source.py").write_text("edited\n")
+        (self.project / "new.py").write_text("new\n")
+        (self.project / "private.ignored").write_text("not copied")
+        clone = self.clone()
+        self.assertTrue((clone / ".git").is_dir())
+        self.assertEqual((clone / "source.py").read_text(), "edited\n")
+        self.assertEqual((clone / "new.py").read_text(), "new\n")
+        self.assertFalse((clone / "private.ignored").exists())
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=clone), self.git("rev-parse", "HEAD"))
+        self.assertEqual(MOD.fingerprint(clone), MOD.fingerprint(self.project))
+        self.assertEqual(self.git("remote", cwd=clone).strip(), "")
+
+    def test_clone_shares_no_object_file_with_the_real_repository(self):
+        (self.project / "new.py").write_text("new\n")
+        clone = self.clone()
+        def inodes(root):
+            return {(path.stat().st_dev, path.stat().st_ino) for path in root.rglob("*") if path.is_file()}
+        self.assertEqual(inodes(self.project / ".git/objects") & inodes(clone / ".git/objects"), set())
+
+    def test_clone_at_detached_head_matches_real_head(self):
+        self.git("checkout", "-q", "--detach")
+        clone = self.clone()
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=clone), self.git("rev-parse", "HEAD"))
+
+    def test_finish_removes_a_clone_whose_files_changed(self):
+        clone = self.clone()
+        (clone / "source.py").write_text("a reviewer edited this\n")
+        (clone / "probe.txt").write_text("scratch probe\n")
+        result = self.manager.finish(self.task_id)
+        self.assertEqual(result["status"], "done", result)
+        self.assertFalse(clone.exists())
+        self.assertEqual((self.project / "source.py").read_text(), "original\n")
+
+    def test_clone_with_new_ref_stash_worktree_or_commit_is_kept(self):
+        identity = ("-c", "user.name=F", "-c", "user.email=f@example.invalid")
+        def branch(clone):
+            self.git("branch", "extra", cwd=clone)
+        def stash(clone):
+            (clone / "source.py").write_text("stashed\n")
+            self.git(*identity, "stash", "-q", cwd=clone)
+        def worktree(clone):
+            self.git("worktree", "add", "-q", "--detach", str(clone.parent / "extra"), cwd=clone)
+        def commit(clone):
+            (clone / "source.py").write_text("committed\n")
+            self.git(*identity, "commit", "-qam", "unique", cwd=clone)
+        for change in (branch, stash, worktree, commit):
+            with self.subTest(change.__name__):
+                self.new_task()
+                clone = self.clone()
+                change(clone)
+                result = self.assert_retained(clone)
+                self.assertTrue(any(str(clone) in reason for reason in result["reasons"]), result)
+
+    def test_clone_with_writer_mutex_or_nested_repository_is_kept(self):
+        clone = self.clone()
+        (clone / ".orch-active").write_text("writer")
+        self.assert_retained(clone)
+        self.new_task()
+        clone = self.clone()
+        self.git("init", "-q", str(clone / "nested"))
+        self.assert_retained(clone)
+
     def test_consumer_closes_admission_and_release_never_finishes(self):
         token = self.acquire("reviewer")
         self.assert_retained()
