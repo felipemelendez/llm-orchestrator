@@ -7,6 +7,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ### Changed
 
+- The review has a new finding kind, `test-gap`: behaviour the tests do not
+  cover, with no wrong result shown. `orch-review.py` always ranks it mild and
+  counts the lowered ranks; test tampering is still raised to serious. The
+  review comparison's scorer now reads `/code-review`'s JSON array of findings
+  one item at a time, and `docs/MEASUREMENTS.md` records the comparison's
+  first full run.
 - Rule changes now go through one command the person runs in their own
   terminal: `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`. It
   applies a patch to the protected files only, re-records the lock and commits

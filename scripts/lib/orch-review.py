@@ -34,7 +34,7 @@ SIGNALS = HERE / "orch-signals.sh"
 CLAUDE_ALIAS = "opus"
 EFFORT = "high"
 RANKS = ("mild", "serious", "catastrophic")
-KINDS = ("defect", "spec-gap", "scope-creep", "test-tampering")
+KINDS = ("defect", "spec-gap", "scope-creep", "test-tampering", "test-gap")
 NOT_CHECKED = ("tests-not-run", "files-not-read", "claim-unverified")
 BLOCKING = {"verified", "unverified", "promoted", "unresolved", "unjudged"}
 CONFIDENCE_FLOOR = 0.8
@@ -53,9 +53,15 @@ SEAT_RULES = """\
 Return one JSON object that matches the schema: `findings` and `not_checked`.
 
 Each finding has `file`, `line`, `rank` (catastrophic, serious or mild, graded
-by the harm ranking), `kind` (defect, spec-gap, scope-creep or test-tampering),
-`confidence` (0.0 to 1.0), `claim` (the state, and the wrong result it gives),
-`evidence`, `repro` and `not_runnable`. Set unused fields to null.
+by the harm ranking), `kind` (defect, spec-gap, scope-creep, test-tampering or
+test-gap), `confidence` (0.0 to 1.0), `claim` (the state, and the wrong result
+it gives), `evidence`, `repro` and `not_runnable`. Set unused fields to null.
+
+A `test-gap` is behavior the tests do not cover, with no wrong result shown.
+It is always mild. When the uncovered code is also wrong, report that as its
+own `defect` with its own rank. `test-tampering` is a test the change deleted,
+skipped, weakened or rewrote to match the code, or code that treats test
+inputs specially; a test that was never there is a `test-gap`, not tampering.
 
 `evidence` is one of:
 
@@ -463,13 +469,16 @@ class Review:
                      "part": part_number, "provider": launch["provider"], "raw": raw,
                      "file": item.get("file"), "line": item.get("line"), "claim": item.get("claim"),
                      "kind": item.get("kind"), "original_rank": rank, "rank": rank,
-                     "rank_replaced": rank not in RANKS, "rank_raised": False,
+                     "rank_replaced": rank not in RANKS, "rank_raised": False, "rank_lowered": False,
                      "evidence": item.get("evidence")}
             if found["rank_replaced"]:
                 found["rank"] = "serious"
             if (found["kind"] == "test-tampering" and found["rank"] == "mild"
                     and not self.options["allow_test_changes"]):
                 found["rank"], found["rank_raised"] = "serious", True
+            # A test-gap shows no wrong behavior, so it is mild; a defect it hides is its own finding.
+            if found["kind"] == "test-gap" and found["rank"] != "mild":
+                found["rank"], found["rank_lowered"] = "mild", True
             confidence = item.get("confidence")
             found["confidence"] = (float(confidence) if type(confidence) in (int, float) else None)
             found["evidence_valid"], found["evidence_reason"] = evidence_valid(
@@ -997,7 +1006,7 @@ def decide(run_dir):
                     findings, not_checked = [], []
     parts = parts or []
     counts = {"raw_findings": len(findings), "notes": 0, "invalid_evidence": 0, "below_floor": 0,
-              "raised_ranks": 0, "replaced_ranks": 0, "patches_not_applied": 0}
+              "raised_ranks": 0, "lowered_ranks": 0, "replaced_ranks": 0, "patches_not_applied": 0}
     tree = start["tree"] if start else None
     launches = []
     for brief, provider in run.get("seats", []):
@@ -1012,6 +1021,7 @@ def decide(run_dir):
             launches.append(launch)
     for found in findings:
         counts["raised_ranks"] += found["rank_raised"]
+        counts["lowered_ranks"] += found.get("rank_lowered", False)
         counts["replaced_ranks"] += found["rank_replaced"]
         counts["invalid_evidence"] += not found["evidence_valid"]
         if found["rank"] == "mild" and found["evidence_valid"] and not (

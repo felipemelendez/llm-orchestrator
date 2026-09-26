@@ -444,8 +444,36 @@ FILE = re.compile(r"(?P<file>[\w./-]*[\w-]+\.(?:py|md|json|toml|ya?ml|txt|csv|cf
                   r"(?:(?::|,? lines? |#L)(?P<line>\d+))?")
 
 
+FENCED_ARRAY = re.compile(r"```[\w-]*[ \t]*\n\s*(\[.*?\])\s*```", re.S)
+TEXT_FIELDS = ("title", "summary", "description", "body", "failure_scenario")
+
+
+def json_findings(text):
+    """Findings from a fenced JSON array of objects that name a file, as /code-review writes them;
+    None when the reply holds no such array. An empty array is a review with no findings."""
+    for block in FENCED_ARRAY.finditer(text):
+        try:
+            items = json.loads(block[1])
+        except json.JSONDecodeError:
+            continue
+        if not all(isinstance(i, dict) and isinstance(i.get("file"), str) for i in items):
+            continue
+        out = []
+        for item in items:
+            line = item.get("line")
+            line = int(line) if isinstance(line, int) or (isinstance(line, str) and line.isdigit()) else None
+            words = " ".join(str(item[k]) for k in TEXT_FIELDS if item.get(k))
+            out.append({"file": item["file"], "line": line, "text": words.strip()[:1000]})
+        return out
+    return None
+
+
 def text_findings(text):
-    """Split free-text review output into findings: one per list item or heading that names a file."""
+    """Split review output into findings: one per item of a fenced JSON findings array when the reply
+    has one, else one per list item or heading that names a file."""
+    from_json = json_findings(text)
+    if from_json is not None:
+        return from_json
     blocks, current = [], []
     starts = re.compile(r"^\s*(?:[-*•]|\d+[.)]|#{1,6}\s|\[P\d\]|\*\*\d)")
     for line in text.splitlines():

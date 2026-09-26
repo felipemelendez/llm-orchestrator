@@ -820,6 +820,19 @@ class ReviewTests(unittest.TestCase):
         review = self.review("standard", "claude", "--allow-test-changes")
         self.assertEqual(review["findings"][0]["rank"], "mild")
 
+    def test_r13_a_test_gap_is_mild_and_never_raised(self):
+        # A test that does not cover something, with no wrong behavior shown, is mild whatever the seat said.
+        gap = finding("serious", kind="test-gap", repro=None)
+        tampering = finding("mild", kind="test-tampering", repro=None, not_runnable="reading only")
+        self.scenario["claude"]["seats"]["contract"] = seat(gap, tampering)
+        review = self.review("standard", "claude")
+        self.assertEqual([(f["kind"], f["rank"]) for f in review["findings"]],
+                         [("test-gap", "mild"), ("test-tampering", "serious")])
+        self.assertTrue(review["findings"][0]["rank_lowered"])
+        self.assertEqual((review["counts"]["lowered_ranks"], review["counts"]["raised_ranks"]), (1, 1))
+        self.assertEqual(review["findings"][0]["status"], "mild")
+        self.assertNotIn("contract-1-1", " ".join(review["incomplete_reasons"]))
+
     def test_r13_an_unknown_rank_becomes_serious_and_is_counted(self):
         self.scenario["claude"]["seats"]["contract"] = seat(finding("critical"), {"junk": True})
         review = self.review("standard", "claude")

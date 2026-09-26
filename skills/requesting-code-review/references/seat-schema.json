@@ -43,7 +43,8 @@
               "defect",
               "spec-gap",
               "scope-creep",
-              "test-tampering"
+              "test-tampering",
+              "test-gap"
             ]
           },
           "confidence": {
