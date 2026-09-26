@@ -527,12 +527,16 @@ case "${cmd}" in
     # would bake relative hook paths into hooks.json.
     dest="$(cd "${dest}" && pwd)"
     mkdir -p "${dest}/.claude" "${dest}/.claude/scripts/hooks" "${dest}/.claude/scripts/lib" "${dest}/.claude/scripts/verification" "${dest}/.claude/docs"
-    # The install record: every file this install places, one relative path per
-    # line. The next --copy removes what the record lists and the plugin no
-    # longer ships, so an upgrade leaves no stale briefs, hooks or libs behind.
-    # Nothing outside the record is ever removed: .claude/ also holds the
-    # project's own skills, commands and settings.
+    # The install record: one "<sha256>  <path>" line per file this install
+    # placed. The next --copy removes a recorded file the plugin no longer
+    # ships only while its content still has the recorded hash, so an upgrade
+    # leaves no stale briefs, hooks or libs behind and never deletes a file the
+    # person changed. Nothing outside the record is ever removed: .claude/ also
+    # holds the project's own skills, commands and settings.
     record="${dest}/.claude/.llm-orchestrator-files"
+    hasher=""
+    if command -v shasum >/dev/null 2>&1; then hasher="shasum -a 256"
+    elif command -v sha256sum >/dev/null 2>&1; then hasher="sha256sum"; fi
     old_record=""
     if [[ -f "${record}" && ! -L "${record}" ]]; then
       old_record=$(cat "${record}")
@@ -607,17 +611,15 @@ case "${cmd}" in
       [[ "${real}" == "${claude_real}" || "${real}" == "${claude_real}/"* ]]
     }
 
-    # The record lists only what this install actually placed: a regular file,
-    # reached through no link, byte-identical to the source. A path the copy
-    # could not write (a read-only file the project owns, say) is never
-    # recorded, so a later upgrade can never take it for the plugin's.
-    placed=""
-    while IFS= read -r rel; do
-      [[ -n "${rel}" ]] || continue
-      plain_path "${rel}" && [[ -f "${dest}/.claude/${rel}" ]] \
-        && cmp -s "${ROOT}/${rel}" "${dest}/.claude/${rel}" \
-        && placed="${placed}${rel}"$'\n'
-    done <<< "${new_record}"
+    # hash_list <dir>: "<sha256>  <path>" for each relative path on stdin that
+    # is a regular file under <dir>, in one hasher run.
+    hash_list() {
+      local dir="$1"
+      ( cd "${dir}" || exit 1
+        while IFS= read -r rel; do [[ -n "${rel}" && -f "${rel}" ]] && printf '%s\0' "${rel}"; done \
+          | xargs -0 ${hasher} 2>/dev/null ) || true
+    }
+    shipped() { printf '%s\n' "${new_record}" | grep -qxF -- "$1"; }
 
     # remove_stale <relative path>: delete one file this plugin placed earlier
     # and no longer ships, then any folders that leaves empty. Only a plain
@@ -635,31 +637,56 @@ case "${cmd}" in
         d=$(dirname "${d}")
       done
     }
-    if [[ -n "${old_record}" ]]; then
+
+    kept=""
+    if [[ -z "${hasher}" ]]; then
+      # No way to prove a file is unchanged: delete nothing, record nothing.
+      echo "Note: neither shasum nor sha256sum was found, so no install record was written and nothing was removed."
+    else
+      if [[ -n "${old_record}" ]]; then
+        while IFS= read -r line; do
+          [[ "${line}" =~ ^([0-9a-f]{64})\ \ (.+)$ ]] || continue
+          want="${BASH_REMATCH[1]}"; rel="${BASH_REMATCH[2]}"
+          shipped "${rel}" && continue
+          plain_path "${rel}" && [[ -f "${dest}/.claude/${rel}" ]] || continue
+          have=$(printf '%s\n' "${rel}" | hash_list "${dest}/.claude" | awk '{print $1}')
+          if [[ -n "${have}" && "${have}" == "${want}" ]]; then
+            remove_stale "${rel}"
+          else
+            kept="${kept}  ${dest}/.claude/${rel}"$'\n'
+          fi
+        done <<< "${old_record}"
+      else
+        # An install made before the record existed: nothing proves which
+        # files this plugin put there, so nothing is removed. The files in the
+        # plugin's own skill folders that it no longer ships are listed.
+        for sk in "${ROOT}"/skills/*/; do
+          sk=$(basename "${sk}")
+          [[ -d "${dest}/.claude/skills/${sk}" && ! -L "${dest}/.claude/skills/${sk}" ]] || continue
+          while IFS= read -r rel; do
+            [[ -n "${rel}" ]] || continue
+            shipped "${rel}" || kept="${kept}  ${dest}/.claude/${rel}"$'\n'
+          done < <(cd "${dest}/.claude" && find "skills/${sk}" -type f)
+        done
+      fi
+      if [[ -n "${kept}" ]]; then
+        echo "Note: nothing proves the plugin placed these files unchanged, so they were kept. The plugin no longer ships them; delete them if you did not add them yourself:"
+        printf '%s' "${kept}"
+      fi
+
+      # The record lists only what this install placed: a file reached through
+      # no link whose content hashes the same as the source. A file identical
+      # to the plugin's own holds nothing unique, so recording it loses nothing.
+      plain=""
       while IFS= read -r rel; do
         [[ -n "${rel}" ]] || continue
-        printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || remove_stale "${rel}"
-      done <<< "${old_record}"
-    else
-      # An install made before the record existed: nothing proves which files
-      # this plugin put there, so nothing is removed. The files in the plugin's
-      # own skill folders that it no longer ships are listed for the person to
-      # delete; the record written below makes every later upgrade clean itself.
-      unshipped=""
-      for sk in "${ROOT}"/skills/*/; do
-        sk=$(basename "${sk}")
-        [[ -d "${dest}/.claude/skills/${sk}" && ! -L "${dest}/.claude/skills/${sk}" ]] || continue
-        while IFS= read -r rel; do
-          [[ -n "${rel}" ]] || continue
-          printf '%s\n' "${new_record}" | grep -qxF -- "${rel}" || unshipped="${unshipped}  ${dest}/.claude/${rel}"$'\n'
-        done < <(cd "${dest}/.claude" && find "skills/${sk}" -type f)
-      done
-      if [[ -n "${unshipped}" ]]; then
-        echo "Note: this copy predates the install record, so nothing was removed. These files sit in the plugin's skill folders but the plugin no longer ships them; delete them if you did not add them yourself:"
-        printf '%s' "${unshipped}"
-      fi
+        plain_path "${rel}" && plain="${plain}${rel}"$'\n'
+      done <<< "${new_record}"
+      src_h=$(printf '%s' "${plain}" | hash_list "${ROOT}")
+      dst_h=$(printf '%s' "${plain}" | hash_list "${dest}/.claude")
+      LC_ALL=C comm -12 <(printf '%s\n' "${src_h}" | LC_ALL=C sort) \
+                        <(printf '%s\n' "${dst_h}" | LC_ALL=C sort) | grep -E '^[0-9a-f]{64}  ' > "${record}" || true
     fi
-    printf '%s' "${placed}" > "${record}"
 
     sed_inplace() {
       if sed --version >/dev/null 2>&1; then

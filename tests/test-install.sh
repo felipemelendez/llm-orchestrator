@@ -265,6 +265,22 @@ bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ln2.out" 2>&1 || fail "link 
   || fail "deleted through a link" "$TMP/shared/old-skill/SKILL.md is gone"
 [[ -L "$P/.claude/skills/old-skill" ]] && ok "and the link itself is left alone" || fail "link removed" "skills/old-skill is no longer a link"
 
+# Scene 3: the person edits a file the plugin placed. When the plugin retires
+# that path, the edited file holds their own content: it is kept and listed.
+P="$TMP/proj-edit"; mkdir -p "$P"
+bash "$TMP/src-old/scripts/install.sh" --copy "$P" > "$TMP/ed1.out" 2>&1 || fail "edit scene: old install" "$(tail -3 "$TMP/ed1.out")"
+printf 'my own notes\n' > "$P/.claude/commands/old-command.md"
+bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ed2.out" 2>&1 || fail "edit scene: new install" "$(tail -3 "$TMP/ed2.out")"
+if [[ -f "$P/.claude/commands/old-command.md" ]] && grep -qF 'my own notes' "$P/.claude/commands/old-command.md"; then
+  ok "a retired file the person edited is kept"
+else fail "edited file deleted" "commands/old-command.md is gone or changed"; fi
+grep -qF 'commands/old-command.md' "$TMP/ed2.out" && grep -qF 'did not add' "$TMP/ed2.out" \
+  && ok "and it is listed for the person to delete if it is not theirs" || fail "edited file not listed" "$(tail -5 "$TMP/ed2.out")"
+[[ ! -e "$P/.claude/scripts/lib/old-lib.py" ]] && ok "an unchanged retired file in the same upgrade is still removed" \
+  || fail "unchanged retired file" "scripts/lib/old-lib.py survived"
+head -1 "$P/.claude/.llm-orchestrator-files" | grep -qE '^[0-9a-f]{64}  [^ ]' \
+  && ok "the record stores a content hash per file" || fail "record format" "$(head -1 "$P/.claude/.llm-orchestrator-files")"
+
 # ------------------------------------------------------------
 # P4 — --check must fail on deletions and corruption
 # ------------------------------------------------------------
