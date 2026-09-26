@@ -1,7 +1,8 @@
 # Spec: one review design for Standard and Full
 
 Status: T5's design (approved 2026-09-25, ticket T4, built in T5), revised by
-ticket T22 on 2026-09-26 after two blind reviews. Awaits Felipe's approval.
+ticket T22 on 2026-09-26 after two blind reviews and live checks of both
+built-in reviewers. Awaits Felipe's approval.
 
 **What T22 changes.** The reviewers are now the built-in ones: Claude Code's
 `/code-review` and `codex review`. Our seats, their briefs, their schema,
@@ -80,30 +81,49 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   report every place where the change does not meet it, as well as any other
   defect." When the diff matches `ORCH_SIG_SECURITY_DIFF`, the text of
   `references/security-lens.md` follows. Each built-in keeps its own brief.
+  It goes to `/code-review` as `-p` text (R5) and to `codex review` as
+  `developer_instructions` (R6).
 
 ## The reviewers
 
 - **R5. Claude reviewer.** In the copy, stdin closed, reduced environment:
 
   ```
-  claude -p "/code-review high" --model opus --effort high --safe-mode
-    --restricted --tools Read,Grep,Glob,Bash,Agent
-    --allowedTools Read,Grep,Glob,Bash,Agent --permission-mode dontAsk
-    --append-system-prompt <instruction + probe> --output-format stream-json
-    --verbose --strict-mcp-config --mcp-config '{"mcpServers":{}}'
-    --no-session-persistence --settings <T5's Bash sandbox>
+  claude -p "/code-review high <probe instruction> <R4 instruction>"
+    --model opus --effort high --safe-mode --restricted
+    --tools Read,Grep,Glob,Bash,Agent --allowedTools Read,Grep,Glob,Bash,Agent
+    --permission-mode dontAsk --output-format stream-json --verbose
+    --strict-mcp-config --mcp-config '{"mcpServers":{}}'
+    --session-id <new uuid> --settings <T5's Bash sandbox>
   ```
 
+  - **The instruction goes in the `-p` text, after the level.**
+    `/code-review` reviews in a subagent, and `--append-system-prompt` does
+    not reach it (live: a required marker line, the probe and the
+    `.git/orch-review/spec.md` path were all ignored), so the comparison's
+    `code-review` arm never got its spec sentence. Text after the level
+    reaches the subagent's prompt as "Review target: `...`"; it was obeyed,
+    and the uncommitted change was still reviewed.
   - `--safe-mode` keeps the person's CLAUDE.md, plugins and hooks out of the
-    context, but does not stop file tools reading them: 33 of 83 recorded
-    replies cite `~/.claude/CLAUDE.md`. `--restricted` confines file tools to
-    the working directory, and removes Bash unless `--tools` names it.
+    context, but not out of reach: 33 of 83 recorded replies cite
+    `~/.claude/CLAUDE.md`. `--restricted` confines file tools to the working
+    directory (live: a Read of `~/.claude/CLAUDE.md` was refused and listed in
+    `permission_denials`); the sandbox's `denyRead` covers `~/.claude` for Bash.
+  - **Where the calls are.** The subagent's tool calls are not in the stream
+    (it holds `task_started`, `init`, `task_notification` and `result`).
+    They are in its transcript,
+    `$CLAUDE_CONFIG_DIR/projects/*/<session-id>/subagents/agent-*.jsonl`
+    (`~/.claude` by default), so the run keeps session persistence and names
+    its session. The script reads that transcript, then deletes that
+    session's files. No transcript: dropout.
   - **Sandbox proof.** In `-p` mode, settings that fail validation are
-    silently ignored, so the sandbox must be shown. The instruction tells the
-    reviewer to run T5's probe as its first Bash call. The run counts only
-    when the stream shows that call with `ORCH-SANDBOX-ON`, no
-    `ORCH-SANDBOX-OFF`, and the probe file absent afterwards; a Bash call with
-    `dangerouslyDisableSandbox` also fails it. Failure: dropout.
+    silently ignored, so the sandbox must be shown. The transcript must hold a
+    `sandbox_instructions` attachment whose configuration lists the run
+    directory under read deny and the copy under write allow; and its first
+    Bash call must be T5's probe, answered `ORCH-SANDBOX-ON` with no
+    `ORCH-SANDBOX-OFF`, the probe file absent afterwards. A Bash call with
+    `dangerouslyDisableSandbox` also fails it. Failure: dropout. The `init`
+    event must show `mcp_servers: []`.
   - **Served model:** every key of the final result's `modelUsage` must be in
     the `opus` family; any other key is a substitution and a dropout. Claude
     reports no served effort; `review.json` records the requested one.
@@ -117,13 +137,18 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   ```
 
   `codex review` has no `-m`, `-s`, `-C`, `--json` or `--output-schema`, and
-  refuses a prompt with `--uncommitted`. The thread id is `conversation.id=`
-  in the stderr log; the rollout `$CODEX_HOME/sessions/**/rollout-*-<id>.jsonl`
-  gives, in `turn_context`, the served `model`, `effort` and
-  `sandbox_policy`. Dropout unless: model equals `config.toml`'s `model` (not
-  compared when absent), effort is `high`, sandbox is `read-only`, a
-  developer message carries the instruction, and no `codex.tool_result` log
-  line has `mcp_tool=true` (`codex review` logs no MCP start line).
+  refuses a prompt with `--uncommitted`. The stderr log names several
+  `conversation.id=` values (live: the `exec` parent, a `codex-auto-review`
+  helper at effort `low`, and the review). The review's rollout is the one
+  of them, under `$CODEX_HOME/sessions/**/rollout-*-<id>.jsonl`, whose
+  `session_meta.source` is `{"subagent": "review"}`; exactly one must
+  exist. Its `turn_context` gives the served `model`, `effort` and
+  `sandbox_policy`. Dropout unless: model equals `config.toml`'s `model`
+  (not compared when absent), effort is `high`, sandbox is `read-only`, a
+  developer message carries the instruction, no `codex.tool_result` log line
+  has `mcp_tool=true`, and each `codex.conversation_starts` line, when
+  present, has `mcp_servers=""` (none in the 83 recorded runs; six in the
+  live run). Helper models are recorded, not compared.
 - **R7. Dropouts and parsing.** A reviewer is a dropout when it exits
   nonzero, runs over 3600 seconds, fails a check in R5 or R6, or its reply is
   not positively parsed:
@@ -296,7 +321,9 @@ removed options; the section "The native `/code-review`" goes);
 the reviewers' instruction); `ARCHITECTURE.md:209`, `AGENTS.md`,
 `README.md`, `docs/codex.md`, `docs/codex-provider.md`,
 `docs/commands-guide.md`, `tests/README.md`, `tests/evals/README.md`.
-`commands/review.md` is unchanged in use.
+`commands/review.md` is unchanged in use. `docs/MEASUREMENTS.md` and
+`tests/evals/README.md` say the `code-review` arm never received its spec
+sentence (R5); that arm in `arms.json` moves the sentence into its `-p` text.
 
 **Claude Code path:** the skill runs the script with `--writer claude`.
 **Codex path:** skill only, as in T5, `--writer codex`. The script, not the
@@ -305,7 +332,8 @@ agent, starts the built-ins.
 ## How we will know it works
 
 - **Tests, free.** `tests/test-review.py` rewritten around fake `claude` and
-  `codex` on `PATH`: `/code-review` streams, prover, refuter and runner
+  `codex` on `PATH`: `/code-review` streams and subagent transcripts (with
+  and without the probe or the `sandbox_instructions` attachment), prover, refuter and runner
   streams, `codex review` stdout, stderr log and rollout in a fake
   `CODEX_HOME`, `codex sandbox` run directly. One case per rule, including:
   provider choice with one or both CLIs and `same_provider`; the exact flags;
@@ -317,10 +345,7 @@ agent, starts the built-ins.
 - **Scorer, free.** `tests/test-review-compare.py` covers the shared parsers;
   re-score the recorded comparison and note any count change in
   `docs/MEASUREMENTS.md`.
-- **One-time paid check, only when Felipe asks:** one `/code-review` run with
-  R5's flags, to see that it runs under `--restricted`, that its Bash calls
-  and the probe appear in `stream-json`, and one `codex review` run showing
-  `sandbox_policy` read-only from the override.
+- **Live checks** (run 2026-09-26 with Felipe's approval; see Verified).
 - **Comparison, paid, only when Felipe asks.** Arms `full-builtin` (`--path
   full --writer claude`) and `standard-builtin` (`--path standard --writer
   claude`); `standard-builtin-codex` (`--writer codex`) is listed, not run.
@@ -332,7 +357,13 @@ agent, starts the built-ins.
 ## Limits
 
 - The Codex read-only sandbox limits writes, not reads.
-- MCP servers in `codex review` are turned off by flags; only use is seen.
+- MCP servers in `codex review` are turned off by flags; its start log line
+  is not always written, so sometimes only use is seen.
+- The `/code-review` probe rests on the reviewer obeying the `-p` text; one
+  that skips it is a dropout. How often that happens is measured by the arm.
+- `/code-review` treats the `-p` text as its "review target"; a future
+  release could read it differently. The transcript check would then fail
+  (no probe), giving `INCOMPLETE`.
 - Parsers follow the shapes seen on 2026-09-25/26; a new shape gives
   `INCOMPLETE`, never `READY`.
 - A mild `style`, `scope-creep` or `test-gap` label is the prover's
@@ -346,9 +377,11 @@ agent, starts the built-ins.
 
 1. **One-CLI users (R3).** Recommend approving R3: Standard falls back to the
    writer's own reviewer with `same_provider` recorded; Full needs both.
-2. **If `/code-review`'s Bash calls do not appear in the stream** (paid
-   check), recommend running it with `--tools Read,Grep,Glob,Agent`, no Bash,
-   so no sandbox needs proving; reproduction stays the prover's job.
+2. **Reading `/code-review`'s transcript** (R5) means writing, then
+   deleting, one session's files under the person's `~/.claude/projects`.
+   Recommend accepting it: it is the only place the Bash calls and sandbox
+   configuration show. The alternative, `--tools Read,Grep,Glob,Agent` with
+   no Bash, needs no proof but loses the reviewer's own test runs.
 3. **Refuter on Standard.** Recommend not yet; decide from
    `standard-builtin`.
 4. **Refuter drops** now need its own scenario test-run (R15). Recommend
@@ -357,8 +390,50 @@ agent, starts the built-ins.
    recorded replies, a real prover runs; about half the cost. Recommend yes,
    then a small live pilot.
 6. **From T5:** the Claude alias, `opus` or `fable`.
+7. **Re-run the `code-review` arm** with the spec sentence in its `-p` text,
+   since it never received it. Recommend yes, with the new arms.
 
-## Verified on 2026-09-26 (no model called)
+## Verified on 2026-09-26
+
+Live runs, with Felipe's approval, on a copy of the comparison case
+`role-permissions--01`, with the run directory under
+`~/.local/state/llm-orchestrator/t22-checks/`:
+
+- `/code-review` with R5's flags (first with `--append-system-prompt`, then
+  with the instruction in the `-p` text): exit 0 in about 37 s, one fenced
+  array (10 and 9 findings), `modelUsage` only `claude-opus-5-5`, `init` with
+  `mcp_servers: []` and tools `Task, Bash, Glob, Grep, Read`, no permission
+  denials. The stream showed no tool call. With the instruction appended to
+  the system prompt, the transcript showed no probe and no read of
+  `.git/orch-review/spec.md`, and a marker line was not written; given in
+  the `-p` text, the marker was written, and the transcript's first Bash call
+  was the probe: `touch: .../sandbox-probe: Operation not permitted` then
+  `ORCH-SANDBOX-ON`; the reviewer then ran `cat .git/orch-review/spec.md`.
+  The transcript's `sandbox_instructions` attachment listed the run
+  directory and `~/.claude` under read `denyOnly`, and the copy under write
+  `allowOnly`. The reviewer did not try to read `~/.claude/CLAUDE.md`; its
+  reply said the sandbox blocks it.
+- `claude -p` with `--restricted --tools Read`, asked to Read
+  `~/.claude/CLAUDE.md`: refused, "is outside <copy>; --restricted confines
+  the file tools to the working directory", and listed in
+  `permission_denials`.
+- `codex review` with R6's flags: exit 0 in 56 s; the review rollout
+  (`source` `{"subagent": "review"}`) has `turn_context` model
+  `gpt-6-astra`, effort `high`, sandbox `read-only`, approval `never`; a
+  developer message carries the instruction; its final message has
+  `findings`, `overall_confidence_score`, `overall_correctness` ("patch is
+  incorrect") and `overall_explanation`, with 2 findings of keys `body`,
+  `code_location`, `confidence_score`, `priority`, `title`; stdout had 2
+  `[P1]` lines. Stderr named three conversations, the first the `exec`
+  parent, one `codex-auto-review` at effort `low`; six
+  `codex.conversation_starts` lines, all `mcp_servers=""`; all tool results
+  `mcp_tool=false`.
+- The Claude experiment runner (R10), `--restricted --tools Bash` and the
+  sandbox: the stream showed the three calls verbatim, with results
+  `...Operation not permitted` / `ORCH-SANDBOX-ON`, `ORCH-EXIT=3` and
+  `ORCH-EXIT=0`; exit 0 in 12 s.
+
+Without calling a model:
 
 - `claude --help` (2.1.283) lists every flag in R5; `--restricted` confines
   file tools to the working directories and drops Bash unless `--tools`
@@ -380,15 +455,14 @@ agent, starts the built-ins.
   `[P<n>]` count equals `findings` in all 83; every stderr has
   `conversation.id=`, none a `conversation_starts` line; all 295 tool results
   have `mcp_tool=false`.
-- One rollout's `turn_context`: `gpt-6-astra`, effort `high` over the
-  config's `xhigh`, sandbox `read-only` by default, approval `never`; a
-  developer message carries the instruction.
 - A copy made as in step 3 shows a committed change, a modified file and an
   untracked file as its uncommitted change; its tree equals the fingerprint.
 
-Not verified: `/code-review` under `--restricted`, `--tools` and the
-sandbox, and its stream; `codex review` serving the `sandbox_mode` override;
-the Claude experiment runner.
+Not verified: whether `-c sandbox_mode` changes anything (`codex review`
+served `read-only` with and without it); a Bash `cat ~/.claude/CLAUDE.md`
+inside `/code-review` (the sandbox configuration denies it; nothing tried
+it); the runner with a real repro and patch; Linux; nested runs from a
+Codex session.
 
 Sources: T5's (arXiv:2605.21537, 2607.21656, 2506.07962, 2608.18167,
 2603.00539, 2606.15689) and `docs/MEASUREMENTS.md`, 2026-09-25/26.
