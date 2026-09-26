@@ -52,53 +52,21 @@ print(json.dumps({'hook_event_name':'SubagentStop','session_id':'reap-test','age
 held()  { [[ -d "$1/.orch-active" ]]; }
 mkwt()  { mkdir -p "$1/.orch-active"; }
 
-printf '%s== mutex map: ownership is keyed on agent_id ==%s\n' "$DIM" "$RESET"
-# Mutation-found gap: deleting the agent_id read left every check green,
-# because NO test exercised the mutex-map path at all — the map is the
-# reaper's PRIMARY and strongest ownership proof (PostToolUse only records a
-# claim for a command that SUCCEEDED, so a lost mkdir race records nothing).
-# Without the agent_id match the reaper releases whatever any agent claimed,
-# which puts two writers in one tree — the failure this hook exists to prevent.
-fire_as() { # fire_as <agent_id> <cwd> <last_assistant_message>
-  python3 -c "
-import json, sys
-print(json.dumps({'hook_event_name':'SubagentStop','session_id':'reap-test','agent_id':sys.argv[1],
-                  'cwd':sys.argv[2],'last_assistant_message':sys.argv[3]}))" "$1" "$2" "$3" \
-  | bash "$HOOK" 2>&1
-}
-# The map lives under the project hash of the repo the hook resolves from.
-map_for() { # map_for <repo-dir>
-  local h="default"
-  h=$(cd "$1" && bash -c '. "'"$ROOT"'/scripts/lib/orch-project.sh"; orch_project_hash' 2>/dev/null) || h="default"
-  printf '%s/state/%s/mutex-map.reap-test.tsv' "$ORCH_HOME" "$h"
-}
+printf '%s== a leftover mutex map is not evidence ==%s\n' "$DIM" "$RESET"
+# The reaper once also read a per-session "mutex map" of claims. Its only
+# writer, the evidence hook, was deleted, so the reader went too. A map an old
+# version left on disk must not release anything.
 W="$TMP/map"; mkdir -p "$W"
 ( cd "$W" && git init -q && git config user.email t@t.t && git config user.name t \
   && echo s > s.txt && git add s.txt && git commit -qm s ) >/dev/null 2>&1
-mkwt "$W/.worktrees/agent-one"; mkwt "$W/.worktrees/agent-two"
-MAP="$(map_for "$W")"; mkdir -p "$(dirname "$MAP")"
-printf 'claim\ta1\t%s\t%s\n' "$W/.worktrees/agent-one/.orch-active" "$(date +%s)" >  "$MAP"
-printf 'claim\ta2\t%s\t%s\n' "$W/.worktrees/agent-two/.orch-active" "$(date +%s)" >> "$MAP"
-OUT=$(cd "$W" && fire_as a1 "$W" 'Status: DONE
+mkwt "$W/.worktrees/agent-one"
+H=$(cd "$W" && bash -c '. "'"$ROOT"'/scripts/lib/orch-project.sh"; orch_project_hash' 2>/dev/null) || H="default"
+MAP="$ORCH_HOME/state/$H/mutex-map.reap-test.tsv"; mkdir -p "$(dirname "$MAP")"
+printf 'claim\ta1\t%s\t%s\n' "$W/.worktrees/agent-one/.orch-active" "$(date +%s)" > "$MAP"
+OUT=$(cd "$W" && fire "$W" 'Status: DONE
 Summary: finished')
-held "$W/.worktrees/agent-one" && fail "own mapped claim not reaped" "$OUT" \
-  || ok "agent a1's own mapped claim is released"
-held "$W/.worktrees/agent-two" && ok "agent a2's claim is NOT released by a1's stop (no cross-agent reap)" \
-  || fail "cross-agent reap" "a1's stop released a LIVE sibling's mutex — two writers in one tree. $OUT"
-
-printf '\n%s== mutex map: a released claim is not re-reaped ==%s\n' "$DIM" "$RESET"
-W2="$TMP/map2"; mkdir -p "$W2"
-( cd "$W2" && git init -q && git config user.email t@t.t && git config user.name t \
-  && echo s > s.txt && git add s.txt && git commit -qm s ) >/dev/null 2>&1
-mkwt "$W2/.worktrees/done-already"
-MAP2="$(map_for "$W2")"; mkdir -p "$(dirname "$MAP2")"
-printf 'claim\ta1\t%s\t%s\n'   "$W2/.worktrees/done-already/.orch-active" "$(date +%s)" >  "$MAP2"
-printf 'release\ta1\t%s\t%s\n' "$W2/.worktrees/done-already/.orch-active" "$(date +%s)" >> "$MAP2"
-OUT=$(cd "$W2" && fire_as a1 "$W2" 'Status: DONE
-Summary: finished')
-held "$W2/.worktrees/done-already" \
-  && ok "a claim already released is left alone (a later claimant's mutex is safe)" \
-  || fail "released claim re-reaped" "$OUT"
+held "$W/.worktrees/agent-one" && ok "a claim in an old mutex map releases nothing" \
+  || fail "old mutex map reaped" "$OUT"
 
 printf '\n%s== a named sibling is never reaped ==%s\n' "$DIM" "$RESET"
 W="$TMP/a"; mkwt "$W/.worktrees/mine"; mkwt "$W/.worktrees/sibling"
@@ -143,22 +111,41 @@ OUT=$(fire "$W" 'Status: DONE
 Summary: finished in .worktrees/only')
 held "$W/.worktrees/only" && ok "non-empty mutex refused (inspect by hand)" || fail "removed non-empty mutex" "$OUT"
 
-# REMOVED: the end-to-end case that drove the real orch-evidence-ledger.sh.
-# It asserted the LEDGER wrote honest claims into the mutex map — that a
-# politely losing `mkdir X || echo BLOCKED` recorded nothing, and that the
-# winner's claim was recorded and later reaped. The ledger is gone (retired to
-# a stub that exits 0), so nothing writes the map in production and there is no
-# ledger behaviour left to assert. The reaper still READS the map, and the
-# handwritten-map cases at the top of this file pin that reading: own claim
-# reaped, another agent's claim never reaped, a released claim not re-reaped.
-# The reaper's other evidence sources — the agent's CWD and a single
-# unambiguous mention in a success-shaped message — are covered below.
-
 printf '\n%s== no worktree named → nothing reaped, state reported ==%s\n' "$DIM" "$RESET"
 W="$TMP/g"; mkwt "$W/.worktrees/only"
 OUT=$(fire "$W" 'Status: DONE
 Summary: all good')
 held "$W/.worktrees/only" && ok "unnamed worktree left alone" || fail "reaped without evidence" "$OUT"
+
+printf '\n%s== the report the implementer sent its caller is read ==%s\n' "$DIM" "$RESET"
+# Captured Claude Code 2.1.282 payloads. In auto mode the report is the
+# SubagentHandback message and last_assistant_message is "Report delivered to
+# caller."; in default mode the report is last_assistant_message.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+fire_captured() { # fire_captured <out-dir> <materialize args...>
+  local dir="$1"; shift
+  python3 "$MAT" "$@" --agent-type llm-orchestrator:orch-implementer "$dir" | bash "$HOOK" 2>&1
+}
+DONE_REPORT='Status: DONE
+Summary: finished in .worktrees/only
+Verify: bash tests/test-a.sh → 3 passed'
+W="$TMP/h"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" auto --report "$DONE_REPORT")
+held "$W/repo/.worktrees/only" && fail "auto mode: DONE in the SubagentHandback report not read" "$OUT" \
+  || ok "auto mode: the one worktree named in a DONE handback report is reaped"
+W="$TMP/i"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" auto --report "$DONE_REPORT" --handback-error)
+held "$W/repo/.worktrees/only" && ok "auto mode: a SubagentHandback answered by an error is not the report" \
+  || fail "auto mode: reaped from an errored handback" "$OUT"
+W="$TMP/j"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" default --report "$DONE_REPORT")
+held "$W/repo/.worktrees/only" && fail "default mode: DONE in last_assistant_message not read" "$OUT" \
+  || ok "default mode: the one worktree named in a DONE last_assistant_message is reaped"
+W="$TMP/k"; mkwt "$W/repo/.worktrees/only"
+OUT=$(fire_captured "$W" default --report 'Status: BLOCKED
+Need: .worktrees/only is held')
+held "$W/repo/.worktrees/only" && ok "default mode: a BLOCKED report reaps nothing" \
+  || fail "default mode: reaped on BLOCKED" "$OUT"
 
 printf '\n'
 if (( FAIL == 0 )); then

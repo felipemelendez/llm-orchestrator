@@ -1,5 +1,5 @@
 ---
-description: List the orchestrator's skills and commands with their trigger conditions, so you can see what is available and when each fires.
+description: List the orchestrator's skills and commands and when each applies.
 ---
 
 You are running `/llm-orchestrator:skills`.
@@ -18,7 +18,7 @@ Steps:
 
 3. Present the result as a `Found:` block. Group the skills:
    - **Process** — brainstorming, research-classifier, systematic-debugging
-   - **Build** — writing-plans, executing-plans, test-driven-development, dispatching-subagents, dispatching-parallel-agents, using-workflows
+   - **Build** — writing-plans, executing-plans, test-driven-development, dispatching-subagents, dispatching-parallel-agents
    - **Review & finish** — requesting-code-review, receiving-code-review, verification-before-completion, finishing-a-branch
    - **Context & memory** — handing-off-to-fresh-context, managing-memory, using-orchestrator
    - **Git** — using-git-worktrees

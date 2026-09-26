@@ -117,8 +117,7 @@ EOS
   # entirely by the "no suite names this file" path.
   printf '%s\n' 'set -u' '. ./src/epsilon.js' '[ -n "$EPSILON_MARK" ] && echo ASSERT_PASS || echo ASSERT_FAIL' > "$d/tests/epsilon.test.js"
   cat > "$d/docs/llm-orchestrator/cadence.json" <<EOS
-{ "schema": 1, "enabled": true, "notes_dir": "docs/llm-orchestrator/notes",
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
+{ "schema": 1, "enabled": true, "workflow": "proportional",
   "runner": { "profile": "fixture", "test_cmd": "bash runner.sh", "summary_re": "^Tests:",
               "fail_count_re": "([0-9]+) failed", "suites_re": "^Suites:" },
   "typecheck_cmd": "bash typecheck.sh", "unused_cmd": "",
@@ -401,15 +400,31 @@ bash "$DETECT" --root "$SS" > "$TMP/proposal.json" 2>"$TMP/derr"; RC=$?
 [[ "$RC" == "0" ]] && ok "cadence-detect.sh exits 0" || fail "detect rc" "rc=$RC $(cat "$TMP/derr")"
 python3 -m json.tool "$TMP/proposal.json" >/dev/null 2>&1 && ok "the proposal is valid JSON" || fail "detect json" "$(cat "$TMP/proposal.json")"
 MISSING=""
-for k in schema enabled notes_dir ticket_re runner typecheck_cmd unused_cmd src_roots prod_globs test_globs \
+for k in schema enabled workflow runner typecheck_cmd unused_cmd src_roots prod_globs test_globs \
          import_patterns export_pattern comment_prefixes positive_control wait_patterns wait_timeout_s \
          scratch_dir refuse_paths lock_extra install_cmd; do
   grep -q "\"$k\"" "$TMP/proposal.json" || MISSING="$MISSING $k"
 done
 [[ -z "$MISSING" ]] && ok "every cadence.json key is present in the proposal" || fail "detect keys" "missing:$MISSING"
+if grep -qE '"(notes_dir|ticket_re)"' "$TMP/proposal.json"; then fail "detect unused keys" "$(grep -oE '"(notes_dir|ticket_re)"' "$TMP/proposal.json" | tr '\n' ' ')"; else ok "the proposal carries no key nothing reads (notes_dir, ticket_re)"; fi
 grep -q '"profile": "shell-suites"' "$TMP/proposal.json" && ok "tests/run-all.sh + tests/test-*.sh → shell-suites" || fail "detect shell-suites" "$(grep profile "$TMP/proposal.json")"
 DSNAP1="$TMP/dsnap1"; snapshot "$SS" "$DSNAP1"
 cmp -s "$DSNAP0" "$DSNAP1" && ok "the detector wrote nothing" || fail "detector wrote" "$(diff "$DSNAP0" "$DSNAP1" | head -5)"
+[[ ! -s "$TMP/derr" ]] && ok "no existing cadence.json: the detector says nothing on stderr" || fail "detect stderr" "$(cat "$TMP/derr")"
+# SCENE: the project already has an enabled cadence.json with no workflow, or
+# "legacy"; when the detector runs; expect the proposal (which says
+# "proportional") on stdout and the shared workflow error on stderr, so the
+# existing file's problem is never hidden behind a clean proposal.
+for WV in none legacy; do
+  DW="$TMP/detect-$WV"; mkdir -p "$DW/docs/llm-orchestrator"
+  if [[ "$WV" == "none" ]]; then printf '{ "enabled": true }\n' > "$DW/docs/llm-orchestrator/cadence.json"
+  else printf '{ "enabled": true, "workflow": "legacy" }\n' > "$DW/docs/llm-orchestrator/cadence.json"; fi
+  bash "$DETECT" --root "$DW" > "$TMP/dw.json" 2>"$TMP/dw.err"; RC=$?
+  if [[ "$RC" == "0" ]] && python3 -m json.tool "$TMP/dw.json" >/dev/null 2>&1 \
+     && grep -qF 'needs "workflow": "proportional"' "$TMP/dw.err" && grep -qF 'cadence-ruling.sh' "$TMP/dw.err"; then
+    ok "existing workflow $WV: the proposal still prints, and stderr names the existing file's error"
+  else fail "detect existing workflow $WV" "rc=$RC err=$(cat "$TMP/dw.err")"; fi
+done
 
 dprofile() { # dprofile <dir> -> the detected profile
   bash "$DETECT" --root "$1" 2>/dev/null | sed -n 's/.*"profile": "\([^"]*\)".*/\1/p' | head -1

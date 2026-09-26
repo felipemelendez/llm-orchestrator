@@ -61,6 +61,55 @@ unmeasurable here while its false-positive cost is documented from live
 operation. The case pair needs pressure that actually induces false claims
 before this question can be re-asked. An honest inconclusive, logged as such.
 
+### 2026-09-25/26 — The Full review found no more than /code-review or codex review
+`tests/evals/review-compare/` (method: `tests/evals/README.md`, "The review
+comparison"). Raw results stay in the run's ignored `review-compare/work/`
+folder, not in Git.
+83 cases (69 with planted defects, 14 clean), 134 planted defects, one try per
+case, three arms: `full` (this plugin's `orch-review.py`, Claude seat and
+refuter on claude-opus-5-5, Codex seat on gpt-6-astra), `code-review`
+(`/code-review high` on claude-opus-5-5) and `codex-review` (`codex review` on
+gpt-6-astra). 5 of 83 `full` runs ended INCOMPLETE and are left out of its
+numbers: in four the contract seat listed something it had not checked
+(multi-line CSV cells twice, a large Decimal amount, a case-sensitive file
+system), and in one the contract seat dropped out because its sandbox check did
+not show a refused write outside the copy.
+
+Scored with the corrected scorer. The first scoring read each `/code-review`
+reply as one finding, because that reply puts its findings in a JSON array in a
+fenced block and the scorer split only on list items and headings: it saw 84
+findings where there were 700, and gave `code-review` 48/134. The scorer now
+reads one finding per array item.
+
+| arm | found | serious | mild | tampering | false | false/run | clean runs with no finding | minutes per case |
+|---|---|---|---|---|---|---|---|---|
+| `code-review` | 125/134 (93%) | 59/63 | 66/71 | 14/14 | 481 | 5.8 | 0/14 | 0.6 |
+| `codex-review` | 130/134 (97%) | 61/63 | 69/71 | 14/14 | 107 | 1.3 | 3/14 | 1.1 |
+| `full` (78 complete) | 123/126 (98%) | 59/61 | 64/65 | 14/14 | 258 | 3.3 | 0/13 | 3.3 |
+
+Paired on the defects both arms saw (exact McNemar): `full` against
+`code-review`, 6 found only by `full` and 1 only by `code-review`, p = 0.125;
+`full` against `codex-review`, 1 and 1, p = 1.0; `codex-review` against
+`code-review`, 7 and 2, p = 0.18. None is a difference.
+
+The "false" column overstates noise. A finding is false when it points at no
+planted defect, and the clean cases turned out to hold real bugs the set did
+not plant. An audit read 80 sampled false findings (40 `full`, 25
+`codex-review`, 15 `code-review`): almost all were true, either real bugs or
+spec gaps the set did not plant, or minor notes that the tests do not cover
+something. None of the 80 was wrong.
+
+**Conclusion.** `full` did not detect more than `/code-review` or `codex
+review`, and took three to five and a half times as long. What it adds is a
+run: on its 78 complete runs, 477 of the 538 findings it reported (89%, every
+finding except notes and dropped ones) were reproduced by a failing command
+and a patch, and it blocks. It returned NOT-READY on all 78 complete runs, including
+all 13 complete clean cases, partly because it ranked notes that the tests do
+not cover something as serious. **Acted on:** such a note is now a `test-gap`
+finding, mild unless it carries a failing command (R13 in
+`docs/specs/review-design.md`); test tampering stays serious. Not yet run: the `full-swap`, `full-no-refuter`, `full-split`
+and Standard arms.
+
 ## Field records (not A/B)
 
 Everything above this line is an A/B run. Everything below it is not, and the
@@ -144,16 +193,18 @@ threat, and this one never was.
 
 - `archive/POISONED-2026-08-04T131538Z-*` — a session limit returned 94/100
   normal-looking $0 results; graded as failures they produced a confident
-  false "REGRESSION p=0.000". The runner now excludes error rows, aborts on
-  three consecutive errors, and invalidates arms with >10% loss.
+  false "REGRESSION p=0.000". `claude plugin eval` still grades such runs and
+  does not mark the suite partial, so read each run's `error` field before
+  trusting a score (`tests/evals/README.md`).
 - 2026-08-05 — arm names containing `/` (branch refs) broke scratch paths;
   the abort-don't-pay guard stopped the run after one arm was already paid.
-  Fixed with `ORCH_EVAL_DRY_RUN` coverage (`tests/test-eval-runner-paths.sh`).
+  That runner has since been replaced by `claude plugin eval`.
 
 ## Not yet measured
 
-The remaining deferred runs and every case marked "unrun detector" in
-`tests/evals/cases/` — see the open items in the dated plan under
+The remaining deferred runs, every case in `tests/evals/cases/` since its move
+to `claude plugin eval`, and the review comparison's other arms in
+`tests/evals/review-compare/` (its three main arms are in the ledger) — see the open items in the dated plan under
 `docs/llm-orchestrator/plans/`. An unmeasured bet stays a bet; this ledger
 only ever grows by paid runs.
 
@@ -161,5 +212,6 @@ only ever grows by paid runs.
 cost and what it dropped, but not what it was worth: no arm ran without it. The
 settling run is a held-out set of tickets put through the cadence twice, once
 with the refuter stage and once without, graded on defects that reach a landing
-and on rounds spent. Until that runs, "the refuter pays above a threshold" is an
+and on rounds spent. The review comparison's `full` and `full-no-refuter` arms
+measure the review step's part of this. Until that runs, "the refuter pays above a threshold" is an
 operating rule taken from one operator's experience, not a measured finding.

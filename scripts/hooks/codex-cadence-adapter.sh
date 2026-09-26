@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # LLM Orchestrator — Codex's deny rules for the cadence lock set. Claude Code
-# denies the locked FILES natively; Codex has no such rule, so this PreToolUse
+# denies the locked FILES natively; Codex can only through a permission profile
+# in ~/.codex/config.toml, which the setup does not write, so this PreToolUse
 # hook (matchers Bash and apply_patch) is that one layer and nothing else: a
 # command or a patch header that names a locked file and is not one plain read
 # is refused with exit 2 and the way out printed.
@@ -26,15 +27,6 @@ CJ="$PROJ/docs/llm-orchestrator/cadence.json"
 [ -f "$CJ" ] || exit 0
 tr -d '\n' < "$CJ" | grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' || exit 0
 
-# The unlock is honoured from the environment only. A file that persists it is
-# a disarmed lock: the unlock stops counting and the refusal says where it is.
-PERSIST=""
-if [ "${ORCH_CADENCE_UNLOCK:-}" = "1" ]; then
-  for f in "${HOME:-}/.codex/config.toml" "$PROJ/.codex/config.toml" "$PROJ/.claude/settings.json"; do
-    if [ -f "$f" ] && grep -q ORCH_CADENCE_UNLOCK "$f" 2>/dev/null; then PERSIST="$f"; fi
-  done
-  [ -n "$PERSIST" ] || exit 0
-fi
 [ -t 0 ] && exit 0
 PAY=$(cat); TOOL=""; TEXT=""; NOPY=""
 if command -v python3 >/dev/null 2>&1; then
@@ -76,8 +68,7 @@ basehit() { local t=" $1 " n; for n in "${BASE[@]}"; do
   case "$t" in *[$BB]"$n"[$AA]*) HIT="$n"; return 0 ;; esac; done; return 1; }
 refuse() {
   printf 'cadence lock: "%s" would change %s, and a change to this file is a ruling, not an edit.\n' "$1" "$2" >&2
-  printf 'Read it with one plain command (cat %s) — no pipe, no redirect, nothing else on the line — or start the session with ORCH_CADENCE_UNLOCK=1 in its environment.\n' "$2" >&2
-  [ -n "$PERSIST" ] && printf 'The unlock is set, but %s persists it: a persisted unlock is a disarmed lock, so it is not honoured. Pass it per session instead.\n' "$PERSIST" >&2
+  printf 'Read it with one plain command (cat %s) — no pipe, no redirect, nothing else on the line. To change it, explain why and give the person a patch to apply with cadence-ruling.sh in their own terminal.\n' "$2" >&2
   [ -n "$NOPY" ] && printf 'python3 is not on the PATH, so this hook cannot read the command precisely; a call that names a locked file is refused — read the file from your own shell, or install python3.\n' >&2
   exit 2
 }

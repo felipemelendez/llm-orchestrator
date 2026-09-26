@@ -16,11 +16,10 @@
 #   P2  docs/install.md Option B wires every hook script hooks.json ships.
 #   P3  --copy seeds settings.json from templates/settings.json and ships
 #       docs/install.md so the settings _hooks_note pointer resolves.
-#   P4  --check fails on deleted referenced files and corrupted JSON.
+#   P4  --check fails on deleted referenced files and corrupted JSON, the Codex
+#       manifest included.
 #   P6  both hard-guard escape hatches are documented.
 #   P7  templates/settings.json contains no permission rules that cannot fire.
-#   P8  validate-workflows signals degraded mode when node is absent.
-#   P10 validate-workflows' empty-directory message states its actual scope.
 #
 # Bash 3.2 compatible. Exits non-zero on any failure.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -152,7 +151,7 @@ section "--copy fails closed on unresolvable hooks (P1)"
 copy_tree() {
   local dst="$1" item
   mkdir -p "$dst"
-  for item in "$ROOT"/* "$ROOT"/.claude-plugin "$ROOT"/.github; do
+  for item in "$ROOT"/* "$ROOT"/.claude-plugin "$ROOT"/.codex-plugin "$ROOT"/.github; do
     [[ -e "$item" ]] || continue
     cp -R "$item" "$dst/"
   done
@@ -176,6 +175,113 @@ else
 fi
 
 # ------------------------------------------------------------
+# P11 — a --copy upgrade leaves nothing the plugin no longer ships, and never
+# touches what the project put in .claude/ itself.
+# ------------------------------------------------------------
+section "--copy upgrade removes what the plugin stopped shipping (P11)"
+copy_tree "$TMP/src-old"
+mkdir -p "$TMP/src-old/skills/old-skill"
+printf 'x\n' > "$TMP/src-old/skills/cadence/references/fixer.md"
+printf -- '---\nname: old-skill\ndescription: Use when never.\n---\nold\n' > "$TMP/src-old/skills/old-skill/SKILL.md"
+printf 'x\n' > "$TMP/src-old/commands/old-command.md"
+printf 'x\n' > "$TMP/src-old/scripts/lib/old-lib.py"
+printf 'x\n' > "$TMP/src-old/scripts/hooks/old-hook.sh"
+upgrade_scene() { # <label> <project> <drop-manifest 0|1>
+  local label="$1" proj="$2" f
+  mkdir -p "$proj/.claude/skills/my-skill" "$proj/.claude/commands" "$proj/.claude/scripts"
+  printf 'mine\n' > "$proj/.claude/skills/my-skill/SKILL.md"
+  printf 'mine\n' > "$proj/.claude/commands/mine.md"
+  printf 'mine\n' > "$proj/.claude/scripts/mine.sh"
+  bash "$TMP/src-old/scripts/install.sh" --copy "$proj" > "$TMP/up-old.out" 2>&1 \
+    || fail "$label: old install" "$(tail -3 "$TMP/up-old.out")"
+  [[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] || fail "$label: fixture" "the old install did not place fixer.md"
+  [[ "$3" == "1" ]] && rm -f "$proj/.claude/.llm-orchestrator-files"
+  bash "$ROOT/scripts/install.sh" --copy "$proj" > "$TMP/up-new.out" 2>&1 \
+    || fail "$label: new install" "$(tail -3 "$TMP/up-new.out")"
+  if [[ "$3" == "0" ]]; then
+    if [[ ! -e "$proj/.claude/skills/cadence/references/fixer.md" ]]; then
+      ok "$label: a file removed from a shipped skill is gone"
+    else fail "$label: stale skill file" "skills/cadence/references/fixer.md survived the upgrade"; fi
+  else
+    # With no record the installer cannot prove it put a file there, so it
+    # removes nothing and lists what the plugin no longer ships instead.
+    if [[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] \
+       && grep -qF 'skills/cadence/references/fixer.md' "$TMP/up-new.out" && grep -qi 'delete' "$TMP/up-new.out"; then
+      ok "$label: nothing is removed; the file the plugin no longer ships is listed for the person to delete"
+    else fail "$label: no-record listing" "kept=$([[ -f "$proj/.claude/skills/cadence/references/fixer.md" ]] && echo yes || echo no) out=$(tail -5 "$TMP/up-new.out")"; fi
+    grep -qF 'skills/my-skill' "$TMP/up-new.out" && fail "$label: listing" "the project's own skill was listed" \
+      || ok "$label: the project's own skill is not listed"
+  fi
+  for f in skills/my-skill/SKILL.md commands/mine.md scripts/mine.sh; do
+    [[ -f "$proj/.claude/$f" ]] && ok "$label: the project's own $f is kept" \
+      || fail "$label: own file" "$f was removed"
+  done
+}
+upgrade_scene "with the install record" "$TMP/proj-up" 0
+for f in skills/old-skill/SKILL.md commands/old-command.md scripts/lib/old-lib.py scripts/hooks/old-hook.sh; do
+  [[ ! -e "$TMP/proj-up/.claude/$f" ]] && ok "with the install record: $f, no longer shipped, is gone" \
+    || fail "with the install record: stale $f" "it survived the upgrade"
+done
+[[ ! -d "$TMP/proj-up/.claude/skills/old-skill" ]] && ok "with the install record: the emptied skill folder is gone" \
+  || fail "empty skill dir" "skills/old-skill is still there"
+upgrade_scene "an install made before the record existed" "$TMP/proj-up-legacy" 1
+[[ -f "$TMP/proj-up-legacy/.claude/.llm-orchestrator-files" ]] && ok "the upgrade writes the install record" \
+  || fail "install record" "no .claude/.llm-orchestrator-files after --copy"
+
+# ------------------------------------------------------------
+# P12 — the cleanup never deletes a file the plugin did not place, and never
+# reaches through a link.
+# ------------------------------------------------------------
+section "--copy cleanup deletes only what it placed, never through a link (P12)"
+# Scene 1: the project owns a read-only file at a path the plugin ships. The
+# copy cannot place it (agents/ copy errors are tolerated), so it must not be
+# recorded as the plugin's; a later upgrade that retires the path leaves it.
+if [[ "$(id -u)" != "0" ]]; then
+  copy_tree "$TMP/src-ro"
+  printf 'plugin version\n' > "$TMP/src-ro/agents/orch-retired.md"
+  P="$TMP/proj-ro"; mkdir -p "$P/.claude/agents"
+  printf 'the project'"'"'s own\n' > "$P/.claude/agents/orch-retired.md"; chmod 444 "$P/.claude/agents/orch-retired.md"
+  bash "$TMP/src-ro/scripts/install.sh" --copy "$P" > "$TMP/ro1.out" 2>&1 || true
+  grep -qxF 'agents/orch-retired.md' "$P/.claude/.llm-orchestrator-files" 2>/dev/null \
+    && fail "unplaced file recorded" "agents/orch-retired.md is in the record though the copy could not place it" \
+    || ok "a file the copy could not place is not recorded"
+  bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ro2.out" 2>&1 || true
+  if [[ -f "$P/.claude/agents/orch-retired.md" ]] && grep -qF "the project's own" "$P/.claude/agents/orch-retired.md"; then
+    ok "retiring that path leaves the project's own file"
+  else fail "project file deleted" "agents/orch-retired.md is gone or changed after the upgrade"; fi
+  chmod 644 "$P/.claude/agents/orch-retired.md" 2>/dev/null || true
+else
+  ok "read-only scene skipped: root ignores file modes"
+fi
+# Scene 2: an installed skill folder later replaced by a link to a shared
+# skill. Retiring that skill must not delete the files behind the link.
+P="$TMP/proj-link"; mkdir -p "$P"
+bash "$TMP/src-old/scripts/install.sh" --copy "$P" > "$TMP/ln1.out" 2>&1 || fail "link scene: old install" "$(tail -3 "$TMP/ln1.out")"
+mkdir -p "$TMP/shared/old-skill"
+printf 'shared\n' > "$TMP/shared/old-skill/SKILL.md"
+rm -rf "$P/.claude/skills/old-skill"; ln -s "$TMP/shared/old-skill" "$P/.claude/skills/old-skill"
+bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ln2.out" 2>&1 || fail "link scene: new install" "$(tail -3 "$TMP/ln2.out")"
+[[ -f "$TMP/shared/old-skill/SKILL.md" ]] && ok "a retired skill whose folder is now a link: the file behind the link stays" \
+  || fail "deleted through a link" "$TMP/shared/old-skill/SKILL.md is gone"
+[[ -L "$P/.claude/skills/old-skill" ]] && ok "and the link itself is left alone" || fail "link removed" "skills/old-skill is no longer a link"
+
+# Scene 3: the person edits a file the plugin placed. When the plugin retires
+# that path, the edited file holds their own content: it is kept and listed.
+P="$TMP/proj-edit"; mkdir -p "$P"
+bash "$TMP/src-old/scripts/install.sh" --copy "$P" > "$TMP/ed1.out" 2>&1 || fail "edit scene: old install" "$(tail -3 "$TMP/ed1.out")"
+printf 'my own notes\n' > "$P/.claude/commands/old-command.md"
+bash "$ROOT/scripts/install.sh" --copy "$P" > "$TMP/ed2.out" 2>&1 || fail "edit scene: new install" "$(tail -3 "$TMP/ed2.out")"
+if [[ -f "$P/.claude/commands/old-command.md" ]] && grep -qF 'my own notes' "$P/.claude/commands/old-command.md"; then
+  ok "a retired file the person edited is kept"
+else fail "edited file deleted" "commands/old-command.md is gone or changed"; fi
+grep -qF 'commands/old-command.md' "$TMP/ed2.out" && grep -qF 'did not add' "$TMP/ed2.out" \
+  && ok "and it is listed for the person to delete if it is not theirs" || fail "edited file not listed" "$(tail -5 "$TMP/ed2.out")"
+[[ ! -e "$P/.claude/scripts/lib/old-lib.py" ]] && ok "an unchanged retired file in the same upgrade is still removed" \
+  || fail "unchanged retired file" "scripts/lib/old-lib.py survived"
+head -1 "$P/.claude/.llm-orchestrator-files" | grep -qE '^[0-9a-f]{64}  [^ ]' \
+  && ok "the record stores a content hash per file" || fail "record format" "$(head -1 "$P/.claude/.llm-orchestrator-files")"
+
+# ------------------------------------------------------------
 # P4 — --check must fail on deletions and corruption
 # ------------------------------------------------------------
 section "--check blind spots (P4)"
@@ -197,11 +303,7 @@ expect_check_fail() {
 
 expect_check_ok "--check passes on a pristine copy"
 
-# Deleting either of the two hook scripts the old hand list had drifted past.
-mv "$TMP/src/scripts/hooks/guard-config-protection.sh" "$TMP/keep.a"
-expect_check_fail "--check fails when guard-config-protection.sh is deleted"
-mv "$TMP/keep.a" "$TMP/src/scripts/hooks/guard-config-protection.sh"
-
+# Deleting a hook script the old hand list had drifted past.
 mv "$TMP/src/scripts/hooks/skill-telemetry.sh" "$TMP/keep.a"
 expect_check_fail "--check fails when skill-telemetry.sh is deleted"
 mv "$TMP/keep.a" "$TMP/src/scripts/hooks/skill-telemetry.sh"
@@ -229,10 +331,22 @@ PY
 expect_check_fail "--check fails when hooks.json references a missing script"
 cp "$TMP/keep.a" "$TMP/src/hooks/hooks.json"
 
+# The Codex manifest carries its hooks inline; the same two checks cover it.
+cp "$TMP/src/.codex-plugin/plugin.json" "$TMP/keep.a"
+printf 'NOT JSON{{{\n' > "$TMP/src/.codex-plugin/plugin.json"
+expect_check_fail "--check fails when .codex-plugin/plugin.json is not JSON"
+python3 - "$TMP/keep.a" "$TMP/src/.codex-plugin/plugin.json" <<'PY'
+import io, sys
+s = io.open(sys.argv[1], encoding="utf-8").read()
+io.open(sys.argv[2], "w", encoding="utf-8").write(s.replace("codex-verify-gate.sh", "does-not-exist.sh", 1))
+PY
+expect_check_fail "--check fails when .codex-plugin/plugin.json references a missing script"
+cp "$TMP/keep.a" "$TMP/src/.codex-plugin/plugin.json"
+
 # Referenced artifacts proven deletable-without-detection before the fix.
-mv "$TMP/src/workflows/review-diff.js" "$TMP/keep.a"
-expect_check_fail "--check fails when workflows/review-diff.js is deleted"
-mv "$TMP/keep.a" "$TMP/src/workflows/review-diff.js"
+mv "$TMP/src/scripts/lib/orch-review.py" "$TMP/keep.a"
+expect_check_fail "--check fails when scripts/lib/orch-review.py is deleted"
+mv "$TMP/keep.a" "$TMP/src/scripts/lib/orch-review.py"
 
 mv "$TMP/src/templates/settings.json" "$TMP/keep.a"
 expect_check_fail "--check fails when templates/settings.json is deleted"
@@ -262,8 +376,8 @@ mv "$TMP/src/agents/orch-implementer.md" "$TMP/keep.a"
 expect_check_fail "--check fails when agents/orch-implementer.md is deleted"
 mv "$TMP/keep.a" "$TMP/src/agents/orch-implementer.md"
 
-# The cadence files. None of them is derived from hooks.json — several are
-# scripts and references no hook manifest names — so the manifest is the only
+# The cadence files and the libraries hooks load. None of them is derived from
+# hooks.json — no hook manifest names them — so the manifest is the only
 # thing that fails closed when one of them is deleted, which is exactly the
 # blind spot this section exists for.
 for cadence_entry in commands/cadence-init.md \
@@ -271,6 +385,9 @@ for cadence_entry in commands/cadence-init.md \
                      scripts/hooks/codex-verify-gate.sh \
                      scripts/lib/codex-completion-check.py \
                      scripts/lib/codex-cadence-read-command.py \
+                     scripts/lib/orch-completion-check.py \
+                     scripts/lib/orch-subagent-report.py \
+                     skills/cadence/scripts/cadence-ruling.sh \
                      templates/cadence-global-block.md \
                      skills/cadence/SKILL.md \
                      skills/cadence/CADENCE.md \
@@ -279,7 +396,7 @@ for cadence_entry in commands/cadence-init.md \
                      skills/cadence/scripts/cadence-detect.sh \
                      skills/cadence/scripts/cadence-init.sh \
                      skills/cadence/references/commit-msg \
-                     skills/cadence/references/cadence-state.md; do
+                     skills/cadence/references/laws.md; do
   if [[ -f "$TMP/src/$cadence_entry" ]]; then
     mv "$TMP/src/$cadence_entry" "$TMP/keep.a"
     expect_check_fail "--check fails when ${cadence_entry} is deleted"
@@ -332,7 +449,7 @@ fi
 # ------------------------------------------------------------
 section "escape hatches (P6)"
 
-for knob in ORCH_ALLOW_DESTRUCTIVE_GIT ORCH_ALLOW_CONFIG_EDIT; do
+for knob in ORCH_ALLOW_DESTRUCTIVE_GIT; do
   if grep -q "$knob" "$ROOT/docs/install.md"; then
     ok "$knob documented in docs/install.md"
   else
@@ -373,45 +490,6 @@ if [[ -z "$PERM_OUT" ]]; then
   ok "templates/settings.json has no rules that cannot fire"
 else
   fail "templates/settings.json has no rules that cannot fire" "$PERM_OUT"
-fi
-
-# ------------------------------------------------------------
-# P8 + P10 — validate-workflows honesty
-# ------------------------------------------------------------
-section "validate-workflows (P8, P10)"
-
-# P10: only a nested *.js present — the message must state the actual scope
-# (top level of workflows/), not "contains no *.js".
-mkdir -p "$TMP/vw/tests/lib" "$TMP/vw/workflows/sub"
-cp "$ROOT/tests/validate-workflows.sh" "$TMP/vw/tests/"
-# The syntax/meta checker lives in tests/lib/ and the validator refuses to run
-# without it — correct, but this case is about the top-level-scope message.
-cp "$ROOT/tests/lib/check-workflow-script.mjs" "$TMP/vw/tests/lib/"
-printf 'export const meta = {};\n' > "$TMP/vw/workflows/sub/x.js"
-VW_OUT=$(bash "$TMP/vw/tests/validate-workflows.sh" 2>&1)
-VW_RC=$?
-if [[ $VW_RC -ne 0 ]] && printf '%s' "$VW_OUT" | grep -q "top level"; then
-  ok "empty-top-level message states its scope and fails"
-else
-  fail "empty-top-level message states its scope and fails" "rc=$VW_RC out=$VW_OUT"
-fi
-
-# P8: with node absent the success line must signal degraded mode and must NOT
-# read as the full-validation pass line.
-SHIM="$TMP/shim-bin"
-mkdir -p "$SHIM"
-for t in sh grep find sort head sed cat dirname uname; do
-  p=$(command -v "$t" 2>/dev/null) && ln -s "$p" "$SHIM/$t"
-done
-NODELESS_OUT=$(PATH="$SHIM" "$BASH" "$ROOT/tests/validate-workflows.sh" 2>&1)
-NODELESS_RC=$?
-if [[ $NODELESS_RC -eq 0 ]] \
-   && printf '%s' "$NODELESS_OUT" | grep -q "degraded" \
-   && ! printf '%s' "$NODELESS_OUT" | grep -q "workflow script(s) validated"; then
-  ok "node-less run signals degraded mode, not a full pass"
-else
-  fail "node-less run signals degraded mode, not a full pass" \
-       "rc=$NODELESS_RC out=$(printf '%s' "$NODELESS_OUT" | tail -1)"
 fi
 
 # ------------------------------------------------------------

@@ -61,13 +61,12 @@ _orch_sweep_lockdirs() { # <dir>
 [[ -d "${ARCH_CACHE_DIR}" ]] && find "${ARCH_CACHE_DIR}" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 # Handoff nudge markers (Layer 9 fire-once state): short-lived, prune after 1 day.
 [[ -d "${HANDOFF_STATE_DIR}" ]] && find "${HANDOFF_STATE_DIR}" -name 'nudged.*' -type f -mtime +1 -delete 2>/dev/null || true
-# Evidence ledgers + mutex maps (per-session, written by orch-evidence-ledger.sh)
-# and retry-cap fingerprints: session-scoped, prune after 7 days.
+# Retry-cap fingerprints: session-scoped, prune after 7 days.
 STATE_DIR="${HOME_DIR}/state"
 if [[ -d "${STATE_DIR}" ]]; then
   # briefs-index accumulates a row per research pass and was pruned by nothing.
   [[ -d "${HOME_DIR}/research/briefs-index" ]] && find "${HOME_DIR}/research/briefs-index" -type f -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
-  find "${STATE_DIR}" \( -name 'evidence.*.tsv' -o -name 'mutex-map.*.tsv' -o -name 'retry-cap*' -o -name 'turn-start.*' \) -type f -mtime +7 -delete 2>/dev/null || true
+  find "${STATE_DIR}" -name 'retry-cap*' -type f -mtime +7 -delete 2>/dev/null || true
 fi
 # Research cache uses its own (shorter) retention since docs change faster than sessions.
 # Per-library overrides are honored: a cache file with `cache_ttl_days: <N>` in

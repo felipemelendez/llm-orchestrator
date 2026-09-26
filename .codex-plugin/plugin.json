@@ -1,0 +1,51 @@
+{
+  "name": "llm-orchestrator",
+  "version": "0.11.0",
+  "description": "The Codex part of LLM Orchestrator: the cadence and review skills, the file guard and the completion check.",
+  "homepage": "https://github.com/felipemelendez/llm-orchestrator",
+  "repository": "https://github.com/felipemelendez/llm-orchestrator",
+  "license": "MIT",
+  "skills": ["./skills/cadence", "./skills/requesting-code-review"],
+  "hooks": {
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "Bash",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${PLUGIN_ROOT}/scripts/hooks/codex-cadence-adapter.sh\"",
+              "timeout": 10
+            }
+          ]
+        },
+        {
+          "matcher": "apply_patch",
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${PLUGIN_ROOT}/scripts/hooks/codex-cadence-adapter.sh\"",
+              "timeout": 10
+            }
+          ]
+        }
+      ],
+      "Stop": [
+        {
+          "hooks": [
+            {
+              "type": "command",
+              "command": "bash \"${PLUGIN_ROOT}/scripts/hooks/codex-verify-gate.sh\"",
+              "timeout": 10
+            },
+            {
+              "type": "command",
+              "command": "bash \"${PLUGIN_ROOT}/scripts/hooks/orch-task-cleanup.sh\"",
+              "timeout": 10
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

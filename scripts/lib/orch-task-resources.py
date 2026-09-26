@@ -27,6 +27,11 @@ import time
 import uuid
 
 
+# The one wording for a bad workflow, shared with orch-cadence-check.sh,
+# cadence-init.sh and orch-protocol.sh (tests/test-cadence-docs.sh).
+WORKFLOW_FIX = ('needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed')
+
+
 class Unsafe(Exception):
     pass
 
@@ -65,6 +70,33 @@ def git(project, *args, timeout=None):
     if result.returncode:
         raise Unsafe(f"git {' '.join(args[:2])}: {result.stderr.strip()}")
     return result.stdout
+
+
+def fingerprint(path):
+    """Return the tree id of every tracked and untracked, non-ignored file in a checkout.
+
+    The files are added to a temporary index, so the checkout's own index is untouched.
+    """
+    with tempfile.TemporaryDirectory(prefix="orch-fingerprint-") as temporary:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(temporary) / "index")}
+        def run(*args):
+            result = subprocess.run(["git", "-C", str(path), *args], capture_output=True,
+                                    text=True, check=False, env=env)
+            if result.returncode:
+                raise Unsafe(f"git {args[0]}: {result.stderr.strip()}")
+            return result.stdout
+        if subprocess.run(["git", "-C", str(path), "rev-parse", "--verify", "-q", "HEAD"],
+                          capture_output=True, check=False).returncode == 0:
+            run("read-tree", "HEAD")
+        run("add", "-A")
+        return run("write-tree").strip()
+
+
+def clone_baseline(path):
+    """Refs, HEAD and worktrees of a clone; any later addition is unique work."""
+    return {"refs": sorted(git(path, "for-each-ref", "--format=%(refname) %(objectname)").splitlines()),
+            "head": git(path, "rev-parse", "HEAD").strip(),
+            "worktrees": len(git(path, "worktree", "list", "--porcelain", "-z").split("\0\0"))}
 
 
 def canonical(value):
@@ -177,11 +209,12 @@ class Manager:
             if not isinstance(resource, dict):
                 raise Unsafe("malformed resource record")
             name = resource.get("name", "")
-            if (not re.fullmatch(r"(?:copy|worktree)-[0-9a-f]{32}", name)
-                    or name in seen or resource.get("kind") not in {"copy", "worktree"}
+            if (not re.fullmatch(r"(?:copy|worktree|clone)-[0-9a-f]{32}", name)
+                    or name in seen or resource.get("kind") not in {"copy", "worktree", "clone"}
                     or not name.startswith(resource["kind"] + "-")
                     or not identity_valid(resource.get("identity"))
-                    or type(resource.get("removed")) is not bool):
+                    or type(resource.get("removed")) is not bool
+                    or not isinstance(resource.get("baseline", {}), (dict, type(None)))):
                 raise Unsafe("malformed resource ownership")
             seen.add(name)
         for token, consumer in state["leases"].items():
@@ -234,10 +267,10 @@ class Manager:
         if expected is None or ident(path) != expected or path.resolve() != path:
             raise Unsafe(f"resource missing, replaced or uncertain: {path}")
 
-    def project_valid(self, state, timeout=None):
+    def project_valid(self, state):
         project = Path(state["project"])
         self.owned(project, state["project_identity"])
-        common = git(project, "rev-parse", "--git-common-dir", timeout=timeout).strip()
+        common = git(project, "rev-parse", "--git-common-dir").strip()
         actual = canonical(Path(common) if Path(common).is_absolute() else project / common)
         if str(actual) != state["common_dir"]:
             raise Unsafe("project repository changed")
@@ -269,9 +302,11 @@ class Manager:
                 raise Unsafe("unknown consumer generation")
             return self.result(state)
 
-    def create(self, task_id, token, kind, ref="HEAD", branch=None):
-        if kind not in {"copy", "worktree"} or ref.startswith("-") or (branch and branch.startswith("-")):
-            raise Unsafe("invalid resource kind or Git ref")
+    def create(self, task_id, token, kind, ref="HEAD", branch=None, tree=None):
+        if (kind not in {"copy", "worktree", "clone"} or ref.startswith("-")
+                or (branch and branch.startswith("-"))
+                or (kind == "clone") != bool(tree and re.fullmatch(r"[0-9a-f]{40,64}", tree))):
+            raise Unsafe("invalid resource kind, Git ref or tree")
         with self.locked(task_id):
             state = self.read(task_id)
             if state["status"] != "open" or token not in state["leases"]:
@@ -282,9 +317,13 @@ class Manager:
             name = f"{kind}-{uuid.uuid4().hex}"
             path = scratch / name
             resource = dict(name=name, kind=kind, identity=None, removed=False)
+            if kind == "clone":
+                resource["baseline"] = None
             state["resources"].append(resource)
             self.save(state)
-            if kind == "worktree":
+            if kind == "clone":
+                self.clone(project, path, tree)
+            elif kind == "worktree":
                 # Never claim an existing branch as owned; branches are always retained.
                 args = ["worktree", "add"]
                 args += ["-b", branch] if branch else ["--detach"]
@@ -292,10 +331,44 @@ class Manager:
             else:
                 path.mkdir(mode=0o700)
             resource["identity"] = ident(path)
+            if kind == "clone":
+                resource["baseline"] = clone_baseline(path)
             self.save(state)
             if kind == "copy":
                 self.snapshot(project, path)
             return {"id": task_id, "path": str(path), "kind": kind}
+
+    @staticmethod
+    def clone(project, path, tree):
+        # A disposable clone with its own .git (objects copied, never hardlinked, so
+        # nothing in the clone can change the real object files), HEAD at the real HEAD, and the
+        # fingerprinted tree (committed plus uncommitted files) checked out.
+        # The remote is removed so nothing in the clone can push to the project.
+        git(project, "clone", "--quiet", "--local", "--no-hardlinks", "--no-checkout", str(project), str(path))
+        head = git(project, "rev-parse", "HEAD").strip()
+        if git(path, "rev-parse", "HEAD").strip() != head:
+            git(path, "update-ref", "--no-deref", "HEAD", head)
+        git(path, "remote", "remove", "origin")
+        # The project's own exclude rules, so its ignored files stay ignored in the clone.
+        common = Path(git(project, "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+        if (common / "info/exclude").is_file():
+            (path / ".git/info").mkdir(exist_ok=True)
+            shutil.copyfile(common / "info/exclude", path / ".git/info/exclude")
+        git(path, "read-tree", "-u", "--reset", tree)
+
+    def clone_safe(self, path, resource):
+        marker = path / ".git"
+        if marker.is_symlink() or not marker.is_dir():
+            raise Unsafe("clone has no own .git directory")
+        if not resource.get("baseline"):
+            raise Unsafe("clone refs were never recorded; ownership is uncertain")
+        if self.repository_inside(path, skip=marker):
+            raise Unsafe("clone contains another repository")
+        current = clone_baseline(path)
+        baseline = resource["baseline"]
+        if (not set(current["refs"]) <= set(baseline["refs"]) or current["head"] != baseline["head"]
+                or current["worktrees"] > baseline["worktrees"]):
+            raise Unsafe("clone holds a ref, stash, commit or worktree it did not have when made")
 
     def snapshot(self, project, destination):
         # An explicitly disposable copy of current tracked and nonignored files.
@@ -386,6 +459,8 @@ class Manager:
                     raise Unsafe("active or uncertain writer mutex")
                 if resource["kind"] == "worktree":
                     self.worktree_safe(state, path)
+                elif resource["kind"] == "clone":
+                    self.clone_safe(path, resource)
                 elif self.repository_inside(path):
                     raise Unsafe("copy contains a repository; writer ownership is uncertain")
                 resource["deleting"] = True
@@ -410,8 +485,11 @@ class Manager:
         return []
 
     @staticmethod
-    def repository_inside(path):
-        for _, dirs, files in os.walk(path, followlinks=False):
+    def repository_inside(path, skip=None):
+        for root, dirs, files in os.walk(path, followlinks=False):
+            if skip is not None and Path(root) == path:
+                dirs[:] = [name for name in dirs if path / name != skip]
+                files = [name for name in files if path / name != skip]
             if ".git" in dirs or ".git" in files or ".orch-active" in dirs or ".orch-active" in files:
                 return True
             if "HEAD" in files and "objects" in dirs and "refs" in dirs:
@@ -500,51 +578,6 @@ class Manager:
         return []
 
 
-def owned_disposable_target(path, project):
-    """Recognize leased disposable scratch from existing helper state, read-only.
-
-    Infer custom storage from its exact managed layout, never from a filename
-    prefix alone. Writer worktrees are deliberately outside this exemption.
-    False means unknown ownership; callers must retain normal source uncertainty.
-    """
-    try:
-        target = Path(path).expanduser().absolute()
-        if ".." in target.parts or target.resolve() != target:
-            return False
-        project = canonical(project)
-        for scratch in (target, *target.parents):
-            if scratch.parent.name != "scratch" or not re.fullmatch(r"[0-9a-f]{32}", scratch.name):
-                continue
-            manager = Manager(scratch.parent.parent, create=False)
-            with manager.locked(scratch.name, existing_only=True, nonblocking=True):
-                state = manager.read(scratch.name, max_bytes=RoutineBudget.STATE_BYTES)
-                if (state["project"] != str(project) or state["status"] != "open"
-                        or not state["leases"]):
-                    return False
-                manager.project_valid(state, timeout=0.5)
-                manager.owned(scratch, state["identity"])
-                relative = target.relative_to(scratch)
-                if ".git" in relative.parts:
-                    return False
-                if relative.parts:
-                    for resource in state["resources"]:
-                        if resource["name"] == relative.parts[0]:
-                            if resource["kind"] != "copy" or resource["removed"]:
-                                return False
-                            manager.owned(scratch / resource["name"], resource["identity"])
-                for ancestor in (target, *target.parents):
-                    if not nested(ancestor, scratch):
-                        break
-                    if ((ancestor / ".git").exists() or (ancestor / ".git").is_symlink()
-                            or ((ancestor / "HEAD").exists() and (ancestor / "objects").is_dir()
-                                and (ancestor / "refs").is_dir())):
-                        return False
-                return True
-    except (Unsafe, OSError, ValueError, KeyError, TypeError):
-        pass
-    return False
-
-
 def hook_retry(state_dir=None, payload=None):
     """A Stop is only a chance to retry an explicitly finished opted-in task."""
     try:
@@ -554,7 +587,8 @@ def hook_retry(state_dir=None, payload=None):
             payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             raise Unsafe("hook payload must be an object")
-        cwd = payload.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+        # The same starting point as orch_cadence_find in scripts/lib/orch-project.sh.
+        cwd = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or os.getcwd()
         if not isinstance(cwd, str):
             raise Unsafe("hook cwd must be a path")
         resolved_cwd = canonical(cwd)
@@ -568,19 +602,21 @@ def hook_retry(state_dir=None, payload=None):
                 return  # A normal Stop outside a repository is not an error.
             raise Unsafe(f"cannot locate hook project: {probe.stderr.strip()}")
         project = canonical(probe.stdout.strip())
-        config_path = project / "docs/llm-orchestrator/cadence.json"
-        if not config_path.exists():
+        # The nearest cadence.json from the start up to the Git root, as
+        # orch_cadence_find decides it; tasks stay keyed by the Git root.
+        config_path = next((d / "docs/llm-orchestrator/cadence.json"
+                            for d in [resolved_cwd, *resolved_cwd.parents]
+                            if nested(d, project)
+                            if (d / "docs/llm-orchestrator/cadence.json").is_file()), None)
+        if config_path is None:
             return
         config = json.loads(config_path.read_text())
         if not isinstance(config, dict) or type(config.get("enabled")) is not bool:
             raise Unsafe("invalid cadence enabled setting")
         if not config["enabled"]:
             return
-        workflow = config.get("workflow", "legacy")
-        if workflow not in {"legacy", "proportional"}:
-            raise Unsafe("invalid cadence workflow setting")
-        if workflow != "proportional":
-            return
+        if config.get("workflow") != "proportional":
+            raise Unsafe("docs/llm-orchestrator/cadence.json " + WORKFLOW_FIX)
         if not canonical(state_dir or Manager.default_base()).exists():
             return
         manager = Manager(state_dir)

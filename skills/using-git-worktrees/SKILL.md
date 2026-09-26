@@ -1,6 +1,6 @@
 ---
 name: using-git-worktrees
-description: Use when work needs isolation from the current branch — long-running feature, risky refactor, parallel attempt. Creates and tracks a worktree without touching unrelated state.
+description: Use when work needs its own branch and checkout — a long feature, a risky refactor, or a parallel attempt.
 ---
 
 # Using git worktrees
@@ -15,7 +15,8 @@ isolation is needed. Acquire a lease, create a copy/worktree, release after all
 consumers stop, then explicitly finish after preserving deliverables. The helper
 checks ownership, leases, locks, ignored/dirty files and retained commits before
 non-forcing removal. Report retained paths. Never adopt old resources. No
-automatic dependencies or broad baseline suites. Stop here; legacy steps follow.
+automatic dependencies or broad baseline suites. Stop here; the steps below
+are for projects without an enabled cadence.
 
 ## Delegation
 

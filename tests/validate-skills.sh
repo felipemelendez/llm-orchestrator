@@ -131,20 +131,19 @@ while IFS= read -r dir; do
     dispatching-subagents)         limit=2202  ;;
     using-orchestrator)            limit=1535  ;;
     dispatching-parallel-agents)   limit=1389  ;;
-    requesting-code-review)        limit=1249  ;;
     test-driven-development)       limit=1247  ;;
     research-classifier)           limit=1094  ;;
     brainstorming)                 limit=1087  ;;
     writing-plans)                 limit=1068  ;;
     using-git-worktrees)           limit=1018  ;;
     managing-memory)               limit=1012  ;;
-    using-workflows)               limit=981   ;;
     systematic-debugging)          limit=972   ;;
     verification-before-completion) limit=942   ;;
     executing-plans)               limit=903   ;;
     writing-skills)                limit=847   ;;
     finishing-a-branch)            limit=769   ;;
-    receiving-code-review)         limit=664   ;;
+    requesting-code-review)        limit=647   ;;
+    receiving-code-review)         limit=619   ;;
     *)                              limit=500  ;;
   esac
   if (( body_words > limit )); then
@@ -280,7 +279,7 @@ REQUIRED_SKILLS="using-orchestrator brainstorming writing-plans executing-plans 
 dispatching-subagents dispatching-parallel-agents test-driven-development \
 systematic-debugging verification-before-completion requesting-code-review \
 receiving-code-review using-git-worktrees finishing-a-branch writing-skills \
-using-workflows research-classifier managing-memory handing-off-to-fresh-context"
+research-classifier managing-memory handing-off-to-fresh-context"
 for req in $REQUIRED_SKILLS; do
   if [[ ! -f "$ROOT/skills/$req/SKILL.md" ]]; then
     echo "FAIL: core skill missing: skills/$req/SKILL.md (deletion must be deliberate — update REQUIRED_SKILLS in the same commit)"
@@ -331,17 +330,22 @@ done < <(command grep -rn --include='*.md' -e 'OK: [0-9]* skills, [0-9]* command
 # Every agent's model pin is owner policy, and this list is where it is written
 # down, so a change to a pin shows up in the same commit where a reviewer sees it.
 #
-# Policy (Felipe, 2026-09-21): opus everywhere.
-# It was fable everywhere except orch-security-reviewer, which was already opus
-# because Fable's safety classifiers fire on benign security-review work. The same
+# Policy (Felipe, 2026-09-21): opus everywhere; the explorer is sonnet (2026-09-25).
+# It was fable everywhere except the security reviewer agent (since removed), which
+# was already opus because Fable's safety classifiers fire on benign security-review work. The same
 # thing kept happening beyond security work — a Codex review of this repo's own
 # hook refused an ordinary audit brief as a "cybersecurity risk", and the Fable
 # review route was rate-limited out entirely — so the exception became the rule.
+# Opus 5.5, which `opus` now means, runs the same safety classifiers as Fable
+# (cybersecurity-flagged requests re-run on Opus 4.8), so the classifier reason
+# no longer separates the two; the rate limit and the lower price still do.
 # The agent files are the source of truth; this list follows them.
 while IFS= read -r agent_file; do
   [[ -f "$agent_file" ]] || continue
   agent_name=$(basename "$agent_file" .md)
   want=opus
+  # Felipe, 2026-09-25: the read-only explorer runs on the latest Sonnet.
+  [[ "$agent_name" == "orch-explorer" ]] && want=sonnet
   got=$(awk '/^---$/{c++; next} c==1 && /^model:/{print $2; exit}' "$agent_file")
   if [[ -z "$got" ]]; then
     echo "FAIL: $agent_file has no 'model:' pin (expected ${want})"
@@ -351,11 +355,24 @@ while IFS= read -r agent_file; do
     echo "      Change the policy list in tests/validate-skills.sh in this same commit and say why."
     fail=1
   fi
+  # Effort (Felipe, 2026-09-25): the reviewer agent runs at high, because a
+  # reviewer that stops early misses findings; every other agent inherits the
+  # session's level.
+  case "$agent_name" in
+    orch-spec-reviewer) want_effort=high ;;
+    *) want_effort="" ;;
+  esac
+  got_effort=$(awk '/^---$/{c++; next} c==1 && /^effort:/{print $2; exit}' "$agent_file")
+  if [[ "$got_effort" != "$want_effort" ]]; then
+    echo "FAIL: $agent_file has 'effort: ${got_effort:-<unset>}' but policy says '${want_effort:-<unset>}'"
+    fail=1
+  fi
 done < <(find "$ROOT/agents" -maxdepth 1 -name '*.md' | sort)
 
 # The plugin version is quoted in prose, and a quoted version rots: manual-testing
 # claimed 0.1.0 while the plugin shipped 0.6.0, and marketplace.json is a second
-# copy that must agree with plugin.json or an install advertises the wrong build.
+# copy that must agree with plugin.json or an install advertises the wrong build;
+# .codex-plugin/plugin.json is a third copy, and Codex keys its cached install by it.
 # One source of truth, checked against every copy.
 PLUGIN_VERSION=$(python3 -c "import json;print(json.load(open('${ROOT}/.claude-plugin/plugin.json'))['version'])" 2>/dev/null)
 if [[ -z "${PLUGIN_VERSION}" ]]; then
@@ -368,6 +385,11 @@ d=json.load(open('${ROOT}/.claude-plugin/marketplace.json'))
 print(d['plugins'][0].get('version',''))" 2>/dev/null)
   if [[ "${MP_VERSION}" != "${PLUGIN_VERSION}" ]]; then
     echo "FAIL: marketplace.json says '${MP_VERSION}' but plugin.json says '${PLUGIN_VERSION}'"
+    fail=1
+  fi
+  CODEX_VERSION=$(python3 -c "import json;print(json.load(open('${ROOT}/.codex-plugin/plugin.json')).get('version',''))" 2>/dev/null)
+  if [[ "${CODEX_VERSION}" != "${PLUGIN_VERSION}" ]]; then
+    echo "FAIL: .codex-plugin/plugin.json says '${CODEX_VERSION}' but .claude-plugin/plugin.json says '${PLUGIN_VERSION}'"
     fail=1
   fi
   while IFS= read -r hit; do

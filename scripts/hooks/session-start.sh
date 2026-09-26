@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # LLM Orchestrator SessionStart hook.
 #
-# Loads the using-orchestrator meta-skill (Concise Agent Protocol) as session
-# context. User-curated facts live in Claude Code's native CLAUDE.md; plugin
+# Loads the using-orchestrator meta-skill core (when a skill applies) as session
+# context, plus its reply-format block only in a project whose cadence.json is
+# enabled. User-curated facts live in Claude Code's native CLAUDE.md; plugin
 # state is loaded at trigger time by the gate hook, not ambient.
 #
 # The meta-skill bootstrap always loads. The post-compaction advisory is
@@ -19,11 +20,10 @@ if [[ ",${DISABLED}," == *",orch-session-start,"* ]]; then
   exit 0
 fi
 
-# One loud, early notice if python3 is missing: the protocol grader and the
-# subagent Status grader both no-op without it. Each also warns at grade time,
+# One loud, early notice if python3 is missing: the subagent Status grader and
+# the completion check both no-op without it. Each also warns when it runs,
 # but that stderr is easy to miss; this surfaces it once at session start.
-# Informational only — never fails the hook. Silent under the minimal profile,
-# where those graders are already off.
+# Informational only — never fails the hook. Silent under the minimal profile.
 if [[ "${PROFILE}" != "minimal" ]] && ! command -v python3 >/dev/null 2>&1; then
   printf 'LLM Orchestrator: python3 not found — the subagent Status grader and the completion check are disabled. Install python3 to enable them, or set ORCH_HOOK_PROFILE=minimal to silence this notice.\n' >&2
 fi
@@ -37,7 +37,10 @@ MAX_CHARS="${ORCH_SESSION_MAX_CHARS:-8000}"
 # controller that the in-flight narrative is lossy. A PreCompact hook exists,
 # but carries no additionalContext in hookSpecificOutput — it can block
 # compaction, not add to it — so this is where that advisory lives.
-INPUT=$(cat || true)
+# Read it only from a non-tty stdin: a bare `bash session-start.sh` in a
+# terminal would otherwise block in `cat` forever.
+INPUT=""
+[[ -t 0 ]] || INPUT=$(cat || true)
 # Extract the source, matching only the documented enum values. Claude Code's
 # SessionStart payload is flat (source is a top-level field), so the first match
 # is the real value. (This takes the first enum-valued "source" in the payload;
@@ -66,19 +69,19 @@ strip_frontmatter() {
   ' "$1"
 }
 
-# Extract only the eager protocol core marked in the meta-skill, so SessionStart
-# injects ~400 tokens instead of the whole ~2,000-token body. The rest of the
-# file (routing table, red flags, dispatch detail) is loaded lazily when the
-# agent reads the skill. Prints nothing if the markers are absent — the caller
-# then falls back to the full body, so a custom meta-skill without markers keeps
-# working exactly as before.
-extract_eager() {
+# Extract one marked block of the meta-skill (<!-- ORCH:<NAME>:START/END -->),
+# so SessionStart injects the short core instead of the whole ~2,000-token body.
+# The rest of the file (routing table, dispatch detail) is loaded when the agent
+# reads the skill. Prints nothing if the markers are absent — for the EAGER
+# block the caller then falls back to the full body, so a custom meta-skill
+# without markers keeps working.
+extract_block() { # <file> <NAME>
   # Buffer the block and emit it only once a matching END marker is seen. A
-  # malformed START-without-END therefore prints nothing (fail closed) so the
-  # caller falls back to the full body rather than grabbing the file to EOF.
-  awk '
-    /<!-- ORCH:EAGER:START -->/ { grab=1; buf=""; next }
-    /<!-- ORCH:EAGER:END -->/   { if (grab) seen=1; grab=0; next }
+  # malformed START-without-END therefore prints nothing (fail closed) rather
+  # than grabbing the file to EOF.
+  awk -v s="<!-- ORCH:$2:START -->" -v e="<!-- ORCH:$2:END -->" '
+    $0 == s { grab=1; buf=""; next }
+    $0 == e { if (grab) seen=1; grab=0; next }
     grab { buf = buf $0 "\n" }
     END  { if (seen) printf "%s", buf }
   ' "$1"
@@ -112,11 +115,12 @@ truncate_at_line() {
 # ---------------------------------------------------------------------------
 # The cadence verdict.
 #
-# Stage 1 is the same opt-in test the cadence guards use — a file test and a
-# grep on docs/llm-orchestrator/cadence.json, no JSON decode and no fork — so a
-# project that never opted in pays nothing and its output stays byte-identical
-# to what this hook printed before the cadence existed (pinned in
-# tests/test-cadence-session-start.sh against the commit before this change).
+# Stage 1 is orch_protocol_workflow, the same test the per-turn hook uses, so
+# the two hooks always agree on whether the cadence is on. A project without a
+# cadence.json pays one git call and nothing else: no verdict and no
+# reply-format rule (tests/test-cadence-session-start.sh). A cadence.json that
+# does not decode still gets the verdict, which reports the error, but no
+# reply-format rule.
 #
 # The verdict is PREPENDED because truncation drops the TAIL: whatever else the
 # budget eats, the session opens knowing whether the lock still matches the tree.
@@ -124,10 +128,22 @@ truncate_at_line() {
 # ORCH_DISABLED_HOOKS=orch-session-start, so nothing may depend on it.
 # ---------------------------------------------------------------------------
 CADENCE_PREFIX=""
+CADENCE_STATE=""
 CADENCE_PROJ="${CLAUDE_PROJECT_DIR:-${PWD}}"
+# Resolve the library from this script's own location first, like the check
+# script below, so a wrong CLAUDE_PLUGIN_ROOT still finds it; fall back to ROOT.
+# With neither present the install is broken and the cadence reads as off.
+PROTOCOL_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/../lib/orch-protocol.sh"
+[[ -f "${PROTOCOL_LIB}" ]] || PROTOCOL_LIB="${ROOT}/scripts/lib/orch-protocol.sh"
+if [[ -f "${PROTOCOL_LIB}" ]] && source "${PROTOCOL_LIB}"; then
+  CADENCE_PROJ=$(orch_cadence_root "${INPUT}")
+  CADENCE_STATE=$(orch_protocol_workflow "${INPUT}")
+fi
 CADENCE_PROJ="${CADENCE_PROJ%/}"
-CADENCE_CFG="${CADENCE_PROJ}/docs/llm-orchestrator/cadence.json"
-if [[ -f "${CADENCE_CFG}" ]] && grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "${CADENCE_CFG}"; then
+# The reply-format rule and the recovery reminder need the cadence on.
+CADENCE_ON=""
+[[ "${CADENCE_STATE}" == "proportional" ]] && CADENCE_ON=1
+if [[ -n "${CADENCE_STATE}" ]]; then
   _orch_sha256() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum | awk '{print $1}'
     elif command -v shasum >/dev/null 2>&1; then shasum -a 256 | awk '{print $1}'
@@ -149,7 +165,7 @@ if [[ -f "${CADENCE_CFG}" ]] && grep -qE '"enabled"[[:space:]]*:[[:space:]]*true
     # different rules run in two different places.
     if [[ -f "${CADENCE_PROJ}/.githooks/orch-cadence-check.sh" ]] \
        && ! cmp -s "${CADENCE_PROJ}/.githooks/orch-cadence-check.sh" "${CHECK_SH}"; then
-      VERDICT="${VERDICT} · hook copy differs from the plugin's (re-run the cadence skill's init under the unlock)"
+      VERDICT="${VERDICT} · hook copy differs from the plugin's (re-run the cadence init: it writes an upgrade ruling to apply with cadence-ruling.sh)"
     fi
   else
     VERDICT="cadence: check script missing at ${CHECK_WANT}"
@@ -188,9 +204,36 @@ META_BODY=""
 META_FILE="${ROOT}/skills/using-orchestrator/SKILL.md"
 if [[ -f "${META_FILE}" ]]; then
   # Prefer the lean eager core; fall back to the full body if unmarked.
-  META_BODY=$(extract_eager "${META_FILE}")
-  [[ -z "${META_BODY}" ]] && META_BODY=$(strip_frontmatter "${META_FILE}")
+  META_BODY=$(extract_block "${META_FILE}" EAGER)
+  if [[ -z "${META_BODY}" ]]; then
+    META_BODY=$(strip_frontmatter "${META_FILE}")
+  elif [[ -n "${CADENCE_ON}" ]]; then
+    # The six reply headers are a cadence-project rule. Everywhere else the
+    # session gets no reply-format rule from this plugin.
+    FORMAT_BODY=$(extract_block "${META_FILE}" FORMAT)
+    [[ -n "${FORMAT_BODY}" ]] && META_BODY="${META_BODY}
+
+${FORMAT_BODY}"
+  fi
 fi
+
+# Prepend a short preamble naming the Skill tool as the invocation surface for
+# the rest of the catalog, so the agent knows where the process lives.
+#
+# It used to end "skipping a skill that applies is the failure mode, not
+# invoking one and discarding it" — an instruction to distrust one's own
+# relevance judgement, injected into every session. That is the inverse of the
+# Claude 5 guidance ("Then: give Claude rules / Now: let Claude use
+# judgement"), and it was the last surviving copy after the same phrasing was
+# removed from the meta-skill and CLAUDE.md. The skill descriptions are already
+# in context and are the real trigger surface; a mandate on top of them buys
+# nothing and costs the model its own judgement about relevance.
+PREAMBLE="You are running LLM Orchestrator. Below is the core of your 'using-orchestrator' meta-skill. The rest of the catalog loads through the 'Skill' tool — each skill's description says when it applies.
+
+---
+"
+POSTAMBLE="
+---"
 
 # The post-compaction recovery note is the reactive half of the handoff feature.
 # Honour the "minimal/disabled = silent" invariant.
@@ -199,35 +242,32 @@ if [[ ",${DISABLED}," == *",orch-handoff-nudge,"* ]] || [[ "${PROFILE}" == "mini
   PRESSURE_DISABLED=1
 fi
 
-# Compact path — emit the lean recovery note plus the canonical per-turn
-# protocol reminder (NOT the ~8K meta body, which would risk the 10,000-char
-# additionalContext cap). The reminder is included here so protocol survival
-# across compaction does not depend on the per-turn hook being enabled.
+# Compact path — emit the lean recovery note plus, in a cadence-enabled project,
+# the canonical protocol reminder (NOT the ~8K meta body, which would risk the
+# 10,000-char additionalContext cap). The reminder is included here so the
+# format survives compaction without depending on the per-turn hook.
 # The newest-handoff path is derived live (a pointer, never the artifact body).
 if [[ "${SOURCE}" == "compact" ]] && [[ "${PRESSURE_DISABLED}" == "0" ]]; then
-  PROTOCOL_MARKER="orch-turn-reminder"
-  PROTOCOL_LIB="${ROOT}/scripts/lib/orch-protocol.sh"
-  if [[ -f "$PROTOCOL_LIB" ]]; then
-    source "$PROTOCOL_LIB"
-    orch_protocol_is_proportional "$INPUT" && PROTOCOL_MARKER="orch-proportional-reminder"
-  fi
-  PROJ="${CLAUDE_PROJECT_DIR:-${PWD}}"
-  HANDOFF_DIR="${PROJ}/docs/llm-orchestrator/handoffs"
+  PROTOCOL_MARKER="orch-proportional-reminder"
+  HANDOFF_DIR="${CADENCE_PROJ}/docs/llm-orchestrator/handoffs"
   NEWEST="none"
-  if [[ "$PROTOCOL_MARKER" == "orch-turn-reminder" && -d "${HANDOFF_DIR}" ]]; then
+  if [[ -z "${CADENCE_ON}" && -d "${HANDOFF_DIR}" ]]; then
     # Newest by modification time (robust to regeneration in place). The note
     # also tells the next turn the plan file is authoritative over the artifact,
     # so a wrong pick self-corrects, but mtime is the right primary signal.
     _newest=$(ls -1t "${HANDOFF_DIR}"/*.md 2>/dev/null | head -1)
     [[ -n "${_newest}" ]] && NEWEST="${_newest}"
   fi
+  HANDOFF_HINT=""
+  [[ "${NEWEST}" != "none" ]] && HANDOFF_HINT=" (newest: ${NEWEST})"
 
   # Canonical protocol reminder (single source: concise-agent-protocol.md).
+  # It carries the reply-format rule, so only a cadence-enabled project gets it.
   CANON_FILE="${ROOT}/concise-agent-protocol.md"
   PROTOCOL_CORE=""
-  [[ -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk -v s="<!-- $PROTOCOL_MARKER-start -->" -v e="<!-- $PROTOCOL_MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON_FILE}" 2>/dev/null)
+  [[ -n "${CADENCE_ON}" && -f "${CANON_FILE}" ]] && PROTOCOL_CORE=$(awk -v s="<!-- $PROTOCOL_MARKER-start -->" -v e="<!-- $PROTOCOL_MARKER-end -->" '$0==s{f=1;next} $0==e{f=0} f' "${CANON_FILE}" 2>/dev/null)
 
-  if [[ "$PROTOCOL_MARKER" == "orch-proportional-reminder" ]]; then
+  if [[ -n "${CADENCE_ON}" ]]; then
     NOTE="
 
 ---
@@ -245,14 +285,23 @@ ${PROTOCOL_CORE}"
 **Post-compaction recovery.** This session resumed immediately after native context compaction. The narrative above the boundary is a lossy summary — treat in-flight details (file:line refs, test counts, what was just edited) as unverified.
 
 Before continuing or claiming any work done:
-- Reconcile against the plan file's checkboxes and TaskList — they are authoritative over any handoff artifact. Re-run the verification baseline if it looks stale.
-- Newest handoff artifact: ${NEWEST}. If its frontmatter slug does not match the active plan, discard it and rebuild from the plan file and git history.
-- If all plan tasks are checked, stop and report — do not invent work.
+- If a plan file exists, reconcile against its checkboxes — they are authoritative over any handoff artifact. Re-run the verification baseline if it looks stale.
+- If a handoff file exists${HANDOFF_HINT}, check that its frontmatter slug matches the active plan; if not, discard it and rebuild from the plan file and git history.
+- If every task in the plan is checked, stop and report — do not invent work.
 
 ${PROTOCOL_CORE}"
   fi
 
+  [[ -z "${PROTOCOL_CORE}" ]] && NOTE="${NOTE%$'\n\n'}"
+  # Without the cadence there is no reminder to re-establish the format, but the
+  # rule for when a skill applies was lost with the summary, so it goes back in.
+  if [[ -z "${CADENCE_ON}" && -n "${META_BODY}" ]]; then
+    NOTE="${NOTE}
+
+${PREAMBLE}${META_BODY}${POSTAMBLE}"
+  fi
   NOTE="${CADENCE_PREFIX}${NOTE}"
+  NOTE=$(truncate_at_line "${NOTE}" "${MAX_CHARS}")
 
   if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
     printf 'orch-dry-run[session-start]: would inject post-compaction recovery note (%s chars)\n' "${#NOTE}" >&2
@@ -283,23 +332,6 @@ if [[ -z "${META_BODY}" ]]; then
   exit 0
 fi
 
-# Prepend a short preamble naming the Skill tool as the invocation surface for
-# the rest of the catalog, so the agent knows where the process lives.
-#
-# It used to end "skipping a skill that applies is the failure mode, not
-# invoking one and discarding it" — an instruction to distrust one's own
-# relevance judgement, injected into every session. That is the inverse of the
-# Claude 5 guidance ("Then: give Claude rules / Now: let Claude use
-# judgement"), and it was the last surviving copy after the same phrasing was
-# removed from the meta-skill and CLAUDE.md. The skill descriptions are already
-# in context and are the real trigger surface; a mandate on top of them buys
-# nothing and costs the model its own judgement about relevance.
-PREAMBLE="You are running LLM Orchestrator. Below is the protocol core of your 'using-orchestrator' meta-skill. The rest of the catalog loads through the 'Skill' tool — each skill's description says when it applies.
-
----
-"
-POSTAMBLE="
----"
 
 BODY="${CADENCE_PREFIX}${PREAMBLE}${META_BODY}${POSTAMBLE}"
 

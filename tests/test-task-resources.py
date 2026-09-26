@@ -2,6 +2,7 @@
 """Filesystem, Git preservation and deterministic lifecycle concurrency checks."""
 
 import importlib.util
+import io
 import fcntl
 import json
 import multiprocessing
@@ -141,6 +142,94 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual((copy / "source.py").read_text(), "edited\n")
         self.assertTrue((copy / "new.py").exists())
         self.assertFalse((copy / "private.ignored").exists())
+
+    def clone(self):
+        token = self.acquire()
+        result = self.manager.create(self.task_id, token, "clone", tree=MOD.fingerprint(self.project))
+        self.release(token)
+        return Path(result["path"])
+
+    def new_task(self):
+        self.task = self.manager.start(self.project, "test")
+        self.task_id = self.task["id"]
+        self.scratch = Path(self.task["scratch"])
+
+    def test_fingerprint_covers_uncommitted_files_and_leaves_the_index_alone(self):
+        clean = MOD.fingerprint(self.project)
+        self.assertEqual(clean, self.git("rev-parse", "HEAD^{tree}").strip())
+        index = (self.project / ".git/index").read_bytes()
+        (self.project / "private.ignored").write_text("ignored\n")
+        self.assertEqual(MOD.fingerprint(self.project), clean)
+        (self.project / "new.py").write_text("new\n")
+        untracked = MOD.fingerprint(self.project)
+        self.assertNotEqual(untracked, clean)
+        (self.project / "source.py").write_text("edited\n")
+        self.assertNotIn(MOD.fingerprint(self.project), {clean, untracked})
+        self.assertEqual((self.project / ".git/index").read_bytes(), index)
+        self.assertIn("?? new.py", self.git("status", "--porcelain"))
+
+    def test_clone_holds_the_uncommitted_change_with_its_own_git_at_real_head(self):
+        (self.project / "source.py").write_text("edited\n")
+        (self.project / "new.py").write_text("new\n")
+        (self.project / "private.ignored").write_text("not copied")
+        clone = self.clone()
+        self.assertTrue((clone / ".git").is_dir())
+        self.assertEqual((clone / "source.py").read_text(), "edited\n")
+        self.assertEqual((clone / "new.py").read_text(), "new\n")
+        self.assertFalse((clone / "private.ignored").exists())
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=clone), self.git("rev-parse", "HEAD"))
+        self.assertEqual(MOD.fingerprint(clone), MOD.fingerprint(self.project))
+        self.assertEqual(self.git("remote", cwd=clone).strip(), "")
+
+    def test_clone_shares_no_object_file_with_the_real_repository(self):
+        (self.project / "new.py").write_text("new\n")
+        clone = self.clone()
+        def inodes(root):
+            return {(path.stat().st_dev, path.stat().st_ino) for path in root.rglob("*") if path.is_file()}
+        self.assertEqual(inodes(self.project / ".git/objects") & inodes(clone / ".git/objects"), set())
+
+    def test_clone_at_detached_head_matches_real_head(self):
+        self.git("checkout", "-q", "--detach")
+        clone = self.clone()
+        self.assertEqual(self.git("rev-parse", "HEAD", cwd=clone), self.git("rev-parse", "HEAD"))
+
+    def test_finish_removes_a_clone_whose_files_changed(self):
+        clone = self.clone()
+        (clone / "source.py").write_text("a reviewer edited this\n")
+        (clone / "probe.txt").write_text("scratch probe\n")
+        result = self.manager.finish(self.task_id)
+        self.assertEqual(result["status"], "done", result)
+        self.assertFalse(clone.exists())
+        self.assertEqual((self.project / "source.py").read_text(), "original\n")
+
+    def test_clone_with_new_ref_stash_worktree_or_commit_is_kept(self):
+        identity = ("-c", "user.name=F", "-c", "user.email=f@example.invalid")
+        def branch(clone):
+            self.git("branch", "extra", cwd=clone)
+        def stash(clone):
+            (clone / "source.py").write_text("stashed\n")
+            self.git(*identity, "stash", "-q", cwd=clone)
+        def worktree(clone):
+            self.git("worktree", "add", "-q", "--detach", str(clone.parent / "extra"), cwd=clone)
+        def commit(clone):
+            (clone / "source.py").write_text("committed\n")
+            self.git(*identity, "commit", "-qam", "unique", cwd=clone)
+        for change in (branch, stash, worktree, commit):
+            with self.subTest(change.__name__):
+                self.new_task()
+                clone = self.clone()
+                change(clone)
+                result = self.assert_retained(clone)
+                self.assertTrue(any(str(clone) in reason for reason in result["reasons"]), result)
+
+    def test_clone_with_writer_mutex_or_nested_repository_is_kept(self):
+        clone = self.clone()
+        (clone / ".orch-active").write_text("writer")
+        self.assert_retained(clone)
+        self.new_task()
+        clone = self.clone()
+        self.git("init", "-q", str(clone / "nested"))
+        self.assert_retained(clone)
 
     def test_consumer_closes_admission_and_release_never_finishes(self):
         token = self.acquire("reviewer")
@@ -494,6 +583,16 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)["tasks"][0]["status"], "done")
 
+    def test_hook_names_the_fix_for_a_missing_or_legacy_workflow(self):
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        for value in ({"enabled": True}, {"enabled": True, "workflow": "legacy"}):
+            with self.subTest(value=value):
+                config.write_text(json.dumps(value))
+                with mock.patch("sys.stderr", new_callable=io.StringIO) as err:
+                    MOD.hook_retry(self.manager.base, {"cwd": str(self.project)})
+                self.assertIn('needs "workflow": "proportional"', err.getvalue())
+
     def test_hook_requires_exact_proportional_opt_in(self):
         token = self.acquire()
         self.manager.finish(self.task_id)
@@ -514,6 +613,22 @@ class LifecycleTests(unittest.TestCase):
         self.assertTrue(self.scratch.exists())
         config.write_text(json.dumps({"enabled": True, "workflow": "proportional"}))
         MOD.hook_retry(self.manager.base, {"cwd": str(config.parent)})
+        self.assertFalse(self.scratch.exists())
+
+    def test_hook_skips_a_directory_named_cadence_json(self):
+        token = self.acquire()
+        self.manager.finish(self.task_id)
+        self.release(token)
+        config = self.project / "docs/llm-orchestrator/cadence.json"
+        config.parent.mkdir(parents=True)
+        config.write_text(json.dumps({"enabled": True, "workflow": "proportional"}))
+        # A directory with the config's name is not a config: the walk passes it
+        # and finds the real file at the project root, as the bash -f test does.
+        app = self.project / "app"
+        (app / "docs/llm-orchestrator/cadence.json").mkdir(parents=True)
+        with mock.patch("sys.stderr") as warning:
+            MOD.hook_retry(self.manager.base, {"cwd": str(app)})
+            self.assertFalse(warning.write.called)
         self.assertFalse(self.scratch.exists())
 
     def test_hook_ignores_open_task_and_other_project(self):
@@ -659,21 +774,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.manager.paths(self.task_id)[0].read_bytes(), before)
         self.assertEqual(self.manager.retry_project(self.project)["tasks"][0]["status"], "done")
 
-    def test_disposable_attribution_returns_unknown_on_busy_task_or_registry(self):
-        self.acquire("writer")
-        target = self.scratch / "probe.py"
-        for lock in (self.manager.paths(self.task_id)[1], self.manager.base / ".registry.lock"):
-            with self.subTest(lock=lock.name):
-                child, release = self.hold_lock(lock)
-                results = CTX.Queue()
-                attribution = self.spawn(lambda: results.put(MOD.owned_disposable_target(target, self.project)))
-                self.assertFalse(results.get(timeout=2))
-                self.joined(attribution)
-                release.set()
-                self.joined(child)
-        self.assertTrue(MOD.owned_disposable_target(target, self.project))
-
-    def test_routine_git_discovery_and_disposable_attribution_are_time_bounded(self):
+    def test_routine_git_discovery_is_time_bounded(self):
         _, run_hook = self.hook_fixture()
         self.acquire("writer")
         binaries = self.root / "slow-git-bin"
@@ -684,10 +785,6 @@ class LifecycleTests(unittest.TestCase):
         env = {"PATH": str(binaries) + os.pathsep + os.environ.get("PATH", "")}
         result = run_hook(env)
         self.assertIn("timed out", result.stderr)
-        started = time.monotonic()
-        with mock.patch.dict(os.environ, env):
-            self.assertFalse(MOD.owned_disposable_target(self.scratch / "probe.py", self.project))
-        self.assertLess(time.monotonic() - started, 2)
         self.assertTrue(self.scratch.exists())
 
     def test_hook_malformed_payload_is_inert_and_warns(self):
@@ -755,52 +852,14 @@ class LifecycleTests(unittest.TestCase):
         result = self.manager.finish(self.task_id)
         self.assertEqual(result["status"], "closed")
 
-    def test_owned_disposable_target_requires_real_lease_and_exact_project(self):
-        target = self.scratch / "probe.py"
-        self.assertFalse(MOD.owned_disposable_target(target, self.project))
-        token = self.acquire("probe writer")
-        self.assertTrue(MOD.owned_disposable_target(target, self.project))
-        self.assertFalse(target.exists())  # recognition never creates target
-        self.assertFalse(MOD.owned_disposable_target(target, self.root / "other-project"))
-        copied = self.manager.create(self.task_id, token, "copy")
-        copied_target = Path(copied["path"]) / "source.py"
-        self.assertTrue(MOD.owned_disposable_target(copied_target, self.project))
-        self.release(token)
-        self.assertFalse(MOD.owned_disposable_target(copied_target, self.project))
-        token = self.acquire("second writer")
-        self.manager.finish(self.task_id)
-        self.assertFalse(MOD.owned_disposable_target(copied_target, self.project))
-        self.release(token)
-
-    def test_owned_disposable_target_rejects_worktree_repo_spoof_and_symlinks(self):
-        token = self.acquire()
-        worktree = self.manager.create(self.task_id, token, "worktree")
-        self.assertFalse(MOD.owned_disposable_target(Path(worktree["path"]) / "source.py", self.project))
-        spoof = self.root / "fake-state/scratch" / ("a" * 32) / "probe.py"
-        spoof.parent.mkdir(parents=True)
-        before = sorted(str(path) for path in (self.root / "fake-state").rglob("*"))
-        self.assertFalse(MOD.owned_disposable_target(spoof, self.project))
-        self.assertEqual(before, sorted(str(path) for path in (self.root / "fake-state").rglob("*")))
-        linked = self.scratch / "linked"
-        linked.symlink_to(self.project, target_is_directory=True)
-        self.assertFalse(MOD.owned_disposable_target(linked / "source.py", self.project))
-        self.assertFalse(MOD.owned_disposable_target(self.scratch / ".." / "probe.py", self.project))
-        repo = self.scratch / "unregistered-repo"
-        repo.mkdir()
-        self.git("init", "-q", cwd=repo)
-        self.assertFalse(MOD.owned_disposable_target(repo / "source.py", self.project))
-        copy = Path(self.manager.create(self.task_id, token, "copy")["path"])
-        copy.rename(self.scratch / "moved-copy")
-        copy.mkdir()
-        self.assertFalse(MOD.owned_disposable_target(copy / "source.py", self.project))
-
-    def test_owned_disposable_target_works_from_copied_skill_helper(self):
-        installed = self.root / "installed-skill/scripts"
-        (installed / "lib").mkdir(parents=True)
-        shutil.copy2(SOURCE, installed / "lib/orch-task-resources.py")
-        shutil.copy2(SOURCE.parents[2] / "skills/cadence/scripts/orch-task-resources.py",
-                     installed / "orch-task-resources.py")
-        command = [sys.executable, str(installed / "orch-task-resources.py"),
+    def test_copied_skill_helper_allocates_a_copy(self):
+        installed = self.root / "installed/.claude"
+        (installed / "scripts/lib").mkdir(parents=True)
+        (installed / "skills/cadence/scripts").mkdir(parents=True)
+        shutil.copy2(SOURCE, installed / "scripts/lib/orch-task-resources.py")
+        shim = installed / "skills/cadence/scripts/orch-task-resources.py"
+        shutil.copy2(SOURCE.parents[2] / "skills/cadence/scripts/orch-task-resources.py", shim)
+        command = [sys.executable, str(shim),
                    "--state-dir", str(self.manager.base)]
         result = subprocess.run(command + ["acquire", "--id", self.task_id, "--consumer", "installed"],
                                 capture_output=True, text=True)
@@ -809,8 +868,9 @@ class LifecycleTests(unittest.TestCase):
         result = subprocess.run(command + ["copy", "--id", self.task_id, "--token", lease["token"]],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        target = Path(json.loads(result.stdout)["path"]) / "source.py"
-        self.assertTrue(MOD.owned_disposable_target(target, self.project))
+        copied = Path(json.loads(result.stdout)["path"])
+        self.assertEqual(copied.parent, self.scratch)
+        self.assertEqual(self.manager.read(self.task_id)["resources"][-1]["kind"], "copy")
 
     def test_successful_tombstones_expire_without_age_reaping_unfinished_work(self):
         opened = self.manager.start(self.project, "paused")

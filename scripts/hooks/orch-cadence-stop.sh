@@ -28,7 +28,20 @@
 
 set -uo pipefail
 
+# Where the cadence lives: the one rule every hook shares (orch_cadence_find in
+# scripts/lib/orch-project.sh, pure bash, no fork). The event's cwd is read only
+# when CLAUDE_PROJECT_DIR is unset, so the usual case still opens with a file
+# test and a grep.
+INPUT=""
+[[ -n "${CLAUDE_PROJECT_DIR:-}" || -t 0 ]] || INPUT=$(cat || true)
 PROJ="${CLAUDE_PROJECT_DIR:-$PWD}"
+_ORCH_LIB="${BASH_SOURCE[0]:-$0}"
+[[ "${_ORCH_LIB}" == */* ]] && _ORCH_LIB="${_ORCH_LIB%/*}" || _ORCH_LIB="."
+_ORCH_LIB="${_ORCH_LIB}/../lib/orch-project.sh"
+# shellcheck source=scripts/lib/orch-project.sh
+if [[ -f "${_ORCH_LIB}" ]] && source "${_ORCH_LIB}" && declare -f orch_cadence_find >/dev/null 2>&1; then
+  orch_cadence_find "${INPUT}"; PROJ="${ORCH_CADENCE_ROOT}"
+fi
 PROJ="${PROJ%/}"
 CJ="${PROJ}/docs/llm-orchestrator/cadence.json"
 [[ -f "$CJ" ]] || exit 0
@@ -36,8 +49,7 @@ grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "$CJ" || exit 0
 
 case ",${ORCH_DISABLED_HOOKS:-}," in *,orch-cadence-stop,*) exit 0 ;; esac
 
-INPUT=""
-[[ -t 0 ]] || INPUT=$(cat || true)
+[[ -n "${INPUT}" || -t 0 ]] || INPUT=$(cat || true)
 
 # orch_json_field returns STRINGS only, so a boolean has to be read off the raw
 # text. Re-entry first, before anything that could produce output.
@@ -113,7 +125,7 @@ if [[ -n "$CHANGED" && -n "$SNAP" && -f "$SNAP" ]]; then
 fi
 NEW="${NEW% }"
 
-MSG="${VERDICT} — the lock no longer matches the tree. Re-record it with ${CHECK} --lock (which needs ORCH_CADENCE_UNLOCK=1 in the environment when a lock already exists), or restore the files it names. An amendment to the laws is a numbered ruling: commit with \"Ruling <N>\" in the message so the git layer can see it."
+MSG="${VERDICT} — the lock no longer matches the tree. Restore the files it names. Only the person can re-record the lock (${CHECK} --lock, in their own terminal). If the rules should change, explain why and give them a patch to apply with cadence-ruling.sh, which re-records the lock and commits the numbered ruling."
 
 if [[ "${ORCH_STRICT_CADENCE_LOCK:-0}" == "1" && -n "$NEW" ]]; then
   MARK="${STATE}/cadence-stop-blocked.${SESSION_HASH}"

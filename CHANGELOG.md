@@ -3,6 +3,66 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- On Codex, the completion check's continuation now also tells the agent to
+  repeat its full answer with the corrected Verification line. The reply to
+  it becomes the turn's final answer, so an agent that answered with the line
+  alone lost its answer (`codex exec -o` saved only that line).
+- The review has a new finding kind, `test-gap`: behaviour the tests do not
+  cover. `orch-review.py` ranks it mild unless it carries a repro (then it
+  keeps its rank and is run like a defect), and counts the lowered ranks;
+  test tampering is still raised to serious. The review comparison's scorer
+  now reads `/code-review`'s JSON array of findings one item at a time (codex
+  output still goes through the text rule), and `docs/MEASUREMENTS.md` records the comparison's
+  first full run.
+- Rule changes now go through one command the person runs in their own
+  terminal: `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`. It
+  applies a patch to the protected files only, re-records the lock and commits
+  the next `Ruling <N>`, after a typed confirmation read from `/dev/tty`.
+  `--lock` rewrites an existing lock only when a terminal is attached. The
+  `ORCH_CADENCE_UNLOCK` variable, `guard-cadence-unlock.sh` and the init's
+  unlocked replacement of hooks, config and marked sections are removed.
+- **Upgrade step for projects set up with an older version.** Their
+  `.githooks/orch-cadence-check.sh` still honours `ORCH_CADENCE_UNLOCK`, so an
+  agent could re-record the lock without a terminal. Re-run
+  `/llm-orchestrator:cadence-init`: in an armed project it writes no protected
+  file, writes an upgrade ruling patch (the shipped hooks, the current marked
+  block, the missing deny rules and the next ruling line) and prints the one
+  `cadence-ruling.sh` command that applies it.
+- `cadence-init` adds the deny rule `Bash(*cadence-ruling.sh*)`, and the command
+  refuses to run when `CLAUDECODE` or a Codex session variable is set.
+- The docs now say what the lock does: it stops accidental edits and makes
+  deliberate ones visible in the history. It cannot stop an agent that rewrites
+  `LAWS.md` and `LOCK.sha256` from a script and commits a `Ruling <N>` message.
+- The behaviour evals run on `claude plugin eval` (`tests/evals/cases/`), 8 runs
+  per case, and `tests/evals/run-evals.sh` with its two tests is gone. A new
+  review comparison (`tests/evals/review-compare/`) runs the Full review, the
+  built-in `/code-review` and `codex review` on the same changes with planted
+  defects and scores defects found, false findings and cost. Both have free
+  checks in `tests/`; the paid commands and cost estimates are in
+  `tests/evals/README.md`.
+- Removed what nothing used any more: `templates/dispatch-response.md` is no
+  longer shipped or copied by `install.sh --copy` (the Status blocks live in
+  `templates/implementer-prompt.md` and `agents/orch-implementer.md`); the old
+  release-notes pages `docs/release-v0.8.0.md` and `docs/release-v0.9.0.md`
+  are gone, their content is in this changelog; and the worktree reaper no
+  longer reads mutex-map files an older version left behind.
+
+### Fixed
+
+- In auto mode a subagent sends its report through the `SubagentHandback`
+  tool, and SubagentStop's `last_assistant_message` holds only its closing text
+  ("Report delivered to caller."). `subagent-stop.sh` and
+  `orch-researcher-validator.sh` checked that closing text, so every plugin
+  agent's return was flagged as badly shaped and the agent was sent back for
+  another turn, and researcher briefs were never validated. Both now read the
+  last `SubagentHandback` message from the subagent's own transcript, and fall
+  back to `last_assistant_message` when there is none. Tests use payloads
+  captured from Claude Code 2.1.282.
+
 ## [0.11.0] - 2026-09-23
 
 Codex is back. `./scripts/install.sh --codex` works again. It installs the
@@ -106,8 +166,7 @@ risky changes get independent review, tests are remembered while the files
 they covered are unchanged, and a completion claim is checked against what
 actually ran. Onboarding was rewritten for a first-time reader.
 
-Start with the [release overview](docs/release-v0.9.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 
 ### Changed
 
@@ -155,8 +214,7 @@ verification process. Two reviewers check each code change independently, and
 Codex records actual test results before reporting verified completion.
 (0.9.0 sizes the reviews to the change.)
 
-Start with the [release overview](docs/release-v0.8.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 The implementation details follow.
 
 ### Added — Codex execution evidence and optional external reviews

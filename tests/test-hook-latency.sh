@@ -61,7 +61,6 @@ TRANSCRIPT_EVENT="$TMP/te.json"; printf '{"transcript_path":"%s","source":"start
 SKILL_EVENT="$TMP/sk.json"; printf '{"tool_name":"Skill","tool_input":{"skill":"llm-orchestrator:brainstorming"}}' > "$SKILL_EVENT"
 BASH_EVENT="$TMP/bash.json"; printf '{"tool_name":"Bash","tool_input":{"command":"git status"}}' > "$BASH_EVENT"
 START_EVENT="$TMP/start.json"; printf '{"source":"startup"}' > "$START_EVENT"
-AGENT_EVENT="$TMP/agent.json"; printf '{"tool_name":"Agent","tool_input":{"description":"one seat","prompt":"do the thing","model":"opus"}}' > "$AGENT_EVENT"
 
 # The cadence hooks are measured twice: on the INERT path every other project
 # takes (stage 1 is a file test and a grep, so it must cost almost nothing), and
@@ -70,7 +69,7 @@ AGENT_EVENT="$TMP/agent.json"; printf '{"tool_name":"Agent","tool_input":{"descr
 CADENCE_OFF="$TMP/cadence-off"; mkdir -p "$CADENCE_OFF"
 CADENCE_ON="$TMP/cadence-on"
 mkdir -p "$CADENCE_ON/docs/llm-orchestrator" "$CADENCE_ON/.claude"
-printf '{ "schema": 1, "enabled": true }\n' > "$CADENCE_ON/docs/llm-orchestrator/cadence.json"
+printf '{ "schema": 1, "enabled": true, "workflow": "proportional" }\n' > "$CADENCE_ON/docs/llm-orchestrator/cadence.json"
 printf '# Laws\n\nRuling 1 — the cadence.\n' > "$CADENCE_ON/docs/llm-orchestrator/LAWS.md"
 printf '{}\n' > "$CADENCE_ON/.claude/settings.json"
 printf '# P\n\n<!-- ORCH:LAWS:START -->\nlaws\n<!-- ORCH:LAWS:END -->\n\ntail\n' > "$CADENCE_ON/CLAUDE.md"
@@ -119,6 +118,22 @@ check_latency "session-start.sh"            "$START_EVENT"   "$SESSION_BUDGET_MS
 check_latency "user-prompt-submit.sh"       "$PROMPT_EVENT"
 check_latency "orch-research-gate.sh"       "$PROMPT_EVENT"
 check_latency "orch-handoff-nudge.sh"       "$TRANSCRIPT_EVENT"
+# The nudge's slow path: a transcript over the floor, where it counts tokens and
+# emits additionalContext. It fires once per session, so every timed run clears
+# the marker first; otherwise runs 2-5 would time the early exit.
+NUDGE_EVENT="$TMP/nudge.json"
+printf '{"session_id":"latency","transcript_path":"%s","prompt":"continue"}' \
+  "${ROOT}/tests/handoff/fixtures/high.jsonl" > "$NUDGE_EVENT"
+NUDGE_RUN="$TMP/nudge-run.sh"
+printf 'rm -f "%s/handoff/nudged.latency"\nORCH_CONTEXT_HANDOFF_TOKENS=800000 exec bash "%s"\n' \
+  "$ORCH_HOME" "${HOOKS}/orch-handoff-nudge.sh" > "$NUDGE_RUN"
+if bash "$NUDGE_RUN" < "$NUDGE_EVENT" 2>/dev/null | grep -q additionalContext; then
+  ms=$(time_hook "$NUDGE_RUN" "$NUDGE_EVENT")
+  if (( ms < BUDGET_MS )); then ok "orch-handoff-nudge.sh emitting a nudge: ${ms}ms (< ${BUDGET_MS}ms)"
+  else fail "orch-handoff-nudge.sh emitting a nudge: ${ms}ms" "exceeds ${BUDGET_MS}ms budget"; fi
+else
+  fail "orch-handoff-nudge.sh emitting a nudge" "the high-input fixture did not produce additionalContext, so the slow path was not timed"
+fi
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
@@ -127,9 +142,6 @@ check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-verify-gate.sh"         "$TRANSCRIPT_EVENT"
 ORCH_RETRY_CAP=1 check_latency "orch-retry-cap.sh" "$TRANSCRIPT_EVENT"
 check_latency "orch-stop.sh"                "$TRANSCRIPT_EVENT"
-# orch-protocol-grader.sh and orch-evidence-ledger.sh are no longer timed here: the
-# grader is deleted and the ledger is a retired, unregistered stub. Neither is a
-# hook hooks.json fires, so neither has a latency budget to defend.
 check_latency "orch-worktree-reaper.sh"     "$TRANSCRIPT_EVENT"
 # The Codex twins: a Stop payload naming the same transcript (the check reads
 # it and finds no PASS label), and a PreToolUse Bash payload on a project with
@@ -139,13 +151,9 @@ python3 -c 'import json,sys; print(json.dumps({"session_id":"s","turn_id":"t","t
 check_latency "codex-verify-gate.sh"        "$CODEX_STOP_EVENT"
 CODEX_PROJECT_DIR="$CADENCE_OFF" check_latency "codex-cadence-adapter.sh" "$BASH_EVENT"
 
-CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
 CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "orch-cadence-stop.sh"    "$TRANSCRIPT_EVENT"
-CLAUDE_PROJECT_DIR="$CADENCE_OFF" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n%s== In cadence mode (the same 500 ms budget) ==%s\n' "$DIM" "$RESET"
-CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-dispatch-model.sh" "$AGENT_EVENT"
-CLAUDE_PROJECT_DIR="$CADENCE_ON" check_latency "guard-cadence-unlock.sh" "$BASH_EVENT"
 
 printf '\n'
 if (( FAIL == 0 )); then

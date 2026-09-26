@@ -9,10 +9,11 @@ under `docs/specs/`; design decisions in `DESIGN_RULINGS.md`; traps in
 handoff and keeps working under the law as written. Only Felipe rules.
 
 This file is what the cadence lock protects. It changes only by a numbered
-ruling, in a commit whose message carries `Ruling <N>`, with `LOCK.sha256`
-rewritten under `ORCH_CADENCE_UNLOCK=1`, which the person sets in the
-environment when launching that session, never in a settings file and never by
-an agent. The re-lock and the ruling commit happen inside that session.
+ruling, in a commit whose message carries `Ruling <N>`. Felipe makes that commit
+by running `skills/cadence/scripts/cadence-ruling.sh` in his own terminal: it
+applies the agreed patch, re-records `LOCK.sha256` and commits. An agent
+proposes the change as a patch outside Git, with its reasons, and never runs
+the command.
 
 ## 1. What we are building, and why
 
@@ -48,16 +49,17 @@ cleaned safely, and a completion claim is backed by observed execution.
 
 - **Standing orders:** never commit, push, merge or tag unless Felipe asks in
   that turn; stage by explicit pathspec, never `git add -A`. Never run paid
-  evaluations (`tests/evals/`) unattended. Never set or persist the unlock, the
-  hook profile, the disabled-hooks list or any allow hatch; those belong to
-  the person's own shell.
+  evaluations (`tests/evals/`) unattended. Never run `cadence-ruling.sh`, and
+  never set or persist the hook profile, the disabled-hooks list or any allow
+  hatch; those belong to the person's own shell.
 - **Rulings that govern the build:**
   `Ruling 1 (2026-09-17, Felipe): the proportional cadence specified in docs/specs/proportional-cadence.md applies to this repository itself, with workflow proportional, Claude and Codex execution evidence in blocking mode, and the shared task-resource cleanup; the framework verifies its own changes through its own hooks.`
   `Ruling 2 (2026-09-22, Felipe): Claude Code only; completion is checked once at Stop, by warning, never by blocking. Supersedes Ruling 1 where they differ.`
   `Ruling 3 (2026-09-23, Felipe): Codex is a supported harness, with the file guard and the completion check installed by install.sh --codex. On Codex the completion check's single decision:block continuation to the agent is the warning, suppressed on stop_hook_active; systemMessage and any output for the person stay forbidden. docs/llm-orchestrator/CODEX.md is reinstated. "One harness, one policy: Claude Code" is amended to "Claude Code and Codex, one policy". Supersedes Rulings 1 and 2 where they differ.`
+  `Ruling 4 (2026-09-25, Felipe): Felipe applies an agreed rule change with skills/cadence/scripts/cadence-ruling.sh in his own terminal, which re-records the lock and commits the ruling, replacing the removed unlock variable; the shipped cadence files (git hooks, marked block, deny rules) are upgraded to match, workflows/ leaves the production list and cadence.json's src_roots and prod_globs, and cadence.json drops the legacy notes_dir and ticket_re. On Codex the file guard and the completion check come from the Codex plugin (codex plugin add), and install.sh --codex writes only the instructions block and, once the plugin is installed, removes the hook entries older releases added. Supersedes Ruling 3 where they differ.`
 - **Standing constraints:** shipped files under `scripts/`, `skills/`, `hooks/`,
-  `agents/`, `commands/`, `templates/`, `workflows/` and `output-styles/` are
-  production; `tests/` are tests; ordinary Markdown is documentation. After a
+  `agents/`, `commands/`, `templates/` and `output-styles/` are production;
+  `tests/` are tests; ordinary Markdown is documentation. After a
   shipped file changes, the installed Claude plugin copy must be refreshed to
   byte parity before the change is called complete.
   `templates/cadence-global-block.md` and

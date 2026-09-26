@@ -1,0 +1,36 @@
+{
+  "title": "Paginate the items endpoint with opaque cursors",
+  "spec": "docs/specs/pagination.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "limit-not-capped", "rank": "mild", "kind": "defect", "symbol": "clamp_limit",
+     "what": "A limit above 100 is not lowered to 100.",
+     "edits": [{"file": "api/listing.py", "find": "return min(limit, MAX_LIMIT)", "replace": "return limit"}]},
+    {"id": "limit-zero-accepted", "rank": "mild", "kind": "defect", "symbol": "clamp_limit",
+     "what": "A limit of 0 is accepted instead of rejected.",
+     "edits": [{"file": "api/listing.py", "find": "if limit < 1:", "replace": "if limit < 0:"}]},
+    {"id": "full-last-page-cursor", "rank": "serious", "kind": "defect", "symbol": "paginate",
+     "what": "An exactly full last page still returns a next cursor, leading to an empty extra page.",
+     "edits": [{"file": "api/listing.py", "find": "if end < len(items) else None", "replace": "if end <= len(items) else None"}]},
+    {"id": "negative-offset-accepted", "rank": "serious", "kind": "defect", "symbol": "decode_cursor",
+     "what": "A cursor with a negative offset is accepted and slices from the end of the list.",
+     "edits": [{"file": "api/listing.py", "find": "    if offset < 0:\n        raise InvalidCursor(cursor)\n", "replace": ""}]},
+    {"id": "slice-ignores-offset", "rank": "serious", "kind": "defect", "symbol": "paginate",
+     "what": "Pages after the first use the limit as the end index, so they come back empty or short.",
+     "edits": [{"file": "api/listing.py", "find": "page = items[offset:offset + limit]", "replace": "page = items[offset:limit]"}]},
+    {"id": "total-counts-page", "rank": "mild", "kind": "defect", "symbol": "paginate",
+     "what": "total is the size of the page instead of every matching item.",
+     "edits": [{"file": "api/listing.py", "find": "\"total\": len(items)}", "replace": "\"total\": len(page)}"}]},
+    {"id": "bad-cursor-restarts", "rank": "serious", "kind": "test-tampering", "symbol": "decode_cursor",
+     "what": "An undecodable cursor silently restarts at the first page, and the test that required an error was changed to expect the first page.",
+     "edits": [
+       {"file": "api/listing.py", "find": "    except (ValueError, KeyError, TypeError):\n        raise InvalidCursor(cursor) from None", "replace": "    except (ValueError, KeyError, TypeError):\n        return 0"},
+       {"file": "tests/test_listing.py", "find": "        with self.assertRaises(InvalidCursor):\n            list_page(ITEMS, cursor=\"not-a-cursor\")", "replace": "        page = list_page(ITEMS, cursor=\"not-a-cursor\")\n        self.assertEqual([item[\"id\"] for item in page[\"items\"]], [1, 2, 3])"}]},
+    {"id": "default-limit-max", "rank": "mild", "kind": "defect", "symbol": "clamp_limit",
+     "what": "With no limit the page holds 100 items instead of 20.",
+     "edits": [{"file": "api/listing.py", "find": "        return DEFAULT_LIMIT", "replace": "        return MAX_LIMIT"}]},
+    {"id": "status-filter-dropped", "rank": "serious", "kind": "defect", "symbol": "list_page",
+     "what": "list_page ignores the status filter.",
+     "edits": [{"file": "api/listing.py", "find": "return paginate(list_items(items, status), limit, cursor)", "replace": "return paginate(list_items(items), limit, cursor)"}]}
+  ]
+}

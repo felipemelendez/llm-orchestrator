@@ -23,7 +23,8 @@ The three fastest signals, if you want them individually:
 
 Set `ORCH_REQUIRE_DEPS=1` to make a missing dependency a failure instead of a skip — that
 is what CI does, so a runner that lost `python3` cannot turn six guard suites into green
-no-ops.
+no-ops. The Codex CLI is not one of those dependencies: the live Codex probes skip when
+no `codex` is on the PATH, and fail only when `CODEX_BIN` names one that does not work.
 
 ## What each one checks
 
@@ -48,7 +49,7 @@ Checks per **agent** (`agents/<name>.md`):
 - `description` present
 - `model:` (if set) is one of `haiku | sonnet | opus | fable | inherit`, or a full model id
 
-Output: `OK: 19 skills, 15 commands, 7 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
+Output: `OK: 18 skills, 15 commands, 5 agents` on success. Otherwise lines starting with `FAIL:` and exit 1.
 
 ### `test-portability.sh` — shell portability scanner
 
@@ -77,12 +78,12 @@ Six sections:
 
 1. **Structural** — delegates to `install.sh --check` and `validate-skills.sh`.
 2. **Hooks** — runs each hook with realistic inputs:
-   - SessionStart → valid JSON, loads the using-orchestrator meta-skill body
+   - SessionStart → valid JSON, loads the using-orchestrator meta-skill body; finishes on its own when its input is a terminal
    - UserPromptSubmit → valid JSON, reminder mentions the protocol
    - PreToolUse guard → blocks `--no-verify` (exit 2), allows clean commits (exit 0)
    - SubagentStop → accepts both markdown and JSONL transcripts with a `Status:` block, warns (exit 0) when missing
    - Stop hook → prunes `memory/.trash/` older than retention
-3. **Portable lock** — sources `scripts/lib/orch-lock.sh`, runs 10 concurrent writers, expects 10 lines; tests `append_line` for shell-injection safety.
+3. **Portable lock** — sources `scripts/lib/orch-lock.sh`, runs 10 concurrent writers, expects 10 lines; tests `append_line` for shell-injection safety. The writers get a long lock wait, so a busy machine slows the check instead of failing it.
 4. **Classifier** — runs the `/remember` section classifier on 10 canonical facts (`pnpm not npm` → Conventions; `Sara owns auth` → People; `we picked tRPC over GraphQL` → Decisions; etc.). Each fact must land in the expected section.
 5. **--copy install** — runs `install.sh --copy` against a fresh git project, verifies every required file landed (`scripts/lib/orch-lock.sh`, `settings.json`, `output-styles/`, `concise-agent-protocol.md`, etc.), checks the generated `settings.json` is valid JSON, checks `hooks.json` paths are absolute, re-runs SessionStart from the copied install.
 6. **Documentation** — no stale `OrchestraKit`/`OK_` identifiers remain, README has the Quick Start block, no auto-loading `.mcp.json` is present (only `.mcp.json.example`).
@@ -122,28 +123,27 @@ Add to `test-portability.sh` when:
 ## The full suite
 
 `./tests/run-all.sh` runs all of these. `tests/smoke.sh` runs the structural checks and
-shells out to several of them; each is also runnable on its own, and every one exits
-non-zero on failure.
+shells out to several of them, but not `test-hook-latency.sh`: a timing check run twice
+on a busy machine measures the machine. Each suite is also runnable on its own, and every
+one exits non-zero on failure.
 
 | Suite | Covers |
 |---|---|
 | `validate-skills.sh` | skill/command/agent frontmatter, length cap, reference resolution |
-| `validate-workflows.sh` | `workflows/*.js` parse + `meta` shape (static only — it never executes a script) |
-| `test-review-diff-behavior.sh` | what `review-diff.js` actually RETURNS: dead-stage detection, the confidence floor, refutation, and the four ways a review can look clean when it isn't |
-| `test-workflow-distribution.sh` | `--copy` ships `workflows/`, and `--check` names it when missing |
+| `test-review.sh` (runs `test-review.py`) | `scripts/lib/orch-review.py`, one case per rule in `docs/specs/review-design.md`, with fake `claude` and `codex` programs: a missing seat or unchecked item gives `INCOMPLETE`, dropouts are never replaced, bad evidence keeps a serious finding blocking, a drop needs a passing receipt 1, a write to the real checkout gives `INCOMPLETE` |
 | `test-install.sh` | the installer's claims are true: `--copy` rewrites every hook command to an absolute existing path (positive property, independently asserted) and fails closed; `--check` fails on deleted/corrupted shipped files; docs wire every hook; no dead permission rules |
 | `test-portability.sh` | GNU-only constructs that break on macOS bash 3.2 / BSD tools |
 | `test-protocol-hooks.sh`, `test-protocol-drift.sh` | reply shapes, Status blocks, single-sourcing of the per-turn reminder |
 | `test-verify-gate.sh` | what the Stop completion check warns about, and the prose it must stay out of |
 | `test-codex-verify-gate.sh` | the Codex twin: the same question asked of a Codex rollout, answered to the agent once and never to the person |
-| `test-codex-adapter.sh`, `test-claude-provider.sh` | the Codex file guard, and the optional Claude reviewer runner with a fake CLI |
-| `test-install-global.sh` | `--global` and `--codex` under a temporary HOME: the block, the skill copy, the hooks merge, and the installed Stop command run for real |
+| `test-codex-adapter.sh` | the Codex file guard |
+| `test-install-global.sh` | `--global` and `--codex` under a temporary HOME: the block, the removal of what an earlier `--codex` wrote, the plugin's Stop command run for real, and (with `CODEX_BIN` set) a real plugin install listed by Codex |
 | `test-guard-no-verify.sh`, `test-destructive-git-guard.sh` | the two PreToolUse guards — both fail-open and false-positive directions |
 | `test-worktree-reaper.sh`, `test-worktree-materialize.sh`, `test-worktree-integrate.sh`, `test-writer-mutex-modes.sh` | worktree lifecycle, mutex ownership, and the writer-isolation mode contract |
 | `test-research-gate.sh`, `test-research-classifier.sh`, `test-research-brief.sh` | the research gate's compel/skip precision and the brief contract |
 | `test-detect.sh`, `test-lib-resolution.sh`, `test-telemetry.sh`, `test-retry-cap.sh`, `test-hook-latency.sh` | toolchain detection, lib lookup, opt-in telemetry, retry breaker, per-hook latency budget |
-| `test-eval-cases.sh` | every eval case is red before the agent runs, its regexes compile, its checks parse as shell, and it carries a `why` |
-| `test-eval-reporter.sh` | the eval reporter still calls the archived 2026-08-03 behavioural drop a regression, and reports each check separately |
+| `test-eval-cases.sh` | every `claude plugin eval` case matches the case schema, fails on its bare scaffold, and passes on its reference solution |
+| `test-review-compare.sh` | every planted review defect fails its held-out check but passes the committed tests, and the comparison scorer counts a dry run with fake reviewers correctly |
 | `handoff/smoke-handoff.sh`, `handoff/test-precompact.sh`, `handoff/test-token-floor.sh` | handoff artifact lifecycle, pre-compaction capture, token floor |
 
 **Isolation is a hard requirement for new suites.** Use `mktemp -d` for both the
@@ -169,6 +169,6 @@ CI runs on Linux; several defects in this area were BSD-vs-GNU differences that 
 silently on one platform, so run the suite locally on macOS too.
 
 Evals are not part of CI and never will be: they make paid API calls. See
-[`evals/README.md`](evals/README.md). What *is* in CI is the eval harness's own correctness
-— `test-eval-cases.sh` (every case is red before the agent runs) and `test-eval-reporter.sh`
-(the reporter still calls the archived 2026-08-03 regression a regression).
+[`evals/README.md`](evals/README.md). What *is* in CI is the free part: `test-eval-cases.sh`
+(every case is red before the agent runs and can pass) and `test-review-compare.sh` (every
+planted defect is real, and the scorer counts correctly).

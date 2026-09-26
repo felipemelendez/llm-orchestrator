@@ -61,7 +61,7 @@ mkproj() { # mkproj <dir> [enabled]
   local d="$1"
   mkdir -p "$d/docs/llm-orchestrator" "$d/.claude"
   if [[ -n "${2:-}" ]]; then
-    printf '{ "schema": 1, "enabled": %s }\n' "$2" > "$d/docs/llm-orchestrator/cadence.json"
+    printf '{ "schema": 1, "enabled": %s, "workflow": "proportional" }\n' "$2" > "$d/docs/llm-orchestrator/cadence.json"
     printf '# Laws\n\nRuling 3 — the cadence is the process.\n' > "$d/docs/llm-orchestrator/LAWS.md"
   fi
   printf '{}\n' > "$d/.claude/settings.json"
@@ -160,7 +160,7 @@ expect 2 "the first stop after a this-session change blocks" "$rc"
   || fail 'the block payload is {"decision":"block"}' "stdout: $(head -c 200 "$OUT")"
 R=$(field reason)
 case "$R" in *"--lock"*) ok "the reason names --lock" ;; *) fail "the reason names --lock" "reason: $R" ;; esac
-case "$R" in *"ORCH_CADENCE_UNLOCK"*) ok "the reason names the unlock" ;; *) fail "the reason names the unlock" "reason: $R" ;; esac
+case "$R" in *"cadence-ruling.sh"*) ok "the reason names the ruling command" ;; *) fail "the reason names the ruling command" "reason: $R" ;; esac
 [[ -s "$ERRF" ]] && ok "the block reason also reaches stderr" || fail "the block reason also reaches stderr" "stderr empty"
 ls "$ORCH_HOME"/state/cadence-stop-blocked.* >/dev/null 2>&1 \
   && ok "a once-per-session marker is left behind" || fail "a once-per-session marker is left behind" "no marker"

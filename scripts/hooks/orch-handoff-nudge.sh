@@ -85,7 +85,10 @@ MSG="Context has passed ~${FLOOR} tokens. At the next clean stopping point (a fi
 _PROTOCOL_LIB="${_HOOK_DIR}/../lib/orch-protocol.sh"
 if [[ -f "${_PROTOCOL_LIB}" ]]; then
   source "${_PROTOCOL_LIB}"
-  if orch_protocol_is_proportional "$INPUT"; then
+  _STATE=$(orch_protocol_workflow "$INPUT")
+  _CONFIG_ERROR=$(orch_protocol_config_error "${_STATE}")
+  [[ -n "${_CONFIG_ERROR}" ]] && MSG="${_CONFIG_ERROR}. ${MSG}"
+  if [[ "${_STATE}" == "proportional" ]]; then
     MSG="Context has passed ~${FLOOR} tokens. Use /llm-orchestrator:handoff to refresh a concise note in task-owned external scratch under a consumer lease. Report the exact task ID and recovery/note paths; retain them while work is pending. Record failures and pending checks honestly. Reuse matching trusted execution evidence on resume; compaction alone does not require rerunning checks. This nudge repeats only after the next compaction."
   fi
 fi

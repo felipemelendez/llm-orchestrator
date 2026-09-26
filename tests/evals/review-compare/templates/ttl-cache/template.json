@@ -1,0 +1,138 @@
+{
+  "title": "Add per-entry expiry and statistics to the LRU cache",
+  "spec": "docs/specs/ttl-and-stats.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "expiry-boundary",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "_expired",
+      "what": "An entry is still returned at exactly its expiry time.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "return expires_at is not None and now >= expires_at",
+          "replace": "return expires_at is not None and now > expires_at"
+        }
+      ]
+    },
+    {
+      "id": "expired-get-not-a-miss",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "get",
+      "what": "A get of an expired entry is not counted as a miss.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "            self.stats.expirations += 1\n            self.stats.misses += 1\n",
+          "replace": "            self.stats.expirations += 1\n"
+        }
+      ]
+    },
+    {
+      "id": "get-keeps-lru-order",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "get",
+      "what": "get no longer marks the entry as recently used, so a hot entry is evicted first.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "        self._data.move_to_end(key)\n        self.stats.hits += 1",
+          "replace": "        self.stats.hits += 1"
+        }
+      ]
+    },
+    {
+      "id": "zero-ttl-accepted",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "set",
+      "what": "A ttl of zero is accepted and stores an entry that is already expired.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "elif ttl <= 0:",
+          "replace": "elif ttl < 0:"
+        }
+      ]
+    },
+    {
+      "id": "purge-returns-size",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "purge_expired",
+      "what": "purge_expired returns the number of entries left instead of the number removed.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "        self.stats.expirations += len(expired)\n        return len(expired)",
+          "replace": "        self.stats.expirations += len(expired)\n        return len(self._data)"
+        }
+      ]
+    },
+    {
+      "id": "contains-ignores-expiry",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "__contains__",
+      "what": "key in cache is true for an expired entry.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "return entry is not None and not self._expired(entry[1], self._clock())",
+          "replace": "return entry is not None"
+        }
+      ]
+    },
+    {
+      "id": "hit-rate-uses-misses",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "hit_rate",
+      "what": "hit_rate divides the misses, not the hits, by the lookups.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "return self.hits / total",
+          "replace": "return self.misses / total"
+        }
+      ]
+    },
+    {
+      "id": "delete-always-true",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "delete",
+      "what": "delete reports True for a key that was not there.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "        return self._data.pop(key, None) is not None",
+          "replace": "        self._data.pop(key, None)\n        return True"
+        }
+      ]
+    },
+    {
+      "id": "ttl-stored-as-deadline",
+      "rank": "serious",
+      "kind": "test-tampering",
+      "symbol": "set",
+      "what": "The ttl is stored as an absolute time instead of counted from now, and the expiry test's clock was moved to start at zero so it still passes.",
+      "edits": [
+        {
+          "file": "cache/lru.py",
+          "find": "expires_at = None if ttl is None else self._clock() + ttl",
+          "replace": "expires_at = None if ttl is None else ttl"
+        },
+        {
+          "file": "tests/test_lru.py",
+          "find": "        clock = FakeClock(100)\n        cache = LRUCache(clock=clock)\n        cache.set(\"a\", 1, ttl=10)\n        clock.now = 105\n        self.assertEqual(cache.get(\"a\"), 1)\n        clock.now = 120",
+          "replace": "        clock = FakeClock(0)\n        cache = LRUCache(clock=clock)\n        cache.set(\"a\", 1, ttl=10)\n        clock.now = 5\n        self.assertEqual(cache.get(\"a\"), 1)\n        clock.now = 20"
+        }
+      ]
+    }
+  ]
+}

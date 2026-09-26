@@ -1,288 +1,240 @@
-# Behavioural evals
+# Paid evals
 
-`tests/*.sh` check that the shell mechanics work. Nothing there checks whether the
-plugin **changes what the agent does**. These evals do.
+`tests/*.sh` check that the shell mechanics work. The evals here check whether the
+plugin changes what the agent does, and how the plugin's review compares with the
+built-in ones. Every run is a real model call. Nothing here runs in CI or in
+`tests/run-all.sh`; only the free checks below do.
 
-Every skill, rule, and hook in this repo is a bet that some prompt text improves agent
-behaviour. Until a bet is measured, adding it and removing it are equally defensible —
-which is how a repo ends up with rules nobody can justify and nobody dares delete.
+- `cases/` holds behaviour cases for `claude plugin eval`. They were checked
+  against Claude Code 2.1.282; the plugin-evals docs name 2.1.269 as the first
+  version with the command, which was not tested here. Each case runs 8 times with the plugin and 8 times without it.
+- `review-compare/` holds small changes with planted defects, and a script that
+  runs several reviewers on the same changes and scores them.
+- `results/benchmark.json`, `results/raw.jsonl` and `results/archive/` are the
+  results of the old runner, kept as the record behind `docs/MEASUREMENTS.md`.
 
-The published evidence is blunt about this. In a 5,832-run study across 18 skill-library
-conditions, regressions cancelled **59% of gross gains**, only 3 of 18 conditions survived
-Bonferroni correction, and ranking libraries by *gross* gain versus *net* effect reversed
-the order ([arXiv:2607.22520](https://arxiv.org/abs/2607.22520)). A component ablation on
-Terminal-Bench found parts summing to +11.1 pp while the assembled stack delivered +7.3,
-with a **system-prompt-only change measuring −2.3 pp**
-([arXiv:2604.25850](https://arxiv.org/abs/2604.25850)). Anthropic's own skill guidance says
-to build the eval first and establish a baseline without the skill.
-
-## What it measures
-
-Each case runs the same prompt twice, in a scratch project:
-
-- **arm `with`** — the plugin's skills and hooks installed, from the working tree
-- **arm `without`** — a bare project, no plugin
-- **arm `ref:<gitref>`** — the plugin as of that commit
-
-and grades both. A case earns its keep only if `with` beats `without`. A case where both
-arms pass is telling you the model already does it — that rule is restating a default and
-is costing tokens for nothing.
-
-`ref:` is what makes this a **regression** instrument and not only an existence proof.
-`with` vs `without` answers *does the plugin do anything*. It cannot answer *did this
-week's edit make it better or worse* — and that is the question every compression or
-rule-deletion pass raises. Compare the two plugin versions directly:
+## Free checks
 
 ```bash
-tests/evals/run-evals.sh --arm "ref:4f6815f with" --case tdd-bugfix --n 5
+bash tests/test-eval-cases.sh      # every case: schema, red before, green after
+bash tests/test-review-compare.sh  # every planted defect is real; scorer dry run
 ```
 
-`ref:` exports the whole commit, not just `skills/` — the hook scripts and libs of that
-commit are part of what the arm is testing, and pairing old prose with new enforcement
-would measure neither. Exports are cached per SHA, so N iterations pay for one export,
-and an unknown ref fails loudly rather than quietly building a half-populated arm.
+`claude plugin eval` has no dry-run option, so `test-eval-cases.py` checks each
+case against the case schema that Claude Code 2.1.282 enforces (read from the
+installed binary), and grades it with the binary's own rules: the `file_exists`
+glob rule (`**` spans directories, `*` and `?` stay within one, and `[` and `]`
+are literal), and `input_match` tested against the JSON of each tool call's input.
+It stages the workspace as the eval does (`<root>/home/cwd`, with a stub `.git`
+and a `.gitconfig` in `home`) and runs the scaffold with the eval's environment.
+Then it requires:
 
-Use it before deleting instructional content. Deleting a rule that turns out to be
-load-bearing is the failure this instrument exists to catch: obra/superpowers cut their
-TDD skill's rationale as padding, measured it, found test-first behaviour under pressure
-dropped from 8/10 to 5/10, and reversed the cut. `tdd-bugfix` is the case in this suite
-most likely to show that effect, because its checks execute the code rather than grading
-the prose.
+- at least one grader to fail on the bare scaffold;
+- at least one grader to fail on the reference reply with none of the work done
+  (skipped for the four reply-only cases, whose descriptions say so);
+- every grader to pass on the reference solution: `reference.sh`,
+  `reference-reply.md`, a Write call for each file the reference creates or
+  changes, and any other calls in `reference-tools.json`.
 
-Both directions are tested on purpose. `research-gate-skips` asserts the gate stays
-*quiet*; a gate that fires on everything is as broken as one that never fires. One-sided
-evals produce one-sided optimisation.
+Only regex graders on the whole transcript or on MCP mock calls are not
+evaluated; no case uses them.
 
-## Noise floor
+`test-review-compare.py` runs every template's held-out check on the clean change
+and on each planted defect, builds the cases twice to show the build is
+deterministic, and runs three arms through `run` and `score` with fake `claude`,
+`codex` and `orch-review.py` programs. It checks that the report counts exactly
+what the fakes reported.
 
-Single-run pass rates on agentic benchmarks vary by 2.2–6.0 pp, with std ≥1.5 pp even at
-temperature 0 ([arXiv:2602.07150](https://arxiv.org/abs/2602.07150)). A 1-of-1 difference
-between arms is not a result. Default is `N=3` per arm; raise it before believing anything
-smaller than a clean sweep.
+## Running the behaviour cases
 
-## Cost
-
-Each run is a cold `claude -p` session — roughly **$0.15–0.30**, mostly cache creation.
-A full pass at `N=3` over `C` cases is about `C × 6` runs. Budget before running the
-whole suite; `--case` runs one.
-
-## Usage
+Run from the repository root, in a terminal (the first run asks you to trust the
+directory):
 
 ```bash
-tests/evals/run-evals.sh                  # all cases, N=3
-tests/evals/run-evals.sh --n 1            # smoke, one run per arm
-tests/evals/run-evals.sh --case shape-header
-tests/evals/run-evals.sh --arm with       # one arm only
-
-# Did an edit help or hurt? Compare two plugin versions on the same case.
-tests/evals/run-evals.sh --arm "ref:4f6815f with" --case tdd-bugfix --n 5
+claude plugin eval . --eval-dir tests/evals --model opus --scaffold -j 4 \
+  --threshold 0 --no-publish --max-cost-usd 150 --allow-tools Bash Write Edit
 ```
 
-Results land in `tests/evals/results/` (see *Results are append-only* below) and a human
-summary is printed.
+- 19 cases × 8 runs × 2 arms is 304 sessions. The old runner's recorded runs
+  on Opus averaged $0.24 to $0.38 per session (`results/raw.jsonl` and the
+  `.jsonl` files in `results/archive/`), so expect about $75 to $115. The
+  `--max-cost-usd 150` ceiling leaves room for longer runs. No case uses a judge
+  grader, so there is no judge cost.
+- `--scaffold` runs each case's `scaffold.sh` as you; it only writes fixture files
+  and a git repository into the run's empty workspace.
+- One case: add `--case tdd-bugfix`. One family: `--tag tdd-under-pressure`.
+- The report and `aggregate-result.json` go to `tests/evals/results/<timestamp>/`
+  (ignored by git).
+- Before trusting a score, read each run's `error` in the JSON. A usage limit ends
+  runs with an error, they are still graded, and the suite is not marked partial.
 
-## Adding a case
+What the port changed, and what the eval cannot reproduce:
 
-One JSON file in `cases/`:
+- `claude plugin eval` has no custom-code graders. The old cases ran Python checks
+  on the finished workspace; each one is now a regex over a file, a `file_exists`
+  glob or a `tool_used` check on the transcript. Each case's description ends with
+  one sentence saying what its graders approximate. A correct fix written in an
+  unexpected form can fail, and a wrong one that looks right can pass.
+- Runs load no CLAUDE.md, user settings, memory or other plugins, run in `-p`
+  mode, and receive only `EVAL_*` environment variables. They do not reproduce an
+  interactive session with the person's own setup.
+- Two old cases were removed. `shape-header-no-turn-hook` switched a hook off with
+  `ORCH_DISABLED_HOOKS`, which an eval run cannot receive (only `EVAL_*` variables
+  pass, and runs read user settings only, so a workspace `.claude/settings.json`
+  is ignored). `verify-under-pressure-strict` set `ORCH_STRICT_VERIFY`, which no
+  code reads any more, so it was the same case as `verify-under-pressure`.
+- Variants became separate cases tagged with their family, so
+  `--tag tdd-under-pressure` runs all four.
+- Comparing two plugin versions (the old `ref:` arm) means running the same
+  command in a worktree of each version.
 
-```json
-{
-  "id": "verify-evidence",
-  "why": "The rule this case exists to defend, in one line.",
-  "prompt": "What the user types.",
-  "setup": ["shell commands run in the scratch project first"],
-  "expect": {
-    "must_match": ["^Verify:"],
-    "must_not_match": ["\\bshould pass\\b"]
-  }
-}
+## The review comparison
+
+`review-compare/templates/` holds a curated set of 14 small Python changes,
+each with a base commit, a spec under `docs/specs/`, committed tests, and a
+held-out check that is never copied into a case. Each template lists 8 to 10
+defects, each a small edit inside the lines the change touches.
+`review_compare.py build` turns them into cases: one clean case per template, and
+one case per pair of defects in listed order, each a git repository with the
+change left uncommitted. Every defect fails the held-out check and passes the
+committed tests, so running the tests does not reveal it. Each template has at
+least one test-tampering defect (the code is wrong and a test was changed to
+match), which covers the spec's item 7. Four templates change more than 150
+lines, for the split arm.
+
+The set has 134 planted defects in 83 cases (69 with defects,
+14 clean). The literature research estimates 100 to 170 defects to detect a
+rise in detection from 50% to 65% with a paired test.
+
+Arms (`review-compare/arms.json`) all run on the same cases, with the change
+uncommitted. Every arm gets the same spec file. `orch-review.py` receives it
+through `--spec` and puts it in its own briefs. The two native arms receive the
+same sentence naming the spec: "The change must implement the spec in <spec>.
+Read it, and report every place where the change does not meet it, as well as
+any other defect." It goes to `/code-review` through `--append-system-prompt`,
+and to `codex review` as `-c developer_instructions=...`, because codex 0.157.0
+refuses a custom-instructions PROMPT together with `--uncommitted`. Each tool still uses its own
+review brief around that sentence, so a difference between arms is a difference
+between the whole methods, not only the reviewers.
+
+| arm | command |
+|---|---|
+| `full` | `orch-review.py run --path full --writer claude --base HEAD --spec <spec>` |
+| `code-review` | `claude -p "/code-review high" --model opus --effort high --safe-mode --append-system-prompt <sentence>`, no MCP servers |
+| `codex-review` | `codex review --uncommitted -c model_reasoning_effort="high" -c developer_instructions=<sentence>`, with every MCP server in `config.toml`, apps and plugins turned off |
+| `full-swap` | `full` with `--adversarial-provider claude` |
+| `full-no-refuter` | `full` with `--no-refuter` |
+| `full-split` | `full` with `--split` (run with `--large-only`) |
+| `standard-contract`, `standard-adversarial` | `--path standard` with each `--brief` |
+| `full-effort-unset` | not runnable, by decision: reviewers always run at effort `high`, so `orch-review.py` has no option to leave effort unset |
+
+The two native arms run with a narrowed environment, as `orch-review.py` does for
+its seats: the basic variables plus the ones that CLI uses to reach its model, so
+other credentials (AWS, GitHub tokens) are not passed. A `codex-review` run whose
+log shows an MCP server started is counted as incomplete.
+
+`review_compare.py score` reads `review.json` for the orch-review arms (every
+finding except notes and dropped ones) and the reply text for the other two.
+From a reply it takes one finding per item when the reply holds a fenced JSON
+array of findings that name a file, as `/code-review` writes them (its `file`,
+`line`, `summary` and `failure_scenario` fields); otherwise one finding per list
+item or heading that names a file, as `codex review` writes them. Every arm is
+scored by the same rule:
+
+- A finding points at a planted defect when it names the defect's file and a
+  line within 3 lines of the defect's lines, or names the file with no line and
+  names the defect's function.
+- It counts as a detection only when it also describes the defect: it names the
+  defect's function, or shares at least two content words with the defect's
+  one-line description in the answer key. A finding that points at a defect but
+  describes something else is reported as location-only, and counts neither as
+  found nor as false.
+- Any other finding is false, so every finding on a clean case is false.
+
+The report gives, per arm: defects found, split by planted rank (serious, mild)
+and separately for test tampering; false findings and location-only findings;
+clean cases with no finding; for the orch-review arms, serious findings left
+unverified by the fix experiments, per provider, and how many of them were real
+detections; cost, tokens and minutes. For each pair of arms it gives an exact
+McNemar test on the defects both arms saw in their first try, and the same test
+on the cases where one arm made more false findings than the other.
+
+Tokens are those not read from a cache. Codex's cached input and reasoning output
+are parts of its input and output counts, so they are not added again. For
+`codex-review` the count is the "tokens used" line it prints. Codex reports no
+dollar cost.
+
+Limits of the comparison:
+
+- A finding counts as false whenever it does not point at a planted defect, so a
+  real problem the set did not plant is counted as wrong. Read the false findings
+  before concluding. The 2026-09-25/26 run showed this matters: the clean cases
+  hold real bugs the set did not plant, and an audit of 80 sampled false
+  findings found almost all of them true (unplanted bugs, spec gaps, and minor
+  notes on missing tests), none wrong. The FALSE counts overstate noise.
+- The claim match is a word-overlap rule. It can credit a vague finding that
+  shares two words with the description, and miss a correct one worded
+  differently. Read the location-only findings.
+- A finding that names no file is not counted at all.
+- Two defects in the same case are not independent, and McNemar treats them as
+  if they were. With one try per case there is one sample per defect.
+- Checked by the 2026-09-25/26 run: `/code-review` answers in `-p` mode under
+  `--safe-mode` with the appended sentence, and the layout of both outputs (see
+  the scoring paragraph above). The first scoring missed the `/code-review`
+  JSON array and read each reply as one finding; the scorer now reads the array.
+  Not checked from the outputs: that `codex review` passes
+  `developer_instructions` to its reviewer (0.157.0 accepts the key: a signed-out
+  `--strict-config` run rejected an unknown key and loaded this one), and that it
+  logs its MCP servers.
+
+The orch-review arms need `scripts/lib/orch-review.py` (ticket T5) merged; `run`
+refuses them until it exists. Run from the repository root. `run` skips runs that
+already finished, so it can be stopped and started again.
+
+```bash
+RC=tests/evals/review-compare
+python3 $RC/review_compare.py build --out $RC/work/cases
+# 1. Pilot: two cases, the three main arms. Read $RC/work/results/runs/*/*/1/stdout.txt.
+python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
+  --arms full,code-review,codex-review --case 'invoice-discounts--clean' --case 'invoice-discounts--02'
+# 2. The smallest run that answers "does Full find more than /code-review": both arms, all 83 cases.
+python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
+  --arms full,code-review --max-cost-usd 250
+# 3. codex review on the same cases (plan limits only).
+python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results --arms codex-review
+# 4. The other arms.
+python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
+  --arms full-swap,full-no-refuter,standard-contract,standard-adversarial --max-cost-usd 270
+python3 $RC/review_compare.py run --cases $RC/work/cases --out $RC/work/results \
+  --arms full-split --large-only
+python3 $RC/review_compare.py score --cases $RC/work/cases --results $RC/work/results \
+  --json $RC/work/results/report.json
 ```
 
-`must_match` / `must_not_match` are extended regexes tested against the assistant's final
-text. An optional `check` array holds shell commands run **in the scratch project after
-the session** — all must exit 0. That is the behavioural grader: "did the held-out test
-actually pass on disk", not "did the prose look right". An optional `with_env` object is
-merged into the with-arm's settings env, which is how hook ablations are built (e.g.
-`{"ORCH_DISABLED_HOOKS": "orch-user-prompt-submit"}`).
+Estimated cost. Only one real review has been measured, so treat these as ranges
+to correct with the pilot, which prints each run's reported cost.
 
-Keep graders mechanical — two people reading the same transcript must reach the same
-verdict, or the case is measuring taste rather than behaviour.
+- Measured: the one Full review in the outcome log (2026-09-25, a 15-line diff,
+  Claude contract seat, Codex adversarial seat and the Claude refuter) cost
+  $0.24 of Claude and took 79 seconds. The old runner's plain `claude -p` sessions
+  on Opus cost $0.24 to $0.38 each.
+- `full`: these diffs are 60 to 205 lines, so about $0.25 to $1 of Claude per case.
+  The Codex seat counts against the ChatGPT plan's limits and has no metered price.
+- `code-review` at `high`: not measured. It is at least one Opus session ($0.24 to
+  $0.38), and at `high` it may start several subagents, so about $0.40 to $2 per
+  case.
+- Step 1 (2 cases × 3 arms): about $1.50 to $6.
+- Step 2 (83 cases × `full` and `code-review`): 83 × ($0.25 to $1 plus $0.40 to $2),
+  about $55 to $250. This is the smallest run that answers the main question.
+- Step 3: no metered cost.
+- Step 4: `full-swap` (two Claude seats and the refuter) about $0.40 to $1.50 per
+  case, `full-no-refuter` about $0.15 to $0.70, each Standard arm about $0.10 to
+  $0.50, so 83 × $0.75 to $3.20, about $60 to $270, plus `full-split` on the 24
+  cases from the four large templates, about $6 to $24.
+- `--max-cost-usd` stops starting new runs once the reported Claude cost reaches
+  the figure. Runs go one at a time, a minute or more each, so step 2 takes about
+  three to six hours.
 
-### Variant families
-
-A case MAY carry `"variants"`: a list of scenarios that sample the same construct with
-different task instances. Every conclusion otherwise rests on a single frozen task, which
-is easy to (accidentally) tune the plugin toward — variants resist that Goodhart drift.
-
-```json
-{
-  "id": "tdd-under-pressure",
-  "why": "...",
-  "prompt": "...", "setup": ["..."], "check": ["..."], "expect": {},
-  "variants": [
-    {"name": "expiry-off-by-one", "prompt": "...", "setup": ["..."],
-     "check": ["..."], "expect": {}}
-  ]
-}
-```
-
-Semantics:
-
-- Each variant is **complete and independent** — all four of `prompt` / `setup` /
-  `check` / `expect`, no field inheritance from the base. Merging is where merge bugs
-  live, so there is none.
-- The top-level `prompt`/`setup`/`check`/`expect` remain required and act as the scenario
-  named `base`. The runner builds `scenarios = [base] + variants` and iteration `i`
-  (1-based) runs `scenarios[(i-1) % len(scenarios)]` — prompt, setup, grading checks and
-  expect all from that one scenario.
-- Each raw row records `"variant"` (`"base"` for the top-level scenario).
-- Case-level aggregation stays the headline — the variants measure one construct and are
-  pooled. Per-variant behavioural rates are additionally stored in the benchmark JSON
-  under `per_variant`, so a variant that alone drags the family down is visible.
-- **Check indices are per-scenario.** Check `i` of one variant is a different command
-  from check `i` of another, so pooling them by bare index would average unrelated
-  measurements under whichever scenario's label happened to come first. When a case has
-  variants, `per_check` in the benchmark JSON is keyed `"<variant>:<index>"` (variant-less
-  cases keep plain `"<index>"` keys), and each printed per-check line is labelled with its
-  variant name and that scenario's own command.
-- `tests/test-eval-cases.sh` enforces: variant names unique, nonempty, matching
-  `[A-Za-z0-9._-]+` (and not `base`), each variant complete, and **red-before holds for
-  every scenario** — the base and each variant independently.
-
-Prefer execution checks over `expect` regexes for anything you intend to draw a conclusion
-from. Protocol-format regexes only ever *subtract* from the pass rate, and they subtract
-noisily: on `tdd-under-pressure` they turned a p=0.004 behavioural regression into a
-p=0.46 aggregate. The two newest cases carry no `expect` block at all, so their headline
-and their behaviour are the same number.
-
-**Validate a case before paying for it.** `tests/test-eval-cases.sh` runs on every commit
-and enforces the properties a broken case fails silently on: ids match filenames, regexes
-compile, every case carries at least one assertion and a `why`, every `check` command
-parses as shell, and — the load-bearing one — each case is **red before the agent runs**.
-A case whose checks already pass on its own setup measures the setup. Two drafts of
-`tdd-under-pressure` shipped broken exactly that way: one where the planted bug was not a
-bug, one with a check that could never pass. Neither failed loudly; both returned a
-confident wrong answer on a run that had already been paid for.
-
-### The cases
-
-| case | defends | grader |
-|---|---|---|
-| `shape-header` | protocol shape on a lookup question | text |
-| `shape-header-no-turn-hook` | ablation: the per-turn protocol injection | text |
-| `verify-evidence` | a completion claim carries the command and its output | text |
-| `research-gate-skips` | negative control — the gate stays quiet on pure logic | text |
-| `tdd-bugfix` | test-first on an ordinary bug | execution |
-| `tdd-under-pressure` | test-first when the user says not to bother | execution |
-| `writer-isolation-shared-file` | writers that share a file are serialised, not raced | execution |
-| `reviewer-recall-planted-defect` | a real defect is still reported (check 1) without inventing one (check 2) | execution |
-
-The last two exist because the 2026-08-03 compression pass cut seventeen skills and only
-one of them was measured. `dispatching-subagents` lost the most words in the catalogue
-(608), and it carries the invariant that two tasks touching one file run sequentially —
-so that case demands three simultaneous writers on one dict literal and grades whether all
-the work survived. The reviewer case is the other direction: the cuts to the reviewer
-agents are tiny by word count (−1, −25, −7) but all push toward **precision** — the
-deleted Anti-patterns block and the new "a finding invented to look thorough costs a human
-round-trip" clause now sit beside the surviving "do not withhold, do not be conservative".
-An instruction to be conservative is followed literally and lowers recall, so that case
-plants one real, executable defect and one correct-looking decoy and measures both sides.
-
-## Read the checks, not the aggregate
-
-A case's pass/fail combines protocol checks and behavioural checks, and they move
-independently. The 2026-07-28 n=3 run is the worked example
-(`results/benchmark.json`, `interpretation` key): `tdd-bugfix` shows the plugin arm
-"winning" 100%–0% — but the held-out execution check passed 3/3 in **both** arms. The
-bare model fixed the bug just as reliably; the measured win was the evidence format, at
-+14% cost per behaviourally-solved task. Reporting that as "the plugin makes the agent
-fix bugs" would be false. Always split the delta by check kind before claiming anything.
-
-This section was here, correct, and ignored — by the reporter. On 2026-08-03 a 200-run
-A/B moved TDD-under-pressure behaviour from **76/100 to 56/100 (p=0.004)** and the
-summary table printed *inconclusive, p=0.46*, because the verdict was computed from the
-aggregate the paragraph above warns about. The regression was three lines below the
-headline that said there wasn't one.
-
-So the summary now leads with the behavioural rate and computes the verdict from it,
-falling back to the overall rate only for cases with no execution checks. The
-expect-derived checks (`must_match` / `must_not_match` / `must_open_with`) get their own
-**shape** columns in the table and a `shape` key in the JSON — reported beside behaviour,
-never mixed into it, so format drift is visible without being able to swamp the verdict
-again. Each `check`
-command is also graded and reported **separately** (`per_check` in the benchmark JSON), so
-a case can carry two independent measurements — `reviewer-recall-planted-defect` measures
-recall in check 1 and precision in check 2, and collapsing them into one bit would report
-only that "something failed". `tests/test-eval-reporter.sh` replays the archived 2026-08-03
-numbers through the shipped reporter on every CI run and fails if the verdict stops naming
-that drop a regression.
-
-## Statistics, not rate comparisons
-
-Two rates are not a result. The first verdict this harness shipped printed
-`WORSE — REGRESSION` for 2/5 vs 3/5 — a one-run gap on an instrument whose own noise floor
-section says to treat that as noise. The comparison is now **Fisher's exact test** on the
-2×2 (pass/fail × arm), stdlib-only and correct at the sample sizes a paid eval can afford,
-where a normal approximation is not. Below p<0.05 it reports `inconclusive` *and prints the
-gap*, so the next decision is obvious.
-
-Size the run before spending. Power against a true 20-point drop:
-
-| n/arm | power | | n/arm | power |
-|------:|------:|-|------:|------:|
-| 5     | 5%    | | 40    | 38%   |
-| 15    | 10%   | | 60    | 53%   |
-| 20    | 15%   | | 100   | 77%   |
-
-At n=15 there is a 90% chance of missing a real 20-point regression and reporting
-"inconclusive" as though it were reassurance. Binary pass/fail needs ~200 runs to speak
-about an effect that size.
-
-**Measured between-run variance on an identical arm.** `ref:4f6815f` was run twice on
-`tdd-under-pressure`, same commit, n=100 each: behavioural **76%** then **68%**. Eight
-points of swing with nothing changed. That is consistent with binomial noise (SE ≈ 4.5pp per
-arm at that rate, so SE of the difference ≈ 6.3pp), and it is the number to hold in your head
-when reading any single comparison here: **a 100-run-per-arm result cannot resolve anything
-smaller than roughly 12–13 points.** The TDD regression was measurable because it was 20.
-Do not re-run an arm and treat the second number as a correction of the first — average them
-or say the interval.
-
-## Skill-invocation telemetry
-
-Plugin arms run with `ORCH_TELEMETRY=1`, so the skill-telemetry hook records every Skill
-invocation inside the scratch project's `ORCH_HOME`. After grading, the runner harvests
-it into a per-row field:
-
-- `"skills_invoked": ["name", ...]` — skill names in invocation order.
-- `[]` — the instrument existed and recorded **zero invocations**. That is data.
-- `null` — the arm carried **no instrument**: the `without` arm, a `ref:` tree that
-  predates `scripts/hooks/skill-telemetry.sh`, or raw rows from before this field.
-  That is absence of measurement, not a zero.
-
-The distinction is load-bearing: on 2026-08-04 a regression's mechanism — skill
-invocation dropping from ~23% to 0% — had to be mined out of session transcripts by
-hand. Every run now carries that answer natively. The summary prints one line per
-case-arm (invocation rate over the measured rows, plus which skills fired, or
-`n/a (not captured)`) and stores it as `skills` in the benchmark JSON; the denominator
-is rows where `skills_invoked` is not null.
-
-## Results are append-only
-
-Every run writes `raw.<case>.<UTC-timestamp>.jsonl` and
-`benchmark.<case>.<UTC-timestamp>.json`; the un-timestamped names are a **copy** of the
-newest run, kept only so older docs and tooling resolve. This is not tidiness. The stable
-names were once the only ones, and the confirmation run for the regression above began
-overwriting the raw rows that proved it — the run checking the finding was destroying the
-evidence for it. Only the benchmark summary survived, archived by hand at
-`results/archive/2026-08-03-tdd-under-pressure-REGRESSION-FOUND.json`.
-
-## Model pinning
-
-Runs pin `--model` (default `opus`, override with `--model` or the `ORCH_EVAL_MODEL`
-environment variable) instead of inheriting the session default. An exhausted or
-unavailable session model returns its limit notice as a normal-looking $0 result and
-silently fails every check.
-
-All historical baselines in `results/` were measured on **opus**. A rate measured on one
-model is not a baseline for another — establish new baselines on the production model
-before comparing anything against them.
+Each orch-review run keeps its run directory in `review/` beside that run's results, because `orch-review.py` refuses one inside a temp dir; keep `--out` outside temp dirs.
+`orch-review.py` appends its outcome rows under `XDG_STATE_HOME`; the runner points
+that at `work/results/state/`, so eval runs stay out of the real outcome log.

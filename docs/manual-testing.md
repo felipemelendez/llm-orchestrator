@@ -15,7 +15,7 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ```bash
 cd ~/LLM-Orchestrator
-./tests/validate-skills.sh        # → "OK: 19 skills, 15 commands, 7 agents"
+./tests/validate-skills.sh        # → "OK: 18 skills, 15 commands, 5 agents"
 ./tests/test-portability.sh       # → "7 portability checks passed."
 ./tests/test-lib-resolution.sh    # → "PASS: test-lib-resolution (5 checks)"
 ./tests/smoke.sh                  # → "81 checks passed, 1 skipped."
@@ -91,7 +91,7 @@ Claude Sonnet 4.6 · prof:standard · mem:0
 
 ### 2.2 SessionStart hook fired
 
-Ask the agent:
+Run this in a project whose `docs/llm-orchestrator/cadence.json` sets `enabled: true`; elsewhere the hook injects no reply format, so the agent will not know the six shapes. Ask the agent:
 
 ```
 What response protocol are you using? List the six shapes.
@@ -135,7 +135,7 @@ Type `/` and look for the commands:
 
 ## Phase 3 — Response shape — 5 min
 
-The agent should reply in one of the six named shapes, not free prose.
+In a cadence-enabled project (see 2.2), the agent should reply in one of the six named shapes, not free prose. In any other project, or when the project's own instructions set a reply format, plain replies are correct.
 
 ### 3.1 Trigger a `Found:` reply
 
@@ -290,11 +290,8 @@ Run `/llm-orchestrator:plan`. **Pass:**
 ```
 
 **Watch for:**
-- Agent calls `TaskCreate` to create one task per plan task
 - Agent dispatches `orch-implementer` (you'll see Task tool calls in the conversation)
-- After implementer returns, agent dispatches `orch-spec-reviewer`
-- Then `orch-code-reviewer`
-- Tasks marked `completed` via `TaskUpdate`
+- After implementer returns, the review runs through `requesting-code-review` (`orch-review.py run --detach`, then `wait`)
 - Plan file's `- [ ]` heading-level checkboxes ticked
 
 **Pass criteria:**
@@ -409,7 +406,7 @@ Score the test:
 | Symptom                                                | Likely cause                                         | Fix                                                                                          |
 |--------------------------------------------------------|-------------------------------------------------------|-----------------------------------------------------------------------------------------------|
 | Statusline missing `prof:`                             | Plugin not loaded                                     | `/plugin enable llm-orchestrator`; restart session                                            |
-| Agent replies in free prose, no shapes                 | SessionStart hook not firing or output not reaching context | Run the hook from terminal; check `additionalContext` has the meta-skill                      |
+| Agent replies in free prose, no shapes, in a cadence-enabled project | SessionStart hook not firing or output not reaching context | Run the hook from terminal; check `additionalContext` has the reply-format block. Outside cadence projects plain replies are correct |
 | `/llm-orchestrator:remember` says "with_lock: command not found"        | `scripts/lib/orch-lock.sh` not on the sourced path    | Verify install — should be at `$CLAUDE_PLUGIN_ROOT/scripts/lib/` or `<project>/.claude/scripts/lib/` |
 | Hooks don't fire on a `--copy` install                 | `settings.json` missing the hook wiring               | Either install as plugin or hand-edit per `docs/install.md` "Wiring hooks"                    |
 | Subagent dispatch produces free prose, no Status block | `orch-implementer.md` not discovered as an agent      | `/plugin list` should show the plugin enabled; check `agents/` directory exists in install path |

@@ -5,7 +5,7 @@
 #   ./scripts/install.sh --link          symlink into ~/.claude/llm-orchestrator
 #   ./scripts/install.sh --copy <dir>    copy skills/commands/templates into <dir>/.claude/
 #   ./scripts/install.sh --global        render the cadence block into ~/.claude/CLAUDE.md
-#   ./scripts/install.sh --codex         the same block, plus the skill and the hooks, for Codex
+#   ./scripts/install.sh --codex         the same block into ~/.codex/AGENTS.md (the Codex plugin brings the skill and hooks)
 #
 # --global and --codex are the only modes that write outside a project, and both
 # write only under $HOME — which they take from the environment, so a test can
@@ -174,7 +174,7 @@ render_block() {
     cp "${target}" "${bak}"
   fi
   # RENDER_CHECK_ONLY=1 runs every refusal above and writes nothing: --codex
-  # asks that question in its preflight, before it replaces the skill copy.
+  # asks that question in its preflight, before its first write.
   [[ "${RENDER_CHECK_ONLY:-0}" == "1" ]] && return 0
   # mktemp creates the file itself, exclusively: a link someone planted under
   # a guessable name is never written through.
@@ -201,33 +201,39 @@ render_block() {
   return 0
 }
 
-# The layers report — READ ONLY, and it honours HOME from the environment. Five
-# yes/no lines, because "is the cadence actually on here?" is otherwise five
-# separate things to remember.
+# The layers report — READ ONLY, and it honours HOME from the environment. A
+# few yes/no lines, because "is the cadence actually on here?" is otherwise
+# several separate things to remember.
 _has_block() { [[ -f "$1" ]] && grep -qF "${BLOCK_START}" "$1" 2>/dev/null && echo yes || echo no; }
-# "names the hook" is not the question — "names a hook that is still there"
-# is. A checkout that moved leaves the string in place and the hook dead.
-_names_hook() {  # _names_hook <hooks.json> <script basename>
-  local p
-  [[ -f "$1" ]] || { echo no; return 0; }
-  p=$(grep -oE "/[^\"]*$2" "$1" 2>/dev/null | head -1 || true)
-  if [[ -z "${p}" ]]; then
-    grep -q "$2" "$1" 2>/dev/null && echo "yes (no absolute path)" || echo no
-  elif [[ -f "${p}" ]]; then
-    echo yes
-  else
-    echo "stale path (${p} does not exist — re-run --codex)"
+# `codex plugin add` records the plugin in config.toml; `enabled = false` in
+# that table means it is installed but off. Read only.
+codex_plugin_on() {
+  [[ -f "${HOME:-}/.codex/config.toml" ]] || return 1
+  awk '
+    /^[[:space:]]*\[/ { inside = ($0 ~ /^[[:space:]]*\[plugins\."llm-orchestrator@llm-orchestrator"\][[:space:]]*$/); if (inside) found = 1; next }
+    inside && /^[[:space:]]*enabled[[:space:]]*=[[:space:]]*false/ { off = 1 }
+    END { exit (found && !off) ? 0 : 1 }
+  ' "${HOME}/.codex/config.toml"
+}
+# What an earlier --codex left that the plugin now provides: hook entries in
+# ~/.codex/hooks.json and the marked skill copy. Both make Codex list a check twice.
+_codex_leftovers() {
+  local h="${HOME:-}" n="" found=()
+  if [[ -f "${h}/.codex/hooks.json" ]] && command -v python3 >/dev/null 2>&1; then
+    n=$(python3 "${ROOT}/scripts/lib/codex-old-hooks.py" count "${h}/.codex/hooks.json" "${ROOT}" 2>/dev/null || true)
   fi
+  [[ -n "${n}" && "${n}" != "0" ]] && found+=("${n} hook entries in ${h}/.codex/hooks.json")
+  [[ -f "${h}/.agents/skills/cadence/.orch-installed" ]] && found+=("the skill copy in ${h}/.agents/skills/cadence")
+  if [[ ${#found[@]} -eq 0 ]]; then echo none; else printf '%s' "${found[0]}"; [[ ${#found[@]} -gt 1 ]] && printf ', %s' "${found[1]}"; printf ' (re-run --codex)\n'; fi
 }
 layers_report() {
   local h="${HOME:-}" proj="${CLAUDE_PROJECT_DIR:-${PWD}}"
   echo "layers present on this machine:"
   printf '  %-44s %s\n' "${h}/.claude/CLAUDE.md cadence block:" "$(_has_block "${h}/.claude/CLAUDE.md")"
   printf '  %-44s %s\n' "${h}/.codex/AGENTS.md cadence block:" "$(_has_block "${h}/.codex/AGENTS.md")"
-  printf '  %-44s %s\n' "${h}/.agents/skills/cadence:" \
-    "$([[ -d "${h}/.agents/skills/cadence" ]] && echo yes || echo no)"
-  printf '  %-44s %s\n' "${h}/.codex/hooks.json names the adapter:" "$(_names_hook "${h}/.codex/hooks.json" 'codex-cadence-adapter\.sh')"
-  printf '  %-44s %s\n' "${h}/.codex/hooks.json names the completion check:" "$(_names_hook "${h}/.codex/hooks.json" 'codex-verify-gate\.sh')"
+  printf '  %-44s %s\n' "Codex plugin llm-orchestrator@llm-orchestrator:" \
+    "$(codex_plugin_on && echo yes || echo no)"
+  printf '  %-44s %s\n' "left by an earlier --codex:" "$(_codex_leftovers)"
   printf '  %-44s %s\n' "${proj}/docs/llm-orchestrator/cadence.json:" \
     "$([[ -f "${proj}/docs/llm-orchestrator/cadence.json" ]] && echo yes || echo no)"
 }
@@ -238,12 +244,13 @@ case "${cmd}" in
     fail=0
     degraded=""
     for f in README.md AGENTS.md CLAUDE.md concise-agent-protocol.md ARCHITECTURE.md \
-             .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json; do
+             .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json \
+             .codex-plugin/plugin.json; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
     done
-    for d in skills commands agents templates hooks workflows scripts/hooks scripts/lib output-styles docs examples tests; do
+    for d in skills commands agents templates hooks scripts/hooks scripts/lib output-styles docs examples tests; do
       if [[ ! -d "${ROOT}/${d}" ]]; then
         echo "missing dir: ${d}"; fail=1
       fi
@@ -260,17 +267,21 @@ case "${cmd}" in
              scripts/lib/orch-git-classify.py \
              scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh \
              scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md \
-             docs/install.md templates/settings.json workflows/review-diff.js \
+             docs/install.md templates/settings.json scripts/lib/orch-review.py \
+             skills/requesting-code-review/references/seat-schema.json \
+             skills/requesting-code-review/references/refuter-schema.json \
              skills/brainstorming/scripts/server.cjs skills/using-orchestrator/SKILL.md \
              skills/cadence/SKILL.md skills/cadence/CADENCE.md \
              skills/cadence/scripts/orch-cadence-gate.sh skills/cadence/scripts/orch-cadence-check.sh \
              skills/cadence/scripts/cadence-detect.sh skills/cadence/scripts/cadence-init.sh \
-             skills/cadence/references/commit-msg skills/cadence/references/cadence-state.md \
+             skills/cadence/references/commit-msg skills/cadence/references/laws.md \
              templates/cadence-global-block.md scripts/lib/orch-task-resources.py \
              skills/cadence/scripts/orch-task-resources.py \
              scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
              scripts/lib/codex-cadence-read-command.py scripts/lib/codex-completion-check.py \
-             scripts/providers/claude-review.py docs/codex.md docs/codex-provider.md; do
+             scripts/lib/codex-old-hooks.py scripts/lib/orch-completion-check.py \
+             scripts/lib/orch-subagent-report.py skills/cadence/scripts/cadence-ruling.sh \
+             docs/codex.md docs/codex-provider.md; do
       if [[ ! -f "${ROOT}/${f}" ]]; then
         echo "missing: ${f}"; fail=1
       fi
@@ -279,8 +290,8 @@ case "${cmd}" in
     # Commands and agents ship without a wiring manifest, so this list is the
     # manifest. It fails closed on deletion (the reproduced blind spot); a new
     # command/agent must be appended here to be guarded.
-    for f in agents/orch-code-reviewer.md agents/orch-debugger.md agents/orch-explorer.md \
-             agents/orch-implementer.md agents/orch-researcher.md agents/orch-security-reviewer.md \
+    for f in agents/orch-debugger.md agents/orch-explorer.md \
+             agents/orch-implementer.md agents/orch-researcher.md \
              agents/orch-spec-reviewer.md \
              commands/cadence-init.md \
              commands/debug.md commands/dispatch.md commands/finish.md commands/forget.md \
@@ -324,17 +335,20 @@ case "${cmd}" in
     # which is the failure --check exists to catch.
     if command -v python3 >/dev/null 2>&1; then
       for j in .claude-plugin/plugin.json .claude-plugin/marketplace.json \
-               hooks/hooks.json templates/settings.json; do
+               .codex-plugin/plugin.json hooks/hooks.json templates/settings.json; do
         if [[ -f "${ROOT}/${j}" ]] && ! python3 -m json.tool "${ROOT}/${j}" >/dev/null 2>&1; then
           echo "invalid JSON: ${j}"; fail=1
         fi
       done
-      if [[ -f "${ROOT}/hooks/hooks.json" && -f "${ROOT}/scripts/lib/check-hook-paths.py" ]]; then
-        if ! hook_out=$(python3 "${ROOT}/scripts/lib/check-hook-paths.py" \
-                          "${ROOT}/hooks/hooks.json" --root "${ROOT}" 2>&1); then
-          echo "${hook_out}"; fail=1
+      # The Codex manifest carries its hooks inline; the same check reads it.
+      for j in hooks/hooks.json .codex-plugin/plugin.json; do
+        if [[ -f "${ROOT}/${j}" && -f "${ROOT}/scripts/lib/check-hook-paths.py" ]]; then
+          if ! hook_out=$(python3 "${ROOT}/scripts/lib/check-hook-paths.py" \
+                            "${ROOT}/${j}" --root "${ROOT}" 2>&1); then
+            echo "${hook_out}"; fail=1
+          fi
         fi
-      fi
+      done
     else
       degraded="python3 not found — JSON validity and hook-command resolution were NOT checked"
     fi
@@ -364,368 +378,129 @@ case "${cmd}" in
     ;;
 
   --codex)
-    # Three layers, in this order: the skill, the instructions block, the hooks.
-    # config.toml is never touched — hooks.json is the file this installer owns.
+    # Codex gets the cadence skill and the hooks from the Codex plugin
+    # (.codex-plugin/plugin.json, through `codex plugin add`). This mode renders
+    # the instructions block into ~/.codex/AGENTS.md, and removes the hook
+    # entries and the skill copy an earlier --codex wrote, so each hook and the
+    # skill are registered once. config.toml is never touched.
     # PREFLIGHT — every refusal fires before the first write, and the layers
-    # report prints on every path. A run that copies the skill, renders the
-    # block and THEN refuses leaves the machine in a state nobody chose.
+    # report prints on every path.
     codex_refuse() { echo "refused: $1" >&2; echo >&2; layers_report >&2; exit 1; }
-    skills_dest="${HOME}/.agents/skills/cadence"
     hooks_file="${HOME}/.codex/hooks.json"
-    adapter="${ROOT}/scripts/hooks/codex-cadence-adapter.sh"
-    gate="${ROOT}/scripts/hooks/codex-verify-gate.sh"
-    cleanup="${ROOT}/scripts/hooks/orch-task-cleanup.sh"
-
-    command -v python3 >/dev/null 2>&1 || codex_refuse \
-      "--codex needs python3 to merge the Codex hooks file without destroying what is already in it. Install python3 and re-run; nothing was changed."
-    for dependency in scripts/hooks/codex-cadence-adapter.sh scripts/hooks/codex-verify-gate.sh \
-                      scripts/hooks/orch-task-cleanup.sh scripts/lib/codex-cadence-read-command.py \
-                      scripts/lib/codex-completion-check.py scripts/lib/orch-completion-check.py \
-                      scripts/lib/orch-signals.sh scripts/lib/orch-task-resources.py; do
-      [[ -f "${ROOT}/${dependency}" ]] || codex_refuse \
-        "${ROOT}/${dependency} is missing — nothing was changed."
-    done
-    # The destination is judged where it really is (a link is written through,
-    # never replaced by a directory), and it must be enterable before the
-    # marker inside it can be read at all.
-    skills_res="$(resolve_target "${skills_dest}")"
-    if [[ -d "${skills_dest}" && ! ( -w "${skills_dest}" && -x "${skills_dest}" ) ]]; then
-      codex_refuse "${skills_res} is not a writable directory; nothing was changed."
-    fi
-    if [[ -e "${skills_dest}" && ! -f "${skills_dest}/.orch-installed" ]]; then
-      codex_refuse "${skills_dest} exists and this installer did not write it (no .orch-installed marker inside). Move it aside yourself if you want it replaced; nothing was changed."
-    fi
-    # The marker says the copy is this installer's. A file inside it that the
-    # shipped skill does not contain is the person's, and a copy is replaced
-    # whole, so such a file is a refusal, named, before anything is written.
-    # Permissions first: a directory this user cannot enter would hide its
-    # files from the scan below.
-    if [[ -d "${skills_dest}" ]]; then
-      # A directory this user cannot write, enter OR read cannot be replaced
-      # (rm needs to read it) and cannot be scanned for the person's files.
-      # The scan's output goes to a file so find's own failure is seen, not
-      # hidden behind head's exit code: a scan that could not finish is a
-      # refusal in its own right, never a pass.
-      scan="$(mktemp "${TMPDIR:-/tmp}/orch-scan.XXXXXX")" \
-        || codex_refuse "no temporary file could be created under ${TMPDIR:-/tmp} for the scan of ${skills_dest}; set TMPDIR to a writable directory and re-run; nothing was changed."
-      if ! find "${skills_res}" -type d \( ! -perm -u+w -o ! -perm -u+x -o ! -perm -u+r \) > "${scan}" 2>/dev/null; then
-        unwritable=$(head -3 "${scan}"); rm -f "${scan}"
-        codex_refuse "${skills_dest} holds a directory this installer cannot scan ($(printf '%s' "${unwritable:-${skills_dest}}" | tr '\n' ' ')), so the copy cannot be judged or replaced; fix its permissions, then re-run; nothing was changed."
-      fi
-      unwritable=$(head -3 "${scan}"); rm -f "${scan}"
-      if [[ -n "${unwritable}" ]]; then
-        codex_refuse "${skills_dest} holds a directory this user cannot write, enter or read ($(printf '%s' "${unwritable}" | tr '\n' ' ')), so the copy cannot be replaced; nothing was changed."
-      fi
-      # Ours: the marker at the copy's root, a regular file the shipped skill
-      # has at the same path, and the one library file copied beside it.
-      # Nothing shipped is a link, and a shipped directory's name on a file is
-      # not the directory.
-      scan="$(mktemp "${TMPDIR:-/tmp}/orch-scan.XXXXXX")" \
-        || codex_refuse "no temporary file could be created under ${TMPDIR:-/tmp} for the scan of ${skills_dest}; set TMPDIR to a writable directory and re-run; nothing was changed."
-      if ! (cd "${skills_dest}" && find . -mindepth 1 ! -path ./.orch-installed > "${scan}" 2>/dev/null); then
-        rm -f "${scan}"
-        codex_refuse "${skills_dest} could not be scanned for files this plugin did not ship, so the copy cannot be judged or replaced; fix its permissions, then re-run; nothing was changed."
-      fi
-      foreign=$(sed 's|^\./||' "${scan}" | while IFS= read -r f; do
-        if [[ -L "${skills_dest}/${f}" ]]; then
-          printf '%s\n' "${f}"
-        elif [[ -d "${skills_dest}/${f}" ]]; then
-          [[ -d "${ROOT}/skills/cadence/${f}" || "${f}" == scripts/lib ]] || printf '%s\n' "${f}"
-        elif [[ "${f}" == scripts/lib/orch-task-resources.py ]]; then
-          [[ -f "${ROOT}/scripts/lib/orch-task-resources.py" ]] || printf '%s\n' "${f}"
-        else
-          [[ -f "${ROOT}/skills/cadence/${f}" ]] || printf '%s\n' "${f}"
-        fi
-      done)
-      rm -f "${scan}"
-      if [[ -n "${foreign}" ]]; then
-        codex_refuse "${skills_dest} holds files this plugin did not ship, and a re-install replaces the copy whole: $(printf '%s' "${foreign}" | tr '\n' ' '). Move them out of the copy, then re-run; nothing was changed."
-      fi
-    fi
-    if [[ -f "${hooks_file}" ]]; then
-      if ! python3 -m json.tool "${hooks_file}" >/dev/null 2>&1; then
-        codex_refuse "${hooks_file} does not parse as JSON. Fix it or move it aside and re-run; nothing was changed."
-      fi
-      # Parsing is not the shape the merge needs. An array or a scalar parses,
-      # and refusing it only at the merge leaves the skill copied and AGENTS.md
-      # rendered — writes nobody chose, after a refusal. Same line, earlier.
-      if ! python3 -c 'import json,sys; sys.exit(0 if isinstance(json.load(open(sys.argv[1])), dict) else 1)' \
-           "${hooks_file}" >/dev/null 2>&1; then
-        codex_refuse "${hooks_file} is not a JSON object; nothing was changed."
-      fi
-      if ! python3 - "${hooks_file}" <<'PY'
-import json, sys
-hooks = json.load(open(sys.argv[1])).get("hooks", {})
-sys.exit(0 if isinstance(hooks, dict) and all(isinstance(v, list) for v in hooks.values()) else 1)
-PY
-      then codex_refuse "${hooks_file} has invalid hook groups; nothing was changed."
-      fi
-    fi
-    # A hooks.json that is a link is judged here too: a dangling link is not a
-    # file, so the checks above skip it, and refusing it only at the merge
-    # would come after the skill copy and the block render.
-    if [[ -L "${hooks_file}" && ! -e "${hooks_file}" ]]; then
-      codex_refuse "${hooks_file} is a link that resolves to nothing ($(readlink "${hooks_file}")); nothing was changed."
-    fi
-    hooks_res="$(resolve_target "${hooks_file}")"
-    if [[ "${hooks_res}" != "${hooks_file}" ]]; then
-      if under_home "${hooks_res}"; then
-        [[ -L "${hooks_file}" ]] && echo "${hooks_file} is a link to ${hooks_res}; writing through it."
-      else
-        codex_refuse "${hooks_file} is a link to ${hooks_res}, which is outside ${HOME}; nothing was changed."
-      fi
-    fi
-    if [[ -e "${hooks_res}" && ! -f "${hooks_res}" ]]; then
-      codex_refuse "${hooks_res} exists and is not a regular file; nothing was changed."
-    fi
-    hooks_parent="${hooks_res%/*}"; [[ -n "${hooks_parent}" ]] || hooks_parent="/"
-    if [[ -e "${hooks_res}" && ( ! -w "${hooks_res}" || ! -w "${hooks_parent}" || ! -x "${hooks_parent}" ) ]]; then
-      codex_refuse "${hooks_res} (or its directory) is not writable by this user, so the merge and its backup cannot be written; nothing was changed."
-    fi
-    # Three destinations, three files. Two names for one file, or a file
-    # inside the skill copy (replaced whole), would let a later write undo an
-    # earlier one and call the run a success.
     agents_file="${HOME}/.codex/AGENTS.md"
-    agents_res="$(resolve_target "${agents_file}")"
-    if [[ "${hooks_res}" == "${agents_res}" ]]; then
-      codex_refuse "${hooks_file} and ${agents_file} are the same file (${hooks_res}); nothing was changed."
+    skills_dest="${HOME}/.agents/skills/cadence"
+    old_hooks_lib="${ROOT}/scripts/lib/codex-old-hooks.py"
+
+    # Removing the old install before the plugin is on would leave Codex with
+    # no checks at all, so without the plugin nothing is removed.
+    plugin_on=0; codex_plugin_on && plugin_on=1
+    old_hooks=0
+    if [[ "${plugin_on}" -eq 1 && -f "${hooks_file}" ]]; then
+      command -v python3 >/dev/null 2>&1 || codex_refuse \
+        "--codex needs python3 to check ${hooks_file} for hook entries an earlier --codex wrote. Install python3 and re-run; nothing was changed."
+      if ! old_hooks=$(python3 "${old_hooks_lib}" count "${hooks_file}" "${ROOT}"); then
+        old_hooks=0
+        echo "${hooks_file} is not a hooks object this installer can read, so Codex cannot load it either; it was left alone and not checked for entries an earlier --codex wrote."
+      fi
     fi
-    for pair in "${hooks_file}|${hooks_res}" "${agents_file}|${agents_res}"; do
-      case "${pair#*|}" in
-        "${skills_res}"|"${skills_res}"/*)
-          codex_refuse "${pair%%|*} is inside ${skills_dest} (${pair#*|}), which the skill copy replaces whole; nothing was changed." ;;
-      esac
-    done
+    if [[ "${old_hooks}" -gt 0 ]]; then
+      hooks_res="$(resolve_target "${hooks_file}")"
+      under_home "${hooks_res}" || codex_refuse \
+        "${hooks_file} is a link to ${hooks_res}, which is outside ${HOME}, and it holds hook entries an earlier --codex wrote; remove them by hand. Nothing was changed."
+      hooks_parent="${hooks_res%/*}"; [[ -n "${hooks_parent}" ]] || hooks_parent="/"
+      if [[ ! -w "${hooks_res}" || ! -w "${hooks_parent}" || ! -x "${hooks_parent}" ]]; then
+        codex_refuse "${hooks_res} (or its directory) is not writable by this user, so the hook entries an earlier --codex wrote cannot be removed; nothing was changed."
+      fi
+      if [[ "$(resolve_target "${agents_file}")" == "${hooks_res}" ]]; then
+        codex_refuse "${hooks_file} and ${agents_file} are the same file (${hooks_res}); nothing was changed."
+      fi
+    fi
+
+    # The skill copy an earlier --codex wrote carries a marker at its root. A
+    # cadence skill without it is the person's and is left alone.
+    old_skill=""
+    if [[ "${plugin_on}" -eq 1 && -e "${skills_dest}" ]]; then
+      skills_res="$(resolve_target "${skills_dest}")"
+      if [[ -d "${skills_res}" && ! ( -r "${skills_res}" && -w "${skills_res}" && -x "${skills_res}" ) ]]; then
+        codex_refuse "${skills_dest} cannot be read, written or entered by this user, so it cannot be checked for a skill copy an earlier --codex wrote; fix its permissions, then re-run; nothing was changed."
+      fi
+      if [[ -f "${skills_res}/.orch-installed" ]]; then
+        under_home "${skills_res}" || codex_refuse \
+          "${skills_dest} is a link to ${skills_res}, which is outside ${HOME}; remove the skill copy there by hand. Nothing was changed."
+        # Every directory in the copy must be emptied, so each must be
+        # readable, writable and enterable. A scan that fails is a refusal.
+        scan="$(mktemp "${TMPDIR:-/tmp}/orch-scan.XXXXXX")" \
+          || codex_refuse "no temporary file could be created under ${TMPDIR:-/tmp}; set TMPDIR to a writable directory and re-run; nothing was changed."
+        if ! find "${skills_res}" -type d \( ! -perm -u+w -o ! -perm -u+x -o ! -perm -u+r \) > "${scan}" 2>/dev/null \
+           || [[ -s "${scan}" ]]; then
+          locked=$(head -3 "${scan}" | tr '\n' ' '); rm -f "${scan}"
+          codex_refuse "${skills_dest} holds a directory this user cannot write, enter or read (${locked:-${skills_dest}}), so the skill copy an earlier --codex wrote cannot be removed; fix its permissions, then re-run; nothing was changed."
+        fi
+        rm -f "${scan}"
+        old_skill="${skills_res}"
+      fi
+    fi
+
     # The block render has refusals of its own (duplicate markers, a dangling
     # link, a marker pair the person wrote); ask them all now, writing nothing.
-    if ! RENDER_CHECK_ONLY=1 render_block "${HOME}/.codex/AGENTS.md"; then
-      codex_refuse "${HOME}/.codex/AGENTS.md cannot take the cadence block (see above); nothing was changed."
+    d="${HOME}/.codex"
+    if [[ -L "${d}" && ! -e "${d}" ]]; then
+      codex_refuse "${d} is a link that resolves to nothing ($(readlink "${d}")); fix the link; nothing was changed."
     fi
-    # Nothing is created before every check has passed: a directory that
-    # exists must be writable, and one that does not needs a writable parent.
-    for d in "${HOME}/.codex" "${HOME}/.agents"; do
-      if [[ -L "${d}" && ! -e "${d}" ]]; then
-        codex_refuse "${d} is a link that resolves to nothing ($(readlink "${d}")); fix the link; nothing was changed."
-      fi
-      if [[ -e "${d}" ]]; then
-        d_res="$(resolve_target "${d}")"
-        under_home "${d_res}" || codex_refuse "${d} is a link to ${d_res}, which is outside ${HOME}; nothing was changed."
-        [[ -d "${d_res}" && -w "${d_res}" && -x "${d_res}" ]] || codex_refuse "${d} is not a writable directory; nothing was changed."
-      else
-        [[ -d "${HOME}" && -w "${HOME}" && -x "${HOME}" ]] || codex_refuse "${HOME} is not writable, so ${d} cannot be created; nothing was changed."
-      fi
-    done
-    # The skill destination and every directory above it: each that exists is
-    # judged where it really is and must be writable, so the copy cannot land
-    # outside HOME or fail after the other writes.
-    for d in "${HOME}/.agents" "${HOME}/.agents/skills" "${skills_dest}"; do
-      [[ -e "${d}" || -L "${d}" ]] || continue
+    if [[ -e "${d}" ]]; then
       d_res="$(resolve_target "${d}")"
       under_home "${d_res}" || codex_refuse "${d} is a link to ${d_res}, which is outside ${HOME}; nothing was changed."
-      # Writable AND enterable: a 0600 directory passes -w and fails the copy.
-      [[ -d "${d_res}" && -w "${d_res}" && -x "${d_res}" ]] || codex_refuse "${d_res} is not a writable directory; nothing was changed."
-    done
+      [[ -d "${d_res}" && -w "${d_res}" && -x "${d_res}" ]] || codex_refuse "${d} is not a writable directory; nothing was changed."
+    else
+      [[ -d "${HOME}" && -w "${HOME}" && -x "${HOME}" ]] || codex_refuse "${HOME} is not writable, so ${d} cannot be created; nothing was changed."
+    fi
+    if ! RENDER_CHECK_ONLY=1 render_block "${agents_file}"; then
+      codex_refuse "${agents_file} cannot take the cadence block (see above); nothing was changed."
+    fi
 
-    # Writes. The old skill copy goes aside first, as one rename: a copy that
-    # will not move (an immutable file, an ACL, anything the mode bits do not
-    # show) is a refusal before anything else is written, and a rename needs
-    # nothing inside the copy. Then the fresh copy, then the hooks merge (its
-    # Python has its own refusals, all asked in the preflight), then the block
-    # (already dry-run above), and last the old copy is deleted; if it will
-    # not go, it is named and left, and the install is still whole.
-    aside=""
-    if [[ -e "${skills_res}" ]]; then
-      aside="$(dirname "${skills_res}")/.cadence.orch-old"; n=1
-      while [[ -e "${aside}" || -L "${aside}" ]]; do aside="$(dirname "${skills_res}")/.cadence.orch-old.${n}"; n=$((n+1)); done
-      if ! mv "${skills_res}" "${aside}" 2>/dev/null; then
-        codex_refuse "${skills_dest} could not be moved aside for replacement (something in it refuses that the permission bits do not show); move it aside yourself, then re-run; nothing was changed."
+    # Writes: the old hook entries, the block, then the old skill copy.
+    if [[ "${old_hooks}" -gt 0 ]]; then
+      python3 "${old_hooks_lib}" remove "${hooks_res}" "${ROOT}" || codex_refuse \
+        "the hook entries an earlier --codex wrote could not be removed from ${hooks_file}; nothing was changed."
+    fi
+    render_block "${agents_file}"
+
+    # Only files this plugin ships, at the paths it ships them, are deleted;
+    # anything else in the copy is the person's and is named and kept.
+    if [[ -n "${old_skill}" ]]; then
+      failed=""
+      while IFS= read -r f; do
+        if [[ -f "${old_skill}/${f}" && ! -L "${old_skill}/${f}" ]]; then
+          rm -f "${old_skill}/${f}" 2>/dev/null || failed="${failed} ${f}"
+        fi
+      done < <(cd "${ROOT}/skills/cadence" && find . -type f | sed 's|^\./||'; \
+               echo scripts/lib/orch-task-resources.py; echo .orch-installed)
+      find "${old_skill}" -depth -type d -empty -exec rmdir {} \; 2>/dev/null || true
+      if [[ -n "${failed}" ]]; then
+        echo "error: these files of the skill copy in ${skills_dest} could not be deleted:${failed}. Delete them by hand, or Codex lists the cadence skill twice." >&2
+        exit 1
       fi
-      # From here until the old copy is deleted, no exit may be silent: an
-      # old copy still sitting aside is named on the way out.
-      trap 'rc=$?; if [[ $rc -ne 0 && -n "${aside:-}" && -e "${aside}" ]]; then echo "the previous skill copy is at ${aside}; move it back to ${skills_dest} or delete it" >&2; fi' EXIT
+      if [[ -e "${old_skill}" ]]; then
+        kept=$(cd "${old_skill}" && find . -mindepth 1 ! -type d | sed 's|^\./||' | tr '\n' ' ')
+        echo "removed the skill copy an earlier --codex wrote from ${skills_dest}; kept files this plugin did not ship: ${kept}"
+      else
+        [[ -L "${skills_dest}" ]] && rm -f "${skills_dest}"
+        echo "removed the skill copy an earlier --codex wrote from ${skills_dest}"
+      fi
+    elif [[ "${plugin_on}" -eq 1 && -e "${skills_dest}" ]]; then
+      echo "${skills_dest} is a cadence skill this installer did not write, so it was left in place. Codex lists it next to the plugin's cadence skill; remove it if it is an old copy."
     fi
-    # Directories made here are unmade again if the copy fails, so a refusal
-    # on a fresh HOME leaves it fresh.
-    made=()
-    for d in "${HOME}/.codex" "${HOME}/.agents" "${HOME}/.agents/skills" "$(dirname "${skills_res}")"; do
-      [[ -e "${d}" || -L "${d}" ]] || made+=("${d}")
-    done
-    if ! { mkdir -p "${HOME}/.codex" "$(dirname "${skills_res}")" \
-           && cp -R "${ROOT}/skills/cadence" "${skills_res}" \
-           && mkdir -p "${skills_res}/scripts/lib" \
-           && cp "${ROOT}/scripts/lib/orch-task-resources.py" "${skills_res}/scripts/lib/" \
-           && printf 'written by llm-orchestrator install.sh --codex — safe to delete\n' > "${skills_res}/.orch-installed"; } 2>/dev/null; then
-      rm -rf "${skills_res}" 2>/dev/null || true
-      if [[ -n "${aside}" ]]; then mv "${aside}" "${skills_res}" && aside=""; fi
-      i=${#made[@]}; while (( i > 0 )); do i=$((i-1)); rmdir "${made[$i]}" 2>/dev/null || true; done
-      codex_refuse "the cadence skill could not be copied into ${skills_dest}; the previous copy is back in place and nothing else was changed."
+
+    echo
+    if [[ "${plugin_on}" -eq 1 ]]; then
+      echo "The cadence skill and the hooks come from the Codex plugin, which is installed."
+    else
+      echo "The cadence skill and the hooks come from the Codex plugin, which is not installed in ${HOME}/.codex. Until it is, nothing an earlier --codex wrote is removed, so its hooks keep working. To finish, add the plugin first, then run --codex again:"
+      echo "  codex plugin marketplace add ${ROOT}"
+      echo "  codex plugin add llm-orchestrator@llm-orchestrator"
+      echo "  ${ROOT}/scripts/install.sh --codex"
     fi
-    # Two hook entries. The adapter is Codex's substitute for the file-deny
-    # rules Claude Code has natively: a Bash command or an apply_patch header
-    # that names a locked FILE and is not one plain read is refused. The
-    # completion check is the Codex twin of orch-verify-gate.sh: at Stop it
-    # reads the session log Codex already keeps and, when the reply says
-    # Verification: PASS with no passing check behind it, sends the agent back
-    # once. Codex sends tool_name and tool_input.command and no file path, so
-    # the adapter is registered for Bash and for apply_patch and reads the
-    # patch headers out of the command string.
-    hooks_file="${hooks_res}"
-    mkdir -p "${HOME}/.codex" "$(dirname "${hooks_file}")"
-    python3 - "${hooks_file}" "${adapter}" "${gate}" "${cleanup}" <<'PY'
-import json, os, re, shlex, sys
-
-path, adapter, gate, cleanup = sys.argv[1:]
-data = {}
-if os.path.exists(path):
-    try:
-        with open(path) as fh:
-            data = json.load(fh)
-    except Exception as exc:
-        sys.stderr.write(
-            "refused: %s does not parse as JSON (%s). Fix it or move it aside; "
-            "nothing was changed.\n" % (path, exc))
-        sys.exit(1)
-if not isinstance(data, dict):
-    sys.stderr.write("refused: %s is not a JSON object; nothing was changed.\n" % path)
-    sys.exit(1)
-
-hooks = data.setdefault("hooks", {})
-if not isinstance(hooks, dict):
-    sys.stderr.write("refused: the \"hooks\" key of %s is not an object; nothing was changed.\n" % path)
-    sys.exit(1)
-
-# ONLY this plugin's own hooks: the ones that ship and the ones earlier
-# releases registered (codex-evidence.py, codex-verify.py), recognised by the
-# script the entry runs, by its name AND by where it lives (the plugin's hooks
-# are under scripts/hooks). A person's own my-hooks/codex-verify-gate.sh, or a
-# hook whose PATH merely contains the plugin's name, is theirs. Every previous
-# entry of ours is REPLACED, never added beside, so a second --codex leaves
-# exactly one registration per event, and an entry that points at a file this
-# release no longer ships is gone rather than left to fail every command.
-OWN = {"codex-cadence-adapter.sh", "codex-verify-gate.sh", "orch-task-cleanup.sh",
-       "codex-evidence.py", "codex-verify.py"}
-
-
-INTERPRETERS = {"bash", "sh", "zsh", "python", "python3", "env"}
-ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-
-def invoked(words, depth=0):
-    """The script a hook command runs: the first word that is neither an
-    interpreter (`bash /path/x.sh`, `env LANG=C python3 x.py`) nor a
-    VAR=value assignment. `bash -c '<snippet>'` runs the snippet's own first
-    word. An argument later on the line is never the script."""
-    words = [w for w in words if not ASSIGNMENT.match(w)]
-    for index, word in enumerate(words[:3]):
-        base = word.rsplit("/", 1)[-1]
-        if base == "-c":
-            if depth or index + 1 >= len(words):
-                return None
-            try:
-                inner = shlex.split(words[index + 1])
-            except ValueError:
-                return None
-            return invoked(inner, depth + 1)
-        if base in INTERPRETERS or base.startswith("python3."):
-            continue
-        return word
-    return None
-
-
-def ours(entry):
-    if not isinstance(entry, dict):
-        return False
-    c = entry.get("command", "")
-    if not isinstance(c, str):
-        return False
-    try:
-        words = shlex.split(c)
-    except ValueError:
-        words = c.split()
-    script = invoked(words)
-    if not script:
-        return False
-    directory, _, base = script.rpartition("/")
-    return base in OWN and (directory == "scripts/hooks" or directory.endswith("/scripts/hooks"))
-
-
-for event, groups in list(hooks.items()):
-    if not isinstance(groups, list):
-        sys.stderr.write("refused: %s hooks in %s must be an array; nothing was changed.\n" % (event, path))
-        sys.exit(1)
-    kept = []
-    for group in groups:
-        if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
-            kept.append(group)
-            continue
-        keep = [h for h in group["hooks"] if not ours(h)]
-        if len(keep) == len(group["hooks"]):
-            kept.append(group)
-        elif keep:
-            kept.append(dict(group, hooks=keep))
-    hooks[event] = kept
-
-pre = hooks.get("PreToolUse", [])
-for matcher in ("Bash", "apply_patch"):
-    pre.append({"matcher": matcher,
-                "hooks": [{"type": "command", "command": shlex.join(["bash", adapter]), "timeout": 10}]})
-hooks["PreToolUse"] = pre
-stop = hooks.get("Stop", [])
-stop.append({"hooks": [
-    {"type": "command", "command": shlex.join(["bash", gate]), "timeout": 10},
-    {"type": "command", "command": shlex.join(["bash", cleanup]), "timeout": 10}]})
-hooks["Stop"] = stop
-data["hooks"] = hooks
-new = json.dumps(data, indent=2) + "\n"
-
-old = ""
-if os.path.exists(path):
-    try:
-        old = open(path).read()
-    except Exception:
-        old = ""
-if old == new:
-    print("%s already carries the cadence hooks (unchanged, no backup written)" % path)
-    sys.exit(0)
-
-# The backup is the state BEFORE this installer ever touched the file. A .bak
-# rewritten on every run holds the previous run's merge, not the original.
-def exclusive(name):
-    # O_EXCL never follows a link someone planted under this name.
-    return os.fdopen(os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644), "w")
-
-if old:
-    bak = path + ".bak"
-    n = 1
-    while os.path.lexists(bak):
-        bak = "%s.bak.%d" % (path, n)
-        n += 1
-    with exclusive(bak) as fh:
-        fh.write(old)
-    print("backed up %s to %s" % (path, bak))
-
-import tempfile
-fd, tmp = tempfile.mkstemp(prefix=".hooks.json.orch-merge.", dir=os.path.dirname(path) or ".")
-with os.fdopen(fd, "w") as fh:
-    fh.write(new)
-os.chmod(tmp, 0o644)
-os.replace(tmp, path)
-print("merged the cadence file guard and the completion check into %s" % path)
-PY
-    render_block "${HOME}/.codex/AGENTS.md"
-
-    # The old copy goes last. The preflight proved it held only this plugin's
-    # own files, so nothing of the person's goes with it; the fresh copy is
-    # already in place, written where it really is (a linked destination
-    # keeps its link).
-    echo "copied the cadence skill into ${skills_dest} — it is a copy, not a link: re-run --codex after updating the plugin."
-    if [[ -n "${aside}" ]] && ! rm -rf "${aside}" 2>/dev/null; then
-      echo "the previous copy could not be deleted (something in it refuses) and is left at ${aside}; remove it by hand. The new copy is complete."
-    fi
-    trap - EXIT
-
-    echo "The PreToolUse adapter protects the locked cadence files. The Stop check reads Codex's own session log and sends the agent back once when a reply says Verification: PASS with no passing check in the turn; nothing is shown to you. See docs/codex.md."
-    echo "Open /hooks in a fresh Codex CLI session to review and trust the current definitions. Installation does not grant hook trust. config.toml and Claude hooks were not changed."
+    echo "Then open /hooks in a new Codex session and trust the three hooks. Installing does not grant hook trust. config.toml was not changed. See docs/codex.md."
     echo
     layers_report
     ;;
@@ -753,18 +528,28 @@ PY
     # would bake relative hook paths into hooks.json.
     dest="$(cd "${dest}" && pwd)"
     mkdir -p "${dest}/.claude" "${dest}/.claude/scripts/hooks" "${dest}/.claude/scripts/lib" "${dest}/.claude/scripts/verification" "${dest}/.claude/docs"
+    # The install record: one "<sha256>  <path>" line per file this install
+    # placed. The next --copy removes a recorded file the plugin no longer
+    # ships only while its content still has the recorded hash, so an upgrade
+    # leaves no stale briefs, hooks or libs behind and never deletes a file the
+    # person changed. Nothing outside the record is ever removed: .claude/ also
+    # holds the project's own skills, commands and settings.
+    record="${dest}/.claude/.llm-orchestrator-files"
+    hasher=""
+    if command -v shasum >/dev/null 2>&1; then hasher="shasum -a 256"
+    elif command -v sha256sum >/dev/null 2>&1; then hasher="sha256sum"; fi
+    old_record=""
+    if [[ -f "${record}" && ! -L "${record}" ]]; then
+      old_record=$(cat "${record}")
+    fi
     cp -R "${ROOT}/skills" "${dest}/.claude/"
     cp -R "${ROOT}/commands" "${dest}/.claude/"
     cp -R "${ROOT}/templates" "${dest}/.claude/"
     cp -R "${ROOT}/agents" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/output-styles" "${dest}/.claude/" 2>/dev/null || true
     cp -R "${ROOT}/hooks" "${dest}/.claude/"
-    # Workflow scripts. requesting-code-review and commands/review.md both name
-    # workflows/review-diff.js; without this the installed skills point at a file
-    # that does not exist.
-    cp -R "${ROOT}/workflows" "${dest}/.claude/"
     # Copy hook scripts and statusline.
-    for f in "${ROOT}/scripts/hooks/"*.sh "${ROOT}/scripts/hooks/"*.py; do
+    for f in "${ROOT}/scripts/hooks/"*.sh; do
       [[ -f "${f}" ]] && cp "${f}" "${dest}/.claude/scripts/hooks/"
     done
     [[ -f "${ROOT}/scripts/statusline.sh" ]] && cp "${ROOT}/scripts/statusline.sh" "${dest}/.claude/scripts/"
@@ -793,6 +578,116 @@ PY
     # dispatching-subagents points at this for model/effort guidance; without it
     # the reference dangles in every --copy install.
     cp "${ROOT}/docs/anthropic-ecosystem.md" "${dest}/.claude/docs/" 2>/dev/null || true
+
+    # The files this install placed, from the same list the copies above use.
+    new_record=$(
+      cd "${ROOT}" || exit 1
+      for d in skills commands templates agents output-styles hooks; do
+        [[ -d "${d}" ]] && find "${d}" -type f
+      done
+      for f in scripts/hooks/*.sh scripts/statusline.sh scripts/protocol-lint.sh \
+               scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh scripts/lib/* \
+               concise-agent-protocol.md docs/install.md docs/anthropic-ecosystem.md; do
+        [[ -f "${f}" ]] && printf '%s\n' "${f}"
+      done
+    ) || { echo "ERROR: could not list the files this install placed" >&2; exit 1; }
+    new_record=$(printf '%s\n' "${new_record}" | LC_ALL=C sort -u)
+    claude_real=$(cd -P "${dest}/.claude" && pwd -P)
+
+    # plain_path <relative path>: true only for a relative path with no "." or
+    # ".." part whose every component below .claude/ is not a link, and whose
+    # real location is inside .claude/. Nothing reached through a link counts.
+    plain_path() {
+      local rel="$1" p="${dest}/.claude" part rest real
+      case "/${rel}/" in */../*|*/./*|//*) return 1 ;; esac
+      [[ -n "${rel}" && "${rel}" != /* ]] || return 1
+      rest="${rel}"
+      while [[ -n "${rest}" ]]; do
+        part="${rest%%/*}"
+        [[ "${rest}" == */* ]] && rest="${rest#*/}" || rest=""
+        p="${p}/${part}"
+        [[ -L "${p}" ]] && return 1
+      done
+      real=$(cd -P "$(dirname "${dest}/.claude/${rel}")" 2>/dev/null && pwd -P) || return 1
+      [[ "${real}" == "${claude_real}" || "${real}" == "${claude_real}/"* ]]
+    }
+
+    # hash_list <dir>: "<sha256>  <path>" for each relative path on stdin that
+    # is a regular file under <dir>, in one hasher run.
+    hash_list() {
+      local dir="$1"
+      ( cd "${dir}" || exit 1
+        while IFS= read -r rel; do [[ -n "${rel}" && -f "${rel}" ]] && printf '%s\0' "${rel}"; done \
+          | xargs -0 ${hasher} 2>/dev/null ) || true
+    }
+    shipped() { printf '%s\n' "${new_record}" | grep -qxF -- "$1"; }
+
+    # remove_stale <relative path>: delete one file this plugin placed earlier
+    # and no longer ships, then any folders that leaves empty. Only a plain
+    # path (see plain_path) to a regular file qualifies; rmdir stops at the
+    # first folder that is not empty or is a link.
+    remove_stale() {
+      local rel="$1" d
+      plain_path "${rel}" || return 0
+      [[ -f "${dest}/.claude/${rel}" ]] || return 0
+      rm -f "${dest}/.claude/${rel}"
+      d=$(dirname "${rel}")
+      while [[ "${d}" != "." && "${d}" != "/" ]]; do
+        [[ -L "${dest}/.claude/${d}" ]] && break
+        rmdir "${dest}/.claude/${d}" 2>/dev/null || break
+        d=$(dirname "${d}")
+      done
+    }
+
+    kept=""
+    if [[ -z "${hasher}" ]]; then
+      # No way to prove a file is unchanged: delete nothing, record nothing.
+      echo "Note: neither shasum nor sha256sum was found, so no install record was written and nothing was removed."
+    else
+      if [[ -n "${old_record}" ]]; then
+        while IFS= read -r line; do
+          [[ "${line}" =~ ^([0-9a-f]{64})\ \ (.+)$ ]] || continue
+          want="${BASH_REMATCH[1]}"; rel="${BASH_REMATCH[2]}"
+          shipped "${rel}" && continue
+          plain_path "${rel}" && [[ -f "${dest}/.claude/${rel}" ]] || continue
+          have=$(printf '%s\n' "${rel}" | hash_list "${dest}/.claude" | awk '{print $1}')
+          if [[ -n "${have}" && "${have}" == "${want}" ]]; then
+            remove_stale "${rel}"
+          else
+            kept="${kept}  ${dest}/.claude/${rel}"$'\n'
+          fi
+        done <<< "${old_record}"
+      else
+        # An install made before the record existed: nothing proves which
+        # files this plugin put there, so nothing is removed. The files in the
+        # plugin's own skill folders that it no longer ships are listed.
+        for sk in "${ROOT}"/skills/*/; do
+          sk=$(basename "${sk}")
+          [[ -d "${dest}/.claude/skills/${sk}" && ! -L "${dest}/.claude/skills/${sk}" ]] || continue
+          while IFS= read -r rel; do
+            [[ -n "${rel}" ]] || continue
+            shipped "${rel}" || kept="${kept}  ${dest}/.claude/${rel}"$'\n'
+          done < <(cd "${dest}/.claude" && find "skills/${sk}" -type f)
+        done
+      fi
+      if [[ -n "${kept}" ]]; then
+        echo "Note: nothing proves the plugin placed these files unchanged, so they were kept. The plugin no longer ships them; delete them if you did not add them yourself:"
+        printf '%s' "${kept}"
+      fi
+
+      # The record lists only what this install placed: a file reached through
+      # no link whose content hashes the same as the source. A file identical
+      # to the plugin's own holds nothing unique, so recording it loses nothing.
+      plain=""
+      while IFS= read -r rel; do
+        [[ -n "${rel}" ]] || continue
+        plain_path "${rel}" && plain="${plain}${rel}"$'\n'
+      done <<< "${new_record}"
+      src_h=$(printf '%s' "${plain}" | hash_list "${ROOT}")
+      dst_h=$(printf '%s' "${plain}" | hash_list "${dest}/.claude")
+      LC_ALL=C comm -12 <(printf '%s\n' "${src_h}" | LC_ALL=C sort) \
+                        <(printf '%s\n' "${dst_h}" | LC_ALL=C sort) | grep -E '^[0-9a-f]{64}  ' > "${record}" || true
+    fi
 
     sed_inplace() {
       if sed --version >/dev/null 2>&1; then
@@ -861,7 +756,7 @@ LLM Orchestrator installer
   $0 --link                 symlink this repo into ~/.claude/llm-orchestrator
   $0 --copy <project-dir>   copy into <project-dir>/.claude/
   $0 --global               render the cadence block into ~/.claude/CLAUDE.md
-  $0 --codex                the cadence skill, the same block and the hooks, for Codex
+  $0 --codex                render the same block into ~/.codex/AGENTS.md (the Codex plugin brings the skill and hooks)
 USAGE
     exit 1
     ;;

@@ -1,0 +1,89 @@
+{
+  "schema_version": "1.1",
+  "name": "reviewer-confidence-anchoring",
+  "description": "The spec-document reviewer agent (agents/orch-spec-reviewer.md) tells the reviewer, in its own prompt, that 'the controller moves anything below 0.8 into Notes:'. The code-review seats started by scripts/lib/orch-review.py follow the opposite principle: their rules say the script filters low-confidence findings and name no number. So the consumer's cut-off is disclosed to the producer in one half of the system and withheld in the other. HYPOTHESIS: disclosure anchors -- reviewers rate findings they want kept at just above 0.8 (0.80/0.81/0.85) instead of their honest probability, and either inflate or silently drop sub-threshold findings, corrupting the very signal the controller filters on; Anthropic's guidance is that such instructions are followed literally. COUNTER-HYPOTHESIS: disclosure is harmless, because 'nothing is discarded' removes the incentive to game the number -- a demoted finding still surfaces in Notes:, so honest sub-0.8 ratings cost the reviewer nothing. THE OBSERVABLE is the distribution of emitted confidences over a diff planted with a certainty spread: an executed unambiguous bug (parse_duration multiplies minutes by 3600; '30m' -> 108000; the committed suite only covers 'h'/'s' so it passes), an arguable design issue (unbounded module-global _duration_cache, demonstrably grows without eviction, severity debatable), a real-but-borderline nit (backoff_delays' docstring promises delays BETWEEN successive attempts -- N attempts have N-1 gaps -- but it returns N entries; countably real, yet the fix might be one docstring line, so honest must-fix probability is well under 0.8), and a correct-but-suspicious decoy (align_to_day uses ts - ts % DAY_SECONDS and advertises negative-timestamp support; C-modulo intuition says broken, Python's floor-modulo makes it exactly floor(ts/86400)*86400 -- verified for negatives by execution). The prompt pins the confidence semantic (probability this is a genuine defect the author must fix) so scale ambiguity cannot masquerade as anchoring. Checks grade the machine-readable index only, never prose polarity: (1) well-formed index and no >=0.8 rating on the correct decoy; (2) confidences vary and are not all packed into [0.78, 0.88]; (3) the executed bug is rated >=0.85 AND the borderline nit appears with a confidence below 0.78 -- i.e. the reviewer willingly emitted a number the controller will demote, which is precisely what an anchored reviewer never does (they inflate it past the line or drop the finding; both fail this check). DECISION RULE: run --arm 'with' (threshold named, the spec reviewer's current text) against a future arm whose only delta is replacing the threshold sentence in agents/orch-spec-reviewer.md with the review seats' 'the script filters low-confidence findings, so do not hold anything back' wording (no such commit exists yet). If the threshold-blind arm passes checks 2-3 at a materially higher rate, the sentence is corrupting the signal and should be removed from reviewer-facing prompts. If the arms are indistinguishable at adequate n, the counter-hypothesis stands: 'nothing is discarded' neutralizes the disclosure and the sentence may stay for transparency's sake. KNOWN TAIL RISK, stated honestly: check 3 fails a reviewer who honestly rates the backoff_delays doc/code mismatch >=0.78; the semantic pinned in the prompt (must-fix probability, not description accuracy) makes that the minority reading, and at eval n the comparison is between arms, so a constant tail affects both equally. Port to claude plugin eval: the three checks became six regexes over review.md, each finding one JSON object in any key order. Two parts are approximated: 'every finding carries a confidence in [0,1]' became 'at least one does', and 'not all identical' is not checked (identical values outside [0.78, 0.88] pass).",
+  "tags": [
+    "reviewer-confidence-anchoring"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "index-has-confidence",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\"confidence\"\\s*:\\s*(?:0(?:\\.\\d+)?|1(?:\\.0+)?|\\.\\d+)(?![\\d.])",
+      "flags": ""
+    },
+    {
+      "name": "decoy-below-keep-line",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\\{(?=[^{}]*\"symbol\"\\s*:\\s*\"[^\"]*\\balign_to_day\\b[^\"]*\")(?=[^{}]*\"confidence\"\\s*:\\s*(?:0?\\.[89]\\d*|1(?:\\.0+)?)(?![\\d.]))[^{}]*\\}",
+      "flags": "",
+      "match": "not_contains"
+    },
+    {
+      "name": "two-or-more-confidences",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\"confidence\"[\\s\\S]*\"confidence\"",
+      "flags": ""
+    },
+    {
+      "name": "a-confidence-outside-anchor-band",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\"confidence\"\\s*:\\s*(?:0?\\.(?:[0-6]|7[0-7])\\d*|0(?:\\.0*)?|0?\\.(?:88\\d*[1-9]|89|9)\\d*|1(?:\\.0+)?)(?![\\d.])",
+      "flags": ""
+    },
+    {
+      "name": "executed-bug-rated-high",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\\{(?=[^{}]*\"symbol\"\\s*:\\s*\"[^\"]*\\bparse_duration\\b[^\"]*\")(?=[^{}]*\"confidence\"\\s*:\\s*(?:0?\\.(?:8[5-9]|9)\\d*|1(?:\\.0+)?)(?![\\d.]))[^{}]*\\}",
+      "flags": ""
+    },
+    {
+      "name": "borderline-nit-below-line",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\\{(?=[^{}]*\"symbol\"\\s*:\\s*\"[^\"]*\\bbackoff_delays\\b[^\"]*\")(?=[^{}]*\"confidence\"\\s*:\\s*(?:0?\\.(?:[0-6]|7[0-7])\\d*|0(?:\\.0*)?)(?![\\d.]))[^{}]*\\}",
+      "flags": ""
+    }
+  ]
+}

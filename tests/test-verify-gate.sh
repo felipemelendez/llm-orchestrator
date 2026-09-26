@@ -83,7 +83,8 @@ fire() { # fire <last_assistant_message> <transcript> → sets RC and ERR
   python3 -c 'import json,sys; print(json.dumps({"hook_event_name":"Stop",
 "session_id":"vg","last_assistant_message":sys.argv[1],"transcript_path":sys.argv[2]}))' \
     "$1" "$2" > "$TMP/in"
-  bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
+  # The project whose cadence.json may name a test_cmd; none unless PROJ_DIR is set.
+  CLAUDE_PROJECT_DIR="${PROJ_DIR:-$TMP/no-project}" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
   ERR=$(cat "$TMP/err")
   [[ -n "$ERR" ]] && ANY_STDERR=1
   [[ $RC -ne 0 ]] && ANY_RC=1
@@ -218,6 +219,271 @@ fire "$CLAIM" "$T"
 { [[ $RC -eq 0 ]] && warned; } \
   && ok "(f) a check from a PREVIOUS turn does not satisfy this turn's PASS" \
   || fail "(f) stale check counted" "rc=$RC err=$ERR"
+
+printf '\n%s== real test commands count; printing does not ==%s\n' "$DIM" "$RESET"
+
+# counts <label> <command>: a finished, passing run of <command> satisfies PASS.
+counts() {
+  local T; T=$(mk 'user:fix the gate' "bash:t1:$2" 'result:t1:ok')
+  fire "$CLAIM" "$T"
+  { [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } && ok "$1: $2 → silent" \
+    || fail "$1: $2 should count as a check" "rc=$RC out=$(cat "$TMP/out")"
+}
+# ignored <label> <command>: a passing run of <command> is not a check.
+ignored() {
+  local T; T=$(mk 'user:fix the gate' "bash:t1:$2" 'result:t1:ok')
+  fire "$CLAIM" "$T"
+  { [[ $RC -eq 0 ]] && warned; } && ok "$1: $2 → note" \
+    || fail "$1: $2 should not count as a check" "rc=$RC out=$(cat "$TMP/out")"
+}
+
+counts  "(k1) a runner named by a path" '.ve/bin/pytest zapgram/src/zg/test/unit'
+counts  "(k1)" './node_modules/.bin/vitest run'
+counts  "(k1)" 'venv/bin/pytest -q'
+counts  "(k1)" '.ve/bin/python -m pytest -q'
+counts  "(k2) a path-named runner after cd" 'cd zapgram && .ve/bin/pytest src/zg/test/unit'
+counts  "(k3) a runner after a wrapper that ends its options with --" \
+        'aws-vault exec --prompt=osascript testing-felipe -- .ve/bin/pytest src/zg/test/unit'
+counts  "(k3)" 'cd zapgram && aws-vault exec --prompt=osascript testing-felipe -- pytest -q'
+counts  "(k4) a runner through the package manager" 'pnpm vitest run'
+counts  "(k4)" 'pnpm jest'
+counts  "(k4)" 'yarn vitest run'
+counts  "(k4)" 'yarn jest --ci'
+counts  "(k4)" 'npx vitest run'
+counts  "(k4)" 'npx jest'
+ignored "(k5) a command that only prints" 'echo pytest'
+ignored "(k5)" 'echo .ve/bin/pytest'
+ignored "(k5) a runner's version, behind a wrapper" 'aws-vault exec testing-felipe -- .ve/bin/pytest --version'
+ignored "(k5) a path after git's --" 'git diff -- tests/test-verify-gate.sh'
+ignored "(k5) a config file after git's --" 'git diff -- pytest.ini'
+ignored "(k5) installing a runner" 'pnpm add -D vitest'
+
+printf '\n%s== the project'"'"'s own test_cmd counts ==%s\n' "$DIM" "$RESET"
+
+# A project whose cadence.json names a test command the check's lists do
+# not know.
+PROJ="$TMP/project"; mkdir -p "$PROJ/docs/llm-orchestrator"
+printf '{ "schema": 1, "enabled": true, "workflow": "proportional",\n  "runner": { "profile": "custom", "test_cmd": "bin/suite --fast" } }\n' \
+  > "$PROJ/docs/llm-orchestrator/cadence.json"
+ignored "(l1) no cadence.json: a command the lists do not know" 'bin/suite --fast unit'
+PROJ_DIR="$PROJ" counts  "(l2) it starts with runner.test_cmd" 'bin/suite --fast unit'
+PROJ_DIR="$PROJ" counts  "(l2)" 'bin/suite --fast'
+PROJ_DIR="$PROJ" counts  "(l2) after cd" 'cd sub && bin/suite --fast'
+PROJ_DIR="$PROJ" ignored "(l3) the same text continuing into another word" 'bin/suite --fastest'
+PROJ_DIR="$PROJ" ignored "(l3) the text in the middle of a command" 'echo bin/suite --fast'
+PROJ_DIR="$PROJ" ignored "(l3) test_cmd asked only for its help" 'bin/suite --fast --help'
+T=$(mk 'user:fix the gate' 'bash:t1:bin/suite --fast' 'result:t1:error')
+PROJ_DIR="$PROJ" fire "$CLAIM" "$T"
+{ [[ $RC -eq 0 ]] && warned; } && ok "(l4) test_cmd that FAILED does not count" \
+  || fail "(l4) failed test_cmd counted" "rc=$RC out=$(cat "$TMP/out")"
+T=$(mk 'user:fix the gate' 'bgbash:t1:bin/suite --fast' 'result:t1:ok')
+PROJ_DIR="$PROJ" fire "$CLAIM" "$T"
+{ [[ $RC -eq 0 ]] && warned; } && ok "(l4) test_cmd launched in the background does not count" \
+  || fail "(l4) background test_cmd counted" "rc=$RC out=$(cat "$TMP/out")"
+# A test_cmd that holds its own operators is matched against the whole command.
+printf '{ "runner": { "test_cmd": "cd app && ./check" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts  "(l5) a test_cmd with && in it" 'cd app && ./check -q'
+# An unreadable cadence.json is the same as none.
+printf '{ not json' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(l6) a cadence.json that is not JSON: as if there were none" 'bin/suite --fast'
+PROJ_DIR="$PROJ" counts  "(l6)" 'pytest -q'
+
+printf '\n%s== review fixes: what ends a runner name, named wrappers, options ==%s\n' "$DIM" "$RESET"
+
+# A runner name is the whole last part of a path and ends the word; a path
+# that only passes through a directory named like a runner is not a run.
+# After `--`, only a named wrapper runs the rest; git, rm and ls take paths.
+for c in 'git diff -- tests/pytest/conftest.py' 'git diff -- config/jest/setup.js' \
+         'git show HEAD -- config/jest/setup.js' 'git checkout -- src/eslint/' \
+         'git log -- mypy/' 'git diff --stat -- pytest' 'git ls-files -- node_modules/.bin/jest' \
+         'rm -rf -- .ve/bin/pytest' 'ls -- node_modules/.bin/jest' 'scripts/eslint/build-rules.sh' \
+         'tools/tsc/emit.sh' './node_modules/mocha/package.json' 'echo x -- pytest'; do
+  ignored "(m1) not a run" "$c"
+done
+# Every runner may be named by a path, and options may come between the
+# package manager and the runner.
+for c in '/usr/bin/make test' '/usr/local/bin/go test ./...' '~/.cargo/bin/cargo test' \
+         'pnpm --filter web vitest run' 'pnpm -C connections vitest run' 'yarn --cwd web jest' \
+         'npx --yes vitest run' 'uv run --with x pytest' '$HOME/.ve/bin/pytest x' \
+         'doppler run -- bash tests/test-a.sh'; do
+  counts "(m2) a real run" "$c"
+done
+# The named wrappers. These already counted under the looser rule; they pin the list.
+for c in 'aws-vault exec testing-felipe -- .ve/bin/pytest -q' 'doppler run -- pytest' \
+         'op run --env-file=.env -- npm test' 'dotenvx run -f .env -- vitest run' \
+         'infisical run --env=dev -- pytest' 'mise exec -- pytest'; do
+  counts "(m3) a named wrapper" "$c"
+done
+# A test_cmd with its own && still counts after the usual prefixes.
+printf '{ "runner": { "test_cmd": "cd app && ./check" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(m4) test_cmd after cd" 'cd /repo && cd app && ./check -q'
+PROJ_DIR="$PROJ" counts "(m4) test_cmd after an assignment" 'FOO=1 cd app && ./check'
+# A cadence.json nested too deeply for the JSON reader falls back to the
+# lists; it does not switch the whole check off.
+python3 -c 'print("[" * 100000)' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(m5) a cadence.json too deep to read: the check still runs" 'ls -la'
+
+printf '\n%s== round 2: options, the first --, redirections, time ==%s\n' "$DIM" "$RESET"
+
+# A package manager's own subcommands, and a runner named only as an option's
+# value, are not runs.
+for c in 'pnpm -w add -D vitest' 'pnpm -r add -D eslint' 'yarn -W add -D jest' 'pnpm -r remove eslint' \
+         'pnpm -r update vitest' 'pnpm --recursive why jest' 'npx -y install jest' \
+         'npx --package jest /bin/echo done' 'npx -p jest echo hi' 'uv run --with pytest python script.py' \
+         "uv run --with mypy python -c 'print(1)'" 'pnpm --filter jest build' 'yarn --cwd tsc build'; do
+  ignored "(n1) not a run" "$c"
+done
+# A wrapper runs what follows its FIRST --; later ones belong to that program.
+for c in 'aws-vault exec p -- git ls-files -- node_modules/.bin/jest' 'aws-vault exec p -- git diff -- tests/x.sh' \
+         'op run -- git log -- tests/test-verify-gate.sh' 'op run --env-file=.env -- git diff -- pytest' \
+         'aws-vault exec p -- echo -- pytest' 'doppler run -- echo -- pytest' 'op run -- echo -- pytest' \
+         'dotenvx run -- echo -- pytest' 'infisical run -- echo -- pytest' 'mise exec -- echo -- pytest'; do
+  ignored "(n2) not a run" "$c"
+done
+counts "(n3) npm exec before --" 'npm exec -- vitest run'
+# A redirection ends test_cmd's last word.
+printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(n4) test_cmd then a redirection" 'bin/suite --fast</dev/null'
+PROJ_DIR="$PROJ" counts "(n4)" 'bin/suite --fast>check.log'
+
+# A 200 KB command built to make a backtracking matcher slow must add under
+# 500 ms to the hook, and still gets the note. Reading it is linear work that
+# a slow CI runner can spend 100 ms on; a backtracking matcher takes seconds.
+# The command is written into the transcript by Python, never passed as one
+# argument: Linux refuses any single argument over 128 KiB.
+budget_case() { # <label> <python expression for the command>
+  local base big T
+  T=$(mk 'user:fix the gate' 'bash:t1:ls' 'result:t1:ok')
+  base=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$T"
+  base=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$base")
+  T=$(mk 'user:fix the gate' 'bash:t1:BUDGET_CMD' 'result:t1:ok')
+  python3 -c "import json,sys; p=sys.argv[1]; s=open(p).read(); assert s.count('\"BUDGET_CMD\"') == 1; open(p,'w').write(s.replace('\"BUDGET_CMD\"', json.dumps($2)))" "$T" || T=""
+  big=$(python3 -c 'import time; print(time.time())'); fire "$CLAIM" "$T"
+  big=$(python3 -c 'import time,sys; print(time.time()-float(sys.argv[1]))' "$big")
+  { [[ -n $T && $RC -eq 0 ]] && warned && python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) - float(sys.argv[2]) < 0.5 else 1)' "$big" "$base"; } \
+    && ok "(n5) $1: 200 KB judged within 500 ms of a one-word command, note sent" \
+    || fail "(n5) $1 time" "rc=$RC big=${big}s base=${base}s out=$(cat "$TMP/out")"
+}
+budget_case "wrapper and repeated options" '"aws-vault exec " + "-- npx -a " * 20000'
+budget_case "repeated option values" '"pnpm " + "--filter a " * 20000'
+budget_case "repeated path parts" '"a/" * 100000'
+
+printf '\n%s== round 3: comments, heredocs, descriptors, prefixes, dry runs ==%s\n' "$DIM" "$RESET"
+
+for c in 'npm exec -p /bin/echo jest' 'make test -n' 'make -n test' 'cargo test --no-run' \
+         'mvn -DskipTests test' 'mvn -Dmaven.test.skip=true test' 'echo done # ; pytest' \
+         $'cat <<EOF\npytest\nEOF' $'cat <<\'EOF\'\npytest -q\nEOF' $'cat <<-EOF\n\tpytest\n\tEOF'; do
+  ignored "(p1) not a run" "$c"
+done
+for c in '2>/dev/null pytest' 'make 2>/dev/null test' 'time -p pytest' 'env -i pytest' 'env -u X pytest' \
+         'timeout -k 5 300 pytest' 'timeout --signal=KILL 300 pytest' \
+         $'cat <<EOF\nnotes\nEOF\npytest -q'; do
+  counts "(p2) a real run" "$c"
+done
+# The command -c names is not read, so it is never a check.
+ignored "(p2) npx -c" 'npx -c "vitest run"'
+printf '{ "runner": { "test_cmd": "bin/suite --fast" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" counts "(p3) test_cmd behind a named wrapper" 'aws-vault exec p -- bin/suite --fast'
+PROJ_DIR="$PROJ" counts "(p3) test_cmd with a redirection between its words" 'bin/suite 2>/dev/null --fast'
+python3 -c 'import json; print(json.dumps({"runner": {"test_cmd": "a= " * 32500 + "bin/suite"}}))' \
+  > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" budget_case "a long test_cmd against a long command" '"a= " * 65000 + "true"'
+
+printf '\n%s== round 4: other spaces, non-run modes, env forms, later targets ==%s\n' "$DIM" "$RESET"
+
+# Any whitespace separates words, and no character stops the reader.
+for expr in '"git commit -m x y 2>&1"' '"printf \x27%s\\n\x27 hello world"' \
+            '"echo a b 2>&1"' '"echo a　b > x"' '"echo a\vb 2>&1"' '"echo a\fb 2>&1"'; do
+  ignored "(q1) an unusual space, not a run" "$(python3 -c "print($expr, end='')")"
+done
+counts "(q1) an unusual space between words" "$(python3 -c 'print("pytest -q 2>&1", end="")')"
+# Modes of a runner that inspect instead of running.
+for c in 'ruff rule F401' 'ruff config' 'ruff format .' 'pytest --markers' 'pytest --fixtures' \
+         'pytest --collect-only' 'pytest --co' 'jest --clearCache' 'jest --listTests'; do
+  ignored "(q2) not a run" "$c"
+done
+counts "(q2) ruff format --check is a check" 'ruff format --check .'
+for c in '/usr/bin/env make test' 'env -- make test' 'mvn clean test' './gradlew clean test' \
+         './gradlew :app:test' 'make -C app test' 'yarn -s test' 'npx --no-install jest'; do
+  counts "(q3) a real run" "$c"
+done
+ignored "(q3) a target after -- belongs to the program" 'cargo run -- test'
+
+printf '\n%s== targets: first word for subcommand tools, no option values ==%s\n' "$DIM" "$RESET"
+for c in './gradlew build -x test' 'gradle build -x test' './gradlew assemble -x check' \
+         'go build -o test ./cmd/server' 'go build -tags test ./...' 'cargo run --bin check' \
+         'cargo build --features test' 'dotnet run --project test' 'make -C test build' \
+         'bazel build //app:test' 'just --justfile check build' 'task -d test build' \
+         'swift build --product test' 'go mod why test'; do
+  ignored "(r1) not a run" "$c"
+done
+for c in 'cargo +nightly test' 'go -C app test ./...' 'bazel test //app:test' 'just -f ci.just check'; do
+  counts "(r2) a real run" "$c"
+done
+for c in 'python -m ruff rule F401' 'python3 -m ruff check --show-files' 'ruff check --show-settings'; do
+  ignored "(r3) not a run" "$c"
+done
+for c in 'python3 -u -m pytest -q' 'python -X dev -W error -m pytest' 'bash -e tests/test-verify-gate.sh' \
+         'sh -o errexit tests/test-a.sh'; do
+  counts "(r4) interpreter options before a real run" "$c"
+done
+for c in 'bash -n tests/test-a.sh' 'sh -n tests/test-a.sh' 'bash --noexec tests/test-a.sh' 'bash -en tests/test-a.sh'; do
+  ignored "(r5) parse only, not a run" "$c"
+done
+for c in 'bash -euo pipefail tests/test-a.sh' 'bazel --output_base /tmp/bazel test //...'; do
+  counts "(r6) a real run" "$c"
+done
+printf '{ "runner": { "test_cmd": "/usr/bin/make test" } }\n' > "$PROJ/docs/llm-orchestrator/cadence.json"
+PROJ_DIR="$PROJ" ignored "(q4) test_cmd with a dry-run option" '/usr/bin/make test -n -f /dev/stdin'
+
+printf '\n%s== SubagentStop reads the report the subagent sent its caller ==%s\n' "$DIM" "$RESET"
+# Captured Claude Code 2.1.282 payloads. In auto mode the report is the
+# SubagentHandback message and last_assistant_message is "Report delivered to
+# caller."; in default mode the report is last_assistant_message. The captured
+# subagent ran only find, grep and Read, none of which is a check.
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+fire_captured() { # fire_captured <materialize args...> → sets RC and ERR
+  local dir; dir=$(mktemp -d "$TMP/cap.XXXXXX")
+  python3 "$MAT" "$@" "$dir" > "$TMP/in"
+  CLAUDE_PROJECT_DIR="$TMP/no-project" bash "$HOOK" < "$TMP/in" > "$TMP/out" 2> "$TMP/err"; RC=$?
+  ERR=$(cat "$TMP/err")
+  [[ -n "$ERR" ]] && ANY_STDERR=1
+  [[ $RC -ne 0 ]] && ANY_RC=1
+  grep -q '"decision"' "$TMP/out" && ANY_BLOCK=1
+  return 0
+}
+CHECK_USE='{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_check","name":"Bash","input":{"command":"bash tests/test-verify-gate.sh"}}]}}'
+CHECK_OK='{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_check","is_error":false,"content":"PASS"}]}}'
+
+fire_captured auto --report "$CLAIM"
+{ [[ $RC -eq 0 ]] && warned && grep -q '"hookEventName": "SubagentStop"' "$TMP/out"; } \
+  && ok "(s1) auto mode: PASS in the SubagentHandback report with no check → note" \
+  || fail "(s1) auto-mode handback report not checked" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured auto --report "$CLAIM" --append "$CHECK_USE" --append "$CHECK_OK"
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s2) auto mode: PASS in the report and a check passed in the subagent's transcript → silent" \
+  || fail "(s2) auto mode with a passing check" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured auto
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s3) auto mode: a report with no Verification label → silent" \
+  || fail "(s3) auto mode without a label" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured auto --report "$CLAIM" --handback-error
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s4) auto mode: a SubagentHandback answered by an error is not the report" \
+  || fail "(s4) errored handback read as the report" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured default --report "$CLAIM"
+{ [[ $RC -eq 0 ]] && warned; } \
+  && ok "(s5) default mode: PASS in last_assistant_message with no check → note" \
+  || fail "(s5) default-mode report not checked" "rc=$RC out=$(cat "$TMP/out")"
+
+fire_captured default --report "$CLAIM" --append "$CHECK_USE" --append "$CHECK_OK"
+{ [[ $RC -eq 0 && ! -s "$TMP/out" ]]; } \
+  && ok "(s6) default mode: PASS with a passing check in the subagent's transcript → silent" \
+  || fail "(s6) default mode with a passing check" "rc=$RC out=$(cat "$TMP/out")"
 
 printf '\n%s== it warns; it never blocks ==%s\n' "$DIM" "$RESET"
 (( ANY_RC == 0 ))    && ok "no fixture made the hook exit non-zero" \
