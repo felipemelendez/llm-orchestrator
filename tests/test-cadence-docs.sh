@@ -118,7 +118,7 @@ for l in $(grep -ohE '\]\([^)#:]+' "$SKILL" "$FULL" | sed 's/^](//' | sort -u); 
   [ -f "$ROOT/skills/cadence/$l" ] && ok "$l exists" || fail "$l" "linked from the skill but missing"
 done
 # The review briefs are requesting-code-review's; the cadence keeps no copy.
-for n in contract.md adversarial.md refuter.md security-lens.md; do
+for n in prover.md refuter.md security-lens.md; do
   has "$FULL" "../requesting-code-review/references/$n" && ok "CADENCE.md links the $n review brief" \
     || fail "the $n review brief" "CADENCE.md does not link ../requesting-code-review/references/$n"
 done

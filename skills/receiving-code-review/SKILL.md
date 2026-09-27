@@ -56,17 +56,17 @@ not as a new top-level PR comment, which detaches the answer from the question.
 
 ## Recording what happened (after `orch-review.py`)
 
-When the review came from `orch-review.py`, record one disposition for every
-finding id in `review.json`, notes included, then run
-`orch-review.py record <run-dir> --dispositions <file>`. The file is a JSON
-object keyed by finding id:
+After an `orch-review.py` review, record one disposition per finding id in
+`review.json`, then run `orch-review.py record <run-dir> --dispositions <file>`.
+The file is a JSON object keyed by id (`code-review-1-3` when one reviewer ran
+twice):
 
 ```json
 {
-  "contract-1-1": {"disposition": "fixed", "check": "python3 tests/test-x.py"},
-  "adversarial-1-2": {"disposition": "refuted",
-                      "evidence": {"type": "file-line", "file": "src/a.py", "line": 12, "quote": "return total"}},
-  "adversarial-1-3": {"disposition": "ignored", "reason": "wording only"}
+  "code-review-1": {"disposition": "fixed", "check": "python3 tests/test-x.py"},
+  "codex-review-2": {"disposition": "refuted",
+                     "evidence": {"type": "file-line", "file": "src/a.py", "line": 12, "quote": "return total"}},
+  "codex-review-3": {"disposition": "ignored", "reason": "wording only"}
 }
 ```
 

@@ -101,7 +101,7 @@ ORCH_SIG_VERSION_NOISE='(^|[^a-z0-9])(line|lines|step|phase|page|row|col|column|
 ORCH_SIG_SECURITY='\b(auth|crypto|payment|secret|jwt|oauth|password|credential|encryption|tls|ssl|webhook)\b|\b(access|refresh|bearer|api|session|csrf)[-_ ]?tokens?\b'
 
 # Looser security pattern for diff-scanning: scripts/lib/orch-review.py adds the
-# security lens to both seat briefs when the diff matches, and it should fail
+# security lens to the reviewers' instruction when the diff matches, and it should fail
 # toward adding it; substring matching on
 # compound identifiers (checkAuth, hashPassword, bcrypt, encryptData, JWTToken)
 # is intentional. Short tokens that create false positives at substring level

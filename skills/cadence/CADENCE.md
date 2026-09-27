@@ -22,9 +22,10 @@ they cannot supply a required independent review or gate.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
 3. Run the Full review with `requesting-code-review` (`orch-review.py run
-   --path full`). It runs two blind reviewers with different briefs on two
-   providers and, when a serious or catastrophic finding exists, the refuter.
-   A provider dropout gives `INCOMPLETE`, never a completed review or a
+   --path full`). It runs two blind reviews, Claude Code's `/code-review` and
+   `codex review` (with one CLI, its reviewer twice, which the verdict says),
+   proves each finding and, when a serious or catastrophic one exists, runs
+   the refuter. A dropout gives `INCOMPLETE`, never a completed review or a
    substitute.
 4. Handle the findings with `receiving-code-review` and record a disposition
    for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
@@ -37,11 +38,12 @@ they cannot supply a required independent review or gate.
    design/runbook updates. Finish task-owned temporary resources after consumers
    stop and deliverables are preserved; explain concrete preservation reasons.
 
-The review script sends each seat its brief from `requesting-code-review`:
-[contract](../requesting-code-review/references/contract.md),
-[adversarial](../requesting-code-review/references/adversarial.md),
-[refuter](../requesting-code-review/references/refuter.md) and, when the diff
-touches security, the [security lens](../requesting-code-review/references/security-lens.md).
+The built-in reviewers keep their own briefs. The review script gives the
+[prover](../requesting-code-review/references/prover.md) and the
+[refuter](../requesting-code-review/references/refuter.md) theirs from
+`requesting-code-review` and, when the diff touches security, adds the
+[security lens](../requesting-code-review/references/security-lens.md) to the
+reviewers' instruction.
 If repeated findings show the design is wrong, revisit the contract rather than
 repeating the same review indefinitely.
 

@@ -75,6 +75,14 @@ numbers: in four the contract seat listed something it had not checked
 system), and in one the contract seat dropped out because its sandbox check did
 not show a refused write outside the copy.
 
+**The `code-review` arm never received its spec sentence.** It was passed with
+`--append-system-prompt`, and a live check on 2026-09-26 showed that text does
+not reach the subagent `/code-review` reviews in (a required marker line and the
+spec path were ignored; the same text in the `-p` prompt was obeyed). So the
+`code-review` row below is `/code-review` without the spec, while `full` and
+`codex-review` had it. The arm now carries the sentence in its `-p` text; the
+re-run is the `code-review-spec` row and the paragraph after the table.
+
 Scored with the corrected scorer. The first scoring read each `/code-review`
 reply as one finding, because that reply puts its findings in a JSON array in a
 fenced block and the scorer split only on list items and headings: it saw 84
@@ -86,6 +94,18 @@ reads one finding per array item.
 | `code-review` | 125/134 (93%) | 59/63 | 66/71 | 14/14 | 481 | 5.8 | 0/14 | 0.6 |
 | `codex-review` | 130/134 (97%) | 61/63 | 69/71 | 14/14 | 107 | 1.3 | 3/14 | 1.1 |
 | `full` (78 complete) | 123/126 (98%) | 59/61 | 64/65 | 14/14 | 258 | 3.3 | 0/13 | 3.3 |
+| `code-review-spec` | 124/134 (93%) | 60/63 | 64/71 | 14/14 | 514 | 6.2 | 0/14 | 0.6 |
+
+**`/code-review` with its spec sentence (2026-09-26).** The `code-review` arm
+was re-run on all 83 cases with the sentence in its `-p` text (arm
+`code-review-spec`, claude-opus-5-5, 83 of 83 runs exited 0, same scorer); 10
+findings pointed at a planted defect but described something else. Against the
+run without the spec, 4 defects were found only without it and 3 only with it,
+p = 1.0: the spec made no measurable difference to detection. It gave slightly
+more extra findings (more on 36 cases, fewer on 18, p = 0.02). Against
+`codex-review`, 2 found only by `code-review-spec` and 8 only by
+`codex-review`, p = 0.11; against `full`, 1 and 7, p = 0.07. None is a
+difference in detection.
 
 Paired on the defects both arms saw (exact McNemar): `full` against
 `code-review`, 6 found only by `full` and 1 only by `code-review`, p = 0.125;
@@ -106,9 +126,14 @@ finding except notes and dropped ones) were reproduced by a failing command
 and a patch, and it blocks. It returned NOT-READY on all 78 complete runs, including
 all 13 complete clean cases, partly because it ranked notes that the tests do
 not cover something as serious. **Acted on:** such a note is now a `test-gap`
-finding, mild unless it carries a failing command (R13 in
-`docs/specs/review-design.md`); test tampering stays serious. Not yet run: the `full-swap`, `full-no-refuter`, `full-split`
-and Standard arms.
+finding, mild unless it carries a failing command; test tampering stays serious.
+Then, in T22 (`docs/specs/review-design.md`), the seats were replaced by the
+built-in reviewers: `/code-review` and `codex review` find, and `orch-review.py`
+proves, decides and records. The seat arms (`full`, `full-swap`,
+`full-no-refuter`, `full-split` and the Standard seat arms) were removed with the
+seats, the last four never run; the built-in arms are `full-builtin`,
+`standard-builtin`, `standard-builtin-codex` and `full-builtin-single`, not yet
+run.
 
 ## Field records (not A/B)
 

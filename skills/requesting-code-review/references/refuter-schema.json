@@ -14,7 +14,9 @@
           "id",
           "verdict",
           "rank",
-          "evidence"
+          "scenario",
+          "drop_check",
+          "explanation"
         ],
         "properties": {
           "id": {
@@ -25,7 +27,8 @@
             "enum": [
               "PROMOTED",
               "DROPPED",
-              "UNRESOLVED"
+              "UNRESOLVED",
+              "RAISE"
             ]
           },
           "rank": {
@@ -40,28 +43,40 @@
               null
             ]
           },
-          "evidence": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type",
-              "explanation"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "receipt-1",
-                  "none"
-                ]
+          "scenario": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "drop_check": {
+            "anyOf": [
+              {
+                "type": "null"
               },
-              "explanation": {
-                "type": [
-                  "string",
-                  "null"
-                ]
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "command",
+                  "expected_output"
+                ],
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "expected_output": {
+                    "type": "string"
+                  }
+                }
               }
-            }
+            ]
+          },
+          "explanation": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }

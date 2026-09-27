@@ -268,7 +268,7 @@ case "${cmd}" in
              scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh \
              scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md \
              docs/install.md templates/settings.json scripts/lib/orch-review.py \
-             skills/requesting-code-review/references/seat-schema.json \
+             skills/requesting-code-review/references/prover-schema.json \
              skills/requesting-code-review/references/refuter-schema.json \
              skills/brainstorming/scripts/server.cjs skills/using-orchestrator/SKILL.md \
              skills/cadence/SKILL.md skills/cadence/CADENCE.md \

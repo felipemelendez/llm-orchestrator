@@ -1,7 +1,7 @@
 {
   "arms": [
     {
-      "name": "full",
+      "name": "full-builtin",
       "provider": "orch-review",
       "output": "review-json",
       "command": [
@@ -21,71 +21,7 @@
       ]
     },
     {
-      "name": "full-swap",
-      "provider": "orch-review",
-      "output": "review-json",
-      "command": [
-        "{python}",
-        "{plugin}/scripts/lib/orch-review.py",
-        "run",
-        "--path",
-        "full",
-        "--writer",
-        "claude",
-        "--base",
-        "HEAD",
-        "--spec",
-        "{spec}",
-        "--run-dir",
-        "{run_dir}",
-        "--adversarial-provider",
-        "claude"
-      ]
-    },
-    {
-      "name": "full-no-refuter",
-      "provider": "orch-review",
-      "output": "review-json",
-      "command": [
-        "{python}",
-        "{plugin}/scripts/lib/orch-review.py",
-        "run",
-        "--path",
-        "full",
-        "--writer",
-        "claude",
-        "--base",
-        "HEAD",
-        "--spec",
-        "{spec}",
-        "--run-dir",
-        "{run_dir}",
-        "--no-refuter"
-      ]
-    },
-    {
-      "name": "full-split",
-      "provider": "orch-review",
-      "output": "review-json",
-      "command": [
-        "{python}",
-        "{plugin}/scripts/lib/orch-review.py",
-        "run",
-        "--path",
-        "full",
-        "--writer",
-        "claude",
-        "--base",
-        "HEAD",
-        "--spec",
-        "{spec}",
-        "--run-dir",
-        "{run_dir}",
-        "--split"
-      ]
-    },
-    {
-      "name": "standard-contract",
+      "name": "standard-builtin",
       "provider": "orch-review",
       "output": "review-json",
       "command": [
@@ -101,13 +37,11 @@
         "--spec",
         "{spec}",
         "--run-dir",
-        "{run_dir}",
-        "--brief",
-        "contract"
+        "{run_dir}"
       ]
     },
     {
-      "name": "standard-adversarial",
+      "name": "standard-builtin-codex",
       "provider": "orch-review",
       "output": "review-json",
       "command": [
@@ -117,15 +51,36 @@
         "--path",
         "standard",
         "--writer",
+        "codex",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}"
+      ]
+    },
+    {
+      "name": "full-builtin-single",
+      "provider": "orch-review",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
         "claude",
         "--base",
         "HEAD",
         "--spec",
         "{spec}",
         "--run-dir",
-        "{run_dir}",
-        "--brief",
-        "adversarial"
+        "{run_dir}"
+      ],
+      "without": [
+        "codex"
       ]
     },
     {
@@ -135,14 +90,12 @@
       "command": [
         "claude",
         "-p",
-        "/code-review high",
+        "/code-review high {spec_note}",
         "--model",
         "opus",
         "--effort",
         "high",
         "--safe-mode",
-        "--append-system-prompt",
-        "{spec_note}",
         "--output-format",
         "json",
         "--permission-mode",
@@ -158,7 +111,7 @@
     {
       "name": "codex-review",
       "provider": "codex",
-      "output": "codex-text",
+      "output": "codex-review",
       "command": [
         "codex",
         "review",
@@ -169,13 +122,6 @@
         "developer_instructions={spec_note_toml}",
         "{codex_mcp_off}"
       ]
-    },
-    {
-      "name": "full-effort-unset",
-      "provider": "orch-review",
-      "output": "review-json",
-      "command": [],
-      "unavailable": "reviewers always run at effort high (Felipe's decision), so orch-review.py has no option to leave effort unset"
     }
   ]
 }
