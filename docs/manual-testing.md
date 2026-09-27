@@ -1,6 +1,6 @@
-# Manual testing game plan
+# Manual testing
 
-The automated suite (`tests/smoke.sh`, `tests/validate-skills.sh`, `tests/test-portability.sh`) verifies mechanics. This document is for **end-to-end verification inside a live Claude Code session** — making sure the plugin loads, hooks fire, the agent replies in protocol shape, and the orchestration loop actually drives work.
+The automated suites under `tests/` check the mechanics. This page is for checking the plugin **inside a live Claude Code session**: that it loads, its hooks fire, the agent replies in the expected shape, and the plan-build-review loop actually drives work.
 
 Two paths:
 
@@ -13,15 +13,16 @@ Run smoke before every commit, full before publishing or before a big behavior c
 
 ## Phase 0 — Pre-flight (terminal, no Claude Code yet) — 1 min
 
+From your checkout of the plugin:
+
 ```bash
-cd ~/LLM-Orchestrator
-./tests/validate-skills.sh        # → "OK: 18 skills, 15 commands, 5 agents"
-./tests/test-portability.sh       # → "7 portability checks passed."
-./tests/test-lib-resolution.sh    # → "PASS: test-lib-resolution (5 checks)"
-./tests/smoke.sh                  # → "81 checks passed, 1 skipped."
+./tests/validate-skills.sh
+./tests/test-portability.sh
+./tests/test-lib-resolution.sh
+./tests/smoke.sh
 ```
 
-**Pass criterion:** all four exit 0. If any fails, fix before continuing — Claude Code testing won't tell you anything useful until the mechanics are sound.
+**Pass criterion:** all four exit 0 and end with a passing summary line. If any fails, fix before continuing — Claude Code testing won't tell you anything useful until the mechanics are sound.
 
 ---
 
@@ -33,7 +34,7 @@ Pick one of these paths:
 
 ```bash
 ./scripts/install.sh --link
-# → "Linked /Users/.../LLM-Orchestrator -> /Users/.../.claude/llm-orchestrator"
+# → "Linked <your checkout> -> ~/.claude/llm-orchestrator"
 ```
 
 Open a Claude Code session **in any project**, then:
@@ -49,7 +50,7 @@ Open a Claude Code session **in any project**, then:
 ./scripts/install.sh --copy ~/some-test-project
 ```
 
-Follow `docs/install.md` "Wiring hooks for a --copy install" — either install the same path as a plugin (recommended) or hand-edit `.claude/settings.json`.
+Follow [Wiring hooks for a --copy install](install.md#wiring-hooks-for-a---copy-install): either install the same path as a plugin (recommended) or edit `.claude/settings.json` by hand.
 
 ### Verify install
 
@@ -81,13 +82,13 @@ In a fresh Claude Code session (post-install, post-restart):
 Look at the bottom of the Claude Code UI. You should see something like:
 
 ```
-Claude Sonnet 4.6 · prof:standard · mem:0
+<model name> · prof:standard · mem:0
 ```
 
 (If memory is empty, `mem:` may be absent. If you're in a project with a recent plan, you'll see `plan:<filename>`.)
 
 **Pass:** statusline shows the model name plus `prof:standard`.
-**Fail:** default Claude Code statusline (no `prof:` prefix). `statusLine` is not a plugin-manifest field, so this is opt-in: point `statusLine.command` in your own `.claude/settings.json` at `scripts/statusline.sh`.
+**Fail:** the default Claude Code statusline (no `prof:`). The statusline is opt-in; see [Optional: statusline](install.md#optional-statusline). Skip this check if you have not set it up.
 
 ### 2.2 SessionStart hook fired
 
@@ -112,6 +113,7 @@ Should print valid JSON with the protocol body inside `additionalContext`.
 Type `/` and look for the commands:
 
 ```
+/llm-orchestrator:cadence-init
 /llm-orchestrator:debug
 /llm-orchestrator:dispatch
 /llm-orchestrator:finish
@@ -128,7 +130,7 @@ Type `/` and look for the commands:
 /llm-orchestrator:worktree
 ```
 
-**Pass:** all 14 appear in the completion menu (`ls commands/*.md | wc -l` is the source of truth).
+**Pass:** all 15 appear in the completion menu (`ls commands/*.md | wc -l` is the source of truth).
 **Fail:** none appear → `commands/` directory not discovered. Check `/plugin list` shows the plugin enabled.
 
 ---
@@ -296,7 +298,7 @@ Run `/llm-orchestrator:plan`. **Pass:**
 
 **Pass criteria:**
 - The implementer returns a `Status:` block with one of DONE / DONE_WITH_CONCERNS / PARTIAL / BLOCKED / NEEDS_CONTEXT (DONE and DONE_WITH_CONCERNS also require `Verify:`). The read-only agents return `Found:` or `Issues:` instead.
-- The orchestrator routes correctly (re-dispatches on with-fixes, ticks the box on DONE)
+- The orchestrator routes correctly (handles review findings before moving on, ticks the box on DONE)
 - The agent doesn't ask the user "ready to proceed?" between tasks — continuous execution
 
 ### 5.5 Verify + finish
@@ -394,7 +396,7 @@ Score the test:
 | 4. Memory                | Full         |        |
 | 5. Orchestration loop    | Full         |        |
 | 6. BLOCKED recovery      | Full         |        |
-| 7. /clear + resume       | Full         |        |
+| 7. Continuation          | Full         |        |
 
 **Smoke pass:** phases 0–3 all green → safe to commit a minor change.
 **Full pass:** all phases green → safe to publish a release.
@@ -405,10 +407,10 @@ Score the test:
 
 | Symptom                                                | Likely cause                                         | Fix                                                                                          |
 |--------------------------------------------------------|-------------------------------------------------------|-----------------------------------------------------------------------------------------------|
-| Statusline missing `prof:`                             | Plugin not loaded                                     | `/plugin enable llm-orchestrator`; restart session                                            |
+| Statusline missing `prof:`                             | Statusline not set up (it is opt-in)                  | Point `statusLine` at `scripts/statusline.sh` ([install.md](install.md#optional-statusline)) |
 | Agent replies in free prose, no shapes, in a cadence-enabled project | SessionStart hook not firing or output not reaching context | Run the hook from terminal; check `additionalContext` has the reply-format block. Outside cadence projects plain replies are correct |
 | `/llm-orchestrator:remember` says "with_lock: command not found"        | `scripts/lib/orch-lock.sh` not on the sourced path    | Verify install — should be at `$CLAUDE_PLUGIN_ROOT/scripts/lib/` or `<project>/.claude/scripts/lib/` |
-| Hooks don't fire on a `--copy` install                 | `settings.json` missing the hook wiring               | Either install as plugin or hand-edit per `docs/install.md` "Wiring hooks"                    |
+| Hooks don't fire on a `--copy` install                 | `settings.json` missing the hook wiring               | Install as a plugin, or wire them by hand ([install.md](install.md#wiring-hooks-for-a---copy-install)) |
 | Subagent dispatch produces free prose, no Status block | `orch-implementer.md` not discovered as an agent      | `/plugin list` should show the plugin enabled; check `agents/` directory exists in install path |
 | `/llm-orchestrator:remember` writes to wrong file                       | Routing branch mis-fired (plugin-config vs user fact) | If fact starts with `research_aggressiveness:` or `declined_mcp:`, it goes to plugin memory by design; everything else goes to CLAUDE.md |
 | Truncation in SessionStart output                      | Meta-skill > 8000 chars                               | Set `ORCH_SESSION_MAX_CHARS=16000` in shell env or `.claude/settings.json`                    |

@@ -500,7 +500,7 @@ case "${cmd}" in
       echo "  codex plugin add llm-orchestrator@llm-orchestrator"
       echo "  ${ROOT}/scripts/install.sh --codex"
     fi
-    echo "Then open /hooks in a new Codex session and trust the three hooks. Installing does not grant hook trust. config.toml was not changed. See docs/codex.md."
+    echo "Then open /hooks in a new Codex session and trust the plugin's four entries (the file guard is listed twice). Installing does not grant hook trust. config.toml was not changed. See docs/codex.md."
     echo
     layers_report
     ;;

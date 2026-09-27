@@ -166,7 +166,7 @@ person to type `ruling <N>`, applies the patch, re-records the lock with
 patch. It reads the confirmation from `/dev/tty`, and `--lock` rewrites an
 existing lock only when a terminal is attached. An agent's shell has no
 terminal, so both refuse there. The one known way around this is stated in
-`docs/install.md`, "Changing the rules".
+`docs/cadence.md`, "What the lock cannot stop".
 
 ## The check script and the verdict line
 

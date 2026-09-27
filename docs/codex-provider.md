@@ -1,77 +1,65 @@
-# Reviews from Codex
+# Running a review by hand
 
-On Codex, the `requesting-code-review` skill runs the same script as on Claude
-Code, with `--writer codex`:
+Normally you just ask the assistant for a review (in Claude Code,
+`/llm-orchestrator:review`); it runs everything below for you, on Claude Code
+or Codex. This page is for running the review script yourself and reading
+its result.
+
+## Run a review
+
+Find the script, then start a review of the current change:
 
 ```sh
-python3 /path/to/LLM-Orchestrator/scripts/lib/orch-review.py run --detach \
-  --path standard|full --writer codex --base <ref> --spec <file> \
-  --run-dir <new directory outside the repository>
-python3 /path/to/LLM-Orchestrator/scripts/lib/orch-review.py wait <run-dir> --seconds 540
+REVIEW=$(find ~/.claude/plugins ~/.codex/plugins/cache -name orch-review.py -path '*llm-orchestrator*' 2>/dev/null | tail -1)
+python3 "$REVIEW" run --detach --path standard --writer codex \
+  --base origin/main --spec <file the change must implement> \
+  --run-dir <a new folder outside the repository>
+python3 "$REVIEW" wait <that folder> --seconds 540
 ```
 
-Repeat `wait` until it reports that the run finished. The rules are in
-`docs/specs/review-design.md`.
+- `--path full` asks for a Full review instead of Standard.
+- `--writer` is the tool that wrote the change: `codex` or `claude`.
+- Repeat `wait` until it reports that the run finished.
 
-## Which reviewer runs
+The result is `review.json` in the run folder. Nothing is saved in the
+repository.
+
+## What the verdict means
+
+| Verdict | Meaning | What to do |
+|---|---|---|
+| `READY` | Every reviewer finished and nothing it reported held up. | Go ahead. |
+| `READY-WITH-FIXES` | Only mild findings. | Fix each one or note why not. |
+| `NOT-READY` | At least one serious finding blocks. | Fix it, or show with evidence that it is wrong, then run a new review. |
+| `INCOMPLETE` | Something is missing: a reviewer dropped out or is not signed in, a reply could not be read, or the checkout changed during the run. | Never treat it as a pass. Fix the cause and run a new review. |
+
+After handling the findings, the assistant records what happened to each with
+`orch-review.py record`.
+
+## Who reviews
 
 The reviewers are the built-in ones: Claude Code's `/code-review` and
 `codex review`.
 
-- **Standard** runs `/code-review` when `claude` is installed, because the
-  review should come from the provider that did not write the change. Without
-  `claude` it runs `codex review` and records `same_provider`.
-- **Full** runs one `/code-review` and one `codex review`. With only `codex`
-  installed it runs `codex review` twice, each in its own copy, and the verdict
-  line says both reviews came from one provider.
-- The prover and the refuter run on Claude when it is installed, else on Codex
-  (`codex exec`).
+- **Standard** runs one review, from the other tool when it is installed: a
+  change Codex wrote is reviewed by `/code-review`, and one Claude Code wrote
+  by `codex review`. With only one tool installed, it reviews its own work, and
+  the result is marked `same_provider` (both sides came from the same tool).
+- **Full** runs both. With only one tool installed, that tool reviews twice,
+  each time in its own copy, marked `same_provider`.
 
-A CLI that is installed but not signed in (`codex login status`,
-`claude auth status --json`) makes the review `INCOMPLETE`. A missing or failed
-reviewer is never replaced by another provider or model.
+Two more steps check the findings. The **prover** ranks each finding and
+writes a command that shows the failure and a proposed fix; the script runs
+them in a sandbox. On Full, the **refuter** can drop a serious finding only if
+a check the script runs shows it is wrong. Both run on Claude when it is
+installed, else on Codex. A reviewer that is missing or fails is never
+replaced by another tool or model.
 
-## What the script checks
-
-- `/code-review` runs `--model opus --effort high --safe-mode --restricted`
-  with no MCP servers and Claude Code's Bash sandbox. Its tool calls are in the
-  session transcript, which the script reads (the sandbox settings and a probe
-  that must show a refused write) and then deletes by its exact session id.
-  Every model in the result's `modelUsage` must be an Opus model.
-- `codex review --uncommitted` runs read-only with MCP servers, apps and
-  plugins off, and the spec instruction as `developer_instructions`. The script
-  finds the review's rollout under `$CODEX_HOME/sessions` and checks the served
-  model (against `config.toml`'s `model`, when set), effort `high`, the
-  `read-only` sandbox, and that no MCP tool ran.
-
-`review.json` records the requested and served model and effort of every
-launch, and the served sandbox or probe result.
-
-## Where the work runs
-
-Each reviewer, prover and refuter runs in its own disposable clone whose HEAD
-is the merge-base, so the whole change is uncommitted there. The script
-compares a fingerprint of the real checkout before and after, and a change
-gives `INCOMPLETE`.
-
-Proposed fixes are run by the script itself under
-`codex sandbox -P :workspace -C <copy> --`, which allows writes only in the copy
-and the system temporary directory and blocks network access. This was checked
-on macOS; on Linux Codex uses a different sandbox, and if it cannot start, the
-finding is left unreproduced and stays blocking. Without `codex`, a sandboxed
-Claude runner runs them instead.
+How the script checks each step: [ARCHITECTURE.md, Layer 6](../ARCHITECTURE.md#layer-6--code-review-by-one-script).
 
 ## Signing in from a Codex sandbox
 
-A Codex sandbox can stop `claude` from reading the operating system credential
-store even when a normal terminal reports a valid login. Then run the review
-through the normal Codex approval path; do not ask for a secret or a new
-subscription.
-
-## Tests
-
-```sh
-python3 tests/test-review.py
-```
-
-The tests use fake `claude` and `codex` programs and make no model calls.
+A Codex sandbox can stop `claude` from reading the system's credential store,
+even when a normal terminal shows a valid login; the review is then
+`INCOMPLETE`. Run the review through Codex's normal approval path instead; do
+not ask for a secret or a new subscription.

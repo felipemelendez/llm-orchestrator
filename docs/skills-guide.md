@@ -1,81 +1,58 @@
 # Skills guide
 
-How LLM Orchestrator skills are shaped, and how to write a new one.
+How the plugin's skills are shaped, and how to write a new one. For the
+step-by-step method, including testing a skill on a fresh agent, see the
+`writing-skills` skill.
 
-## Anatomy
+## Shape
 
-```
-skills/<name>/SKILL.md
-```
+A skill is one folder with one file, `skills/<name>/SKILL.md`. Supporting
+files (references, scripts) can sit next to it.
 
-One directory, one file. Optional sibling files (prompt fragments, scripts) live next to it.
+The frontmatter (the block between `---` lines at the top) has two keys:
 
-## Frontmatter (the YAML block at the top of the file, between `---` markers)
-
-Required:
-- `name` — hyphenated, lowercase, matches the directory name.
-- `description` — triggers only, not a workflow summary. Two sentences max. Starts with "Use when".
-
-Optional:
-- `tools` — comma-separated list of tools the skill needs.
-
-Example:
+- `name` — lowercase with hyphens, the same as the folder name.
+- `description` — when to use the skill, starting with "Use when". Claude Code
+  reads it to decide whether to load the skill, so describe the trigger, not
+  the steps. A description that summarises the steps lets the model skip the
+  body.
 
 ```yaml
 ---
 name: writing-plans
-description: Use when a spec is approved and you need a step-by-step implementation plan. Produces a dated, checklist-shaped plan file.
+description: Use when a spec is approved and implementation has not started, to write a checklist plan.
 ---
 ```
 
-## Body conventions
+Good: "Use when a diff is ready for review, before merge or before claiming a
+feature is done." Bad: "Reviews code by checking files in order and scoring
+issues."
 
-- Markdown. Sections in order: Purpose (one line at top), When to use, Steps, Output shape, Anti-patterns.
-- Sentences, not paragraphs.
-- Tables when comparing options.
-- Code blocks for response shapes and commands.
-- Length target: under 250 lines (aim for 150). If it's longer, the skill is doing too much.
+## Body
 
-## Description rule (the one that matters)
-
-The `description` field must describe **triggers**, not workflow. Claude Code uses this field to decide whether to invoke the skill. If you summarize the workflow there, the model thinks it has the gist and skips the body.
-
-Good:
-> Use when a diff is ready for review — before merge, before PR, before claiming a feature is done.
-
-Bad:
-> Reviews code by checking files in order, scoring issues, and reporting in markdown.
-
-## Voice
-
-- No ALL CAPS.
-- No "MUST", "ALWAYS", "NEVER" as the dominant register. Strong words once, plain prose elsewhere.
-- No rationalization tables or "red flags" sections. Trust the reader.
-- No Graphviz `dot` charts; if a decision is non-obvious, a numbered list works.
-
-## Output shape
-
-Every skill ends with a "Output shape" section showing the Concise Agent Protocol block (the structured status block Claude Code reads to know what happened) the agent should produce. This is what makes skills compose.
+- There are no required sections; use the headings the content needs. Most
+  skills end with an "Output shape" section showing the reply the agent should
+  give, in the [Concise Agent Protocol](../concise-agent-protocol.md).
+- Write only what a capable model would get wrong without it. Keep a short
+  reason next to a rule only when the agent will be tempted to break it.
+- Number steps only when the order matters.
+- Plain voice: no runs of all-caps words, no walls of "MUST", no
+  rationalization tables, no diagrams.
+- Aim for about 150 lines; the hard limit is 250.
 
 ## Adding a skill
 
-```
+```sh
 mkdir skills/<name>
 cp templates/skill.md skills/<name>/SKILL.md
 $EDITOR skills/<name>/SKILL.md
 ./tests/validate-skills.sh
 ```
 
-The validator checks:
-- Directory name matches `name:` in frontmatter.
-- `description:` starts with "Use when".
-- File is ≤ 250 lines.
-- No 4+ consecutive ALL CAPS words outside code blocks.
+The validator checks that the folder matches `name`, the description starts
+with "Use when", the file is at most 250 lines, there are no four or more
+all-caps words in a row outside code blocks, and existing skills stay under
+their word ceilings.
 
-For a deeper walkthrough including TDD-for-skills, see the `writing-skills` skill itself.
-
-## When NOT to add a skill
-
-- The behavior is already covered by an existing skill.
-- The behavior is a single command (it's a slash command, not a skill).
-- You're tempted to write 800+ words. Reconsider the scope.
+Do not add a skill when an existing one covers the behaviour, or when it is
+really a single action (make it a [command](commands-guide.md)).

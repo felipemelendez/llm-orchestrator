@@ -197,7 +197,7 @@ emit() { # <verb> <path> [<suffix>]
 # names both ways to turn that setting on, because a tip that says a second
 # layer exists without saying how to reach it costs the reader the layer.
 print_tip() {
-  echo "tip: Claude Code's sandbox is optional; turn it on with /sandbox in a session or \"sandbox\": {\"enabled\": true} in .claude/settings.json, and the Edit(...) deny rules above also bind every subprocess (see docs/install.md, \"The lock's two layers\")"
+  echo "tip: Claude Code's sandbox is optional; turn it on with /sandbox in a session or \"sandbox\": {\"enabled\": true} in .claude/settings.json, and the Edit(...) deny rules above also bind every subprocess (see docs/cadence.md, \"The lock's two layers\")"
 }
 
 # The block the cadence writes into AGENTS.md. It lives in templates/ in the
@@ -908,6 +908,6 @@ if [ "$IS_GIT" = "1" ]; then
   # The last layer of the alarm, and the only one that still speaks in a clone
   # whose hooks were never routed or whose commit stepped past them.
   STEP=$((STEP+1))
-  echo "  $STEP. in CI, run .githooks/orch-cadence-check.sh --audit HEAD (see docs/install.md, \"The lock's two layers\")"
+  echo "  $STEP. in CI, run .githooks/orch-cadence-check.sh --audit HEAD (see docs/cadence.md, \"The CI step\")"
 fi
 exit 0

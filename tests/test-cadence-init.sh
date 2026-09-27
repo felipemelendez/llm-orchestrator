@@ -509,7 +509,7 @@ has "$OUT" '--lock' && ok "step 2 names the re-lock the placeholder fill makes n
 S5=$(lineof "$OUT" '5. in CI, run .githooks/orch-cadence-check.sh --audit')
 if [[ -n "$S5" ]]; then ok "the recipe carries the CI audit step"; else fail "recipe ci" "$(cat "$OUT")"; fi
 if [[ -n "$S4" && -n "$S5" ]] && (( S4 < S5 )); then ok "and prints it after the commit it audits"; else fail "recipe ci order" "4=$S4 5=$S5"; fi
-has "$OUT" 'in CI, run .githooks/orch-cadence-check.sh --audit HEAD (see docs/install.md, "The lock'"'"'s two layers")' \
+has "$OUT" 'in CI, run .githooks/orch-cadence-check.sh --audit HEAD (see docs/cadence.md, "The CI step")' \
   && ok "and the step names the command and the heading that explains it" || fail "recipe ci text" "$(cat "$OUT")"
 
 printf '\n%s== @AGENTS.md counts only as line 1, exactly ==%s\n' "$DIM" "$RESET"
@@ -660,11 +660,11 @@ has "$OUT" 'deny rules above also bind every subprocess' && ok "the tip says wha
 # settings key spelled from memory sends them to a knob Claude Code ignores —
 # so both spellings are pinned literally: the in-session command and the
 # settings.json key, verified against the Claude Code settings reference.
-TIP_EXACT='tip: Claude Code'"'"'s sandbox is optional; turn it on with /sandbox in a session or "sandbox": {"enabled": true} in .claude/settings.json, and the Edit(...) deny rules above also bind every subprocess (see docs/install.md, "The lock'"'"'s two layers")'
+TIP_EXACT='tip: Claude Code'"'"'s sandbox is optional; turn it on with /sandbox in a session or "sandbox": {"enabled": true} in .claude/settings.json, and the Edit(...) deny rules above also bind every subprocess (see docs/cadence.md, "The lock'"'"'s two layers")'
 has "$OUT" "$TIP_EXACT" && ok "the tip line reads exactly as pinned" || fail "tip exact" "$(grep -F 'tip:' "$OUT")"
 has "$OUT" '/sandbox in a session' && ok "and names the in-session command that turns it on" || fail "tip cmd" "$(grep -F 'tip:' "$OUT")"
 has "$OUT" '"sandbox": {"enabled": true} in .claude/settings.json' && ok "and the settings key, spelled as the reference spells it" || fail "tip key" "$(grep -F 'tip:' "$OUT")"
-has "$OUT" 'docs/install.md, "The lock'"'"'s two layers"' && ok "and points at the heading that explains both layers" || fail "tip heading" "$(grep -F 'tip:' "$OUT")"
+has "$OUT" 'docs/cadence.md, "The lock'"'"'s two layers"' && ok "and points at the heading that explains both layers" || fail "tip heading" "$(grep -F 'tip:' "$OUT")"
 TP2="$TMP/tip2"; mkrepo "$TP2"
 RC=$(run "$TP2" --dry-run)
 [[ "$(grep -cF "sandbox is optional" "$OUT")" == "1" ]] && ok "--dry-run prints it too" || fail "tip dry" "$(cat "$OUT")"

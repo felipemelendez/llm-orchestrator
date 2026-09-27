@@ -13,7 +13,8 @@
 # Covers:
 #   P1  --copy rewrites every hooks.json command to an absolute existing path,
 #       and fails loudly (instead of claiming success) when it cannot.
-#   P2  docs/install.md Option B wires every hook script hooks.json ships.
+#   P2  docs/install.md names every hook script hooks.json ships and points
+#       manual --copy wiring at the installed .claude/hooks/hooks.json.
 #   P3  --copy seeds settings.json from templates/settings.json and ships
 #       docs/install.md so the settings _hooks_note pointer resolves.
 #   P4  --check fails on deleted referenced files and corrupted JSON, the Codex
@@ -407,7 +408,7 @@ for cadence_entry in commands/cadence-init.md \
 done
 
 # ------------------------------------------------------------
-# P2 — docs/install.md Option B completeness
+# P2 — docs/install.md hook completeness
 # ------------------------------------------------------------
 section "docs/install.md hook wiring (P2)"
 
@@ -427,20 +428,18 @@ for event, matchers in hooks.get("hooks", {}).items():
                 name = tok.rsplit("/", 1)[-1]
                 if name.endswith(".sh") and name not in doc:
                     missing.append(name)
-for event in sorted(events):
-    if not re.search(r'"%s"' % re.escape(event), doc):
-        missing.append("event " + event)
-# The type:"prompt" termination-contract hook must at least be mentioned.
-if '"prompt"' not in doc and "prompt hook" not in doc:
-    missing.append('the type:"prompt" SubagentStop hook')
+# Manual wiring copies the entries from the installed hooks.json (paths already
+# absolute), so the guide must send the reader there rather than hand-list them.
+if ".claude/hooks/hooks.json" not in doc:
+    missing.append("pointer to .claude/hooks/hooks.json for manual wiring")
 for m in sorted(set(missing)):
     print(m)
 PY
 )
 if [[ -z "$DOC_MISSING" ]]; then
-  ok "every shipped hook script + event appears in docs/install.md"
+  ok "every shipped hook script appears in docs/install.md, and manual wiring points at hooks.json"
 else
-  fail "every shipped hook script + event appears in docs/install.md" \
+  fail "every shipped hook script appears in docs/install.md, and manual wiring points at hooks.json" \
        "missing: $(printf '%s ' $DOC_MISSING)"
 fi
 
