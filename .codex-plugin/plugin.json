@@ -1,6 +1,6 @@
 {
   "name": "llm-orchestrator",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The Codex part of LLM Orchestrator: the cadence and review skills, the file guard and the completion check.",
   "homepage": "https://github.com/felipemelendez/llm-orchestrator",
   "repository": "https://github.com/felipemelendez/llm-orchestrator",
