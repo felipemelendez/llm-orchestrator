@@ -93,4 +93,4 @@ this layer is the only one that stops anything before the fact.
 ## The boundary
 
 What the lock stops and what it cannot is stated once, in
-[What the lock cannot stop](install.md#what-the-lock-cannot-stop).
+[What the lock cannot stop](cadence.md#what-the-lock-cannot-stop).

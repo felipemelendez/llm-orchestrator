@@ -5,7 +5,7 @@ How to add a skill, command, or subagent role: copy a template, run the tests, o
 This is intentionally a small, opinionated kit:
 
 - **Pure markdown + shell.** No build step. Add a skill by copying `templates/skill.md`. Hooks (automation scripts Claude Code runs at lifecycle events) live in `scripts/hooks/`.
-- **Small catalog (19 skills).** Your contribution actually gets noticed and used. Past ~40 skills the catalog gets unscannable — we cap there on purpose.
+- **Small catalog (18 skills).** Your contribution actually gets noticed and used. Past ~40 skills the catalog gets unscannable — we cap there on purpose.
 - **Real test suite.** The suites are discovered, not listed — the runner prints the count. `./tests/run-all.sh` runs them in about three minutes and gating every commit. They catch regressions in JSON schemas, hook output formats, concurrency, portability (bash 3.2 / BSD / macOS), and shape-checking. Behavioural claims go further: `tests/evals/` A/B-tests the plugin against a bare model and against any earlier commit, with Fisher's exact test on the result.
 - **TDD-for-skills loop documented.** `writing-skills` walks through: write a skill, dispatch a test subagent with no other context, see if the subagent follows the skill, refine.
 - **Native Claude Code primitives.** Your contribution works for everyone who uses Claude Code — no parallel platform support needed.
@@ -31,6 +31,24 @@ cp agents/orch-implementer.md agents/orch-<your-role>.md
 $EDITOR agents/orch-<your-role>.md
 ./tests/validate-skills.sh
 ```
+
+## Adding a command
+
+A command is one file, `commands/<name>.md`. Its frontmatter needs a
+`description`; `argument-hint` is optional. The body is the prompt Claude Code
+sends when someone types the command, with their input in `$ARGUMENTS`.
+
+- Say which command is running: "You are running `/llm-orchestrator:<name>`."
+- Use numbered steps and name the skills to use; the skill holds the
+  discipline, the command is the entry point.
+- End with a `Constraints:` section and the shape of the reply.
+
+Add a command when people will type it often and it maps to one clear intent;
+not for a prompt people can simply type, or for a discipline that belongs in a
+skill. Name it in lowercase with hyphens, matching the file name, and add its
+row to [`docs/commands-guide.md`](./docs/commands-guide.md):
+`./tests/validate-skills.sh` fails when a command has no row there. How skills
+are shaped: [`docs/skills-guide.md`](./docs/skills-guide.md).
 
 ## Test discipline
 

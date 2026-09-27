@@ -28,15 +28,14 @@ What matters most:
 
 ### Upgrading
 
-Full steps: [Upgrading to 0.12.0](docs/install.md#upgrading-to-0120).
-
 - **Claude Code:** `claude plugin marketplace update llm-orchestrator`, then
   `claude plugin update llm-orchestrator@llm-orchestrator`, and restart. For a
   `--copy` or `--link` install, rerun that installer from an updated checkout.
 - **`workflow` missing or `legacy`:** the hooks now show an error instead of
   running. Set `"workflow": "proportional"` in
-  `docs/llm-orchestrator/cadence.json`, through a ruling in an armed project.
-- **Armed projects set up with an older version:** re-run
+  `docs/llm-orchestrator/cadence.json`, through a ruling if the project's
+  cadence is locked.
+- **Locked cadence projects set up with an older version:** re-run
   `/llm-orchestrator:cadence-init`. It changes no protected file; it writes an
   upgrade patch (new git hooks, the current marked block, the missing deny
   rules) and prints the one `cadence-ruling.sh` command that applies it. Until
@@ -115,8 +114,8 @@ Full steps: [Upgrading to 0.12.0](docs/install.md#upgrading-to-0120).
   docs match the agent files.
 - The docs about native Claude Code features and the cited papers were
   re-checked and corrected. The README is now a short quick start, and each
-  topic has one page: install, update and settings in `docs/install.md`, Codex
-  in `docs/codex.md`.
+  topic has one page: install and settings in `docs/install.md`, the cadence
+  in `docs/cadence.md`, Codex in `docs/codex.md`.
 - `install.sh --check` also requires `orch-completion-check.py`,
   `orch-subagent-report.py` and `cadence-ruling.sh`.
 
@@ -140,13 +139,14 @@ Full steps: [Upgrading to 0.12.0](docs/install.md#upgrading-to-0120).
 
 ### Fixed
 
-- In auto mode a subagent sends its report through the `SubagentHandback`
-  tool, so the text the hooks read held only its closing line. Every plugin
-  agent's report was flagged as badly shaped, researcher briefs were never
-  checked, and the completion check missed a subagent's Verification line. The
-  subagent checks, the completion check and the worktree cleanup now read the
-  real report, and fall back to the old text when there is none.
-- `session-start.sh` no longer waits forever when its input is left open.
+- In auto mode, helper agents' reports are checked again. Before, every
+  report was flagged as badly shaped, research briefs went unchecked, and the
+  completion check missed a helper's `Verification:` line, because in auto
+  mode the report arrives through the `SubagentHandback` tool and the hooks
+  read only its closing line. The report checks, the completion check and the
+  worktree cleanup now read the real report.
+- A session no longer hangs at start when the session-start hook's input is
+  left open.
 
 ## [0.11.0] - 2026-09-23
 

@@ -139,17 +139,53 @@ The gate script (`skills/cadence/scripts/orch-cadence-gate.sh`) makes its own th
 
 **Task scratch.** `scripts/lib/orch-task-resources.py` owns the scratch directories, file copies, worktrees and disposable clones a task uses, outside the repo. It deletes a clone only when the clone holds no ref, stash, commit or worktree beyond those it had when made. A consumer takes a lease before touching scratch and states, on release, that it and its children have stopped. The Stop hook (`scripts/hooks/orch-task-cleanup.sh`) may only retry cleanup of tasks already marked finished — age, process id, or a confident-sounding final message never count as "done". Finished records are kept seven days; unfinished ones are kept indefinitely.
 
-The lock over all of it is two layers: the native `Edit(...)` deny rules and the `commit-msg` git hook; the session-start line, the end-of-turn verdict and `--audit` in CI report rather than prevent. The user-facing account, with what the lock cannot stop, is `docs/install.md` ("The lock's two layers"). The cadence hooks (the session-start line, the cadence Stop verdict, and on Codex the file guard) are inert in a project without an enabled `cadence.json`; the completion check and the task-scratch cleanup are ordinary plugin hooks that run everywhere.
+The lock over all of it is two layers: the native `Edit(...)` deny rules and the `commit-msg` git hook; the session-start line, the end-of-turn verdict and `--audit` in CI report rather than prevent. The user-facing account, with what the lock cannot stop, is `docs/cadence.md` ("The lock's two layers"). The cadence hooks (the session-start line, the cadence Stop verdict, and on Codex the file guard) are inert in a project without an enabled `cadence.json`; the completion check and the task-scratch cleanup are ordinary plugin hooks that run everywhere.
 
 **Files.** `skills/cadence/SKILL.md` and `skills/cadence/CADENCE.md` (the text), `skills/cadence/references/*` (the templates the init renders), `skills/cadence/scripts/{orch-cadence-gate.sh,orch-cadence-check.sh,cadence-detect.sh,cadence-init.sh,cadence-ruling.sh}`, `commands/cadence-init.md`, `scripts/hooks/{session-start.sh,orch-task-cleanup.sh}`, `scripts/lib/orch-task-resources.py`, `templates/cadence-global-block.md`, and in the opted-in project `docs/llm-orchestrator/{LAWS.md,cadence.json,LOCK.sha256}` plus `.githooks/{commit-msg,orch-cadence-check.sh}`. On Codex, `scripts/hooks/codex-cadence-adapter.sh` (with `scripts/lib/codex-cadence-read-command.py`) stands in for the deny rules, `scripts/hooks/codex-verify-gate.sh` for the completion check, `.codex-plugin/plugin.json` registers both and the cleanup when installed with `codex plugin add`, and `scripts/install.sh --codex` renders only the instructions block; `docs/codex.md` is the user-facing page.
 
-**Amendment path.** `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by the person in their own terminal: it refuses a patch outside the lock set (sources of renames and deletions included), a change outside a marked section, or one that no longer applies, refuses when an agent-session variable is set, reads a typed confirmation from `/dev/tty`, applies the patch, re-records the lock with `orch-cadence-check.sh --lock`, commits `Ruling <N>: <wording>` and runs `--audit HEAD`, undoing everything on failure or interruption. In an armed project `cadence-init` writes an upgrade ruling patch instead of touching protected files. `--lock` rewrites an existing lock only when a terminal is attached. An agent's shell has none; the known limit is stated in `docs/install.md` ("Changing the rules"). The hooks themselves are ordinary hooks: `ORCH_DISABLED_HOOKS` and `ORCH_HOOK_PROFILE` name them like any other, except the Codex file guard. Not opting in is the fullest hatch there is.
+**Amendment path.** `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`, run by the person in their own terminal: it refuses a patch outside the lock set (sources of renames and deletions included), a change outside a marked section, or one that no longer applies, refuses when an agent-session variable is set, reads a typed confirmation from `/dev/tty`, applies the patch, re-records the lock with `orch-cadence-check.sh --lock`, commits `Ruling <N>: <wording>` and runs `--audit HEAD`, undoing everything on failure or interruption. In an armed project `cadence-init` writes an upgrade ruling patch instead of touching protected files. `--lock` rewrites an existing lock only when a terminal is attached. An agent's shell has none; the known limit is stated in `docs/cadence.md` ("What the lock cannot stop"). The hooks themselves are ordinary hooks: `ORCH_DISABLED_HOOKS` and `ORCH_HOOK_PROFILE` name them like any other, except the Codex file guard. Not opting in is the fullest hatch there is.
+
+### Models and effort
+
+The agent roster and model pins are listed in `docs/anthropic-ecosystem.md` and `AGENTS.md`; the agent files are the source of truth, and `tests/validate-skills.sh` checks every pin.
+
+Model and effort are separate. The model is what the agent can do; effort is
+how much work it puts in (files read, tools used, steps taken), per Anthropic's
+[guide to choosing a model and effort level](https://claude.com/blog/claude-model-and-effort-level-in-claude-code).
+If an agent did not know enough, raise the model; if it did not try hard
+enough, raise the effort.
+
+A reviewer should be at least as capable as what it reviews. In
+[arXiv:2606.21811](https://arxiv.org/abs/2606.21811) (v2, Table 1), untrained
+small critics changed a coding agent's success rate by −3.6 to +8.2 points,
+while a Claude Opus critic added about 18 points. The paper's own point is that
+*trained* small critics can do well at lower cost; the plugin uses untrained
+reviewers, so it keeps them at full capability.
+
+**Effort** is set only for reviewers: `orch-spec-reviewer` has `effort: high`,
+and `orch-review.py` starts `/code-review`, `codex review`, the prover and the
+refuter at `high`. Every other agent uses the session's level (on Opus the
+default is `medium`). More effort is not always better: one large study found
+equal or lower accuracy with more reasoning in 21 of 36 settings
+([arXiv:2510.11977](https://arxiv.org/abs/2510.11977)). A pinned level
+overrides your session's level either way.
+
+Effort is resolved in this order: `CLAUDE_CODE_EFFORT_LEVEL`, then the agent's
+frontmatter, then the session level, then the model default. A level the model
+does not support falls back to the highest one it does. The `Agent` tool takes
+a `model` but not an `effort`, so a per-task effort needs its own CLI process,
+which is what `orch-review.py` starts.
+
+**Turn limits.** The four read-only agents have `maxTurns` (explorer 25, spec
+reviewer 30, researcher 35, debugger 40) to stop runaway repetition.
+`orch-implementer` has none, because a hard stop could leave its worktree lock
+held.
 
 ### Engineering features (cross-layer)
 
 **Termination discipline (MAST-informed).** The MAST taxonomy ([arXiv:2503.13657](https://arxiv.org/abs/2503.13657), N=1642 traces) puts step repetition at 15.7% of multi-agent failures, unawareness of termination conditions at 12.4%, and premature termination at 6.2%. The plugin answers all three mechanically:
 
-- *Termination contracts.* Every dispatched task carries `Done when:` (the observable end state — the only path to `DONE`) and `Stop if:` (the abort conditions — a fired one returns `PARTIAL` or `BLOCKED`, never more attempts). The plan template requires both per task; `writing-plans` enforces it; the templates paste them into every envelope. `subagent-stop.sh` then checks the shape of what came back: the report the subagent sent its caller. In auto mode that report is the `SubagentHandback` tool's message, read from the subagent's own transcript, because `last_assistant_message` then holds only the closing text ("Report delivered to caller."); otherwise it is `last_assistant_message`. `orch-researcher-validator.sh`, `orch-worktree-reaper.sh` and the completion check read the report the same way; the rules are in `scripts/lib/orch-subagent-report.py`. The strongest available check is an `agent`-type `Stop` hook that re-runs the suite itself: an agent cannot forge a run that happens after it stops. It is documented as an opt-in in `docs/install.md` rather than shipped, because it costs a subagent every turn.
+- *Termination contracts.* Every dispatched task carries `Done when:` (the observable end state — the only path to `DONE`) and `Stop if:` (the abort conditions — a fired one returns `PARTIAL` or `BLOCKED`, never more attempts). The plan template requires both per task; `writing-plans` enforces it; the templates paste them into every envelope. `subagent-stop.sh` then checks the shape of what came back: the report the subagent sent its caller. In auto mode that report is the `SubagentHandback` tool's message, read from the subagent's own transcript, because `last_assistant_message` then holds only the closing text ("Report delivered to caller."); otherwise it is `last_assistant_message`. `orch-researcher-validator.sh`, `orch-worktree-reaper.sh` and the completion check read the report the same way; the rules are in `scripts/lib/orch-subagent-report.py`. The strongest available check is an `agent`-type `Stop` hook that re-runs the suite itself: an agent cannot forge a run that happens after it stops. It is not shipped, because it costs a subagent every turn; a project that wants it adds a `type: "agent"` `Stop` hook to its own `.claude/settings.json` whose prompt runs the suite and returns `{"ok": false, "reason": ...}` on failure. (A `type: "prompt"` hook cannot do this: it is one model call with no tools.)
 - *Retry-storm breaker.* `orch-retry-cap.sh` is ON by default (warn-only; `ORCH_RETRY_CAP=0` disables, `ORCH_STRICT_RETRY=1` blocks). On `Stop` it fingerprints the controller's replies (3 near-identical in a row → stuck loop). On `SubagentStop` it scans the agent's own transcript for the same tool call with the same arguments executed ≥3 times consecutively — the step-repetition shape itself, keyed on `agent_id`.
 - *Premature termination is failure.* A subagent that finishes with an empty final message used to pass silently; `subagent-stop.sh` now treats it as a failure signal. The four read-only agents carry `maxTurns` caps; the implementer deliberately does not (a hard cap would strand its writer mutex), and a SubagentStop **reaper** (`orch-worktree-reaper.sh`) releases a mutex abandoned by a dead implementer — but only on *proof of ownership*: the worktree the agent's own CWD sits inside, or failing that, the single worktree named in a success-shaped report. A message naming TWO worktrees reaps nothing — a success return names a sibling's tree just as routinely as a BLOCKED one, and releasing a live sibling's mutex puts two writers in one tree. Anything unprovable is reported, not reaped — a live sibling's mutex must never be released — and the controller frees true leftovers by hand once all implementers finish. A regular *file* at a mutex path (repo root included) is reported as **protocol corruption**, never listed as held: it is an improvised hold-marker no successful `mkdir` claimed, so no writer owns it and the operator removes it by hand (`rm`).
 
