@@ -2,5 +2,5 @@
 af61d2005063130252fc2d257e04f0b3a6b475a9aa3a06cecd68706392d15c44  .githooks/commit-msg
 3487a8d4b16dc7cd0f11e3f8b5efca44ecf88a360e8d43f814e45756cc1706f8  .githooks/orch-cadence-check.sh
 0a9bc65eaefad9430cc1ce982ce76b28b8744e6cc1b71b1808310500237ebcf3  AGENTS.md#ORCH:LAWS
-647f3b454397d5ae7a7e754be5632e3fe0c095a0533a347c8b3eb4a1a6b35dc1  docs/llm-orchestrator/LAWS.md
+7da428bb207754d16e4b4834fca53775bb9991b14cd822169d9f0a615aa4a7b2  docs/llm-orchestrator/LAWS.md
 65e5c2d05672a5abe2f35130e11e0a821e59fcf019301748c93c72ba2208ef86  docs/llm-orchestrator/cadence.json
