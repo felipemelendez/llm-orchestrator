@@ -2,7 +2,7 @@
 # Drift test: the cadence's names must be spelled the same everywhere they appear.
 #
 # The cadence is described in four places that no compiler relates — the skill
-# (SKILL.md / CADENCE.md), the README, docs/install.md, and the check script's
+# (SKILL.md / CADENCE.md), the README, docs/cadence.md, and the check script's
 # own --help — and a mode or a file renamed in one of them reads as correct
 # until someone types it. This suite pins the spellings, both directions where
 # it can: every mode the script's usage line advertises must appear in the
@@ -22,7 +22,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$ROOT/skills/cadence/SKILL.md"
 FULL="$ROOT/skills/cadence/CADENCE.md"
 README="$ROOT/README.md"
-INSTALL="$ROOT/docs/install.md"
+INSTALL="$ROOT/docs/cadence.md"
 CHECK="$ROOT/skills/cadence/scripts/orch-cadence-check.sh"
 INIT="$ROOT/skills/cadence/scripts/cadence-init.sh"
 LOCK_HEADING="The lock's two layers"
@@ -51,8 +51,8 @@ for m in --verdict --lock --commit-msg --audit --version; do
 done
 # The two modes a person types by hand belong in the user-facing guide.
 for m in --lock --audit; do
-  has "$INSTALL" "$m" && ok "$m is named in docs/install.md" \
-    || fail "$m in docs/install.md" "the install guide never spells it"
+  has "$INSTALL" "$m" && ok "$m is named in docs/cadence.md" \
+    || fail "$m in docs/cadence.md" "the cadence guide never spells it"
 done
 
 printf '\n== The lock set ==\n'
@@ -60,8 +60,8 @@ for n in "docs/llm-orchestrator/LAWS.md" "cadence.json" "LOCK.sha256" \
          ".githooks/commit-msg" ".githooks/orch-cadence-check.sh"; do
   if has "$SKILL" "$n" || has "$FULL" "$n"; then ok "$n in the skill's text"
   else fail "$n in the skill's text" "neither SKILL.md nor CADENCE.md names it"; fi
-  has "$INSTALL" "$n" && ok "$n in docs/install.md" \
-    || fail "$n in docs/install.md" "the install guide never spells it"
+  has "$INSTALL" "$n" && ok "$n in docs/cadence.md" \
+    || fail "$n in docs/cadence.md" "the cadence guide never spells it"
 done
 
 printf '\n== No legacy procedure is left ==\n'
@@ -124,8 +124,8 @@ for n in prover.md refuter.md security-lens.md; do
 done
 
 printf '\n== Two layers, not three, and no deleted guard ==\n'
-has "$INSTALL" "### $LOCK_HEADING" && ok "docs/install.md carries the heading \"$LOCK_HEADING\"" \
-  || fail "the heading \"$LOCK_HEADING\"" "docs/install.md has no such section heading"
+has "$INSTALL" "### $LOCK_HEADING" && ok "docs/cadence.md carries the heading \"$LOCK_HEADING\"" \
+  || fail "the heading \"$LOCK_HEADING\"" "docs/cadence.md has no such section heading"
 has "$README" "two layers" && ok "the README names the lock's two layers" \
   || fail "the README's two layers" "the cadence section does not say two layers"
 SHIPPED="$ROOT/scripts $ROOT/hooks $ROOT/skills $ROOT/commands $ROOT/templates $ROOT/docs"
@@ -143,32 +143,35 @@ GONE=$(grep -rlF "guard-cadence-lock" $SHIPPED "$ROOT/README.md" "$ROOT/ARCHITEC
   || fail "the deleted shell guard" "still named in: $GONE"
 
 printf '\n== The init points at headings that exist ==\n'
-# The tip prints: ... (see docs/install.md, "The lock's two layers")
-TIP=$(grep -F 'docs/install.md' "$INIT" | grep -F '"' | head -1)
-if [ -z "$TIP" ]; then
-  fail "the init's tip line" "no line in cadence-init.sh points at docs/install.md"
+# The init prints: ... (see docs/cadence.md, "The lock's two layers"), and
+# the CI step points at "The CI step". Every such pointer must name a heading.
+TIPS=$(grep -F 'docs/cadence.md' "$INIT" | grep -F '"')
+if [ -z "$TIPS" ]; then
+  fail "the init's tip line" "no line in cadence-init.sh points at docs/cadence.md"
 else
-  TIPH=$(printf '%s\n' "$TIP" | sed -e 's/.*docs\/install.md[^"]*\\*"//' -e 's/\\*".*//')
-  if [ -n "$TIPH" ] && grep -qF "# $TIPH" "$INSTALL"; then
-    ok "the init's tip names a heading that exists (\"$TIPH\")"
-  else
-    fail "the init's tip heading" "cadence-init.sh sends the reader to \"$TIPH\", which docs/install.md does not carry as a heading"
-  fi
+  while IFS= read -r TIP; do
+    TIPH=$(printf '%s\n' "$TIP" | sed -e 's/.*docs\/cadence.md[^"]*\\*"//' -e 's/\\*".*//')
+    if [ -n "$TIPH" ] && grep -qF "# $TIPH" "$INSTALL"; then
+      ok "the init names a heading that exists (\"$TIPH\")"
+    else
+      fail "the init's heading" "cadence-init.sh sends the reader to \"$TIPH\", which docs/cadence.md does not carry as a heading"
+    fi
+  done <<< "$TIPS"
 fi
 
 printf '\n== The CI step is spelled once ==\n'
 CI_STEP=$(grep -oF '.githooks/orch-cadence-check.sh --audit HEAD' "$INSTALL" | head -1)
 if [ -n "$CI_STEP" ]; then
-  ok "docs/install.md carries the CI step: $CI_STEP"
+  ok "docs/cadence.md carries the CI step: $CI_STEP"
   if grep -qF -- '--audit' "$INIT"; then
     grep -qF "$CI_STEP" "$INIT" \
       && ok "the init's recipe spells the CI step the same way" \
       || fail "the CI step's spelling" "cadence-init.sh mentions --audit but not \"$CI_STEP\""
   else
-    fail "the init's CI recipe" "docs/install.md documents \"$CI_STEP\" but cadence-init.sh prints no --audit step at all, so nobody who follows the init is ever told to run it"
+    fail "the init's CI recipe" "docs/cadence.md documents \"$CI_STEP\" but cadence-init.sh prints no --audit step at all, so nobody who follows the init is ever told to run it"
   fi
 else
-  fail "the CI step" "docs/install.md does not carry the one-line --audit step"
+  fail "the CI step" "docs/cadence.md does not carry the one-line --audit step"
 fi
 
 printf '\n== The evidence page is linked and present ==\n'
