@@ -1,17 +1,14 @@
-# The cadence: what it rests on, and what is unverified
+# The cadence: what it rests on
 
-The cadence and its lock make claims about two harnesses — what a deny rule
-covers, what a hook receives, where a skill is discovered, what blocks what. This
-page records where each of those claims came from, so a reader can check the
-source rather than trust the sentence. Everything here was read from primary
-vendor documentation on the dates given, or executed on a real machine and
-recorded.
+The cadence and its lock rely on facts about Claude Code and Codex: what a deny
+rule covers, what a hook receives, where a skill is found. This page lists each
+fact, whether it was confirmed, and where from, so you can check the source
+yourself. Each was read in the vendor's documentation or source, or run on a
+real machine, on the date given. Vendor behaviour changes, so a fact confirmed
+then can be wrong now.
 
-Two things this page is not. It is not evidence that the *process* works — that
-is field-record material, with its own honest limits, in
-[`MEASUREMENTS.md`](./MEASUREMENTS.md). And it is not a promise: vendor
-behaviour moves, and a claim verified on the date below can be false on the date
-you read it.
+Whether the process itself helps is a different question; that is recorded in
+[`MEASUREMENTS.md`](./MEASUREMENTS.md).
 
 ## Claims and verdicts
 
@@ -37,29 +34,9 @@ you read it.
 | Codex protects `.agents/`, `.codex/` and `.git` as read-only inside a writable root, recursively. A permission profile in `~/.codex/config.toml` can also make a single file `read` or `deny`, enforced by the OS sandbox for writes, renames and deletes; Full access removes it | VERIFIED, 2026-09-25, Codex 0.157.0 (`codex sandbox -P` in a scratch `CODEX_HOME`) — the setup does not write `config.toml`, so the git layer and the file guard stay the cross-tool protection | <https://learn.chatgpt.com/docs/agent-approvals-security> · <https://learn.chatgpt.com/docs/permissions> |
 | A Codex `Stop` hook receives `session_id`, `turn_id`, `transcript_path` (nullable), `cwd`, `model`, `permission_mode`, `stop_hook_active` and `last_assistant_message` (nullable) | VERIFIED, read 2026-09-22 (`StopCommandInput`, codex-rs/hooks/src/schema.rs, Codex 0.155.1) | <https://github.com/openai/codex/blob/main/codex-rs/hooks/src/schema.rs> |
 | A Codex `Stop` hook's output is `continue`, `stopReason`, `suppressOutput`, `systemMessage`, `decision` and `reason` — no `hookSpecificOutput.additionalContext`; `systemMessage` is a warning in the person's UI, and `decision: block` does not reject the turn but continues it with `reason` as the agent's next prompt | VERIFIED, read 2026-09-22 — the reason the Codex completion check sends the agent back once instead of warning the person | <https://learn.chatgpt.com/docs/hooks> · <https://github.com/openai/codex/blob/main/codex-rs/hooks/src/schema.rs> |
-| The Codex session log is a rollout JSONL under `~/.codex/sessions/`. Codex 0.147.0 and later write an `item_completed` / `CommandExecution` record for every command, with the argv, the exit code and the turn, only when the thread's `history_mode` is `paginated`. In `legacy` history, and before 0.147.0, only a direct `exec_command` call leaves a record: its output header (`Process exited with code N`). A command run inside a code-mode `exec` script in legacy history leaves no record Codex wrote. The docs call the transcript format unstable | VERIFIED 2026-09-25: `codex-rs/rollout/src/policy.rs` and `codex-rs/core/src/tools/context.rs` at `rust-v0.157.0`, and the 82 rollouts on this machine (0.146.0, 0.147.0, 0.154.0-alpha.6.2, 0.157.0). The check reads both records and nothing the agent wrote; a code-mode turn in a log with no command record is not judged, rather than sent back | <https://learn.chatgpt.com/docs/hooks>, <https://github.com/openai/codex/blob/rust-v0.157.0/codex-rs/rollout/src/policy.rs> and `~/.codex/sessions` |
+| The Codex session log is a rollout JSONL under `~/.codex/sessions/`. Codex 0.147.0 and later write an `item_completed` / `CommandExecution` record for every command, with the argv, the exit code and the turn, only when the thread's `history_mode` is `paginated`. In `legacy` history, and before 0.147.0, only a direct `exec_command` call leaves a record: its output header (`Process exited with code N`). A command run inside a code-mode `exec` script in legacy history leaves no record Codex wrote. The docs call the transcript format unstable | VERIFIED 2026-09-25: `codex-rs/rollout/src/policy.rs` and `codex-rs/core/src/tools/context.rs` at `rust-v0.157.0`, and real session logs from Codex 0.146.0, 0.147.0, 0.154.0-alpha and 0.157.0. The check reads both records and nothing the agent wrote; a code-mode turn in a log with no command record is not judged, rather than sent back | <https://learn.chatgpt.com/docs/hooks>, <https://github.com/openai/codex/blob/rust-v0.157.0/codex-rs/rollout/src/policy.rs> and `~/.codex/sessions` |
 | An `Edit(path)` deny rule covers the built-in file tools, the Bash file commands Claude Code recognises (`cat`, `head`, `tail`, `sed`) and every Bash redirection target, in every permission mode; it does **not** cover a subprocess that opens the file itself | VERIFIED, read 2026-09-06 | <https://code.claude.com/docs/en/permissions> and <https://code.claude.com/docs/en/permission-modes> (the modes, bypass included) |
 | With the sandbox enabled, `Edit` deny rules merge into an OS-level deny-write list enforced for every subprocess | VERIFIED, read 2026-09-06 — the plugin never enables the sandbox for anyone | <https://code.claude.com/docs/en/sandboxing> (and the settings reference's `sandbox.filesystem`) |
-
-Everything in the table above was read from these pages, the Claude Code set on
-2026-09-05 and the two permissions rows re-read on 2026-09-06:
-
-- <https://code.claude.com/docs/en/memory>
-- <https://code.claude.com/docs/en/hooks>
-- <https://code.claude.com/docs/en/permissions>
-- <https://code.claude.com/docs/en/permission-modes>
-- <https://code.claude.com/docs/en/sandboxing>
-- the Claude Code settings reference (the `sandbox.filesystem` section)
-- <https://code.claude.com/docs/en/sub-agents>
-- <https://code.claude.com/docs/en/skills>
-- <https://code.claude.com/docs/en/plugins-reference>
-- <https://code.claude.com/docs/en/tools-reference>
-- <https://code.claude.com/docs/en/worktrees> (the two worktree rows, read 2026-09-25)
-- <https://learn.chatgpt.com/docs/hooks>
-- <https://learn.chatgpt.com/docs/build-skills>
-- <https://learn.chatgpt.com/docs/agent-configuration/agents-md>
-- <https://learn.chatgpt.com/docs/agent-approvals-security>
-- <https://agentskills.io/specification>
 
 ## Unverified, and left that way
 
@@ -115,12 +92,5 @@ this layer is the only one that stops anything before the fact.
 
 ## The boundary
 
-A write the deny rules do not stop happens. It is named at the end of that turn
-by the verdict, again at the next session start, and a commit of it is refused by
-the `commit-msg` hook — or by `orch-cadence-check.sh --audit <rev>` in CI, for the
-clone where the hook was never routed — unless the commit also re-records the lock
-and carries a numbered ruling. So the lock stops accidental edits and makes
-deliberate ones visible in the history. It cannot stop an agent determined to
-fake a ruling: a script can rewrite `LAWS.md` and `LOCK.sha256` together and
-commit with a `Ruling <N>` message, which the hook accepts. Hooks and deny rules
-are guardrails, not guarantees.
+What the lock stops and what it cannot is stated once, in
+[What the lock cannot stop](install.md#what-the-lock-cannot-stop).

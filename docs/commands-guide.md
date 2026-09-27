@@ -1,78 +1,61 @@
 # Commands guide
 
-How LLM Orchestrator slash commands are shaped, and how to add one.
+Every slash command the plugin adds, and how to write a new one. Type them in
+Claude Code; they do not exist on Codex.
 
-## Anatomy
+## The commands
 
-```
-commands/<name>.md
-```
-
-One file. Frontmatter (the YAML block at the top, between `---` markers) with `description`. Body is the prompt Claude Code sends when the user types `/<name>`.
-
-## Frontmatter
-
-```yaml
----
-description: One-line summary of what the command does. Triggers, not workflow.
----
-```
-
-## Body conventions
-
-- Tell the agent what role it's in: "You are running `/<name>`."
-- Numbered steps, not paragraphs.
-- Reference skills by name (the agent will invoke them).
-- End with a `Constraints:` section listing what not to do.
-- Show the expected output shape at the bottom.
-
-## Composition: commands invoke skills
-
-A command is a workflow wrapper. The skill is the discipline. Most commands open by invoking one skill, then call out to others as needed.
-
-Example: `/llm-orchestrator:review` invokes `requesting-code-review`, which starts `scripts/lib/orch-review.py` (it runs the built-in `/code-review` and `codex review`, then proves and decides) and waits for its verdict.
-
-## When to add a command
-
-- The user will type this often.
-- It maps to a single, named user intent ("plan this", "review this").
-- It composes 2+ skills into one entry point.
-
-## When NOT to add a command
-
-- It's a one-shot prompt the user can type themselves.
-- It's a skill in disguise (just a discipline, not an action).
-
-## Naming
-
-- Lowercase, hyphenated. Match the file name to the command.
-- Short. `/llm-orchestrator:plan`, not `/create-implementation-plan`.
+| Command | What it does |
+|---|---|
+| `/llm-orchestrator:onboard` | Studies the codebase once and, after one approval, writes its `## Decisions` and `## Conventions` into `./CLAUDE.md`. Skips a project already onboarded. Run it first on an existing project. |
+| `/llm-orchestrator:init` | Adds the plugin's starter files (`CLAUDE.md`, `AGENTS.md`, `.gitignore` entries, `docs/llm-orchestrator/` folders) without overwriting. |
+| `/llm-orchestrator:cadence-init` | Turns the cadence on for the project: proposes a `cadence.json` for you to confirm, then writes the rulebook, deny rules and git hooks and arms the lock. Never overwrites. `--dry-run` shows the plan; `--adopt` keeps laws the project already has. See [Enable cadence in a project](install.md#enable-cadence-in-a-project). |
+| `/llm-orchestrator:plan` | Turns an approved spec into a checklist plan under `docs/llm-orchestrator/plans/`. |
+| `/llm-orchestrator:worktree` | Creates a separate git worktree for the current task, marked so cleanup is safe. |
+| `/llm-orchestrator:dispatch` | Runs the tasks in the current plan, one at a time or in parallel. |
+| `/llm-orchestrator:review` | Reviews the current change and reports a verdict. `[base] [--full]`: Standard by default, Full with `--full`. Saves no file in the repository. |
+| `/llm-orchestrator:debug` | Finds a bug's root cause before anything is fixed. |
+| `/llm-orchestrator:verify` | Runs the project's tests, lint and typecheck, and reports the output. |
+| `/llm-orchestrator:finish` | Helps you choose merge, pull request, keep or discard for the branch. Nothing destructive without confirmation. |
+| `/llm-orchestrator:remember` | Saves a fact to the right section of `CLAUDE.md` (Conventions, Decisions, People or Notes), or to plugin memory for plugin settings. |
+| `/llm-orchestrator:forget` | Removes matching lines from `CLAUDE.md` or plugin memory into a trash folder, so they can be recovered. |
+| `/llm-orchestrator:research` | Checks an approach, API or version against current sources before you build on it. |
+| `/llm-orchestrator:handoff` | Writes a short handoff note so work can resume cleanly after the conversation is compacted. |
+| `/llm-orchestrator:skills` | Lists the plugin's skills and commands and when each applies. Takes an optional keyword. |
 
 ## Adding a command
 
+A command is one file, `commands/<name>.md`. Its frontmatter (the block
+between `---` lines at the top) needs a `description`; `argument-hint` is
+optional. The body is the prompt Claude Code sends when someone types the
+command, with their input in `$ARGUMENTS`.
+
+```yaml
+---
+description: One line on what the command does and when to use it.
+---
 ```
+
+Conventions for the body:
+
+- Say which command is running: "You are running `/llm-orchestrator:<name>`."
+- Use numbered steps, and name the skills to use; the skill holds the
+  discipline, the command is the entry point.
+- End with a `Constraints:` section and the shape of the reply.
+
+Example: `/llm-orchestrator:review` uses the `requesting-code-review` skill,
+which runs `scripts/lib/orch-review.py` and waits for its verdict.
+
+Add a command when people will type it often and it maps to one clear intent
+("plan this", "review this"). Do not add one for a prompt people can simply
+type, or for a discipline that belongs in a skill.
+
+Name it in lowercase with hyphens, short, matching the file name. Then:
+
+```sh
 $EDITOR commands/<name>.md
-./tests/validate-skills.sh    # validates frontmatter description on commands too
+./tests/validate-skills.sh
 ```
 
-The validator checks the `description:` field on every command. Body validation (Constraints section, output shape) is not currently enforced.
-
-## Built-in commands
-
-| Command            | What it does                                                            |
-|--------------------|--------------------------------------------------------------------------|
-| `/llm-orchestrator:onboard`         | One-time codebase study: maps architecture and conventions, proposes `## Decisions` + `## Conventions` for `./CLAUDE.md`, writes them on a single approval. Idempotent — skips if already onboarded. Run this first on an existing project before any feature work. |
-| `/llm-orchestrator:init`            | Add LLM Orchestrator conventions to a project.                          |
-| `/llm-orchestrator:cadence-init`    | Turn the cadence on for a project: detect the toolchain, confirm a `cadence.json`, then write the laws, the marked block, the native deny rules and the git layer, and arm the lock over them. Never overwrites. |
-| `/llm-orchestrator:plan`            | Turn an approved spec into a checklist-shaped plan.                     |
-| `/llm-orchestrator:worktree`        | Create an isolated git worktree.                                        |
-| `/llm-orchestrator:dispatch`        | Run a focused subagent with a constructed context envelope.             |
-| `/llm-orchestrator:review`          | `[base] [--full]`: runs `orch-review.py` (Standard by default, Full with `--full`) and reports its verdict. Saves no file in the repository. |
-| `/llm-orchestrator:debug`           | Root-cause debugging.                                                   |
-| `/llm-orchestrator:verify`          | Run tests/lint/typecheck and report evidence.                           |
-| `/llm-orchestrator:finish`          | Decide between merge / PR / keep / discard.                             |
-| `/llm-orchestrator:remember`        | Append a fact to project CLAUDE.md (or user CLAUDE.md / plugin research config), classified by section. |
-| `/llm-orchestrator:forget`          | Soft-delete matching lines from CLAUDE.md or plugin memory.             |
-| `/llm-orchestrator:research`        | Verify an approach, API surface, or version assumption against current sources before building on it. |
-| `/llm-orchestrator:handoff`         | Write a short handoff note so work resumes cleanly after the context is compacted. |
-| `/llm-orchestrator:skills`          | List installed skills and commands with their trigger conditions. Optional keyword filter. |
+The validator checks each command's `description` and fails when this page's
+table has no row for a command file. It does not check the body.

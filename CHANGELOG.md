@@ -14,8 +14,8 @@ What matters most:
   a runner under a folder (`.venv/bin/pytest`), behind a wrapper
   (`aws-vault exec … -- pytest`), through `pnpm`, `yarn` or `npx`, and the
   project's own `runner.test_cmd`.
-- **One review system.** Claude Code's `/code-review` and `codex review` find
-  the problems; the plugin proves each finding with a failing command, then
+- **One review.** Claude Code's `/code-review` and `codex review` find the
+  problems; the plugin proves each finding with a failing command, then
   decides. It was measured against those two built-ins
   (`docs/MEASUREMENTS.md`).
 - **The legacy cadence workflow is gone.** A `cadence.json` with `workflow`
@@ -28,28 +28,27 @@ What matters most:
 
 ### Upgrading
 
-- **Claude Code:** update the plugin (`claude plugin marketplace update
-  llm-orchestrator`, then `claude plugin update llm-orchestrator@llm-orchestrator`)
-  and restart. A `--copy` or `--link` install: rerun that installer from an
-  updated checkout.
-- **Projects with `workflow` missing or set to `legacy`:** the hooks now show
-  an error instead of running. Set `"workflow": "proportional"` in
-  `docs/llm-orchestrator/cadence.json`; in an armed project, do it through a
-  ruling (`cadence-ruling.sh`).
+Full steps: [Upgrading to 0.12.0](docs/install.md#upgrading-to-0120).
+
+- **Claude Code:** `claude plugin marketplace update llm-orchestrator`, then
+  `claude plugin update llm-orchestrator@llm-orchestrator`, and restart. For a
+  `--copy` or `--link` install, rerun that installer from an updated checkout.
+- **`workflow` missing or `legacy`:** the hooks now show an error instead of
+  running. Set `"workflow": "proportional"` in
+  `docs/llm-orchestrator/cadence.json`, through a ruling in an armed project.
 - **Armed projects set up with an older version:** re-run
   `/llm-orchestrator:cadence-init`. It changes no protected file; it writes an
-  upgrade ruling patch (new git hooks, the current marked block, the missing
-  deny rules) and prints the one `cadence-ruling.sh` command that applies it.
-  Until then, the old hooks still honour the removed `ORCH_CADENCE_UNLOCK`.
-- **Codex:** install the Codex plugin (`codex plugin marketplace add`, then
-  `codex plugin add llm-orchestrator@llm-orchestrator`), then rerun
-  `./scripts/install.sh --codex`. With the plugin on, that run removes the
-  skill copy and hook entries an older install wrote, so each hook runs once.
-  Trust the hooks again with `/hooks`.
+  upgrade patch (new git hooks, the current marked block, the missing deny
+  rules) and prints the one `cadence-ruling.sh` command that applies it. Until
+  then, the old hooks still honour the removed `ORCH_CADENCE_UNLOCK`.
+- **Codex:** add the Codex plugin (`codex plugin marketplace add`, then
+  `codex plugin add llm-orchestrator@llm-orchestrator`), rerun
+  `./scripts/install.sh --codex`, which then removes the skill copy and hook
+  entries an older install wrote, and trust the hooks again with `/hooks`.
 - **`--copy` installs** now keep an install record,
   `.claude/.llm-orchestrator-files`. The first rerun after upgrading removes
-  nothing and lists the files the plugin no longer ships, for you to delete;
-  later reruns clean up after themselves.
+  nothing and lists files the plugin no longer ships; later reruns clean up
+  after themselves.
 - `ORCH_CADENCE_UNLOCK` and `ORCH_ALLOW_CONFIG_EDIT` no longer do anything;
   remove them from your shell setup.
 
@@ -115,7 +114,9 @@ What matters most:
 - The explorer runs on Sonnet; the spec reviewer runs at high effort. The model
   docs match the agent files.
 - The docs about native Claude Code features and the cited papers were
-  re-checked and corrected.
+  re-checked and corrected. The README is now a short quick start, and each
+  topic has one page: install, update and settings in `docs/install.md`, Codex
+  in `docs/codex.md`.
 - `install.sh --check` also requires `orch-completion-check.py`,
   `orch-subagent-report.py` and `cadence-ruling.sh`.
 
