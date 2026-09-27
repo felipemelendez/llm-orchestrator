@@ -9,7 +9,7 @@ cadence skill, the shared instructions and three small hooks. See
 
 - **New install:** install [the plugin](#option-1--claude-code-plugin).
 - **Codex:** run [the Codex installer](#codex-setup).
-- **Already installed:** follow [Updating to v0.11.0](#updating-to-v0110).
+- **Already installed:** follow [Updating to v0.12.0](#updating-to-v0120).
 
 Cadence means the agreed sequence of implementation, independent reviews, fixes,
 and verification. It starts only in projects that enable it. Installing the
@@ -96,7 +96,7 @@ steps for the run it just made:
 Your project's rulebook, test commands and verification steps stay in your
 project and survive plugin updates; changing them later is a numbered ruling.
 
-## Updating to v0.11.0
+## Updating to v0.12.0
 
 ### Claude Code plugin
 
@@ -136,6 +136,21 @@ your trust again. If you installed the Codex layer with an earlier
 without it, this run removes nothing. With it, the run removes the skill copy and the hook entries that earlier install
 wrote, so each hook runs once. See
 [Upgrading from an older install](codex.md#upgrading-from-an-older-install).
+
+### What to do after updating to v0.12.0
+
+- **Workflow.** A project whose `docs/llm-orchestrator/cadence.json` has no
+  `workflow`, or `"workflow": "legacy"`, now gets a one-line error from the
+  hooks instead of running. Set `"workflow": "proportional"`. In an armed
+  project that file is protected, so make the change through a ruling (see
+  [Changing the rules](#changing-the-rules)).
+- **Armed projects set up with an older version.** Re-run
+  `/llm-orchestrator:cadence-init` and run the one `cadence-ruling.sh` command
+  it prints. See the upgrade note under [Changing the rules](#changing-the-rules).
+- **Codex.** The skill and hooks now come from the Codex plugin, as above.
+- **`--copy` installs.** The installer now keeps a record of what it placed.
+  The first rerun after upgrading removes nothing and lists the files the plugin
+  no longer ships; see [Option 3](#option-3--per-project-copy).
 
 The remaining sections cover alternative Claude installations and detailed
 settings.

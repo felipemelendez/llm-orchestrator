@@ -12,7 +12,7 @@ LLM Orchestrator is a Claude Code plugin for work you want to hand off: agree on
 
 For example: “Implement the approved plan in `docs/feature-plan.md`. Follow this project's cadence and report the reviews and test results.” Replace the example path with your actual plan.
 
-**New in v0.11.0:** Codex is supported again. One command installs the cadence skill and three small hooks: a guard for the project's rulebook, a check that sends the assistant back once when a reply claims tests passed and none ran, and a cleanup for temporary files. [How to install it](./docs/codex.md) · [What changed](./CHANGELOG.md).
+**New in v0.12.0:** lighter by default, a completion check that knows real test commands, one review built on `/code-review` and `codex review`, rule changes through one command you run, and a Codex plugin. The old `legacy` workflow is gone. [What changed](./CHANGELOG.md) · [How to update](#updating).
 
 ## Quick Start
 
@@ -47,7 +47,18 @@ The process applies to code and test changes in enabled projects. Documentation-
 
 **Requirements:** Claude Code, Bash, Git, and Python 3 (a few hooks use it). The visual brainstorming panel needs Node.js.
 
-Already installed? Follow [Updating to v0.11.0](./docs/install.md#updating-to-v0110). Publishing a release does not update installed copies automatically.
+### Updating
+
+Publishing a release does not update installed copies. On Claude Code, run `claude plugin marketplace update llm-orchestrator`, then `claude plugin update llm-orchestrator@llm-orchestrator`, and restart. On Codex, run `git pull --ff-only` in your checkout, then `codex plugin add llm-orchestrator@llm-orchestrator` and `./scripts/install.sh --codex`, and trust the hooks again with `/hooks`.
+
+Upgrading to v0.12.0:
+
+- A project whose `cadence.json` has no `workflow`, or `"workflow": "legacy"`, now gets an error. Set `"workflow": "proportional"`, through a ruling if the project is armed.
+- An armed project set up with an older version: re-run `/llm-orchestrator:cadence-init` and run the one ruling command it prints.
+- Codex installs through its own plugin now; add it before rerunning `install.sh --codex`, which then removes the older copy.
+- A `--copy` install now keeps an install record, so later reruns remove files the plugin no longer ships.
+
+Details: [Updating to v0.12.0](./docs/install.md#updating-to-v0120).
 
 For a task walkthrough, see [the sample session](./docs/examples/sample-session.md).
 
