@@ -1,5 +1,5 @@
 ---
-description: Create an isolated git worktree for the current task. Marks provenance so cleanup is safe.
+description: Create an isolated git worktree for the current task, marked so cleanup is safe.
 ---
 
 You are running `/llm-orchestrator:worktree`.

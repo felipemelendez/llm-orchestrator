@@ -17,8 +17,8 @@
 #   A5 ordinary work that names nothing
 #   A6 lock_extra, the absolute-path spelling, the case fold, the basename
 #   A7 apply_patch headers in every position
-#   A8 the unlock, and the persisted-unlock refusal
 #   A9 hygiene: the size ceiling, no reference to the deleted guard, HOME clean
+#   A10 .codex-plugin/plugin.json names the cadence and review skills and only Codex hooks
 #
 # Bash 3.2 compatible. Exits non-zero on any failure.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -58,10 +58,10 @@ fi
 arm() {  # arm <dir> [lock_extra-json]
   mkdir -p "$1/docs/llm-orchestrator/notes" "$1/.claude" "$1/.githooks" "$1/src"
   if [[ -n "${2:-}" ]]; then
-    printf '{ "schema": 1, "enabled": true, "lock_extra": %s }\n' "$2" \
+    printf '{ "schema": 1, "enabled": true, "workflow": "proportional", "lock_extra": %s }\n' "$2" \
       > "$1/docs/llm-orchestrator/cadence.json"
   else
-    printf '{ "schema": 1, "enabled": true }\n' > "$1/docs/llm-orchestrator/cadence.json"
+    printf '{ "schema": 1, "enabled": true, "workflow": "proportional" }\n' > "$1/docs/llm-orchestrator/cadence.json"
   fi
   printf '# Laws\n' > "$1/docs/llm-orchestrator/LAWS.md"
   printf 'abc  docs/llm-orchestrator/LAWS.md\n' > "$1/docs/llm-orchestrator/LOCK.sha256"
@@ -182,10 +182,10 @@ pf=$(payload Bash command 'cat docs/llm-orchestrator/LAWS.md | jq .')
 rc=$(run_adapter "$CAD" "$pf")
 [[ "$rc" == 2 ]] && ok "a read inside a pipeline is refused (the accepted cost)" \
                  || fail "a read inside a pipeline is refused (the accepted cost)" "exit $rc"
-if grep -q 'cat docs/llm-orchestrator/laws.md' "$TMP/err.txt" && grep -q 'ORCH_CADENCE_UNLOCK=1' "$TMP/err.txt"; then
-  ok "the refusal prints both ways out (one plain read, or the unlock)"
+if grep -q 'cat docs/llm-orchestrator/laws.md' "$TMP/err.txt" && grep -q 'cadence-ruling.sh' "$TMP/err.txt"; then
+  ok "the refusal prints both ways out (one plain read, or a ruling)"
 else
-  fail "the refusal prints both ways out (one plain read, or the unlock)" "$(cat "$TMP/err.txt")"
+  fail "the refusal prints both ways out (one plain read, or a ruling)" "$(cat "$TMP/err.txt")"
 fi
 
 # ------------------------------------------------------------
@@ -239,44 +239,6 @@ patch_pin 0 "*** Begin Patch
 expect 2 "$CAD" apply_patch patch "*** Begin Patch
 *** Update File: docs/llm-orchestrator/LAWS.md
 *** End Patch" 'apply_patch → 2: the patch arrives in tool_input.patch'
-
-# ------------------------------------------------------------
-section "A8 — the unlock and the persisted-unlock refusal"
-pf=$(payload Bash command 'echo x > docs/llm-orchestrator/LAWS.md')
-rc=$(run_adapter "$CAD" "$pf" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 0 ]] && ok "the unlock frees a lock write" || fail "the unlock frees a lock write" "exit $rc"
-pf2=$(payload apply_patch command "*** Begin Patch
-*** Update File: docs/llm-orchestrator/LAWS.md
-*** End Patch")
-rc=$(run_adapter "$CAD" "$pf2" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 0 ]] && ok "the unlock frees a patch too" || fail "the unlock frees a patch too" "exit $rc"
-
-PERS="$TMP/pers"; arm "$PERS"
-printf '{ "env": { "ORCH_CADENCE_UNLOCK": "1" } }\n' > "$PERS/.claude/settings.json"
-pfp=$(payload Bash command 'echo x > docs/llm-orchestrator/LAWS.md')
-rc=$(run_adapter "$PERS" "$pfp" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 2 ]] && ok "a settings file that persists the unlock disarms it" \
-                 || fail "a settings file that persists the unlock disarms it" "exit $rc"
-grep -q 'persisted unlock is a disarmed lock' "$TMP/err.txt" \
-  && ok "the refusal names the file that persists the unlock" \
-  || fail "the refusal names the file that persists the unlock" "$(cat "$TMP/err.txt")"
-
-PERS2="$TMP/pers2"; arm "$PERS2"; mkdir -p "$PERS2/.codex"
-printf 'ORCH_CADENCE_UNLOCK = "1"\n' > "$PERS2/.codex/config.toml"
-rc=$(run_adapter "$PERS2" "$pfp" ORCH_CADENCE_UNLOCK=1)
-[[ "$rc" == 2 ]] && ok "the project Codex config persists it too" || fail "the project Codex config persists it too" "exit $rc"
-
-HOME2="$TMP/home2"; mkdir -p "$HOME2/.codex"
-printf 'ORCH_CADENCE_UNLOCK = "1"\n' > "$HOME2/.codex/config.toml"
-rc=$( ( cd "$CAD" && env HOME="$HOME2" ORCH_CADENCE_UNLOCK=1 bash "$ADAPTER" < "$pfp" ) >/dev/null 2>&1; printf '%s' "$?" )
-[[ "$rc" == 2 ]] && ok "the home Codex config persists it too" || fail "the home Codex config persists it too" "exit $rc"
-
-rc=$(run_adapter "$PERS" "$pfp")
-[[ "$rc" == 2 ]] && ok "with the unlock unset, a persisting file changes nothing" \
-                 || fail "with the unlock unset, a persisting file changes nothing" "exit $rc"
-pfo=$(payload Bash command 'npm test')
-rc=$(run_adapter "$PERS" "$pfo")
-[[ "$rc" == 0 ]] && ok "and ordinary work under it still passes" || fail "and ordinary work under it still passes" "exit $rc"
 
 # ------------------------------------------------------------
 section "A10 — an interior newline is an operator"
@@ -386,7 +348,8 @@ GATE="$ROOT/skills/cadence/scripts/orch-cadence-gate.sh"
 bash_pin 0 "bash '$CHECK' --root '$CAD' --verdict" 'the installed checker can read its config'
 bash_pin 0 "'$CHECK' --version" 'direct checker invocation'
 bash_pin 0 "bash '$CHECK' --audit HEAD --root '$CAD'" 'read-only committed audit'
-bash_pin 0 "bash '$CHECK' --root '$CAD' --landing FTAPP-123" 'read-only landing check'
+bash_pin 2 "bash '$CHECK' --root '$CAD' --landing FTAPP-123" 'the removed landing mode is not a trusted read'
+bash_pin 2 "bash '$CHECK' --root '$CAD' --base HEAD --verdict" 'the removed --base option is not a trusted read'
 bash_pin 0 "bash '$GATE' '/tmp/task tree' HEAD --config '$CAD/docs/llm-orchestrator/cadence.json'" 'the disposable gate can read its config'
 bash_pin 2 "bash '$CHECK' --root '$CAD' --lock" 'lock rewriting remains blocked'
 bash_pin 2 "bash '$CHECK' --verdict; rm '$CAD/docs/llm-orchestrator/LAWS.md'" 'verification cannot prefix a write'
@@ -395,18 +358,6 @@ bash_pin 2 "bash '$CHECK' --verdict | cat" 'composed commands still fall through
 bash_pin 2 "bash /tmp/orch-cadence-check.sh --verdict" 'an unrecognized same-named script is refused'
 bash_pin 2 "bash '$CHECK' --verdict --lock" 'a read mode cannot authorize a write mode'
 bash_pin 2 "bash '$GATE' /tmp/tree HEAD --config '$CAD/docs/llm-orchestrator/cadence.json' --unknown" 'unknown gate options are refused'
-
-section "A17 — the trusted read-only Claude provider can read locked inputs"
-PROVIDER="$ROOT/scripts/providers/claude-review.py"
-REVIEW="python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$TMP/review.jsonl' --receipt '$TMP/receipt.json'"
-bash_pin 0 "$REVIEW" 'the documented provider config is a read input'
-bash_pin 0 "$REVIEW --context-file docs/llm-orchestrator/LAWS.md" 'locked review context remains read-only'
-bash_pin 2 "$REVIEW --claude-bin /tmp/untrusted" 'a substituted executable gets no read-only exemption'
-bash_pin 2 "$REVIEW --unknown" 'unknown provider options get no exemption'
-bash_pin 2 "$REVIEW; rm '$CAD/docs/llm-orchestrator/LAWS.md'" 'provider cannot prefix a locked-file write'
-bash_pin 2 "python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$CAD/docs/llm-orchestrator/LAWS.md' --receipt '$TMP/receipt.json'" 'provider output cannot target a locked input'
-bash_pin 2 "python3 '$PROVIDER' run --cwd '$TMP' --config '$CAD/docs/llm-orchestrator/cadence.json' --prompt-file '$TMP/brief.md' --output '$TMP/review.jsonl' --receipt '$CAD/docs/llm-orchestrator/LOCK.sha256'" 'provider receipt cannot target the lock'
-bash_pin 2 "python3 /tmp/claude-review.py run --config '$CAD/docs/llm-orchestrator/cadence.json'" 'same-named arbitrary provider is refused'
 
 # ------------------------------------------------------------
 section "A9 — hygiene"
@@ -418,6 +369,69 @@ if grep -q 'guard-cadence-lock' "$ADAPTER"; then
 else ok "the adapter names no deleted guard"; fi
 if [[ "$(home_state)" == "$HOME_BEFORE" ]]; then ok "the temp HOME is byte-identical after every run"
 else fail "the temp HOME is byte-identical after every run" "the adapter wrote into HOME"; fi
+
+# ------------------------------------------------------------
+section "A10 — the Codex plugin manifest"
+# Codex reads .codex-plugin/plugin.json before .claude-plugin/plugin.json, and a
+# manifest that names no hooks falls back to hooks/hooks.json, the Claude Code
+# hooks. So the manifest must name the hooks, and only the three Codex ones.
+MANIFEST="$ROOT/.codex-plugin/plugin.json"
+manifest_out=$(python3 - "$MANIFEST" "$ROOT" <<'PY' 2>&1
+import json, os, re, sys
+path, root = sys.argv[1:]
+m = json.load(open(path))
+claude = json.load(open(root + "/.claude-plugin/plugin.json"))
+problems = []
+if m.get("name") != claude["name"] or m.get("version") != claude["version"]:
+    problems.append("name/version differ from .claude-plugin/plugin.json")
+# Metadata plus the two components; any other key (mcpServers, agents, apps,
+# commands, interface...) is a component Codex would load.
+extra = set(m) - {"name", "version", "description", "homepage", "repository",
+                  "license", "skills", "hooks"}
+if extra:
+    problems.append("unexpected keys %s" % sorted(extra))
+want_skills = ["./skills/cadence", "./skills/requesting-code-review"]
+if m.get("skills") != want_skills:
+    problems.append("skills is %r, not %r" % (m.get("skills"), want_skills))
+for skill in want_skills:
+    if not os.path.isfile(os.path.join(root, skill, "SKILL.md")):
+        problems.append("%s has no SKILL.md" % skill)
+# The review skill runs scripts/lib/orch-review.py from the plugin root, which
+# Codex copies whole into its plugin cache.
+for needed in ("scripts/lib/orch-review.py", "scripts/lib/orch-task-resources.py",
+               "scripts/lib/orch-signals.sh", "skills/cadence/references/laws.md"):
+    if not os.path.isfile(os.path.join(root, needed)):
+        problems.append("the review needs %s" % needed)
+hooks = m.get("hooks", {}).get("hooks") if isinstance(m.get("hooks"), dict) else None
+if not isinstance(hooks, dict):
+    problems.append("hooks is not an inline hooks object")
+    hooks = {}
+named = set()
+for event, groups in hooks.items():
+    for group in groups:
+        for h in group["hooks"]:
+            found = re.fullmatch(r'bash "\$\{PLUGIN_ROOT\}/(scripts/hooks/[a-z-]+\.sh)"', h["command"])
+            if not found:
+                problems.append("unexpected command %r" % h["command"])
+                continue
+            named.add((event, group.get("matcher"), found.group(1)))
+want = {("PreToolUse", "Bash", "scripts/hooks/codex-cadence-adapter.sh"),
+        ("PreToolUse", "apply_patch", "scripts/hooks/codex-cadence-adapter.sh"),
+        ("Stop", None, "scripts/hooks/codex-verify-gate.sh"),
+        ("Stop", None, "scripts/hooks/orch-task-cleanup.sh")}
+if named != want:
+    problems.append("hooks named %s" % sorted(named, key=str))
+for _, _, script in named:
+    if not os.path.isfile(os.path.join(root, script)):
+        problems.append("missing %s" % script)
+print("\n".join(problems))
+PY
+)
+if [[ -f "$MANIFEST" && -z "$manifest_out" ]]; then
+  ok "the Codex manifest names the cadence and review skills and only the three Codex hooks"
+else
+  fail "the Codex manifest names the cadence and review skills and only the three Codex hooks" "${manifest_out:-missing $MANIFEST}"
+fi
 
 # ------------------------------------------------------------
 printf '\n'

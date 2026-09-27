@@ -34,7 +34,7 @@ SUITE_TIMEOUT="${ORCH_SUITE_TIMEOUT:-600}"
 # name<TAB>reason. A trailing / skips the directory's whole subtree.
 SKIP="$(cat <<'EOF'
 tests/run-all.sh	this runner
-tests/evals/	makes paid API calls — run tests/evals/run-evals.sh by hand, never unattended
+tests/evals/	makes paid API calls — see tests/evals/README.md; run by hand, never unattended
 tests/lib/	helper library sourced by suites, not suites
 EOF
 )"
@@ -129,6 +129,8 @@ for t in "${suites[@]}"; do
     printf '  %sok%s   %-38s %ss\n' "$GREEN" "$RESET" "$t" "$dur"
   else
     printf '  %sFAIL%s %-38s %ss (exit %s)\n' "$RED" "$RESET" "$t" "$dur" "$rc"
+    # The failing checks themselves, which the tail below can miss.
+    grep -E -A1 '✗|✘|^not ok' "$RUNTMP/out" | head -40 | sed 's/^/       /'
     tail -25 "$RUNTMP/out" | sed 's/^/       /'
     failed+=("$t")
   fi

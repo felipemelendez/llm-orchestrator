@@ -1,5 +1,5 @@
 ---
-description: Remove matching lines from CLAUDE.md or plugin memory. Soft-deletes to a trash directory so accidents are recoverable. Searches both user-facing memory (CLAUDE.md) and plugin memory (research config) and removes from wherever the match lives.
+description: Remove matching lines from CLAUDE.md or plugin memory, into a trash folder so they can be recovered.
 argument-hint: "[pattern]"
 ---
 

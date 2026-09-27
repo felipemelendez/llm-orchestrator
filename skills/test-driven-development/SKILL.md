@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: Use when implementing a feature or bugfix where tests are practical, before writing implementation code. Enforces red-green-refactor with a verified red phase. Not for docs-only or config-only changes with no testable behavior, and not before systematic-debugging when the trigger was a failure rather than new work.
+description: Use when implementing a feature or bugfix where a test is practical, before writing the code. Not for docs or config with no testable behavior.
 ---
 
 # Test-driven development

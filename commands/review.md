@@ -1,88 +1,53 @@
 ---
-description: Two-stage review of the current diff, with optional Stage 3 security review when the diff touches auth/crypto/payments/secrets. Stage 1 — spec compliance. Stage 2 — code quality. Stage 3 — security (conditional).
+description: Review the current change with orch-review.py — Standard by default, Full with --full. Saves no file in the repository.
 ---
 
 You are running `/llm-orchestrator:review`.
 
-User input: $ARGUMENTS (optional — base ref, defaults to origin/main or the project's default branch)
+User input: $ARGUMENTS (optional: a base ref, and `--full`)
 
 Steps:
 
-1. Invoke `requesting-code-review`. Consult `using-workflows` to route: if the Workflow tool is
-   available, prefer the accelerated path in step 7a; otherwise
-   run the canonical ordered stages (steps 4–8). The two paths are not behaviorally identical.
+1. Invoke `requesting-code-review` and follow it.
 
-2. Determine the base ref:
-   - If `$ARGUMENTS` is non-empty, use it.
-   - Otherwise: `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/@@'`. Fall back to `origin/main` if that fails.
+2. Read the arguments:
+   - `--full` selects the Full review; otherwise run Standard.
+   - Any other argument is the base ref. Without one, use
+     `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/@@'`,
+     and `origin/main` if that fails.
 
-   Then compute the diff:
+3. Find the spec the change must implement: the plan or spec named in this
+   conversation, else the newest file in `docs/llm-orchestrator/specs/`. If
+   there is none, ask the person which file states what the change must do.
+
+4. Start the run in a new directory outside the repository and outside any
+   temporary directory, then wait:
+
    ```bash
-   BASE_SHA=$(git merge-base HEAD "$BASE")
-   git diff "$BASE_SHA"..HEAD
+   RUN_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/reviews/$(date +%Y%m%d-%H%M%S)"
+   python3 "$REVIEW" run --detach --path <standard|full> --writer claude --base "$BASE" --spec "$SPEC" --run-dir "$RUN_DIR"
+   python3 "$REVIEW" wait "$RUN_DIR" --seconds 540
    ```
 
-3. Locate spec + plan if they exist:
-   - `docs/llm-orchestrator/specs/` latest
-   - `docs/llm-orchestrator/plans/` latest
+   `$REVIEW` is found as `requesting-code-review` shows. Repeat `wait` until it
+   reports `finished` or `crashed`.
 
-4. Stage 1 — spec compliance:
-   - Dispatch the native `orch-spec-reviewer` agent (or, if unavailable, a generic subagent with `templates/spec-reviewer-prompt.md`).
-   - Pass: spec content (pasted), plan content (pasted), diff (pasted).
-   - Reviewer reports everything with a 0.0–1.0 confidence tag; you filter below 0.8 into `Notes:`.
-
-5. If Stage 1 verdict is `no`, or `with-fixes` with at least one Critical: stop. Report and return to implementer.
-
-6. Stage 2 — code quality:
-   - Dispatch `orch-code-reviewer` (or generic subagent with `templates/code-reviewer-prompt.md`).
-   - Pass: diff, project conventions (relevant CLAUDE.md section).
-
-7. Stage 3 — security review (conditional):
-   - Check whether the diff is security-sensitive (source `scripts/lib/orch-signals.sh` for `$ORCH_SIG_SECURITY_DIFF`):
-     ```bash
-     # Locate the lib across install layouts (CLAUDE_PLUGIN_ROOT is often unset
-     # in command bash; marketplace installs nest under the plugin cache).
-     orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
-     L=$(orch_lib orch-signals.sh); [ -n "$L" ] && source "$L" || echo "orch-signals.sh not found — reinstall the plugin" >&2
-     echo "$DIFF" | grep -qiE "$ORCH_SIG_SECURITY_DIFF"
-     ```
-     Also check changed file paths for the same keywords.
-   - If the grep matches: dispatch `orch-security-reviewer` (or generic subagent with `templates/security-reviewer-prompt.md`). Pass: diff only.
-   - If the grep does not match: skip Stage 3 silently. Do not mention it in the report.
-   - Stage 3 is advisory. Critical findings from Stage 3 block the merge; Important and below are advisory (recorded, non-blocking).
-
-7a. Preferred path (Workflow tool present) — replaces steps 4–7:
-   - Compute `security_sensitive` from `$ORCH_SIG_SECURITY_DIFF` (the same grep as step 7) — the
-     single source of truth; never re-derive it in the workflow script.
-   - Run `workflows/review-diff.js` with `args = {specText, planText, conventions, diff,
-     security_sensitive}`. It reproduces the Stage-1-gates-Stage-2 ordering (early-exits when the
-     diff fails spec compliance — on **critical or important**, stricter than step 5's
-     Critical-only stop), demotes findings below 0.8 confidence to `Notes:`, and runs a bounded
-     adversarial verify pass (≤4 skeptic agents). It returns `{confirmed, notes, refuted, earlyExit, stagesRun, incomplete, failedDimensions, verifyBatches, unjudgedFindings, malformedVerdicts, droppedFindings, coercedSeverities, unverifiedFindings}`. If `incomplete` is true part of the review was lost — a stage produced no usable result, a live skeptic left a finding unjudged, or junk elements were discarded from a findings array (`droppedFindings`) — report that plainly and do not present the result as a clean review, however few findings came back. An empty diff returns immediately with `incomplete: true` and `failedDimensions: ['no-diff']` — nothing was reviewed. `stagesRun` and `failedDimensions` otherwise share one token set (`spec`, `code-quality`, `security`, `verify`); a partly-executed stage appears in both, and `verifyBatches: {total, lost}` (counted in batches, not findings) gives the degree, so check it before re-running a pass that already pruned findings. A finding tagged `verifiedBy: "unverified"` was never judged — surface it as unjudged, not confirmed; `unverifiedFindings` is the count of those (the early-exit path ships all its blockers unverified with `incomplete: false`, so this count — not `incomplete` — answers "is this an approval"). Judged survivors carry `verifiedReason` (the skeptic's evidence). `refuted` lists the findings the skeptic pass removed, each with `refutedBy` and its `reason` — include them in the report's `Notes:` region as refuted, never resurrect them into `Issues:`. `coercedSeverities` counts findings whose out-of-enum severity was clamped to `important`.
-   - Build the report below from that return, then continue at step 9.
-
-8. Merge all `Issues:` blocks (from whichever stages ran) into one report.
-
-9. Save to `docs/llm-orchestrator/reviews/YYYY-MM-DD-<slug>-review.md`:
-   ```bash
-   mkdir -p docs/llm-orchestrator/reviews
-   ```
-
-10. Report:
+5. Report:
 
 ```
-Issues:
-- Critical: <count>
-- Important: <count>
-- Minor: <count>
 Verdict:
-- Ready: yes | no | with-fixes — <one line>
+- READY | READY-WITH-FIXES | NOT-READY | INCOMPLETE — <one line>
+Findings:
+- <id> <rank> <status> — <file:line> — <claim>
+Incomplete because:
+- <each reason, when INCOMPLETE>
+Review:
+- <run dir>/review.json
 Next:
-- Fix Critical (if any), then /llm-orchestrator:verify, then /llm-orchestrator:finish.
+- Handle the findings with receiving-code-review, then run orch-review.py record.
 ```
 
 Constraints:
-- Never run multiple stages from a single subagent.
-- Speculation goes in `Notes:`, not `Issues:`.
-- Zero issues is a valid outcome.
-- Stage 3 runs only when the diff matches security keywords; otherwise skip silently.
+- Never report `INCOMPLETE` or a crashed run as a pass.
+- Never replace a reviewer that dropped out; report it.
+- Save nothing in the repository; the review lives in the run directory.

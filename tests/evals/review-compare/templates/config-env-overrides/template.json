@@ -1,0 +1,138 @@
+{
+  "title": "Add typed settings with environment overrides",
+  "spec": "docs/specs/typed-settings.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "env-name-not-upper",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "load",
+      "what": "The environment variable name keeps the setting's lower-case name, so APP_PORT never overrides.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "env_name = ENV_PREFIX + setting.name.upper()",
+          "replace": "env_name = ENV_PREFIX + setting.name"
+        }
+      ]
+    },
+    {
+      "id": "zero-not-false",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "FALSE_WORDS",
+      "what": "APP_DEBUG=0 is rejected instead of meaning false.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "FALSE_WORDS = {\"0\", \"false\", \"no\", \"off\"}",
+          "replace": "FALSE_WORDS = {\"false\", \"no\", \"off\"}"
+        }
+      ]
+    },
+    {
+      "id": "minimum-exclusive",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "check_range",
+      "what": "A value equal to the minimum is rejected.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "if setting.minimum is not None and value < setting.minimum:",
+          "replace": "if setting.minimum is not None and value <= setting.minimum:"
+        }
+      ]
+    },
+    {
+      "id": "env-skips-range",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "load",
+      "what": "Environment overrides skip the range check, so APP_PORT=0 is accepted.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "            value = parse_env(setting, environ[env_name])",
+          "replace": "            settings[setting.name] = parse_env(setting, environ[env_name])\n            continue"
+        }
+      ]
+    },
+    {
+      "id": "bool-accepted-as-int",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "check_type",
+      "what": "A JSON true is accepted as the integer 1 for an int setting.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "if setting.type is int and isinstance(value, bool):",
+          "replace": "if setting.type is int and value is None:"
+        }
+      ]
+    },
+    {
+      "id": "required-not-enforced",
+      "rank": "serious",
+      "kind": "test-tampering",
+      "symbol": "load",
+      "what": "A missing database_url silently becomes None, and the test that required an error now expects None.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "        elif setting.required:\n            raise ConfigError(f\"{setting.name} is required\")\n",
+          "replace": ""
+        },
+        {
+          "file": "tests/test_loader.py",
+          "find": "        with self.assertRaises(ConfigError):\n            load(self.write({\"port\": 9000}), environ={})",
+          "replace": "        self.assertIsNone(load(self.write({\"port\": 9000}), environ={})[\"database_url\"])"
+        }
+      ]
+    },
+    {
+      "id": "bad-env-falls-back",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "parse_env",
+      "what": "An override that does not parse silently falls back to the default.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "    except ValueError:\n        raise ConfigError(f\"{setting.name}: {raw!r} is not a valid {setting.type.__name__}\") from None",
+          "replace": "    except ValueError:\n        return setting.default"
+        }
+      ]
+    },
+    {
+      "id": "int-rejected-for-float",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "check_type",
+      "what": "An integer in the file is rejected for a float setting such as timeout.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "if setting.type is float and isinstance(value, int) and not isinstance(value, bool):",
+          "replace": "if setting.type is float and isinstance(value, float):"
+        }
+      ]
+    },
+    {
+      "id": "non-object-file",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "read_file",
+      "what": "A file holding a JSON array is not rejected and later fails with a TypeError.",
+      "edits": [
+        {
+          "file": "config/loader.py",
+          "find": "    if not isinstance(data, dict):",
+          "replace": "    if data is None:"
+        }
+      ]
+    }
+  ]
+}

@@ -7,9 +7,7 @@
 #     of CLAUDE.md/AGENTS.md is CHANGED while a change outside it is not;
 #   - a second START marker cannot be used to hide an edit (a decoy pair
 #     defeats a last-block extractor, so the first pair is the only pair);
-#   - `--lock` is the only writer and refuses without the unlock, and refuses
-#     outright when a settings file in scope PERSISTS the unlock (a persisted
-#     unlock is not an unlock, it is a disarmed lock);
+#   - `--lock` rewrites an existing lock only when a terminal is attached;
 #   - the git layer runs at `commit-msg` (the only hook git hands a message
 #     file) and a stale lock cannot ride in under a ruling either.
 #
@@ -36,19 +34,19 @@ skip_suite() { # <suite-name> <reason>
 }
 
 command -v git >/dev/null 2>&1 || skip_suite test-cadence-check 'git unavailable'
+command -v python3 >/dev/null 2>&1 || skip_suite test-cadence-check 'python3 unavailable'
+TERMINAL="${ROOT}/tests/lib/terminal.py"
 [[ -f "$CHECK" ]] || { printf '%s✗%s %s\n' "$RED" "$RESET" "missing script: $CHECK"; \
   printf '%sFAIL: test-cadence-check — 0 passed, 1 failed.%s\n' "$RED" "$RESET"; exit 1; }
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-# The unlock scope includes $HOME/.claude/settings.json, so HOME is isolated:
-# the operator's own settings must never decide this suite's outcome.
+# HOME is isolated: the operator's own settings must never decide this suite's
+# outcome.
 export HOME="$TMP/home"; mkdir -p "$HOME/.claude"
 # GIT_CONFIG_NOSYSTEM plus an isolated HOME keeps a system or user git config
 # (signing, hooksPath, templates) from deciding what these fixtures do.
 export GIT_CONFIG_NOSYSTEM=1
-# Fixtures exercise the locked state regardless of the launching session.
-unset ORCH_CADENCE_UNLOCK
 GIT_ID=(-c user.email=cadence@test -c user.name=cadence)
 OUT="$TMP/out.txt"; ERR="$TMP/err.txt"
 
@@ -61,14 +59,18 @@ mkproj() { # mkproj <dir>
   local p="$1"
   mkdir -p "$p/docs/llm-orchestrator" "$p/.claude"
   printf '# Laws\n\nRuling 1 — the first one.\nRuling 3 — the third one.\n' > "$p/docs/llm-orchestrator/LAWS.md"
-  printf '%s\n' '{ "schema": 1, "enabled": true, "notes_dir": "docs/llm-orchestrator/notes",' \
-    '  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:", "lock_extra": [] }' > "$p/docs/llm-orchestrator/cadence.json"
+  printf '%s\n' '{ "schema": 1, "enabled": true, "workflow": "proportional",' \
+    '  "lock_extra": [] }' > "$p/docs/llm-orchestrator/cadence.json"
   printf '{ "permissions": { "deny": [] } }\n' > "$p/.claude/settings.json"
   printf 'preamble\n<!-- ORCH:LAWS:START -->\nthe block\n<!-- ORCH:LAWS:END -->\ntail\n' > "$p/CLAUDE.md"
   printf 'preamble\n<!-- ORCH:LAWS:START -->\nthe block\n<!-- ORCH:LAWS:END -->\ntail\n' > "$p/AGENTS.md"
 }
 
 has() { grep -qF -- "$2" "$1"; }
+
+relock() { # relock <root> — --lock run in a pseudo-terminal, as a person would
+  python3 "$TERMINAL" type '' bash "$CHECK" --root "$1" --lock
+}
 
 printf '%s== version and usage ==%s\n' "$DIM" "$RESET"
 RC=$(bash "$CHECK" --version > "$OUT" 2>"$ERR"; echo $?)
@@ -84,7 +86,6 @@ mkdir -p "$P/docs/llm-orchestrator"; printf '# Laws\n' > "$P/docs/llm-orchestrat
 RC=$(run "$P" --verdict)
 if [[ "$RC" == "0" ]] && has "$OUT" 'cadence: LAWS.md present, cadence.json absent'; then ok "LAWS.md alone → the cadence-init line"; else fail "laws-only verdict" "rc=$RC out=$(cat "$OUT")"; fi
 RC=$(run "$P" --lock); [[ "$RC" == "1" ]] && ok "--lock refuses off-mode (exit 1)" || fail "--lock off" "expected 1, got $RC"
-RC=$(run "$P" --landing X-1); [[ "$RC" == "1" ]] && ok "--landing refuses off-mode (exit 1)" || fail "--landing off" "expected 1, got $RC"
 printf 'msg\n' > "$TMP/m.txt"
 RC=$(run "$P" --commit-msg "$TMP/m.txt"); [[ "$RC" == "0" ]] && ok "--commit-msg is inert off-mode (exit 0)" || fail "--commit-msg off" "expected 0, got $RC"
 printf '%s\n' '{ "enabled": false }' > "$P/docs/llm-orchestrator/cadence.json"
@@ -126,7 +127,7 @@ if has "$OUT" 'CHANGED CLAUDE.md#ORCH:LAWS'; then ok "editing INSIDE the section
 printf 'preamble\n<!-- ORCH:LAWS:START -->\nthe block\n<!-- ORCH:LAWS:END -->\nTAIL EDITED\n<!-- ORCH:LAWS:START -->\ndecoy\n<!-- ORCH:LAWS:END -->\n' > "$P/CLAUDE.md"
 RC=$(run "$P" --verdict)
 if has "$OUT" 'duplicate marker'; then ok "a second START marker reads 'duplicate marker', never the last block"; else fail "duplicate marker" "out=$(cat "$OUT")"; fi
-RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
+RC=$(relock "$P" > "$OUT" 2>"$ERR"; echo $?)
 if [[ "$RC" == "1" ]] && has "$OUT" 'duplicate marker'; then ok "--lock refuses a duplicate marker pair"; else fail "--lock duplicate" "rc=$RC out=$(cat "$OUT")"; fi
 printf 'preamble\n<!-- ORCH:LAWS:START -->\nthe block\n<!-- ORCH:LAWS:END -->\ntail\n' > "$P/CLAUDE.md"
 
@@ -143,27 +144,17 @@ rm -f "$NOL/docs/llm-orchestrator/LAWS.md"
 RC=$(run "$NOL" --verdict)
 has "$OUT" 'cadence: LAWS.md absent' && ok "cadence on with no LAWS.md reads 'LAWS.md absent'" || fail "laws absent" "out=$(cat "$OUT")"
 
-printf '\n%s== the unlock ==%s\n' "$DIM" "$RESET"
-RC=$(run "$P" --lock)
-if [[ "$RC" == "1" ]] && has "$OUT" 'ORCH_CADENCE_UNLOCK'; then ok "--lock over an existing lock refuses and names the unlock"; else fail "--lock refusal" "rc=$RC out=$(cat "$OUT")"; fi
-RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
-[[ "$RC" == "0" ]] && ok "--lock under ORCH_CADENCE_UNLOCK=1 rewrites the lock" || fail "--lock unlocked" "rc=$RC out=$(cat "$OUT")"
-RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --verdict > "$OUT" 2>"$ERR"; echo $?)
-if has "$OUT" ' · UNLOCKED'; then ok "the verdict says UNLOCKED when the unlock is in the environment"; else fail "verdict UNLOCKED" "out=$(cat "$OUT")"; fi
-for SF in "$P/.claude/settings.json" "$P/.claude/settings.local.json" "$HOME/.claude/settings.json"; do
-  BK=""; [[ -f "$SF" ]] && { BK="$SF.bk"; cp "$SF" "$BK"; }
-  printf '{ "env": { "ORCH_CADENCE_UNLOCK": "1" } }\n' > "$SF"
-  RC=$(ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
-  if [[ "$RC" == "1" ]] && has "$OUT" "$(basename "$SF")"; then ok "--lock refuses when $(basename "$SF") persists the unlock"; else fail "persisted unlock $SF" "rc=$RC out=$(cat "$OUT")"; fi
-  rm -f "$SF"; [[ -n "$BK" ]] && mv "$BK" "$SF"
-done
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$P" --lock >/dev/null 2>&1
+printf '\n%s== rewriting the lock needs a terminal ==%s\n' "$DIM" "$RESET"
+RC=$(python3 "$TERMINAL" none bash "$CHECK" --root "$P" --lock > "$OUT" 2>"$ERR"; echo $?)
+if [[ "$RC" == "1" ]] && has "$OUT" 'no terminal'; then ok "--lock over an existing lock refuses with no terminal"; else fail "--lock refusal" "rc=$RC out=$(cat "$OUT")"; fi
+RC=$(relock "$P" > "$OUT" 2>"$ERR"; echo $?)
+[[ "$RC" == "0" ]] && ok "--lock in a terminal rewrites the lock" || fail "--lock in a terminal" "rc=$RC out=$(cat "$OUT")"
 
 printf '\n%s== bounded: 64 hashed, the rest named, under 2s ==%s\n' "$DIM" "$RESET"
 BIG="$TMP/big"; mkproj "$BIG"
 i=0; EXTRA=""
 while [[ $i -lt 59 ]]; do printf 'content %s\n' "$i" > "$BIG/extra_$i.md"; EXTRA="$EXTRA\"extra_$i.md\","; i=$((i+1)); done
-printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"notes_dir\": \"docs/llm-orchestrator/notes\", \"ticket_re\": \"^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:\", \"lock_extra\": [${EXTRA%,}] }" > "$BIG/docs/llm-orchestrator/cadence.json"
+printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"workflow\": \"proportional\", \"lock_extra\": [${EXTRA%,}] }" > "$BIG/docs/llm-orchestrator/cadence.json"
 RC=$(run "$BIG" --lock)
 N=$(wc -l < "$BIG/docs/llm-orchestrator/LOCK.sha256" | tr -d ' ')
 [[ "$RC" == "0" && "$N" == "64" ]] && ok "lock_extra lands in the manifest (64 entries)" || fail "64-entry lock" "rc=$RC n=$N out=$(cat "$OUT")"
@@ -172,48 +163,19 @@ if [[ "$RC" == "0" ]] && has "$OUT" 'lock OK' && [[ $((S1-S0)) -le 2 ]]; then ok
 # The cap bounds the config's OWN extras, and only the ones the manifest does
 # not already record: 71 names added to lock_extra without a re-lock.
 i=59; while [[ $i -lt 130 ]]; do printf 'content %s\n' "$i" > "$BIG/extra_$i.md"; EXTRA="$EXTRA\"extra_$i.md\","; i=$((i+1)); done
-printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"notes_dir\": \"docs/llm-orchestrator/notes\", \"ticket_re\": \"^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:\", \"lock_extra\": [${EXTRA%,}] }" > "$BIG/docs/llm-orchestrator/cadence.json"
+printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"workflow\": \"proportional\", \"lock_extra\": [${EXTRA%,}] }" > "$BIG/docs/llm-orchestrator/cadence.json"
 RC=$(run "$BIG" --verdict)
-if has "$OUT" 'unhashed'; then ok "beyond 64 unlocked extras the verdict says how many are unhashed"; else fail "unhashed note" "out=$(cat "$OUT")"; fi
+if has "$OUT" 'unhashed'; then ok "beyond 64 unrecorded extras the verdict says how many are unhashed"; else fail "unhashed note" "out=$(cat "$OUT")"; fi
 
 printf '\n%s== five paths then +k ==%s\n' "$DIM" "$RESET"
 MANY="$TMP/many"; mkproj "$MANY"
 EXTRA=""; i=0
 while [[ $i -lt 8 ]]; do printf 'c %s\n' "$i" > "$MANY/m_$i.md"; EXTRA="$EXTRA\"m_$i.md\","; i=$((i+1)); done
-printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"notes_dir\": \"n\", \"ticket_re\": \"^X:\", \"lock_extra\": [${EXTRA%,}] }" > "$MANY/docs/llm-orchestrator/cadence.json"
+printf '%s\n' "{ \"schema\": 1, \"enabled\": true, \"workflow\": \"proportional\", \"lock_extra\": [${EXTRA%,}] }" > "$MANY/docs/llm-orchestrator/cadence.json"
 run "$MANY" --lock >/dev/null
 i=0; while [[ $i -lt 8 ]]; do printf 'CHANGED %s\n' "$i" > "$MANY/m_$i.md"; i=$((i+1)); done
 RC=$(run "$MANY" --verdict)
 if has "$OUT" '+3' && [[ "$(grep -o ',' "$OUT" | wc -l | tr -d ' ')" == "4" ]]; then ok "at most 5 paths are named, then '+k'"; else fail "+k" "out=$(cat "$OUT")"; fi
-
-printf '\n%s== --landing evidence ==%s\n' "$DIM" "$RESET"
-LP="$TMP/land"; mkproj "$LP"
-( cd "$LP" && git init -q . && git "${GIT_ID[@]}" add -A >/dev/null 2>&1 && git "${GIT_ID[@]}" commit -qm base ) >/dev/null 2>&1
-BASE_TS=$(git -C "$LP" log -1 --format=%ad --date=format:'%Y-%m-%d %H:%M:%S')
-ND="$LP/docs/llm-orchestrator/notes"; mkdir -p "$ND"
-LATER=$(date -r $(( $(date +%s) + 3600 )) '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "2099-01-01 00:00:00")
-for r in BRIEFREV REV1 REV2 REFUTE GATE; do
-  printf 'Started: %s\nbody\nFinished: %s\n' "$LATER" "$LATER" > "$ND/AB-1_${r}_report.md"
-done
-printf 'EXIT=0\n' >> "$ND/AB-1_GATE_report.md"
-RC=$(run "$LP" --landing AB-1)
-[[ "$RC" == "0" ]] && ok "--landing passes with five finished reports and EXIT=0" || fail "landing ok" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
-mv "$ND/AB-1_REV2_report.md" "$ND/held"
-RC=$(run "$LP" --landing AB-1)
-if [[ "$RC" == "1" ]] && has "$OUT" 'REV2'; then ok "--landing names the missing report"; else fail "landing missing" "rc=$RC out=$(cat "$OUT")"; fi
-mv "$ND/held" "$ND/AB-1_REV2_report.md"
-printf 'Started: %s\nbody\nFinished: %s\n' "2001-01-01 00:00:00" "2001-01-01 00:00:01" > "$ND/AB-1_REV1_report.md"
-RC=$(run "$LP" --landing AB-1)
-if [[ "$RC" == "1" ]] && has "$OUT" 'REV1'; then ok "--landing rejects a stale Finished stamp"; else fail "landing stale" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'Started: %s\nbody\nFinished: %s\n' "$LATER" "$LATER" > "$ND/AB-1_REV1_report.md"
-printf 'Started: %s\nbody\nFinished: %s\nEXIT=2\n' "$LATER" "$LATER" > "$ND/AB-1_GATE_report.md"
-RC=$(run "$LP" --landing AB-1)
-if [[ "$RC" == "1" ]] && has "$OUT" 'EXIT=0'; then ok "--landing rejects a gate report whose last line is not EXIT=0"; else fail "landing gate exit" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'Started: %s\nbody\nFinished: %s\nEXIT=0\n' "$LATER" "$LATER" > "$ND/AB-1_GATE_report.md"
-printf 'Started: %s\nbody\n' "$LATER" > "$ND/AB-1_REFUTE_report.md"
-RC=$(run "$LP" --landing AB-1)
-if [[ "$RC" == "1" ]] && has "$OUT" 'REFUTE'; then ok "--landing rejects a report with no Finished stamp"; else fail "landing unfinished" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'Started: %s\nbody\nFinished: %s\n' "$LATER" "$LATER" > "$ND/AB-1_REFUTE_report.md"
 
 printf '\n%s== --commit-msg (the git layer) ==%s\n' "$DIM" "$RESET"
 G="$TMP/git"; mkproj "$G"
@@ -233,7 +195,7 @@ RC=$(cmsg 'chore: sneak a law in
 Ruling 4 — amended.')
 if [[ "$RC" == "1" ]] && has "$OUT" 'a stale lock cannot ride along'; then ok "--commit-msg still blocks: the staged lock is stale under a ruling"; else fail "cmsg stale lock" "rc=$RC out=$(cat "$OUT")"; fi
 printf 'Ruling 4 — amended.\n' >> "$G/docs/llm-orchestrator/LAWS.md"
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$G" --lock >/dev/null 2>&1
+relock "$G" >/dev/null 2>&1
 ( cd "$G" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg 'chore: amend the laws
 
@@ -257,7 +219,7 @@ Ruling 5 — later.')
 if [[ "$RC" == "1" ]] && has "$OUT" 'stale lock'; then ok "a well-formed ruling still cannot carry a stale lock (check 1 alone)"; else fail "cmsg check1 isolated" "rc=$RC out=$(cat "$OUT")"; fi
 # Isolated: only check 2 can fail here - the lock is fresh and consistent, the
 # message simply carries no ruling.
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$G" --lock >/dev/null 2>&1
+relock "$G" >/dev/null 2>&1
 ( cd "$G" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg 'chore: a fresh lock but no ruling')
 if [[ "$RC" == "1" ]] && has "$OUT" 'the message carries no numbered ruling'; then ok "a fresh lock still needs a numbered ruling (check 2 alone), and says so"; else fail "cmsg check2 isolated" "rc=$RC out=$(cat "$OUT")"; fi
@@ -274,8 +236,6 @@ Ruling 4 — amended.')
 ( cd "$G" && git "${GIT_ID[@]}" commit -qm 'chore: amend the laws
 
 Ruling 4 — amended.' ) >/dev/null 2>&1
-RC=$(cmsg 'AB-2: land the ticket')
-if [[ "$RC" == "1" ]] && has "$OUT" 'AB-2'; then ok "a ticket subject triggers the landing check and it fails with no evidence"; else fail "cmsg ticket landing" "rc=$RC out=$(cat "$OUT")"; fi
 
 printf '\n%s== --audit <rev> ==%s\n' "$DIM" "$RESET"
 RC=$( ( cd "$G" && bash "$CHECK" --audit HEAD > "$OUT" 2>"$ERR" ); echo $?)
@@ -312,7 +272,7 @@ cmsg_at() { # cmsg_at <dir> <message>  -> stdout in $OUT, stderr in $ERR, echoes
   ( cd "$d" && bash "$CHECK" --commit-msg "$MSG2" > "$OUT" 2>"$ERR" ); echo $?
 }
 cfgjson() { # cfgjson <file> <enabled-literal> [extra-json]
-  printf '%s\n' "{ \"schema\": 1, \"enabled\": $2, \"notes_dir\": \"docs/llm-orchestrator/notes\", \"ticket_re\": \"^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:\", \"lock_extra\": [${3:-}] }" > "$1"
+  printf '%s\n' "{ \"schema\": 1, \"enabled\": $2, \"workflow\": \"proportional\", \"lock_extra\": [${3:-}] }" > "$1"
 }
 
 printf '\n%s== the git gate reads its mode from git, never from the working tree ==%s\n' "$DIM" "$RESET"
@@ -353,13 +313,13 @@ BROKENPY=(env "ORCH_CADENCE_PYTHON=$SHIM/python3")
 RC=$( "${BROKENPY[@]}" bash "$CHECK" --root "$P" --verdict > "$OUT" 2>"$ERR"; echo $?)
 if [[ "$RC" == "0" ]] && has "$OUT" 'lock OK'; then ok "a present-but-failing interpreter still reads the real lock state"; else fail "broken python verdict" "rc=$RC out=$(cat "$OUT")"; fi
 RC=$( ( cd "$GG" && "${BROKENPY[@]}" bash "$CHECK" --commit-msg "$MSG2" > "$OUT" 2>"$ERR" ); echo $?)
-if [[ "$RC" == "1" ]] && has "$OUT" 'no numbered ruling'; then ok "a present-but-failing interpreter cannot turn the git gate off"; else fail "broken python gate" "rc=$RC out=$(cat "$OUT")"; fi
+if [[ "$RC" == "1" ]] && has "$OUT" 'python3'; then ok "a present-but-failing interpreter cannot turn the git gate off: it refuses and names python3"; else fail "broken python gate" "rc=$RC out=$(cat "$OUT")"; fi
 # The guard that makes cfg_note print once is load-bearing on THIS arm: a broken
 # interpreter is re-tried on every config read, and the git gate reads several.
 N=$(grep -c 'python3 is unavailable' "$ERR" | tr -d ' ')
 [[ "$N" == "1" ]] && ok "a broken interpreter notes once per --commit-msg invocation, not once per config read" || fail "broken-python note count" "printed $N times"
 
-printf '\n%s== the git gate enforces the manifest even without python3 ==%s\n' "$DIM" "$RESET"
+printf '\n%s== without python3 the git gate refuses rather than guess the workflow ==%s\n' "$DIM" "$RESET"
 PL="$TMP/policy"; mkproj "$PL"
 printf 'policy v1\n' > "$PL/POLICY.md"
 cfgjson "$PL/docs/llm-orchestrator/cadence.json" true '"POLICY.md"'
@@ -370,26 +330,7 @@ printf 'policy v2\n' > "$PL/POLICY.md"
 ( cd "$PL" && git "${GIT_ID[@]}" add POLICY.md ) >/dev/null 2>&1
 printf '%s\n' 'chore: policy edit' > "$MSG2"
 RC=$( ( cd "$PL" && "${NOPY[@]}" bash "$CHECK" --commit-msg "$MSG2" > "$OUT" 2>"$ERR" ); echo $?)
-if [[ "$RC" == "1" ]] && has "$OUT" 'POLICY.md'; then ok "a lock_extra entry recorded in the manifest is enforced with no python3"; else fail "manifest without python" "rc=$RC out=$(cat "$OUT")"; fi
-N=$(grep -c 'python3 is unavailable' "$ERR" | tr -d ' ')
-[[ "$N" == "1" ]] && ok "the python3-unavailable note prints exactly once per invocation" || fail "note count" "printed $N times"
-
-printf '\n%s== --landing compares local clocks, not the author zone ==%s\n' "$DIM" "$RESET"
-TZL="$TMP/tzland"; mkproj "$TZL"
-( cd "$TZL" && git init -q . && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
-BEP=$(( $(date +%s) - 3600 ))
-( cd "$TZL" && GIT_AUTHOR_DATE="$BEP +1200" GIT_COMMITTER_DATE="$BEP +1200" git "${GIT_ID[@]}" commit -qm base ) >/dev/null 2>&1
-TND="$TZL/docs/llm-orchestrator/notes"; mkdir -p "$TND"
-NOWU=$(TZ=UTC date '+%Y-%m-%d %H:%M:%S')
-for r in BRIEFREV REV1 REV2 REFUTE GATE; do
-  printf 'Started: %s\nbody\nFinished: %s\n' "$NOWU" "$NOWU" > "$TND/AB-4_${r}_report.md"
-done
-printf 'EXIT=0\n' >> "$TND/AB-4_GATE_report.md"
-RC=$( TZ=UTC bash "$CHECK" --root "$TZL" --landing AB-4 > "$OUT" 2>"$ERR"; echo $?)
-[[ "$RC" == "0" ]] && ok "evidence written after the base passes even when the base was authored east of here" || fail "landing zone" "rc=$RC out=$(cat "$OUT")"
-printf 'Started: %s\nbody\nFinished: %s\n' "2001-01-01 00:00:00" "$NOWU" > "$TND/AB-4_REV1_report.md"
-RC=$( TZ=UTC bash "$CHECK" --root "$TZL" --landing AB-4 > "$OUT" 2>"$ERR"; echo $?)
-if [[ "$RC" == "1" ]] && has "$OUT" 'Started'; then ok "a Started stamp older than the base is stale evidence too"; else fail "landing started stamp" "rc=$RC out=$(cat "$OUT")"; fi
+if [[ "$RC" == "1" ]] && has "$OUT" 'python3'; then ok "a lock_extra edit with no python3 is refused, and the refusal names python3"; else fail "manifest without python" "rc=$RC out=$(cat "$OUT")"; fi
 
 printf '\n%s== the 64 cap applies to lock_extra, never to the fixed set ==%s\n' "$DIM" "$RESET"
 CAP="$TMP/cap"; mkproj "$CAP"
@@ -421,7 +362,7 @@ printf 'drifted\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
 ( cd "$ARM" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: cadence-init')
 [[ "$RC" == "1" ]] && ok "an arming commit whose staged manifest does not match the staged content is refused" || fail "arming drift" "rc=$RC out=$(cat "$OUT")"
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$ARM" --lock >/dev/null 2>&1
+relock "$ARM" >/dev/null 2>&1
 ( cd "$ARM" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: cadence-init' ) >/dev/null 2>&1
 ( cd "$ARM" && git "${GIT_ID[@]}" rm -q --cached docs/llm-orchestrator/LOCK.sha256 ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: tidy')
@@ -435,15 +376,15 @@ RC=$(cmsg_at "$ARM" 'chore: tidy')
 printf '\n%s== the remedy names only the missing piece ==%s\n' "$DIM" "$RESET"
 RC=$(cmsg_at "$ARM" 'chore: nothing to see')
 printf 'Ruling 6 — later still.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
-ORCH_CADENCE_UNLOCK=1 bash "$CHECK" --root "$ARM" --lock >/dev/null 2>&1
+relock "$ARM" >/dev/null 2>&1
 ( cd "$ARM" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: a fresh lock and no ruling')
 if [[ "$RC" == "1" ]] && ! has "$OUT" 're-run --lock'; then ok "a fresh lock with no ruling is not told to re-run --lock"; else fail "remedy over-tells" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'Ruling 7 — unlocked.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
+printf 'Ruling 7 — later again.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"
 ( cd "$ARM" && git "${GIT_ID[@]}" add docs/llm-orchestrator/LAWS.md ) >/dev/null 2>&1
 RC=$(cmsg_at "$ARM" 'chore: a stale lock
 
-Ruling 7 — unlocked.')
+Ruling 7 — later again.')
 if [[ "$RC" == "1" ]] && has "$OUT" 're-run --lock'; then ok "a stale lock IS told to re-run --lock"; else fail "remedy under-tells" "rc=$RC out=$(cat "$OUT")"; fi
 
 printf '\n%s== --audit grades the revision with the revision ==%s\n' "$DIM" "$RESET"
@@ -451,22 +392,16 @@ AU="$TMP/audit"; mkproj "$AU"
 ( cd "$AU" && git init -q . ) >/dev/null 2>&1
 run "$AU" --lock >/dev/null
 ( cd "$AU" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: base' ) >/dev/null 2>&1
-AND="$AU/docs/llm-orchestrator/notes"; mkdir -p "$AND"
-ALATER=$(date -r $(( $(date +%s) + 3600 )) '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "2099-01-01 00:00:00")
-for r in BRIEFREV REV1 REV2 REFUTE GATE; do
-  printf 'Started: %s\nbody\nFinished: %s\n' "$ALATER" "$ALATER" > "$AND/AB-5_${r}_report.md"
-done
-printf 'EXIT=0\n' >> "$AND/AB-5_GATE_report.md"
-( cd "$AU" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'AB-5: land the ticket' ) >/dev/null 2>&1
-rm -rf "$AND"
+printf 'work\n' > "$AU/work.txt"
+( cd "$AU" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: ordinary work' ) >/dev/null 2>&1
 rm -f "$AU/docs/llm-orchestrator/cadence.json"
 RC=$( ( cd "$AU" && bash "$CHECK" --audit HEAD > "$OUT" 2>"$ERR" ); echo $?)
-[[ "$RC" == "0" ]] && ok "--audit reads the config and the evidence at the revision, not from the working tree" || fail "audit at rev" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
+[[ "$RC" == "0" ]] && ok "--audit reads the config at the revision, not from the working tree" || fail "audit at rev" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
 cfgjson "$AU/docs/llm-orchestrator/cadence.json" true
 
 printf '\n%s== "enabled" must be the JSON boolean ==%s\n' "$DIM" "$RESET"
 STR="$TMP/strbool"; mkproj "$STR"
-printf '%s\n' '{ "schema": 1, "enabled": "true", "notes_dir": "docs/llm-orchestrator/notes", "ticket_re": "^X:", "lock_extra": [] }' > "$STR/docs/llm-orchestrator/cadence.json"
+printf '%s\n' '{ "schema": 1, "enabled": "true", "workflow": "proportional", "lock_extra": [] }' > "$STR/docs/llm-orchestrator/cadence.json"
 RC=$(run "$STR" --verdict)
 has "$OUT" 'cadence: off' && ok '"enabled": "true" (a string) is off on the python path' || fail "string enabled python" "out=$(cat "$OUT")"
 RC=$( "${NOPY[@]}" bash "$CHECK" --root "$STR" --verdict > "$OUT" 2>"$ERR"; echo $?)
@@ -477,8 +412,8 @@ RC=$(bash "$CHECK" --frobnicate > "$OUT" 2>"$ERR"; echo $?)
 [[ "$RC" == "1" ]] && ok "an unknown option exits 1" || fail "unknown option rc" "expected 1, got $RC"
 RC=$(bash "$CHECK" > "$OUT" 2>"$ERR"; echo $?)
 [[ "$RC" == "1" ]] && ok "no mode exits 1" || fail "no mode rc" "expected 1, got $RC"
-RC=$(bash "$CHECK" --landing > "$OUT" 2>"$ERR"; echo $?)
-[[ "$RC" == "1" ]] && ok "--landing without a ticket exits 1" || fail "landing usage rc" "expected 1, got $RC"
+RC=$(bash "$CHECK" --landing X-1 > "$OUT" 2>"$ERR"; echo $?)
+[[ "$RC" == "1" ]] && has "$OUT" 'unknown option: --landing' && ok "--landing is not an option" || fail "landing removed" "rc=$RC out=$(cat "$OUT")"
 
 
 # ---------------------------------------------------------------------------
@@ -544,59 +479,68 @@ printf 'preamble\nthe project law: never rewrite history\n<!-- ORCH:LAWS:END -->
 RC=$(run "$OE2" --verdict)
 if [[ "$RC" == "0" ]] && has "$OUT" 'CLAUDE.md#ORCH:LAWS (orphan end marker)'; then ok "--verdict names an orphan END marker for what it is"; else fail "orphan END verdict" "rc=$RC out=$(cat "$OUT")"; fi
 
-printf '\n%s== the skips suffix on --verdict ==%s\n' "$DIM" "$RESET"
-SK="$TMP/skips"; mkproj "$SK"
-( cd "$SK" && git init -q . ) >/dev/null 2>&1
-run "$SK" --lock >/dev/null
-RC=$(run "$SK" --verdict)
-BEFORE=$(cat "$OUT")
-if [[ "$RC" == "0" ]] && ! has "$OUT" 'skips:'; then
-  ok "no CADENCE_STATE.md → the verdict line carries no skips suffix"
-else fail "skips suffix absent" "rc=$RC out=$(cat "$OUT")"; fi
-mkdir -p "$SK/docs/llm-orchestrator/notes"
-printf '# state\n\nskip: T1 review — the diff is one comment\nnote: not a skip\nskip: T2 refuter — under the threshold\n' \
-  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
-RC=$(run "$SK" --verdict)
-if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 2'; then
-  ok "a state file with two skip: lines → ' · skips: 2'"
-else fail "skips count" "rc=$RC out=$(cat "$OUT")"; fi
-if [[ "$(cat "$OUT")" == "${BEFORE} · skips: 2" ]]; then
-  ok "the suffix is appended and the rest of the line is unchanged byte for byte"
-else fail "skips suffix shape" "before=[$BEFORE] after=[$(cat "$OUT")]"; fi
-printf '# state\n\nnothing skipped yet\n' > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
-RC=$(run "$SK" --verdict)
-if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 0'; then
-  ok "a state file with no skip: lines → ' · skips: 0'"
-else fail "skips zero" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'skip: only at the start of a line counts\n  skip: indented is not a skip\n' \
-  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
-RC=$(run "$SK" --verdict)
-if has "$OUT" ' · skips: 1'; then ok "only a line BEGINNING skip: is counted"; else fail "skips anchor" "out=$(cat "$OUT")"; fi
-# notes_dir comes from cadence.json, not from a hardcoded path.
-ND="$TMP/skipsnd"; mkproj "$ND"
-printf '%s\n' '{ "schema": 1, "enabled": true, "notes_dir": "evidence",' \
-  '  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:", "lock_extra": [] }' > "$ND/docs/llm-orchestrator/cadence.json"
-( cd "$ND" && git init -q . ) >/dev/null 2>&1
-run "$ND" --lock >/dev/null
-mkdir -p "$ND/evidence"
-# R4-16: a skip is live until a later re-armed:/expired: line names the SAME
-# stage and the SAME class.
-printf 'skip: gate seat · class CODE · rows T1\nskip: refuter · class PROSE · rows T2\nre-armed: gate seat · class CODE · by T3\nexpired: refuter · class PROSE\n' \
-  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
-RC=$(run "$SK" --verdict)
-if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 0'; then
-  ok "two skips, one re-armed and one expired -> skips: 0"
-else fail "cancelled skips are still counted" "rc=$RC out=$(cat "$OUT")"; fi
-printf 'skip: gate seat · class CODE · rows T1\nskip: refuter · class PROSE · rows T2\nre-armed: gate seat · class CODE · by T3\n' \
-  > "$SK/docs/llm-orchestrator/notes/CADENCE_STATE.md"
-RC=$(run "$SK" --verdict)
-if [[ "$RC" == "0" ]] && has "$OUT" ' · skips: 1'; then
-  ok "one live skip beside a re-armed one -> skips: 1"
-else fail "a live skip is not counted" "rc=$RC out=$(cat "$OUT")"; fi
+printf '\n%s== the workflow must be "proportional" ==%s\n' "$DIM" "$RESET"
+# A config with no workflow, or with "legacy", gets one error that names the
+# one-line fix, in every mode that reads the workflow.
+WF_FIX='needs "workflow": "proportional"'
+for WV in none legacy; do
+  WP="$TMP/wf-$WV"; mkproj "$WP"
+  if [[ "$WV" == "none" ]]; then
+    printf '%s\n' '{ "schema": 1, "enabled": true, "lock_extra": [] }' > "$WP/docs/llm-orchestrator/cadence.json"
+  else
+    printf '%s\n' '{ "schema": 1, "enabled": true, "workflow": "legacy", "lock_extra": [] }' > "$WP/docs/llm-orchestrator/cadence.json"
+  fi
+  RC=$(run "$WP" --verdict)
+  if [[ "$RC" == "0" ]] && has "$OUT" "$WF_FIX" && [[ "$(wc -l < "$OUT" | tr -d ' ')" == "1" ]]; then
+    ok "workflow $WV: --verdict prints one line naming the fix"; else fail "verdict workflow $WV" "rc=$RC out=$(cat "$OUT")"; fi
+  RC=$( "${NOPY[@]}" bash "$CHECK" --root "$WP" --verdict > "$OUT" 2>"$ERR"; echo $?)
+  if [[ "$RC" == "0" ]] && has "$OUT" "$WF_FIX"; then
+    ok "workflow $WV: the sed path names the same fix"; else fail "sed verdict workflow $WV" "rc=$RC out=$(cat "$OUT")"; fi
+  RC=$(run "$WP" --lock)
+  if [[ "$RC" == "1" ]] && has "$OUT" "$WF_FIX" && [[ ! -f "$WP/docs/llm-orchestrator/LOCK.sha256" ]]; then
+    ok "workflow $WV: --lock refuses and writes nothing"; else fail "lock workflow $WV" "rc=$RC out=$(cat "$OUT")"; fi
+  ( cd "$WP" && git init -q . && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
+  RC=$(cmsg_at "$WP" 'chore: anything')
+  if [[ "$RC" == "1" ]] && has "$OUT" "$WF_FIX" && [[ "$(grep -c . "$OUT" | tr -d ' ')" == "1" ]]; then
+    ok "workflow $WV: --commit-msg refuses with that one line"; else fail "commit-msg workflow $WV" "rc=$RC out=$(cat "$OUT")"; fi
+done
+if grep -q 'legacy workflow was removed' "$TMP/out.txt"; then ok "the error says the legacy workflow was removed"; else fail "error names legacy removal" "out=$(cat "$OUT")"; fi
 
-printf 'skip: one\nskip: two\nskip: three\n' > "$ND/evidence/CADENCE_STATE.md"
-RC=$(run "$ND" --verdict)
-if has "$OUT" ' · skips: 3'; then ok "the state file is read from the configured notes_dir"; else fail "skips notes_dir" "out=$(cat "$OUT")"; fi
+# SCENE: given an armed project whose committed cadence.json still has a legacy
+# workflow; when the person repairs it through a ruling (the fixed config, the
+# ruling recorded in the laws, a fresh lock); expect --commit-msg and then
+# --audit on the landed commit to pass. The workflow is judged from the config
+# being committed, never from the one it replaces.
+RP="$TMP/wf-repair"; mkproj "$RP"
+( cd "$RP" && git init -q . ) >/dev/null 2>&1
+run "$RP" --lock >/dev/null
+printf '%s\n' '{ "schema": 1, "enabled": true, "workflow": "legacy", "lock_extra": [] }' > "$RP/docs/llm-orchestrator/cadence.json"
+python3 - "$RP" <<'PY'
+import hashlib, sys
+root = sys.argv[1]; cfg = "docs/llm-orchestrator/cadence.json"
+h = hashlib.sha256(open(root + "/" + cfg, "rb").read()).hexdigest()
+p = root + "/docs/llm-orchestrator/LOCK.sha256"
+lines = [(h + "  " + cfg) if l.endswith("  " + cfg) else l for l in open(p).read().splitlines()]
+open(p, "w").write("\n".join(lines) + "\n")
+PY
+( cd "$RP" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: an old project' ) >/dev/null 2>&1
+printf 'x\n' > "$RP/README.md"; ( cd "$RP" && git "${GIT_ID[@]}" add README.md ) >/dev/null 2>&1
+RC=$(cmsg_at "$RP" 'docs: unrelated')
+if [[ "$RC" == "1" ]] && has "$OUT" "$WF_FIX"; then ok "a commit that keeps the legacy workflow is still refused, naming the fix"; else fail "legacy kept" "rc=$RC out=$(cat "$OUT")"; fi
+( cd "$RP" && git "${GIT_ID[@]}" rm -q --cached README.md ) >/dev/null 2>&1; rm -f "$RP/README.md"
+printf '%s\n' '{ "schema": 1, "enabled": true, "workflow": "proportional", "lock_extra": [] }' > "$RP/docs/llm-orchestrator/cadence.json"
+( cd "$RP" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
+RC=$(cmsg_at "$RP" 'fix: the workflow line')
+if [[ "$RC" == "1" ]] && has "$OUT" 'the message carries no numbered ruling'; then ok "the repair without a ruling is refused by the lock, as any config change is"; else fail "repair no ruling" "rc=$RC out=$(cat "$OUT")"; fi
+printf 'Ruling 4 — the workflow is proportional.\n' >> "$RP/docs/llm-orchestrator/LAWS.md"
+relock "$RP" >/dev/null 2>&1
+( cd "$RP" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
+RMSG='Ruling 4: the workflow is proportional'
+RC=$(cmsg_at "$RP" "$RMSG")
+if [[ "$RC" == "0" ]]; then ok "the repair through a ruling passes --commit-msg"; else fail "repair commit-msg" "rc=$RC out=$(cat "$OUT")"; fi
+( cd "$RP" && git "${GIT_ID[@]}" commit -qm "$RMSG" ) >/dev/null 2>&1
+RC=$(run "$RP" --audit HEAD)
+if [[ "$RC" == "0" ]]; then ok "and --audit passes the landed repair"; else fail "repair audit" "rc=$RC out=$(cat "$OUT")"; fi
 printf '\n'
 if (( FAIL == 0 )); then
   printf '%sPASS: test-cadence-check%s (%d checks)\n' "$GREEN" "$RESET" "$PASS"; exit 0

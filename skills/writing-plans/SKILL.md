@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-description: Use when a spec is approved and implementation has not started. Produces a dated, checklist-shaped plan file that another agent (or you) can execute task-by-task. Not for work already covered by an existing plan, and not before brainstorming has produced the spec.
+description: Use when a spec is approved and implementation has not started, to write a checklist plan file. Not when a plan already covers the work.
 ---
 
 # Writing plans

@@ -1,6 +1,6 @@
 # Dispatch prompt
 
-Role: <implementer | explorer | spec-reviewer | code-reviewer | debugger>
+Role: <implementer | explorer | spec-reviewer | debugger>
 
 ## Scope
 - <files or subsystem — single domain>
@@ -54,7 +54,7 @@ block; asking a read-only role for one gets you a contract it was never given.
 |---|---|
 | implementer | the `Status:` enum below |
 | explorer, debugger | `Found:` → `Recommendation:` → `Next:` |
-| spec-reviewer, code-reviewer | `Issues:` → `Notes:` → `Verdict:` (`Ready: yes \| no \| with-fixes`) |
+| spec-reviewer | `Issues:` → `Notes:` → `Verdict:` (`Ready: yes \| no \| with-fixes`) |
 
 `Done when:` / `Stop if:` still apply to every role — but `PARTIAL` is an
 implementer outcome. A read-only role that hits a `Stop if:` says so in its own

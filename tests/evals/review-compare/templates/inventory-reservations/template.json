@@ -1,0 +1,152 @@
+{
+  "title": "Hold stock for orders with expiring reservations",
+  "spec": "docs/specs/reservations.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "no-rollback",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "reserve",
+      "what": "When a later line is short, lines already held are not released.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "        except OutOfStock:\n            for sku, quantity in taken:\n                self._stock.release(sku, quantity)\n            raise",
+          "replace": "        except OutOfStock:\n            raise"
+        }
+      ]
+    },
+    {
+      "id": "active-at-expiry",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "_active",
+      "what": "A reservation still counts as active at exactly its expiry time.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "if reservation.state == \"active\" and self._clock() >= reservation.expires_at:",
+          "replace": "if reservation.state == \"active\" and self._clock() > reservation.expires_at:"
+        }
+      ]
+    },
+    {
+      "id": "expire-due-boundary",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "expire_due",
+      "what": "expire_due skips reservations that reach their expiry time exactly now.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "if r.state == \"active\" and now >= r.expires_at]",
+          "replace": "if r.state == \"active\" and now > r.expires_at]"
+        }
+      ]
+    },
+    {
+      "id": "duplicate-reservation",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "reserve",
+      "what": "An order can get a second active reservation, holding its stock twice.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "if previous is not None and self._by_id[previous].state == \"active\":",
+          "replace": "if previous is not None and self._by_id[previous].state == \"shipped\":"
+        }
+      ]
+    },
+    {
+      "id": "extend-adds-to-old-expiry",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "extend",
+      "what": "extend adds the hold time to the old expiry instead of restarting it from now.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "        reservation.expires_at = self._clock() + self._hold_for",
+          "replace": "        reservation.expires_at = reservation.expires_at + self._hold_for"
+        }
+      ]
+    },
+    {
+      "id": "ship-leaves-active",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "ship",
+      "what": "ship never marks the reservation shipped, so it stays active and a later cancel or expiry releases stock again.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "        reservation.state = \"shipped\"",
+          "replace": "        self._by_order.pop(reservation.order_id, None)"
+        }
+      ]
+    },
+    {
+      "id": "hold-ignores-held",
+      "rank": "serious",
+      "kind": "test-tampering",
+      "symbol": "hold",
+      "what": "hold compares against stock on hand instead of available stock, so stock is sold twice; the test that caught it was changed to expect it.",
+      "edits": [
+        {
+          "file": "inventory/stock.py",
+          "find": "        if quantity > self.available(sku):",
+          "replace": "        if quantity > self.on_hand(sku):"
+        },
+        {
+          "file": "tests/test_stock.py",
+          "find": "        with self.assertRaises(OutOfStock):\n            stock.hold(\"A\", 3)",
+          "replace": "        stock.hold(\"A\", 3)\n        self.assertEqual(stock.held(\"A\"), 6)"
+        }
+      ]
+    },
+    {
+      "id": "release-checks-on-hand",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "release",
+      "what": "release compares against stock on hand, so more than is held can be released and held goes negative.",
+      "edits": [
+        {
+          "file": "inventory/stock.py",
+          "find": "        if quantity > self.held(sku):",
+          "replace": "        if quantity > self.on_hand(sku):"
+        }
+      ]
+    },
+    {
+      "id": "held-for-stale",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "held_for",
+      "what": "held_for reports an expired hold as still held.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "        self.expire_due()\n        reservation_id = self._by_order.get(order_id)",
+          "replace": "        reservation_id = self._by_order.get(order_id)"
+        }
+      ]
+    },
+    {
+      "id": "reserve-without-expiring",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "reserve",
+      "what": "reserve does not expire due holds first, so expired holds block new orders.",
+      "edits": [
+        {
+          "file": "inventory/reservations.py",
+          "find": "        self.expire_due()\n        taken = []",
+          "replace": "        taken = []"
+        }
+      ]
+    }
+  ]
+}

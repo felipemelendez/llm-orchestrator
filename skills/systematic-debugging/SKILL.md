@@ -1,6 +1,6 @@
 ---
 name: systematic-debugging
-description: Use when a bug, test failure, exception, regression, or unexpected behavior appears, before proposing or applying a fix — it forces root-cause investigation first. Not for the expected red phase of TDD: a failing test you just wrote is progress, not a bug. Runs before test-driven-development when both match.
+description: Use when a bug, test failure or unexpected behavior needs its cause found before a fix. Not for the expected red phase of TDD. Runs before test-driven-development.
 ---
 
 # Systematic debugging

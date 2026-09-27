@@ -2,8 +2,6 @@
   "schema": 1,
   "enabled": true,
   "workflow": "proportional",
-  "notes_dir": "docs/llm-orchestrator/notes",
-  "ticket_re": "^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+:",
   "runner": {
     "profile": "shell-suites",
     "test_cmd": "",
@@ -20,7 +18,6 @@
     "skills",
     "commands",
     "agents",
-    "workflows",
     "templates",
     "output-styles"
   ],
@@ -31,7 +28,6 @@
     "agents/**",
     "commands/**",
     "templates/**",
-    "workflows/**",
     "output-styles/**"
   ],
   "test_globs": [

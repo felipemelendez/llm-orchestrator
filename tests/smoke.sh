@@ -115,51 +115,15 @@ trap cleanup EXIT
 # ------------------------------------------------------------
 if should_run structural; then
   section "Structural"
+  # tests/test-hook-latency.sh is not repeated here. It measures time, so run a
+  # second time inside this suite on a busy machine it failed for the machine,
+  # not the hooks. run-all.sh and CI run it once, on its own.
   check_out "install --check passes" "OK" "${ROOT}/scripts/install.sh" --check
   check_out "validate-skills passes" "OK:" "${ROOT}/tests/validate-skills.sh"
-  # Asserts the "validated" wording, not a bare "OK:" — validate-workflows.sh
-  # also prints "OK: no workflows/ directory — nothing to validate", so a bare
-  # prefix match would pass vacuously on the very tree this suite exists to catch.
-  # A degraded run (node absent, Layer A skipped) is a SKIP, not a pass: booking
-  # a half-run validator as green is the exact reporter defect skipped() exists for.
-  VW_OUT=$("${ROOT}/tests/validate-workflows.sh" 2>&1)
-  VW_RC=$?
-  if [[ $VW_RC -ne 0 ]]; then
-    fail "validate-workflows passes" "$(printf '%s' "$VW_OUT" | head -1)"
-  elif printf '%s' "$VW_OUT" | grep -q "OK (degraded)"; then
-    skipped "validate-workflows full pass (node not installed — Layer A did not run)"
-  elif printf '%s' "$VW_OUT" | grep -q "workflow script(s) validated"; then
-    ok "validate-workflows passes"
-  else
-    fail "validate-workflows passes" "unexpected output: $(printf '%s' "$VW_OUT" | head -1)"
-  fi
-  # The validator's own falsifiability. Node-gated the same way as the
-  # behavior harness below: without node it prints SKIP:, which is announced
-  # rather than booked as a pass.
-  if command -v node >/dev/null 2>&1; then
-    check_out "workflow validator rejects injected defects" "PASS: test-validate-workflows" \
-              bash "${ROOT}/tests/test-validate-workflows.sh"
-  else
-    skipped "workflow validator mutation tests (node not installed)"
-  fi
   check_out "installer + packaging contract tests pass" "PASS: test-install" \
             bash "${ROOT}/tests/test-install.sh"
   check_out "lib-resolution contract tests pass" "PASS: test-lib-resolution" \
             bash "${ROOT}/tests/test-lib-resolution.sh"
-  check_out "workflows ship on --copy installs" "OK: workflow distribution" \
-            bash "${ROOT}/tests/test-workflow-distribution.sh"
-  # Node-gated: the behavior harness executes the workflow script. Without node
-  # the test exits 0 with "SKIP:", which check_out would report as a red ✗.
-  # Announced either way — a check that silently vanishes makes the total lie.
-  if command -v node >/dev/null 2>&1; then
-    check_out "review-diff behavior (dead stages, floor, refutation)" "OK: review-diff behavior" \
-              bash "${ROOT}/tests/test-review-diff-behavior.sh"
-  else
-    # NOT `ok` — counting a check that never ran as a pass is the same
-    # "reported clean while a stage did not run" shape this suite exists to
-    # catch, just relocated into the reporter.
-    skipped "review-diff behavior (node not installed)"
-  fi
   check_out "research-classifier curated examples pass" "classifier checks passed" \
             "${ROOT}/tests/test-research-classifier.sh"
   check_out "research-brief + orch-researcher contract pass" "All 42 brief/agent checks passed" \
@@ -178,8 +142,6 @@ if should_run structural; then
             bash "${ROOT}/tests/handoff/test-precompact.sh"
   check_out "telemetry + dry-run tests pass" "PASS: test-telemetry" \
             bash "${ROOT}/tests/test-telemetry.sh"
-  check_suite "hook latency budget tests pass" "PASS: test-hook-latency" \
-            bash "${ROOT}/tests/test-hook-latency.sh"
   check_suite "verify-gate tests pass" "PASS: test-verify-gate" \
             bash "${ROOT}/tests/test-verify-gate.sh"
   check_suite "retry-cap tests pass" "PASS: test-retry-cap" \
@@ -206,10 +168,10 @@ if should_run hooks; then
 
   # SessionStart — loads the using-orchestrator skill body only. User-curated
   # project facts now live in CLAUDE.md (native), loaded by Claude Code itself.
-  # CLAUDE_PROJECT_DIR points at scratch: these fixtures assert the legacy
-  # reminder, independent of the launching checkout's own cadence policy.
+  # CLAUDE_PROJECT_DIR points at scratch, a project with no cadence, independent
+  # of the launching checkout's own cadence policy.
   CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$SMOKE_TMP/mem" \
-    bash "${ROOT}/scripts/hooks/session-start.sh" > $SMOKE_TMP/out.json 2>&1
+    bash "${ROOT}/scripts/hooks/session-start.sh" < /dev/null > $SMOKE_TMP/out.json 2>&1
 
   check "SessionStart emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "SessionStart loads using-orchestrator skill" "Using LLM Orchestrator" \
@@ -219,14 +181,47 @@ if should_run hooks; then
   check "SessionStart eager body stays lean (< 3500 bytes)" \
     bash -c '[ "$(wc -c < $SMOKE_TMP/out.json)" -lt 3500 ]'
 
-  # UserPromptSubmit — injects protocol reminder
+  check "SessionStart without a cadence carries no reply-format rule" \
+    bash -c "! grep -q 'Changed:' $SMOKE_TMP/out.json"
+
+  # Run by hand in a terminal, the hook's input is that terminal, which never
+  # ends. The hook must not wait for it. It runs in a pseudo-terminal here and
+  # is killed after 20 seconds; exit 0 only when it finished on its own.
+  check "SessionStart does not wait on a terminal for input" \
+    env CLAUDE_PLUGIN_ROOT="$ROOT" CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$SMOKE_TMP/mem" \
+    python3 -c '
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp("bash", ["bash", sys.argv[1]])
+deadline = time.time() + 20
+while time.time() < deadline:
+    if select.select([fd], [], [], 0.1)[0]:
+        try:
+            os.read(fd, 65536)
+        except OSError:
+            pass
+    done, status = os.waitpid(pid, os.WNOHANG)
+    if done:
+        sys.exit(0)
+os.kill(pid, 9)
+os.waitpid(pid, 0)
+sys.exit(1)
+' "${ROOT}/scripts/hooks/session-start.sh"
+
+  # UserPromptSubmit — silent without an enabled cadence
   printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
+  check "UserPromptSubmit injects nothing without an enabled cadence" \
+    bash -c "[ ! -s $SMOKE_TMP/out.json ]"
+
+  # UserPromptSubmit — injects the protocol reminder in an enabled project
+  mkdir -p $SMOKE_TMP/enabled/docs/llm-orchestrator
+  printf '{"enabled": true, "workflow": "proportional"}\n' > $SMOKE_TMP/enabled/docs/llm-orchestrator/cadence.json
+  printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP/enabled" ORCH_HOME="$(mktemp -d)" bash "${ROOT}/scripts/hooks/user-prompt-submit.sh" > $SMOKE_TMP/out.json 2>&1
   check "UserPromptSubmit emits valid JSON" python3 -m json.tool $SMOKE_TMP/out.json
   check_out "UserPromptSubmit reminder mentions the six shape headers" "Changed:" \
             cat $SMOKE_TMP/out.json
-  check_out "UserPromptSubmit requires Verify: in Changed:" "REQUIRE" \
-            cat $SMOKE_TMP/out.json
-  check_out "UserPromptSubmit routes 'best approach' to Plan:" "Plan" \
+  check_out "UserPromptSubmit asks for the Verification: line" "Verification: PASS" \
             cat $SMOKE_TMP/out.json
 
   # PreToolUse guard — blocks --no-verify
@@ -302,6 +297,11 @@ if should_run lock; then
   # at the syscall level on their own — so stubbing with_lock to a no-op still
   # produced 10 lines and the check could not detect a missing lock. With a
   # rewrite in the middle, an unserialised interleaving loses lines.
+  # The writers queue for one lock, so the last waits for all the others. The
+  # default 10-second wait is enough on an idle machine and not on a busy one,
+  # where a timed-out writer drops its line and the check fails for the wrong
+  # reason. This check is about serialisation, not speed: wait up to 120s.
+  export ORCH_LOCK_TIMEOUT=120
   for i in 1 2 3 4 5 6 7 8 9 10; do
     ( with_lock "$TF" bash -c "c=\$(cat '$TF' 2>/dev/null || true); sleep 0.05; { [ -n \"\$c\" ] && printf '%s\n' \"\$c\"; echo line-$i; } > '$TF'" ) &
   done
@@ -337,6 +337,7 @@ if should_run lock; then
   else fail "append_under_section concurrent" "expected 5, got $COUNT"; fi
 
   rm -f "$TF" "$TF.lock" "$TF.lockdir" "$TF2" "$TF2.lock" "$TF2.lockdir"
+  unset ORCH_LOCK_TIMEOUT
 fi
 
 # ------------------------------------------------------------
@@ -429,7 +430,7 @@ if should_run install; then
 
   # Re-run SessionStart from the copied install
   CLAUDE_PLUGIN_ROOT="$SMOKE_TMP/proj/.claude" ORCH_HOME="$SMOKE_TMP/proj-mem" \
-    bash $SMOKE_TMP/proj/.claude/scripts/hooks/session-start.sh > $SMOKE_TMP/out.json 2>&1
+    bash $SMOKE_TMP/proj/.claude/scripts/hooks/session-start.sh < /dev/null > $SMOKE_TMP/out.json 2>&1
   check "SessionStart from --copy emits valid JSON" \
         python3 -m json.tool $SMOKE_TMP/out.json
   rm -rf $SMOKE_TMP/proj-mem
@@ -540,7 +541,7 @@ print('ok')
   fi
 
   # Hook output JSON must include hookEventName field
-  OUT=$(CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/fmt" bash "$ROOT/scripts/hooks/session-start.sh" 2>/dev/null)
+  OUT=$(CLAUDE_PLUGIN_ROOT="$ROOT" ORCH_HOME="$SMOKE_TMP/fmt" bash "$ROOT/scripts/hooks/session-start.sh" < /dev/null 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)
@@ -551,7 +552,9 @@ sys.exit(0 if d.get('hookSpecificOutput', {}).get('hookEventName') == 'SessionSt
     fail "SessionStart hookEventName" "missing from output JSON"
   fi
 
-  OUT=$(printf '{"session_id":"smoke","prompt":"x"}' | ORCH_HOME="$(mktemp -d)" bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
+  mkdir -p $SMOKE_TMP/fmt/docs/llm-orchestrator
+  printf '{"enabled": true, "workflow": "proportional"}\n' > $SMOKE_TMP/fmt/docs/llm-orchestrator/cadence.json
+  OUT=$(printf '{"session_id":"smoke","prompt":"x"}' | CLAUDE_PROJECT_DIR="$SMOKE_TMP/fmt" ORCH_HOME="$(mktemp -d)" bash "$ROOT/scripts/hooks/user-prompt-submit.sh" 2>/dev/null)
   if printf '%s' "$OUT" | python3 -c "
 import json, sys
 d = json.load(sys.stdin)

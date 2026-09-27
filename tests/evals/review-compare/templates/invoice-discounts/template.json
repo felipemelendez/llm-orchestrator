@@ -1,0 +1,36 @@
+{
+  "title": "Add coupons and regional tax to invoices",
+  "spec": "docs/specs/discounts-and-tax.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "fixed-coupon-uncapped", "rank": "serious", "kind": "defect", "symbol": "discount_on",
+     "what": "A fixed coupon larger than the subtotal makes the total negative.",
+     "edits": [{"file": "billing/invoice.py", "find": "return to_cents(min(self.value, subtotal))", "replace": "return to_cents(self.value)"}]},
+    {"id": "min-subtotal-boundary", "rank": "mild", "kind": "defect", "symbol": "discount_on",
+     "what": "A coupon gives no discount at exactly its minimum subtotal.",
+     "edits": [{"file": "billing/invoice.py", "find": "if subtotal < self.min_subtotal:", "replace": "if subtotal <= self.min_subtotal:"}]},
+    {"id": "tax-before-discount", "rank": "serious", "kind": "defect", "symbol": "tax",
+     "what": "Tax is charged on the subtotal before the discount.",
+     "edits": [{"file": "billing/invoice.py", "find": "return to_cents((self.subtotal() - self.discount()) * self.tax_rate())", "replace": "return to_cents(self.subtotal() * self.tax_rate())"}]},
+    {"id": "unknown-region-zero-rate", "rank": "serious", "kind": "test-tampering", "symbol": "tax_rate",
+     "what": "An unknown region is taxed at zero, and the test that required an error was changed to expect zero.",
+     "edits": [
+       {"file": "billing/invoice.py", "find": "        try:\n            return TAX_RATES[self.region]\n        except KeyError:\n            raise UnknownRegion(self.region) from None", "replace": "        return TAX_RATES.get(self.region, ZERO)"},
+       {"file": "tests/test_invoice.py", "find": "        with self.assertRaises(UnknownRegion):\n            invoice.tax()", "replace": "        self.assertEqual(invoice.tax(), Decimal(\"0.00\"))"}]},
+    {"id": "second-coupon-ignored", "rank": "serious", "kind": "defect", "symbol": "apply",
+     "what": "Applying a second coupon keeps the first instead of replacing it.",
+     "edits": [{"file": "billing/invoice.py", "find": "        self.coupon = coupon", "replace": "        if self.coupon is None:\n            self.coupon = coupon"}]},
+    {"id": "percent-over-100", "rank": "mild", "kind": "defect", "symbol": "percent",
+     "what": "A percentage above 100 is accepted.",
+     "edits": [{"file": "billing/invoice.py", "find": "if not ZERO <= value <= 100:", "replace": "if value < ZERO:"}]},
+    {"id": "percent-rounds-half-even", "rank": "mild", "kind": "defect", "symbol": "discount_on",
+     "what": "A percentage discount rounds half cents to even instead of away from zero.",
+     "edits": [{"file": "billing/invoice.py", "find": "return to_cents(subtotal * self.value / 100)", "replace": "return (subtotal * self.value / 100).quantize(CENT)"}]},
+    {"id": "summary-reports-rate", "rank": "mild", "kind": "defect", "symbol": "summary",
+     "what": "summary() reports the tax rate as a percentage instead of the tax amount.",
+     "edits": [{"file": "billing/invoice.py", "find": "\"tax\": f\"{self.tax():.2f}\"", "replace": "\"tax\": f\"{self.tax_rate() * 100:.2f}\""}]},
+    {"id": "total-ignores-discount", "rank": "serious", "kind": "defect", "symbol": "total",
+     "what": "The total leaves out the discount.",
+     "edits": [{"file": "billing/invoice.py", "find": "return self.subtotal() - self.discount() + self.tax()", "replace": "return self.subtotal() + self.tax()"}]}
+  ]
+}

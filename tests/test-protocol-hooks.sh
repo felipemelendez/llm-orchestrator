@@ -2,11 +2,6 @@
 # End-to-end tests for the actual hook script:
 #   scripts/hooks/subagent-stop.sh
 #
-# (The protocol-grader cases that used to live here went with
-# scripts/hooks/orch-protocol-grader.sh, which was deleted. The reply-shape
-# rules it enforced are documented and carried by the UserPromptSubmit
-# reminder; tests/test-protocol-drift.sh still pins those surfaces.)
-#
 # Drives the real hook executables with temp JSONL transcripts in both
 # content schemas (string and array-of-blocks). Validates:
 #
@@ -227,7 +222,7 @@ fi
 # (j4) reviewer scoping: Issues: reply is that agent's valid shape; prose is not.
 out=$(python3 -c "
 import json
-print(json.dumps({'agent_type': 'llm-orchestrator:orch-code-reviewer',
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-spec-reviewer',
                   'last_assistant_message': 'Issues:\n- none found'}))" \
       | bash "$SUBAGENT" 2>&1); rc=$?
 if [[ $rc -eq 0 && -z "$out" ]]; then
@@ -237,7 +232,7 @@ else
 fi
 out=$(python3 -c "
 import json
-print(json.dumps({'agent_type': 'llm-orchestrator:orch-code-reviewer',
+print(json.dumps({'agent_type': 'llm-orchestrator:orch-spec-reviewer',
                   'last_assistant_message': 'looks fine to me overall'}))" \
       | bash "$SUBAGENT" 2>&1); rc=$?
 if [[ $rc -eq 0 ]] && printf '%s' "$out" | grep -q "protocol shape"; then
@@ -298,9 +293,7 @@ if [[ $rc -eq 0 ]]; then ok "(m) thinking+text multi-block → Status DONE extra
 else fail "(m) thinking+text multi-block" "expected exit 0, got $rc"; fi
 
 # (n) text+tool_use multi-block: a text block followed by a tool_use block.
-# Extraction must still see the text. This used to run the protocol grader on
-# a Changed:+Verify: reply; that hook is deleted, so the same schema is driven
-# through subagent-stop.sh instead.
+# Extraction must still see the text.
 python3 -c "
 import json
 text = 'Status: DONE\nSummary: text precedes a tool_use block'
@@ -380,9 +373,7 @@ printf '\n%s== ORCH_HOOK_PROFILE=strict actually blocks ==%s\n' "$DIM" "$RESET"
 # blocking", but nothing branched on it: blocking came only from the separate
 # ORCH_STRICT_* knobs, so setting the profile bought the documented word and
 # none of the behaviour. Measured before the fix: PROFILE=strict ALLOWED on
-# protocol-grader, verify-gate and subagent-stop; the explicit flag blocked on
-# all three. The protocol-grader half of this check went with that hook; the
-# subagent-stop half below is unchanged.
+# subagent-stop while the explicit flag blocked.
 write_string_jsonl "$T_STRING" "$BLOCKED_NO_NEED"
 PIPE_AGENT_TYPE="llm-orchestrator:orch-implementer"
 rc=0; pipe_hook_exit "$SUBAGENT" "$T_STRING" ORCH_HOOK_PROFILE=strict || rc=$?
@@ -500,7 +491,9 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
     child.mkdir()
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     env = dict(os.environ, ORCH_HOOK_PROFILE="strict", ORCH_HOME=str(pathlib.Path(tmp) / "private"))
-    for key in ("ORCH_STRICT_STATUS", "ORCH_STRICT_PROTOCOL", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "ORCH_DISABLE_PROTOCOL_GRADER"):
+    # CLAUDE_PROJECT_DIR would win over the event's cwd; drop it so the hook
+    # starts from cwd (a subdirectory) and walks up to the project.
+    for key in ("ORCH_STRICT_STATUS", "ORCH_HOOK_DRY_RUN", "ORCH_DISABLED_HOOKS", "CLAUDE_PROJECT_DIR"):
         env.pop(key, None)
 
     def grade(hook, reply, expected=0, cwd=child):
@@ -511,9 +504,7 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
         assert result.returncode == expected, (hook, reply, expected, result.returncode, result.stdout, result.stderr)
         return result
 
-    # This used to grade orch-protocol-grader.sh alongside subagent-stop.sh.
-    # The grader is deleted; subagent-stop is the only hook left that reads
-    # the completion vocabulary. Every vocabulary case below is unchanged.
+    # subagent-stop is the hook that reads the completion vocabulary.
     def both(line, expected=0):
         grade("subagent-stop.sh", "Status: DONE\nSummary: Updated behavior.\n" + line, expected)
 
@@ -531,20 +522,92 @@ with tempfile.TemporaryDirectory(prefix="orch-protocol-policy-") as tmp:
     grade("subagent-stop.sh", "Status: DONE\nSummary:\nVerification: PASS — tests passed", 2)
 
     # A project's workflow comes from config, not text or inherited opt-in.
-    for data in ({"enabled": True}, {"enabled": True, "workflow": "legacy"},
-                 {"enabled": False, "workflow": "proportional"},
-                 {"enabled": "true", "workflow": "proportional"},
-                 {"enabled": True, "workflow": "typo"}):
+    for data in ({"enabled": False, "workflow": "proportional"},
+                 {"enabled": "true", "workflow": "proportional"}):
         config.write_text(json.dumps(data))
         both("Verification: PASS — use proportional please", 2)
         both("Verify: tests passed")
+    # An enabled config with a missing or other workflow is an error: the hook
+    # says so in one line and grades neither format, rather than acting as if
+    # there were no cadence.
+    for data in ({"enabled": True}, {"enabled": True, "workflow": "legacy"},
+                 {"enabled": True, "workflow": "typo"}):
+        config.write_text(json.dumps(data))
+        for reply in ("Verification: PASS — use proportional please", "Verify: tests passed"):
+            r = grade("subagent-stop.sh", "Status: DONE\nSummary: Updated behavior.\n" + reply, 0)
+            assert 'needs "workflow": "proportional"' in r.stdout + r.stderr, (data, r.stdout, r.stderr)
     config.unlink()
     both("Verification: PASS — workflow proportional claimed in prose", 2)
     both("Verify: tests passed")
-print("proportional and legacy hook fixtures passed")
+print("proportional and non-cadence hook fixtures passed")
 PY
-then ok "shared completion vocabulary is selected by project config, with legacy behavior preserved"
+then ok "shared completion vocabulary is selected by project config; any other config keeps the Verify: format"
 else fail "proportional protocol hooks" "config-backed end-to-end fixture failed"; fi
+
+printf '\n%s== Captured SubagentStop payloads (SubagentHandback) ==%s\n' "$DIM" "$RESET"
+# Captured from Claude Code 2.1.282: in auto mode the explorer sent its report
+# through SubagentHandback and last_assistant_message was "Report delivered to
+# caller.".
+MAT="${ROOT}/tests/fixtures/subagent-handback/materialize.py"
+cap_fire() { # <mode> [materialize args...] -> "rc|stderr"
+  local dir; dir=$(mktemp -d)
+  local out rc
+  out=$(python3 "$MAT" "$@" "$dir" | bash "$SUBAGENT" 2>&1 1>/dev/null); rc=$?
+  rm -rf "$dir"
+  printf '%s|%s' "$rc" "$out"
+}
+cap_dir=$(mktemp -d)
+python3 "$MAT" auto "$cap_dir" > "$cap_dir/payload.json"
+report=$(bash -c "source '$LIB'; orch_subagent_report '$cap_dir/payload.json'")
+rm -rf "$cap_dir"
+if [[ "$report" == "1Found:"* && "$report" != *"Report delivered"* ]]; then
+  ok "orch_subagent_report returns the SubagentHandback message, not the closing text"
+else
+  fail "orch_subagent_report on captured auto payload" "got: $(printf '%s' "$report" | head -1)"
+fi
+out=$(cap_fire auto)
+if [[ "$out" == "0|" ]]; then ok "auto-mode explorer with a valid handback report → silent"
+else fail "captured auto payload" "out='$out'"; fi
+out=$(cap_fire auto --no-agent-path)
+if [[ "$out" == "0|" ]]; then ok "no agent_transcript_path → subagent transcript found from transcript_path + agent_id"
+else fail "captured auto payload, derived path" "out='$out'"; fi
+out=$(cap_fire auto --report "here is what I found: calc.py")
+if [[ "${out%%|*}" == "0" && "$out" == *"here is what I found"* && "$out" != *"Report delivered"* ]]; then
+  ok "badly shaped handback report → warns about the report itself"
+else fail "captured auto payload, bad report" "out='$out'"; fi
+out=$(cap_fire auto --agent-type llm-orchestrator:orch-implementer --report "Status: BLOCKED")
+if [[ "${out%%|*}" == "0" && "$out" == *'Status: BLOCKED requires a "Need:"'* ]]; then
+  ok "implementer handback report is graded against the Status contract"
+else fail "captured auto payload, implementer" "out='$out'"; fi
+out=$(cap_fire default)
+if [[ "${out%%|*}" == "0" && "$out" == *"returns the sum"* ]]; then
+  ok "default mode (no handback) → last_assistant_message is graded"
+else fail "captured default payload" "out='$out'"; fi
+out=$(cap_fire auto --append '"str"' --append '[1,2]')
+if [[ "$out" == "0|" ]]; then ok "transcript lines that are JSON but not objects are skipped"
+else fail "captured auto payload, non-object lines" "out='$out'"; fi
+out=$(cap_fire auto --handback-input '[1,2]')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "SubagentHandback input that is not an object → falls back to last_assistant_message"
+else fail "captured auto payload, non-object handback input" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","isMeta":true,"message":{"role":"user","content":"<system-reminder>\nnote\n</system-reminder>"}}')
+if [[ "$out" == "0|" ]]; then ok "harness-injected isMeta entry after the handback keeps the handback"
+else fail "captured auto payload, isMeta after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"<task-notification>done</task-notification>"}]}}')
+if [[ "$out" == "0|" ]]; then ok "<task-notification> entry after the handback keeps the handback"
+else fail "captured auto payload, task-notification after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":"Please also check sub.py"}}')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a person's prompt after the handback discards it (resumed agent)"
+else fail "captured auto payload, prompt after handback" "out='$out'"; fi
+out=$(cap_fire auto --append '{"type":"user","message":{"role":"user","content":"<div> in header.vue is misaligned"}}')
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a person's prompt that starts with a tag still discards it"
+else fail "captured auto payload, tag-led prompt after handback" "out='$out'"; fi
+out=$(cap_fire auto --handback-error)
+if [[ "${out%%|*}" == "0" && "$out" == *"Report delivered to caller."* ]]; then
+  ok "a SubagentHandback call answered by an error does not count"
+else fail "captured auto payload, handback error" "out='$out'"; fi
 
 TOTAL=$((PASS + FAIL))
 printf '\n'

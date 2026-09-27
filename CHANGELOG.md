@@ -3,6 +3,151 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.12.0] - 2026-09-26
+
+What matters most:
+
+- **Lighter by default.** In a project without the cadence, the plugin adds no
+  reply format and no per-turn reminder, and small edits and questions need no
+  skill.
+- **The completion check knows real test commands**, on Claude Code and Codex:
+  a runner under a folder (`.venv/bin/pytest`), behind a wrapper
+  (`aws-vault exec … -- pytest`), through `pnpm`, `yarn` or `npx`, and the
+  project's own `runner.test_cmd`.
+- **One review.** Claude Code's `/code-review` and `codex review` find the
+  problems; the plugin proves each finding with a failing command, then
+  decides. It was measured against those two built-ins
+  (`docs/MEASUREMENTS.md`).
+- **The legacy cadence workflow is gone.** A `cadence.json` with `workflow`
+  missing or set to anything but `proportional` is now a clear error.
+- **Rule changes go through one command you run** in your own terminal:
+  `cadence-ruling.sh`.
+- **Codex installs through its own plugin** (`codex plugin add`).
+- **Unused code removed**: three guards, the old review agents and scripts, and
+  their tests and docs.
+
+### Upgrading
+
+- **Claude Code:** `claude plugin marketplace update llm-orchestrator`, then
+  `claude plugin update llm-orchestrator@llm-orchestrator`, and restart. For a
+  `--copy` or `--link` install, rerun that installer from an updated checkout.
+- **`workflow` missing or `legacy`:** the hooks now show an error instead of
+  running. Set `"workflow": "proportional"` in
+  `docs/llm-orchestrator/cadence.json`, through a ruling if the project's
+  cadence is locked.
+- **Locked cadence projects set up with an older version:** re-run
+  `/llm-orchestrator:cadence-init`. It changes no protected file; it writes an
+  upgrade patch (new git hooks, the current marked block, the missing deny
+  rules) and prints the one `cadence-ruling.sh` command that applies it. Until
+  then, the old hooks still honour the removed `ORCH_CADENCE_UNLOCK`.
+- **Codex:** add the Codex plugin (`codex plugin marketplace add`, then
+  `codex plugin add llm-orchestrator@llm-orchestrator`), rerun
+  `./scripts/install.sh --codex`, which then removes the skill copy and hook
+  entries an older install wrote, and trust the hooks again with `/hooks`.
+- **`--copy` installs** now keep an install record,
+  `.claude/.llm-orchestrator-files`. The first rerun after upgrading removes
+  nothing and lists files the plugin no longer ships; later reruns clean up
+  after themselves.
+- `ORCH_CADENCE_UNLOCK` and `ORCH_ALLOW_CONFIG_EDIT` no longer do anything;
+  remove them from your shell setup.
+
+### Added
+
+- `scripts/lib/orch-review.py`, the review behind `/llm-orchestrator:review`
+  and the `requesting-code-review` skill. It runs `/code-review` and
+  `codex review` in copies of the change, checks what each ran on (model,
+  read-only sandbox, instruction), and reads their findings; a reply it cannot
+  read counts as a missing reviewer, never as agreement. A prover ranks each
+  finding and writes a failing command for it. A refuter can drop a finding
+  only with a failure scenario and a drop check the script re-runs on a fresh
+  copy. Standard runs one reviewer and Full runs both; with only one of the two
+  CLIs installed, Full runs it twice.
+- A `test-gap` finding kind: behaviour the tests do not cover. It is mild
+  unless it carries a failing command. Test tampering stays serious.
+- `skills/cadence/scripts/cadence-ruling.sh <patch> "<wording>"`. It applies a
+  patch to the protected files only, re-records the lock and commits the next
+  `Ruling <N>`, after you type a confirmation at the terminal. It undoes its
+  work if any step fails.
+- `.codex-plugin/plugin.json`: the Codex plugin, with the cadence and review
+  skills, the file guard, the completion check and the scratch cleanup.
+- `install.sh --copy` keeps an install record with a SHA-256 per file, and on
+  a rerun removes a file the plugin no longer ships only while it is unchanged.
+- The task-resource helper can track a `clone`, and records what a checkout
+  held so unique work in it is never deleted.
+- The behaviour evals run on `claude plugin eval`, 8 runs per case. A review
+  comparison (`tests/evals/review-compare/`) runs the reviews on the same
+  changes with planted defects and scores what each finds. Both have free
+  checks in `tests/`; the paid runs are described in `tests/evals/README.md`.
+
+### Changed
+
+- The reply-format rule and the per-turn reminder appear only in projects
+  where the cadence is enabled. Where a project's own instructions set a reply
+  format, that format wins. Skill, command and agent descriptions are shorter.
+  The orchestrator output style keeps Claude Code's own coding instructions.
+  After a compaction the skill core is loaded again.
+- The completion check reads commands as words instead of one pattern. It
+  counts path-named, wrapped and package-manager runners and
+  `runner.test_cmd`, and does not count commands that only print, parse or dry
+  run (`echo pytest`, `bash -n`). A failed, unfinished or backgrounded command
+  still does not count.
+- The Codex completion check reads the command records every current Codex
+  version writes, and stays quiet on a turn whose commands it cannot read
+  instead of sending the agent back. When it does send the agent back, it asks
+  for the full answer again, because that reply becomes the final one.
+- Every hook finds the cadence with the same rule, nested projects included.
+  The per-turn, subagent and handoff hooks and the git gate all show the same
+  one-line workflow error.
+- `install.sh --codex` only writes the instructions block to
+  `~/.codex/AGENTS.md`. Once the Codex plugin is on, it removes the skill copy
+  and hook entries an older install wrote, and only those.
+- `--lock` rewrites an existing lock only when a terminal is attached.
+  `cadence-init` adds the deny rule `Bash(*cadence-ruling.sh*)`, and the
+  command refuses to run inside a Claude Code or Codex session. The docs say
+  plainly what the lock cannot stop: an agent that rewrites `LAWS.md` and
+  `LOCK.sha256` from a script and commits a `Ruling <N>` message.
+- Plan-file checkboxes are the only task state. The skills no longer call
+  `TaskCreate`, `TaskUpdate`, `TaskList` or `TodoWrite`.
+- The implementer changes an existing test only when the task says so, and
+  names every such change in its report.
+- The explorer runs on Sonnet; the spec reviewer runs at high effort. The model
+  docs match the agent files.
+- The docs about native Claude Code features and the cited papers were
+  re-checked and corrected. The README is now a short quick start, and each
+  topic has one page: install and settings in `docs/install.md`, the cadence
+  in `docs/cadence.md`, Codex in `docs/codex.md`.
+- `install.sh --check` also requires `orch-completion-check.py`,
+  `orch-subagent-report.py` and `cadence-ruling.sh`.
+
+### Removed
+
+- The legacy cadence workflow: its procedure, role briefs and state files, and
+  every test for it.
+- The old review: `workflows/review-diff.js`, the `using-workflows` skill, the
+  `orch-code-reviewer` and `orch-security-reviewer` agents, the reviewer
+  templates, `scripts/providers/claude-review.py`, and the review options
+  `--brief`, `--adversarial-provider`, `--split` and `--no-refuter`.
+- The dispatch-model guard and the config-protection guard
+  (`ORCH_ALLOW_CONFIG_EDIT`), and the unlock guard with `ORCH_CADENCE_UNLOCK`.
+  The destructive-git guard, the `--no-verify` guard and the lock stay.
+- `workflows/` from the production list, and the unused `notes_dir` and
+  `ticket_re` keys from the `cadence.json` that `cadence-init` proposes.
+- `templates/dispatch-response.md`, the old release-notes pages
+  `docs/release-v0.8.0.md` and `docs/release-v0.9.0.md` (their content is in
+  this file), `tests/evals/run-evals.sh`, and code, variables and files
+  nothing used any more.
+
+### Fixed
+
+- In auto mode, helper agents' reports are checked again. Before, every
+  report was flagged as badly shaped, research briefs went unchecked, and the
+  completion check missed a helper's `Verification:` line, because in auto
+  mode the report arrives through the `SubagentHandback` tool and the hooks
+  read only its closing line. The report checks, the completion check and the
+  worktree cleanup now read the real report.
+- A session no longer hangs at start when the session-start hook's input is
+  left open.
+
 ## [0.11.0] - 2026-09-23
 
 Codex is back. `./scripts/install.sh --codex` works again. It installs the
@@ -106,8 +251,7 @@ risky changes get independent review, tests are remembered while the files
 they covered are unchanged, and a completion claim is checked against what
 actually ran. Onboarding was rewritten for a first-time reader.
 
-Start with the [release overview](docs/release-v0.9.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 
 ### Changed
 
@@ -155,8 +299,7 @@ verification process. Two reviewers check each code change independently, and
 Codex records actual test results before reporting verified completion.
 (0.9.0 sizes the reviews to the change.)
 
-Start with the [release overview](docs/release-v0.8.0.md) or the
-[installation and upgrade guide](docs/install.md#updating-to-v090).
+See the [installation and upgrade guide](docs/install.md).
 The implementation details follow.
 
 ### Added — Codex execution evidence and optional external reviews

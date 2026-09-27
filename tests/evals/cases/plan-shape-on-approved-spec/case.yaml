@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.1",
+  "name": "plan-shape-on-approved-spec",
+  "description": "Unrun detector (982c835 precedent: built and validated against hand-written outcomes only; no paid run has executed it). Bet measured: writing-plans -- 1,514 words of prose (SKILL.md 1,115 + templates/plan.md 399, wc -w) claiming that an approved spec becomes a dated, checklist-shaped, executable plan; before this case the claim had zero behavioral coverage. The expected shape is DERIVED, not invented: path docs/llm-orchestrator/plans/YYYY-MM-DD-<slug>-plan.md is SKILL.md step 7; the heading-level '### N. <name>  - [ ]' checkbox is templates/plan.md's load-bearing durable state ('executing-plans greps across /clear'); per-task 'Done when:' is step 4.5's termination contract; the backticked command with expected output is step 4 plus the no-placeholder hard rule ('a run: step with no expected-output line' is forbidden). Checks grade the durable artifact only, never prose: (1) a dated *-plan.md exists in the plans dir; (2) it carries >= 3 heading-level task checkboxes; (3) every task section has Done when: AND a backticked literal command on a run:/Done when: line. The characteristic failure this distinguishes is the prose plan in the right file -- dated file exists (check 1 green) but paragraphs instead of checklist tasks and no literal commands (checks 2-3 red), which is exactly the plan the skill's 1,514 words exist to prevent. The planted spec is pure-stdlib on purpose so the research gate stays silent and this case measures writing-plans alone. The heading and 'Done when' checks read the Write call that created the plan; the second approximates 'every task has a Done when line and a backticked command' as 'at least three of each', not a per-task check.",
+  "tags": [
+    "plan-shape-on-approved-spec"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "plan-file-created",
+      "type": "file_exists",
+      "path": "docs/llm-orchestrator/plans/????-??-??-*-plan.md"
+    },
+    {
+      "name": "three-checklist-task-headings",
+      "type": "tool_used",
+      "tool": "Write",
+      "input_match": "plans/\\d{4}-\\d{2}-\\d{2}-[^\"]*-plan\\.md\"(?:.*?\\\\n###\\s*\\d+\\.[^\\\\]*?-\\s*\\[[ xX]\\]){3}"
+    },
+    {
+      "name": "tasks-carry-done-when-and-command",
+      "type": "tool_used",
+      "tool": "Write",
+      "input_match": "plans/\\d{4}-\\d{2}-\\d{2}-[^\"]*-plan\\.md\"(?=(?:.*?\\\\n\\s*[Dd][Oo][Nn][Ee] [Ww][Hh][Ee][Nn]:){3})(?:.*?(?:[Rr][Uu][Nn]:|[Dd][Oo][Nn][Ee] [Ww][Hh][Ee][Nn]:)[^\\\\]*?`[^`\\\\]+`){3}"
+    }
+  ]
+}

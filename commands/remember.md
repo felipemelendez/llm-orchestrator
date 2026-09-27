@@ -1,5 +1,5 @@
 ---
-description: Append a fact to your project's CLAUDE.md with auto-classification by section (Conventions / Decisions / People / Notes). Cross-project facts go to ~/.claude/CLAUDE.md. Plugin-config facts (research_aggressiveness, declined_mcp) go to the plugin's internal memory.
+description: Save a fact to the right section of CLAUDE.md, or to plugin memory for plugin settings.
 argument-hint: "[fact]"
 ---
 

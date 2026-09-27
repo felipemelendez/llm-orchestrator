@@ -1,0 +1,127 @@
+{
+  "arms": [
+    {
+      "name": "full-builtin",
+      "provider": "orch-review",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}"
+      ]
+    },
+    {
+      "name": "standard-builtin",
+      "provider": "orch-review",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "standard",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}"
+      ]
+    },
+    {
+      "name": "standard-builtin-codex",
+      "provider": "orch-review",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "standard",
+        "--writer",
+        "codex",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}"
+      ]
+    },
+    {
+      "name": "full-builtin-single",
+      "provider": "orch-review",
+      "output": "review-json",
+      "command": [
+        "{python}",
+        "{plugin}/scripts/lib/orch-review.py",
+        "run",
+        "--path",
+        "full",
+        "--writer",
+        "claude",
+        "--base",
+        "HEAD",
+        "--spec",
+        "{spec}",
+        "--run-dir",
+        "{run_dir}"
+      ],
+      "without": [
+        "codex"
+      ]
+    },
+    {
+      "name": "code-review",
+      "provider": "claude",
+      "output": "claude-json",
+      "command": [
+        "claude",
+        "-p",
+        "/code-review high {spec_note}",
+        "--model",
+        "opus",
+        "--effort",
+        "high",
+        "--safe-mode",
+        "--output-format",
+        "json",
+        "--permission-mode",
+        "dontAsk",
+        "--allowedTools",
+        "Read,Grep,Glob,Bash,Agent",
+        "--strict-mcp-config",
+        "--mcp-config",
+        "{{\"mcpServers\":{{}}}}",
+        "--no-session-persistence"
+      ]
+    },
+    {
+      "name": "codex-review",
+      "provider": "codex",
+      "output": "codex-review",
+      "command": [
+        "codex",
+        "review",
+        "--uncommitted",
+        "-c",
+        "model_reasoning_effort=\"high\"",
+        "-c",
+        "developer_instructions={spec_note_toml}",
+        "{codex_mcp_off}"
+      ]
+    }
+  ]
+}

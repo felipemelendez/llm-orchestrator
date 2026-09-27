@@ -1,128 +1,160 @@
 # Codex
 
-LLM Orchestrator is built for Claude Code. If you use Codex, you can install a
-smaller part of it: the cadence skill and three small hooks. This page says
-what you get, how to install it, and what it never does.
+LLM Orchestrator is built for Claude Code. On Codex you can install a smaller
+part of it, centred on the cadence: an optional set of project rules that
+matches the amount of checking to the risk of a change
+([The cadence](cadence.md)). This page says what you get, how to install and
+update it, and what it does not do.
 
 ## What you get
 
 - **The cadence skill.** It tells the assistant how much checking a change
-  needs. A small change takes a quick path. A risky change gets independent
-  review and real tests before it is called done. It is the same skill Claude
+  needs, in projects that turn the cadence on. It is the same skill Claude
   Code uses.
+- **The review skill** (`requesting-code-review`), which runs the same review
+  script as on Claude Code. See [Reviews from Codex](codex-provider.md).
 - **The shared instructions** in `~/.codex/AGENTS.md`, so every Codex session
   knows to read a project's rulebook before changing code.
-- **Three hooks.**
-  1. *The file guard.* In a project that has cadence turned on, it stops the
-     assistant from editing the rulebook, the config and the lock. Claude Code
-     has built-in deny rules for this. Codex does not, so this hook fills that
-     gap.
-  2. *The completion check.* When a reply ends with `Verification: PASS`, it
-     looks at the session log Codex already keeps and asks one question: did a
-     test command actually run and pass in this turn? If not, it sends the
-     assistant back once to run the check or change PASS to PENDING. You never
-     see a message from it.
-  3. *Scratch cleanup.* Removes temporary files left behind by finished tasks.
+- **Three hooks:**
+  1. *The file guard.* In a project with the cadence on, it refuses a command
+     or patch that would change the rulebook, the config or the lock.
+  2. *The completion check* ([what it is](../README.md#what-happens-by-default)).
+     On Codex it sends the assistant back once, instead of leaving a note.
+  3. *Scratch cleanup.* It removes temporary files left by finished tasks.
 
-Everything else, such as planning, brainstorming, the reviewers and the merge
-queue, stays in Claude Code.
+None of the hooks prints a message for you. Planning, brainstorming and the
+other skills and hooks stay in Claude Code.
 
 ## Install
 
-1. Clone this repository into a folder you will keep. The hooks point at
-   scripts inside it.
+1. Clone this repository into a folder you will keep, and add it to Codex as a
+   plugin. This installs the two skills and the three hooks.
 
    ```sh
    git clone https://github.com/felipemelendez/llm-orchestrator.git
    cd llm-orchestrator
+   codex plugin marketplace add "$PWD"
+   codex plugin add llm-orchestrator@llm-orchestrator
+   ```
+
+2. Add the instructions block to `~/.codex/AGENTS.md`. The plugin cannot do
+   this part.
+
+   ```sh
    ./scripts/install.sh --codex
    ```
 
-2. Open a new Codex session and run `/hooks`. Review the three hooks and trust
-   them. Codex only runs a hook you have trusted, and the installer cannot do
-   that step for you.
+3. Open a new Codex session, run `/hooks`, and trust the plugin's entries.
+   `/hooks` lists four: the file guard twice (once for shell commands, once
+   for patches), the completion check, and scratch cleanup. Codex runs only
+   hooks you have trusted, and no command can do this step for you.
 
-That is all. The installer never touches `config.toml`.
+What each step writes:
 
-What it writes, all under your home folder:
+- `codex plugin add` copies the plugin into Codex's plugin cache under
+  `~/.codex/plugins/cache/` and records it in `~/.codex/config.toml`. Codex
+  runs the skills and hooks from that copy.
+- `install.sh --codex` adds the instructions block to the end of
+  `~/.codex/AGENTS.md`. It never touches `config.toml`. If something is in the
+  way, such as a second pair of markers or a folder it cannot write, it stops
+  and names the problem before writing anything.
 
-- `~/.agents/skills/cadence`: a copy of the skill.
-- `~/.codex/AGENTS.md`: the instructions block, added to what is already there.
-- `~/.codex/hooks.json`: the three hooks, added next to your own entries. The
-  file as it was before is kept as `hooks.json.bak`.
+## Turn a project on
 
-Running the installer again replaces its own entries and leaves yours alone.
-If something is in the way, such as a file of yours inside the skill folder or
-a folder it cannot write, it stops and names the problem before writing
-anything.
+The cadence is per project. Open the project in Codex and ask the assistant to
+enable the cadence using the scripts in the cadence skill's `scripts/` folder.
+The steps are the same as in Claude Code:
+[Enable cadence in a project](cadence.md#enable-cadence-in-a-project).
 
 ## Update
 
 ```sh
 cd llm-orchestrator
 git pull --ff-only
+codex plugin add llm-orchestrator@llm-orchestrator
 ./scripts/install.sh --codex
 ```
 
-The skill is a copy, so it only changes when you rerun the installer. Then
-check `/hooks` in a new session: a hook whose text changed needs your trust
-again.
+`git pull` does not change the copy Codex runs; `codex plugin add` refreshes
+it. Then check `/hooks` in a new session: a hook whose definition changed needs
+your trust again.
 
-If you installed the Codex layer from v0.8 or v0.9, this run also removes old
-hook entries that pointed at deleted files and made every command fail.
+### Upgrading from an older install
 
-## Turn a project on
+Releases before 0.12.0 had `install.sh --codex` copy the skill to
+`~/.agents/skills/cadence` and add the hooks to `~/.codex/hooks.json`. With the
+plugin installed too, Codex would run each hook twice. Once the plugin is
+installed, `install.sh --codex` removes the old copies. Until then it removes
+nothing, so the old hooks keep working, and it tells you to add the plugin
+first.
 
-Cadence is per project. Open the project in Codex and ask the assistant to
-enable cadence using the scripts in `~/.agents/skills/cadence/scripts/`. It
-proposes the config and drafts the rulebook text for you to approve. The steps
-are the same as in Claude Code: see
-[Enable cadence in a project](install.md#enable-cadence-in-a-project).
+- From `~/.codex/hooks.json` it removes only entries that run this plugin's
+  hook scripts. Your own entries stay. The file as it was is kept beside it as
+  `hooks.json.bak` (or a numbered `.bak.1`), and the run prints the path.
+- From `~/.agents/skills/cadence` it removes only files this plugin ships, and
+  only when the old installer's `.orch-installed` marker is there. Files you
+  added are kept and named. A `cadence` skill without the marker is left alone.
+
+`./scripts/install.sh --check` shows whether anything from an older install is
+left.
+
+## Trust and what Codex reads
+
+Codex asks whether to trust each project and saves the answer in
+`~/.codex/config.toml`. As of Codex 0.157.0:
+
+- In an untrusted project, Codex does not read the project's `AGENTS.md`. It
+  still reads `~/.codex/AGENTS.md`, so the cadence block applies, but the
+  project's own rules do not.
+- A project's own `.codex/hooks.json` loads only in a trusted project. The
+  plugin's hooks are not in a project, so project trust does not affect them.
+- A hook runs only after you trust it in `/hooks`. Trust is tied to the hook's
+  event, matcher, command and timeout; changing any of them asks again.
+  Editing the script a hook runs, or a new plugin version, does not.
+- If `~/.codex/AGENTS.override.md` exists, Codex reads it instead of
+  `~/.codex/AGENTS.md`, and the cadence block is not read. Copy the block into
+  the override file, or remove the override.
+
+Codex reads this repository's `.codex-plugin/plugin.json` before the Claude
+Code manifest, so installing it (or importing it with Codex `/import`) loads
+only the two skills and the hooks above. One route still brings Claude Code
+hooks over: a `--copy` install wires them into a project's
+`.claude/settings.json`, and Codex may offer to move them into
+`.codex/hooks.json`. Decline that for this plugin's hooks; they are written
+for Claude Code.
 
 ## How the two checks behave
 
-**The file guard** runs before every shell command and every patch. In a
-project with cadence on, a command or patch that names a locked file is refused
-unless it is one plain read, such as `cat docs/llm-orchestrator/LAWS.md` on its
-own line. The refusal goes to the assistant with the way out. In every other
-project it does nothing. It has no off switch. The only way past it is to start
-the session unlocked, as described under
-[Escape hatches](install.md#escape-hatches-for-the-hard-guards).
+**The file guard** runs before every shell command and patch. In a project
+with the cadence on, a command or patch that names a locked file is refused
+unless it is one plain read on its own line, such as
+`cat docs/llm-orchestrator/LAWS.md`. The refusal tells the assistant how to
+read the file and that a change is a ruling. It has no off switch: a locked
+file changes only by [a ruling](cadence.md#changing-the-rules) you apply in
+your own terminal. In other projects it does nothing.
 
-**The completion check** runs when the assistant stops. It reads only the log
-Codex writes for every command it runs, with the exact command and exit code.
-Nothing the assistant wrote or printed counts. If the reply says PASS and no
-test command finished with exit code 0 in this turn, the assistant is sent back
-once with a short note. On that second stop the check stays quiet, so it can
-never loop. It never blocks you, never hashes files and never prints for you.
+**The completion check** runs when the assistant stops. It reads only the
+records Codex writes when a command finishes, with the exact command and exit
+code; nothing the assistant wrote counts. If the reply says PASS and no test
+command finished with exit code 0 in that turn, the assistant is sent back once
+with a short note, which also asks it to repeat its full answer, because that
+reply becomes the final one. It stays quiet on the second stop, so it never
+loops.
 
 Turn it off with `ORCH_DISABLED_HOOKS=codex-verify-gate` or
 `ORCH_HOOK_PROFILE=minimal`.
 
-## Limits, stated plainly
+## Limits
 
-- The check recognises test commands by a shared pattern: `npm test`,
-  `pytest`, `bash tests/...` and the like. A check hidden in a background job,
-  a heredoc, a quoted string or behind `|| true` slips past on purpose. It
-  catches careless claims, not deliberate disguises.
+- It recognises the same test commands as the Claude Code check: `npm test`,
+  `pytest`, `.venv/bin/pytest`, `pnpm --filter web vitest run`,
+  `aws-vault exec profile -- pytest`, `bash tests/...` and the like, plus any
+  command that starts with the project's `runner.test_cmd`. A check in a
+  background job, behind `|| true` or after `false &&` gets past it. It catches
+  careless claims, not deliberate disguises.
 - It reads Codex's session log, which Codex says is not a stable format. If a
-  future Codex stops writing command records, every PASS will be sent back once
-  until the check is updated. That is the safe direction.
-- It was run over every session log on the machine it was built on (348 files)
-  without a crash, but the test suite drives it with recorded log shapes, not a
-  live session. One Codex turn that ends in PASS with no check is enough to see
-  it work.
-
-## Optional: a Claude reviewer from Codex
-
-On Full work, one of the two independent reviews can come from Claude through
-your existing Claude login. See [codex-provider.md](codex-provider.md).
-
-## Tests
-
-```sh
-bash tests/test-codex-verify-gate.sh   # the completion check on log fixtures
-bash tests/test-codex-adapter.sh       # the file guard
-bash tests/test-install-global.sh      # the installer under a temporary HOME
-python3 tests/test-claude-provider.py  # the optional Claude reviewer, with a fake CLI
-```
+  future Codex stops writing command records, every PASS is sent back once
+  until the check is updated.
+- In a thread whose log says `"history_mode": "legacy"`, commands run inside a
+  code-mode `exec` script leave no record, so the check says nothing for that
+  turn. Commands run directly are still read.

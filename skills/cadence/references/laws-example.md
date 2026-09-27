@@ -14,10 +14,9 @@ If an assistant thinks a rule is wrong, it says so in its handoff and keeps
 following the rule. Only Ana changes this file.
 
 This file is what the cadence lock protects. It changes only by a numbered
-ruling from Ana, in a commit whose message carries `Ruling <N>`, with
-`LOCK.sha256` re-recorded under the unlock switch, which Ana sets in her own
-shell when she starts that session, never in a settings file and never by an
-assistant.
+ruling from Ana, in a commit whose message carries `Ruling <N>`. Ana makes that
+commit with the cadence skill's `cadence-ruling.sh`, in her own terminal; an
+assistant proposes the change and never runs it.
 
 ## 1. What we are building, and why
 

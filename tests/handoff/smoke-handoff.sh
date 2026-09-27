@@ -5,12 +5,14 @@
 # Tests:
 #   1. orch_handoff_estimate_pct against fixture JSONL files
 #   2. Hook output: high-input.json → additionalContext; below-floor → empty
-#   3. Hook latency measurement
-#   4. Disabled-hook: ORCH_DISABLED_HOOKS / ORCH_HOOK_PROFILE=minimal → empty stdout
-#   5. ORCH_CONTEXT_WINDOW_TOKENS validation (non-numeric / empty → 1000000)
-#   6. Bounded tail read on a large synthetic transcript
+#   3. Disabled-hook: ORCH_DISABLED_HOOKS / ORCH_HOOK_PROFILE=minimal → empty stdout
+#   4. ORCH_CONTEXT_WINDOW_TOKENS validation (non-numeric / empty → 1000000)
+#   5. Bounded tail read on a large synthetic transcript
 #
-# Bash 3.2 compatible. Uses python3 ONLY for test-harness wall-clock timing.
+# The hook's speed is not timed here: one wall-clock run failed whenever the
+# machine was busy. tests/test-hook-latency.sh times it (median of five runs).
+#
+# Bash 3.2 compatible.
 
 set -uo pipefail
 
@@ -98,39 +100,7 @@ else
 fi
 
 # ============================================================
-# Section 3: Latency measurement
-# ============================================================
-printf '\n%s== hook latency ==%s\n' "$DIM" "$RESET"
-
-HAVE_PYTHON3=0
-if command -v python3 >/dev/null 2>&1; then
-  HAVE_PYTHON3=1
-fi
-
-if [[ $HAVE_PYTHON3 -eq 1 ]]; then
-  T_START=$(python3 -c 'import time; print(time.time())')
-  CLAUDE_PROJECT_DIR="${ROOT}" ORCH_HOME="$(mktemp -d)" bash "$HOOK" < "${FIXTURES}/high-input.json" >/dev/null 2>/dev/null || true
-  T_END=$(python3 -c 'import time; print(time.time())')
-
-  ELAPSED_MS=$(awk -v s="$T_START" -v e="$T_END" 'BEGIN { printf "%.0f", (e - s) * 1000 }')
-  printf '  hook wall-time: %s ms\n' "$ELAPSED_MS"
-
-  if (( ELAPSED_MS < 50 )); then
-    ok "hook latency < 50ms (${ELAPSED_MS}ms)"
-  elif (( ELAPSED_MS < 500 )); then
-    printf '  %s!%s hook latency %sms exceeds 50ms target (CI may be slow — PASS with note)\n' \
-      "$GREEN" "$RESET" "$ELAPSED_MS"
-    PASS=$((PASS+1))
-  else
-    fail "hook latency < 500ms (${ELAPSED_MS}ms)" "hook took ${ELAPSED_MS}ms — check for hung subprocess"
-  fi
-else
-  printf '  python3 not available — skipping latency measurement (PASS with note)\n'
-  PASS=$((PASS+1))
-fi
-
-# ============================================================
-# Section 4: Disabled-hook — ORCH_DISABLED_HOOKS / minimal → empty stdout
+# Section 3: Disabled-hook — ORCH_DISABLED_HOOKS / minimal → empty stdout
 # ============================================================
 printf '\n%s== disabled-hook (ORCH_DISABLED_HOOKS / ORCH_HOOK_PROFILE=minimal) ==%s\n' "$DIM" "$RESET"
 
@@ -155,7 +125,7 @@ else
 fi
 
 # ============================================================
-# Section 5: ORCH_CONTEXT_WINDOW_TOKENS validation (fallback to 1000000)
+# Section 4: ORCH_CONTEXT_WINDOW_TOKENS validation (fallback to 1000000)
 # ============================================================
 printf '\n%s== ORCH_CONTEXT_WINDOW_TOKENS validation ==%s\n' "$DIM" "$RESET"
 
@@ -174,7 +144,7 @@ else
 fi
 
 # ============================================================
-# Section 6: bounded tail read on a large synthetic transcript
+# Section 5: bounded tail read on a large synthetic transcript
 # ============================================================
 printf '\n%s== bounded tail read ==%s\n' "$DIM" "$RESET"
 

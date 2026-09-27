@@ -1,5 +1,5 @@
 ---
-description: Run the project's verification (tests, lint, typecheck) and report evidence. No assertion without output.
+description: Run the project's tests, lint and typecheck, and report the output.
 ---
 
 You are running `/llm-orchestrator:verify`.
@@ -46,8 +46,7 @@ Next:
 - If failure: /llm-orchestrator:debug.
 ```
 
-(`Verify:` is a sub-section, never the top-level header — the protocol grader
-checks the first line for one of the six shapes.)
+(`Verify:` is a sub-section, never the top-level header.)
 
 Constraints:
 - Never claim "tests pass" without an actual run.

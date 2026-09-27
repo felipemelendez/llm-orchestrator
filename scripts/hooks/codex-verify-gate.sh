@@ -29,14 +29,7 @@ CHECK="${HOOK_DIR}/../lib/codex-completion-check.py"
 [[ -f "${CHECK}" && -f "${HOOK_DIR}/../lib/orch-completion-check.py" ]] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
-# One pattern for both harnesses, described once in orch-signals.sh.
-SIG_LIB="${HOOK_DIR}/../lib/orch-signals.sh"
-# shellcheck source=scripts/lib/orch-signals.sh
-[[ -f "${SIG_LIB}" ]] && source "${SIG_LIB}"
-
 # stdin, never argv: a long reply overflows ARG_MAX and the check would vanish.
-printf '%s' "${INPUT}" \
-  | ORCH_VERIFY_CMD_RE="${ORCH_SIG_VERIFY_CMD:-}" \
-    ORCH_VERIFY_NONRUN_RE="${ORCH_SIG_VERIFY_NONRUN:-}" \
-    python3 "${CHECK}"
+# Which commands count is described once, in orch-completion-check.py.
+printf '%s' "${INPUT}" | python3 "${CHECK}"
 exit 0

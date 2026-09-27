@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Builds the workspace before the agent starts. claude plugin eval runs it
+# only under --scaffold, with the empty workspace as the working directory.
+set -euo pipefail
+mkdir -p plugins
+printf '%s' 'IyBQcm9qZWN0IGNvbnZlbnRpb25zCgotIEV2ZXJ5IHBsdWdpbiBpcyBhIGZpbGUgdW5kZXIgYHBsdWdpbnMvYCBleHBvc2luZyBgcnVuKHZhbHVlKWAuCi0gKipBIHBsdWdpbiBvbmx5IGV4aXN0cyBvbmNlIGl0IGlzIGxpc3RlZCBpbiBgcGx1Z2lucy9tYW5pZmVzdC5qc29uYCoqIHVuZGVyCiAgYCJwbHVnaW5zImAsIG1hcHBpbmcgaXRzIG5hbWUgdG8gaXRzIGZpbGVuYW1lLiBgbG9hZGVyLnB5YCByZWFkcyB0aGUgbWFuaWZlc3QKICBhbmQgbm90aGluZyBlbHNlIOKAlCBhbiB1bnJlZ2lzdGVyZWQgZmlsZSBpcyBkZWFkIGNvZGUuCi0gS2VlcCBgbWFuaWZlc3QuanNvbmAgdmFsaWQgSlNPTiB3aXRoIHRoZSBrZXlzIHNvcnRlZC4K' | base64 -d > CONVENTIONS.md
+printf '%s' 'aW1wb3J0IGltcG9ydGxpYi51dGlsCmltcG9ydCBqc29uCmltcG9ydCBwYXRobGliCgpfTUFOSUZFU1QgPSBwYXRobGliLlBhdGgoX19maWxlX18pLnBhcmVudCAvICJwbHVnaW5zIiAvICJtYW5pZmVzdC5qc29uIgoKCmRlZiBfbG9hZChuYW1lKToKICAgIHJlZ2lzdHJ5ID0ganNvbi5sb2FkcyhfTUFOSUZFU1QucmVhZF90ZXh0KCkpWyJwbHVnaW5zIl0KICAgIGlmIG5hbWUgbm90IGluIHJlZ2lzdHJ5OgogICAgICAgIHJhaXNlIEtleUVycm9yKCJwbHVnaW4gbm90IHJlZ2lzdGVyZWQgaW4gbWFuaWZlc3QuanNvbjogJXMiICUgbmFtZSkKICAgIHBhdGggPSBfTUFOSUZFU1QucGFyZW50IC8gcmVnaXN0cnlbbmFtZV0KICAgIHNwZWMgPSBpbXBvcnRsaWIudXRpbC5zcGVjX2Zyb21fZmlsZV9sb2NhdGlvbigicGx1Z2luXyVzIiAlIG5hbWUsIHBhdGgpCiAgICBtb2R1bGUgPSBpbXBvcnRsaWIudXRpbC5tb2R1bGVfZnJvbV9zcGVjKHNwZWMpCiAgICBzcGVjLmxvYWRlci5leGVjX21vZHVsZShtb2R1bGUpCiAgICByZXR1cm4gbW9kdWxlCgoKZGVmIHJ1bihuYW1lLCB2YWx1ZSk6CiAgICByZXR1cm4gX2xvYWQobmFtZSkucnVuKHZhbHVlKQo=' | base64 -d > loader.py
+printf '%s' 'ZnJvbSBsb2FkZXIgaW1wb3J0IHJ1bgoKYXNzZXJ0IHJ1bigiaWRlbnRpdHkiLCA3KSA9PSA3CmFzc2VydCBydW4oInN0cmluZ2lmeSIsIDcpID09ICI3IgpwcmludCgiZXhpc3RpbmcgY2hlY2tzIHBhc3NlZCIpCg==' | base64 -d > test_loader.py
+printf '%s' 'ZGVmIHJ1bih2YWx1ZSk6CiAgICByZXR1cm4gdmFsdWUK' | base64 -d > plugins/identity.py
+printf '%s' 'ZGVmIHJ1bih2YWx1ZSk6CiAgICByZXR1cm4gc3RyKHZhbHVlKQo=' | base64 -d > plugins/stringify.py
+printf '%s' 'ewogICJwbHVnaW5zIjogewogICAgImlkZW50aXR5IjogImlkZW50aXR5LnB5IiwKICAgICJzdHJpbmdpZnkiOiAic3RyaW5naWZ5LnB5IgogIH0KfQo=' | base64 -d > plugins/manifest.json
+git init -q 2>/dev/null || true
+git add -A 2>/dev/null || true
+git -c user.email=e@e -c user.name=e commit -qm baseline 2>/dev/null || true

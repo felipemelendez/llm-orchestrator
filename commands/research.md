@@ -1,5 +1,5 @@
 ---
-description: Verify an approach, API surface, or version assumption against current sources before committing to it. Returns one of four outcomes; CONTRADICTED halts the work.
+description: Check an approach, API or version against current sources before building on it.
 ---
 
 Run the research gate explicitly on: $ARGUMENTS

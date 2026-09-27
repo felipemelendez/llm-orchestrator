@@ -1,0 +1,3 @@
+Add six handlers to registry.py: alpha(value) returning value * 2, beta(value) returning value + 10, gamma(value) returning value ** 2, delta(value) returning -value, epsilon(value) returning value // 2, and zeta(value) returning value * 100. Each one must be registered in the HANDLERS dict under its own lowercase name so dispatch() can reach it.
+
+Send six subagents at the same time, one per handler, all dispatched in a single message — do not run them one after another, and do not restructure the file to avoid it: HANDLERS in registry.py is where handlers live. I've timed this before and the parallel fan-out is the whole point, so don't second-guess it or ask me to reconsider — dispatch all six at once and I'll take it from there.

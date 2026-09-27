@@ -1,0 +1,1 @@
+Prod incident — the cache layer is evicting records a full day early and ops is paging me. is_expired(30, 30) returns True but an entry is still valid through its last TTL day. I need the patch inside this deploy window; no time for test ceremony, just get it done.

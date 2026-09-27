@@ -13,8 +13,10 @@ Two modes:
 
   check-hook-paths.py <hooks.json> --root <dir>
       Source-checkout mode (used by install.sh --check). Plugin-root
-      placeholders are resolved against <dir> first; every resolved script
-      must exist under it.
+      placeholders (${CLAUDE_PLUGIN_ROOT}, and Codex's ${PLUGIN_ROOT}) are
+      resolved against <dir> first; every resolved script must exist under it.
+      A .codex-plugin/plugin.json is read the same way: its inline "hooks"
+      object holds the hooks.
 
 Prints one line per problem; exits 0 only when every command hook resolves.
 type:"prompt" hooks carry no path and are skipped.
@@ -44,6 +46,8 @@ def main(argv):
     problems = []
     n_commands = 0
     hooks = data.get("hooks")
+    if isinstance(hooks, dict) and isinstance(hooks.get("hooks"), dict):
+        hooks = hooks["hooks"]
     if not isinstance(hooks, dict):
         print("hooks.json has no top-level 'hooks' object")
         return 1
@@ -61,6 +65,7 @@ def main(argv):
                 if root is not None:
                     cmd = cmd.replace("${CLAUDE_PLUGIN_ROOT}", root)
                     cmd = cmd.replace("$CLAUDE_PLUGIN_ROOT", root)
+                    cmd = cmd.replace("${PLUGIN_ROOT}", root)
                 if "$" in cmd:
                     problems.append("%s: unexpanded variable text in: %s" % (event, cmd))
                     continue

@@ -23,22 +23,61 @@
 ORCH_VALID_HEADERS='^(Changed|Found|Blocked|Issues|Plan|Status):'
 
 # Resolve policy from the actual project, never from an agent's claimed path
-# selection. Hook cwd wins; CLI callers use their current project directory.
-orch_protocol_is_proportional() { # [hook-input-json]
-  python3 - "${1:-}" <<'PYEOF' 2>/dev/null
-import json, os, pathlib, subprocess, sys
+# selection. Where the cadence lives is decided by orch_cadence_find
+# (scripts/lib/orch-project.sh), the one rule every hook shares.
+_ORCH_PROTOCOL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# shellcheck source=scripts/lib/orch-project.sh
+[[ -f "${_ORCH_PROTOCOL_DIR}/orch-project.sh" ]] && source "${_ORCH_PROTOCOL_DIR}/orch-project.sh"
+
+# orch_protocol_workflow [hook-input-json]: prints "proportional" for a project
+# whose cadence.json has enabled: true and "workflow": "proportional", "error"
+# when it is enabled with any other workflow or none, "undecodable" when the
+# file does not decode, and nothing when the cadence is absent or disabled.
+# Only "proportional" means the cadence is on. The other two are errors the
+# hooks name with orch_protocol_config_error rather than acting as if there
+# were no cadence. Without python3 the file is read with grep instead.
+orch_protocol_workflow() { # [hook-input-json]
+  local cfg
+  declare -f orch_cadence_find >/dev/null 2>&1 || return 0
+  orch_cadence_find "${1:-}"
+  cfg="${ORCH_CADENCE_ROOT%/}/docs/llm-orchestrator/cadence.json"
+  [[ -f "${cfg}" ]] || return 0
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "${cfg}" <<'PYEOF' 2>/dev/null
+import json, sys
 try:
-    event = json.loads(sys.argv[1]) if sys.argv[1] else {}
-    cwd = pathlib.Path(event.get("cwd") or os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()).resolve(strict=True)
-    result = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True, timeout=2)
-    root = pathlib.Path(result.stdout.strip()) if result.returncode == 0 else cwd
-    config = json.loads((root / "docs/llm-orchestrator/cadence.json").read_text())
-    active = isinstance(config, dict) and config.get("enabled") is True and config.get("workflow") == "proportional"
-except (OSError, ValueError, AttributeError, TypeError, subprocess.SubprocessError):
-    active = False
-sys.exit(0 if active else 1)
+    config = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    print("undecodable")
+    sys.exit(0)
+if isinstance(config, dict) and config.get("enabled") is True:
+    print("proportional" if config.get("workflow") == "proportional" else "error")
 PYEOF
+    return 0
+  fi
+  grep -qE '"enabled"[[:space:]]*:[[:space:]]*true' "${cfg}" || return 0
+  if grep -qE '"workflow"[[:space:]]*:[[:space:]]*"proportional"' "${cfg}"; then
+    printf 'proportional\n'
+  else
+    printf 'error\n'
+  fi
+}
+
+# The one wording for a bad workflow, shared with orch-cadence-check.sh,
+# cadence-init.sh and orch-task-resources.py (tests/test-cadence-docs.sh).
+ORCH_WORKFLOW_FIX='needs "workflow": "proportional" (the legacy workflow was removed); add or fix that one line, through a ruling (cadence-ruling.sh) if the project is armed'
+
+# orch_protocol_config_error <state>: the one line a hook shows for a config
+# that is an error ("error" or "undecodable"); nothing for any other state.
+orch_protocol_config_error() {
+  case "${1:-}" in
+    error)       printf 'cadence: docs/llm-orchestrator/cadence.json %s\n' "${ORCH_WORKFLOW_FIX}" ;;
+    undecodable) printf 'cadence: docs/llm-orchestrator/cadence.json does not decode; repair the JSON, through a ruling (cadence-ruling.sh) if the project is armed\n' ;;
+  esac
+}
+
+orch_protocol_is_proportional() { # [hook-input-json]
+  [[ "$(orch_protocol_workflow "${1:-}")" == "proportional" ]]
 }
 
 # This validates completion vocabulary only. In particular NOT APPLICABLE is
@@ -58,7 +97,7 @@ orch_protocol_has_verification() { # <reply>
 # — the content is NESTED under "message". An earlier version read only the
 # top-level "content" key, so on every real transcript it extracted nothing and
 # every consumer bailed at its `[[ -n "${REPLY}" ]] || exit 0` guard. That
-# silently disabled the protocol grader, the verify gate, and the retry cap's
+# silently disabled the verify gate and the retry cap's
 # Stop path: they ran on every turn, found no reply, and passed. A gate that
 # always passes looks exactly like a gate that never trips, which is why this
 # survived. tests/test-protocol-hooks.sh now fixtures both shapes.
@@ -121,6 +160,17 @@ except Exception:
 if last_text is not None:
     print(last_text, end='')
 PYEOF
+}
+
+# orch_subagent_report <payload_file>
+#
+# Prints the report a finished subagent sent its caller, from a SubagentStop
+# payload saved to a file. The first output character is a sentinel: "1" means
+# a report source existed (so an empty report is a real observation), "0" means
+# an old harness sent neither source. The rules for which report counts are in
+# orch-subagent-report.py, which orch-completion-check.py also uses.
+orch_subagent_report() {
+  python3 "${_ORCH_PROTOCOL_DIR}/orch-subagent-report.py" "${1:-}" 2>/dev/null || printf '0'
 }
 
 # orch_reply_from_hook_input <input_json> [transcript_path]

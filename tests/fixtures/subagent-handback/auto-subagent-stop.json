@@ -1,0 +1,12 @@
+{
+  "session_id": "be8a0dc2-f2f3-4122-8fb3-220e06058751",
+  "transcript_path": "__PROJECTS__/be8a0dc2-f2f3-4122-8fb3-220e06058751.jsonl",
+  "cwd": "__REPO__",
+  "permission_mode": "auto",
+  "agent_id": "ac8880b1ac6e339b3",
+  "agent_type": "llm-orchestrator:orch-explorer",
+  "hook_event_name": "SubagentStop",
+  "stop_hook_active": false,
+  "agent_transcript_path": "__PROJECTS__/be8a0dc2-f2f3-4122-8fb3-220e06058751/subagents/agent-ac8880b1ac6e339b3.jsonl",
+  "last_assistant_message": "Report delivered to caller."
+}

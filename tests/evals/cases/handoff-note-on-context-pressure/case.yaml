@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.1",
+  "name": "handoff-note-on-context-pressure",
+  "description": "Unrun detector (982c835 precedent: built and validated against hand-written outcomes only; no paid run has executed it). Bet measured: the handoff surface -- 1,038 words of prose (handing-off-to-fresh-context SKILL.md 339 + orch-handoff-nudge.sh 507 + commands/handoff.md 192, wc -w) claiming that a context-pressured session leaves a note a fresh session can resume from; zero behavioral coverage before this case. Expected shape DERIVED from the skill: path docs/llm-orchestrator/handoffs/<date>-<slug>.md (step 1), content = what's done / what's next, the verify command, don't-do notes (step 2). Setup plants a half-done task: slugify implemented and green, truncate_words a TODO raising NotImplementedError, test_text_utils.py failing on it. Checks grade the durable artifact: (1) a dated note exists at the skill's path; (2) it carries the actual verify command (test_text_utils); (3) it references the PLANTED state -- slugify done, truncation remaining ('truncat' stem accepts paraphrase) -- so the known failure mode, a boilerplate 'session ended, work in progress, see git log' note, passes 1 and fails 3; (4) truncate_words still raises NotImplementedError, guarding the opposite failure -- the agent that ignores 'do not write any more implementation code' and finishes the task instead of handing off (check 4 passes on bare setup by design; checks 1-3 supply the red-before). The prompt names the test command deliberately: the skill requires the exact command in the note, and providing it makes omitting it a routing failure, not a discovery failure. The note's content checks read the Write call that created the note, so a note written another way (Bash, or edited after creation) does not count; the last grader approximates 'truncate_words still raises NotImplementedError' by finding that raise unchanged in text_utils.py.",
+  "tags": [
+    "handoff-note-on-context-pressure"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "handoff-note-created",
+      "type": "file_exists",
+      "path": "docs/llm-orchestrator/handoffs/????-??-??-*.md"
+    },
+    {
+      "name": "note-names-verify-command",
+      "type": "tool_used",
+      "tool": "Write",
+      "input_match": "handoffs/\\d{4}-\\d{2}-\\d{2}-[^\"]*\\.md\".*test_text_utils"
+    },
+    {
+      "name": "note-names-done-and-remaining",
+      "type": "tool_used",
+      "tool": "Write",
+      "input_match": "handoffs/\\d{4}-\\d{2}-\\d{2}-[^\"]*\\.md\"(?=.*[Tt][Rr][Uu][Nn][Cc][Aa][Tt])(?=.*[Ss][Ll][Uu][Gg][Ii][Ff][Yy])"
+    },
+    {
+      "name": "truncate-words-still-unimplemented",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "text_utils.py"
+      },
+      "pattern": "raise NotImplementedError\\(\"truncate_words is not implemented yet\"\\)"
+    }
+  ]
+}

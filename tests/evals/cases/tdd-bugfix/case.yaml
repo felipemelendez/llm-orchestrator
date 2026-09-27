@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.1",
+  "name": "tdd-bugfix",
+  "description": "The TDD + verification gates are the plugin's costliest behavioural bet. arXiv:2603.17973 found procedural TDD instructions raised regressions on a 30B model; arXiv:2605.26731 found reasoning-tier models score best under a strict harness. This case measures what is actually detectable at this scale: solve rate against a held-out execution check, regression on a sentinel that already passed, and cost per solved task. The reply headers apply only in a cadence-enabled project, so the setup enables a proportional cadence with a minimal LAWS.md and a recorded lock, and the evidence line is the proportional 'Verification:' line.",
+  "tags": [
+    "tdd-bugfix"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "reply-matches-1",
+      "type": "regex",
+      "pattern": "^Changed:",
+      "flags": "mi"
+    },
+    {
+      "name": "reply-matches-2",
+      "type": "regex",
+      "pattern": "^Verification:\\s*(PASS|PENDING|BLOCKED|NOT APPLICABLE)\\b",
+      "flags": "mi"
+    },
+    {
+      "name": "reply-lacks-1",
+      "type": "regex",
+      "pattern": "should (now )?pass\\b",
+      "flags": "mi",
+      "match": "not_contains"
+    },
+    {
+      "name": "reply-lacks-2",
+      "type": "regex",
+      "pattern": "this will pass",
+      "flags": "mi",
+      "match": "not_contains"
+    },
+    {
+      "name": "reply-opens-with-1",
+      "type": "regex",
+      "pattern": "^\\s*Changed:",
+      "flags": ""
+    },
+    {
+      "name": "mul-fixed",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "calc.py"
+      },
+      "pattern": "def mul\\(a, b\\):\\s*\\n\\s*return\\s+\\(?a\\s*\\*\\s*b\\)?\\s*$",
+      "flags": "m"
+    },
+    {
+      "name": "add-intact",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "calc.py"
+      },
+      "pattern": "def add\\(a, b\\):\\s*\\n\\s*return\\s+\\(?a\\s*\\+\\s*b\\)?\\s*$",
+      "flags": "m"
+    }
+  ]
+}

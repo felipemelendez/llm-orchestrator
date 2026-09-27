@@ -1,5 +1,5 @@
 ---
-description: Turn the cadence on for this project — the laws, the lock, the native deny rules and the git layer. Detects the toolchain, proposes a cadence.json for the user to confirm, then writes and arms.
+description: Turn the cadence on for this project — laws, lock, deny rules and git hooks. Proposes a cadence.json for you to confirm first.
 argument-hint: "[--adopt] [--dry-run]"
 ---
 
@@ -44,9 +44,7 @@ Show the user the whole proposal, not a summary — it is the contract the gate,
 the check and the git layer all read. Then say in one line what it detected and
 ask them to confirm or correct. Before writing the configuration, confirm:
 
-- `workflow` is `proportional` for a new project. Only a legacy project keeps
-  it absent, and only then do the legacy report settings (`notes_dir`,
-  `ticket_re`) matter.
+- `workflow` is `proportional`. The init refuses any other value, or none.
 - `runner.test_cmd`, `prod_globs` and `test_globs` match where this project's
   tests, production code and test files actually live. A `profile` of `unknown`
   means no test command was found: ask for the real command now rather than
@@ -77,12 +75,12 @@ changes the report's wording and drops the placeholder reminder; nothing is
 overwritten either way). Add `--dry-run` when they asked to see the plan first —
 then stop and show them the plan.
 
-The script writes, in this order: `LAWS.md` and its three companions →
+The script writes, in this order: `LAWS.md` and its two companions →
 `AGENTS.md` → `CLAUDE.md` → `.claude/settings.json` → `.githooks/` →
 `docs/llm-orchestrator/cadence.json` last → the lock. It never overwrites: every
-file the project already has comes back as `kept` — except the marked
-`ORCH:LAWS` section, which under the unlock is replaced whole after a `.bak`,
-and `.claude/settings.json`, which comes back `merged`.
+file the project already has comes back as `kept`, except `.claude/settings.json`,
+which comes back `merged`. A marked `ORCH:LAWS` section that is not the current
+block is refused; it changes only by a ruling.
 
 ### 5. Report
 
@@ -97,16 +95,16 @@ git config core.hooksPath .githooks
 ```
 
 Report the lock line separately, then end with an honest completion line: the
-rulebook, the re-lock and the hook routing are still the user's to do, so a
-proportional project ends with `Verification: PENDING — rulebook completion,
-re-locking and hook activation remain`, and a legacy one with a `Verify:` line
-naming the verdict command and its output. A Git policy verdict is not test
-execution, so never write PASS here.
+rulebook, the re-lock and the hook routing are still the user's to do, so end
+with `Verification: PENDING — rulebook completion, re-locking and hook
+activation remain`. A Git policy verdict is not test execution, so never write
+PASS here.
 
 The recipe the script prints is ordered, and the order is load-bearing: fill in
-the `<PLACEHOLDER>`s, re-lock under `ORCH_CADENCE_UNLOCK=1` (the fill changed
-the laws after this run's manifest), route the clone's hooks, then make the
-arming commit.
+the `<PLACEHOLDER>`s, re-lock in the user's own terminal with the line the
+script prints (the fill changed the laws after this run's manifest, and `--lock`
+rewrites an existing lock only when a terminal is attached), route the clone's
+hooks, then make the arming commit.
 
 Then help the user write the laws. Point them at the filled-in example beside
 the template, `skills/cadence/references/laws-example.md`, and offer to draft
@@ -126,13 +124,18 @@ placeholders and the re-lock yourself even when the recipe does not list them.
 - Re-running this on an already-initialized project is a no-op while its
   `ORCH:LAWS` section still matches the current block,
   and a refusal once that section has drifted;
-  either way nothing changes unless `ORCH_CADENCE_UNLOCK=1` is in the session's
-  environment (`ORCH_CADENCE_UNLOCK=1 claude`), for two separate reasons.
+  either way nothing changes, for two separate reasons.
   First, the script itself keeps every file the project already has, and
   reports the lock as already armed.
   Second, the native deny rules refuse edits to the config paths (`LAWS.md`,
   `cadence.json`, `LOCK.sha256`, `.claude/settings.json`, `.githooks/**`) —
   present from the moment those rules are merged into `.claude/settings.json`.
+  A protected file changes after that only by a ruling (`cadence-ruling.sh`).
+- In an armed project whose hooks, marked block or deny rules are older than
+  this plugin's, the script writes no protected file. It writes an upgrade
+  ruling patch outside the project and prints the one `cadence-ruling.sh`
+  command that applies it. Relay the patch path and the command; the user runs
+  it in their own terminal. Never run it yourself.
 - Never run `git config` for the user: routing a repo's hooks is their decision,
   so the one-liner is printed, not executed.
 - Never fill in `LAWS.md`'s placeholders yourself, and never edit a `LAWS.md`

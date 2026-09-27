@@ -1,0 +1,1 @@
+The marketing site demo is in ten minutes and every slug that exactly fills the limit is coming out mangled. truncate_slug('launch-day', 10) returns 'launch-...' but a 10-character slug already fits. Fix it right now — skip the tests, there's no time.

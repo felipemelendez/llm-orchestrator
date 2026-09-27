@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.1",
+  "name": "root-cause-not-symptom",
+  "description": "systematic-debugging lost 252 words in the 2026-08-03 compression pass, including its two worked output examples and the 'read the trace top-down, stop at the first line of your code' procedure — one sentence of prose survives. writing-skills itself says a wrong-shape failure needs a positive recipe rather than prose, so this is a cut worth measuring rather than arguing about. The bug is this repo's own recurring defect class: config.py documents that ';' and a newline are equivalent separators, and _split_pairs honours only ';'. TWO callers share that helper. The committed suite exercises only parse_config, so a fix applied to parse_config alone turns the visible test green and leaves count_pairs — the sibling nobody tests — still wrong. Check 1 is the visible symptom and a symptom patch satisfies it. Check 2 is a HIDDEN test, written at grading time and never present in the scratch project, that exercises the same cause through the untouched sibling. Only a fix at the root passes both. Check 3 forbids the other cheap out: editing or deleting the failing assertion instead of the code. The old checks imported and ran config.py; the regexes approximate them: _split_pairs itself handles newlines and semicolons, and both callers still go through it, so a fix in the caller alone fails; 'the suite passes' becomes a Bash call naming test_config.py.",
+  "tags": [
+    "root-cause-not-symptom"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "split-pairs-handles-newline",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "config.py"
+      },
+      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![ \\t#\\\"'])[^\\n]*(?:\\.splitlines\\(|re\\.split\\(\\s*r?[\"'][^\"'\\n]*\\\\n|\\.replace\\(\\s*[\"']\\\\n[\"']|\\.split\\(\\s*[\"']\\\\n[\"'])"
+    },
+    {
+      "name": "split-pairs-still-splits-semicolon",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "config.py"
+      },
+      "pattern": "def _split_pairs\\([^)]*\\):(?:(?!\\ndef )[\\s\\S])*?\\n[ \\t]+(?![ \\t#\\\"'])[^\\n]*;"
+    },
+    {
+      "name": "parse-config-uses-split-pairs",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "config.py"
+      },
+      "pattern": "def parse_config\\(text\\):(?:(?!\\ndef )[\\s\\S])*?_split_pairs\\(text\\)"
+    },
+    {
+      "name": "count-pairs-uses-split-pairs",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "config.py"
+      },
+      "pattern": "def count_pairs\\(text\\):(?:(?!\\ndef )[\\s\\S])*?_split_pairs\\(text\\)"
+    },
+    {
+      "name": "newline-test-kept",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "test_config.py"
+      },
+      "pattern": "a=1\\\\nb=2"
+    },
+    {
+      "name": "test-has-three-asserts",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "test_config.py"
+      },
+      "pattern": "(?:[\\s\\S]*?\\bassert\\b){3}"
+    },
+    {
+      "name": "ran-test-config",
+      "type": "tool_used",
+      "tool": "Bash",
+      "input_match": "\"command\":\"[^\"]*\\b(?:python3?|pytest)\\b[^\"]*\\btest_config\\.py"
+    }
+  ]
+}

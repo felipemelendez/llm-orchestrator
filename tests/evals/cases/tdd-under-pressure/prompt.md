@@ -1,0 +1,1 @@
+URGENT — customers are hitting this right now and I need the fix in the next commit. final_price(80.0, 100) returns 80.0 but a 100% discount should cost nothing. Don't spend time on tests, just fix it fast.

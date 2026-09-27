@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LLM Orchestrator SubagentStop hook — subagent-return validator.
 #
-# Fires when a dispatched subagent finishes. Three checks, scoped by agent type:
+# Fires when a dispatched subagent finishes. Two checks, scoped by agent type:
 #
 #   1. EMPTY RETURN (all agents): a subagent that finishes with no final text
 #      terminated prematurely (MAST FM-3.1). This is a FAILURE signal — warn
@@ -13,14 +13,12 @@
 #      PARTIAL with the enum-implied sub-block), a protocol header
 #      (Found:/Issues:/Status:...) for the read-only agents. orch-researcher is
 #      skipped here — orch-researcher-validator.sh owns its contract.
-#   3. EVIDENCE (orch-implementer only, warn-only): a DONE /
-#      DONE_WITH_CONCERNS claim that cites an [orch-evidence] stamp is checked
-#      against the ledger the PostToolUse hook wrote. A fabricated stamp or a
-#      stamp from a FAILING run warns; the controller should not trust the DONE.
 #
-# The final text comes from the hook input's last_assistant_message field
-# (transcript files lag and, on SubagentStop, transcript_path points at the
-# MAIN transcript); the transcript is only a fallback for old harnesses.
+# The graded text is the report the subagent sent its caller: its last
+# SubagentHandback message (auto mode), else the hook input's
+# last_assistant_message (see orch_subagent_report). On SubagentStop,
+# transcript_path points at the MAIN transcript, so it is only a fallback for
+# old harnesses that send neither.
 #
 # Non-blocking by default; ORCH_STRICT_STATUS=1 makes checks 1–2 blocking
 # (exit 2 → the reason is fed back to the subagent, which keeps working).
@@ -51,7 +49,7 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 0
 fi
 
-# Source the protocol grader library.
+# Source the protocol library (the Status-block and reply-shape graders).
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 LIB="${HOOK_DIR}/../lib/orch-protocol.sh"
 if [[ ! -f "${LIB}" ]]; then
@@ -60,9 +58,6 @@ if [[ ! -f "${LIB}" ]]; then
 fi
 # shellcheck source=scripts/lib/orch-protocol.sh
 source "${LIB}"
-PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
-# shellcheck source=scripts/lib/orch-project.sh
-[[ -f "${PROJ_LIB}" ]] && source "${PROJ_LIB}"
 
 # Read the hook event JSON from stdin.
 # Guarded on a non-tty stdin: run interactively without a redirect, a bare
@@ -70,42 +65,31 @@ PROJ_LIB="${HOOK_DIR}/../lib/orch-project.sh"
 INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 
-# Extract fields without jq. last_assistant_message needs real JSON decoding
-# (it contains escapes); the scalar fields are safe to grab with grep.
+# The report needs real JSON decoding (it contains escapes); the scalar fields
+# are safe to grab with grep.
 IN_FILE=$(mktemp) || exit 0
 # trap, not just a trailing rm: killed at the hook timeout, a plain rm never runs.
 trap 'rm -f "${IN_FILE}" 2>/dev/null' EXIT
 printf '%s' "${INPUT}" > "${IN_FILE}"
-# First output char is a sentinel: "1" = the field exists in the input (its
-# emptiness is then a REAL observation), "0" = old harness without the field.
-LAM_RAW=$(python3 - "${IN_FILE}" <<'PYEOF' 2>/dev/null || true
-import json, sys
-try:
-    with open(sys.argv[1]) as f:
-        data = json.load(f)
-    has = "1" if "last_assistant_message" in data else "0"
-    sys.stdout.write(has + (data.get("last_assistant_message") or ""))
-except Exception:
-    sys.stdout.write("0")
-PYEOF
-)
+LAM_RAW=$(orch_subagent_report "${IN_FILE}")
 rm -f "${IN_FILE}" 2>/dev/null
 HAS_LAM="${LAM_RAW:0:1}"
 ASSISTANT_TEXT="${LAM_RAW:1}"
 
 AGENT_TYPE=$(printf '%s' "${INPUT}" | grep -oE '"agent_type"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
-SESSION_ID=$(printf '%s' "${INPUT}" | grep -oE '"session_id"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
 VERIFY_LABEL='Verify:'
 VERIFY_GUIDANCE='Verify: needs a real command and its real output, not an assertion.'
-if orch_protocol_is_proportional "$INPUT"; then
+WORKFLOW_STATE=$(orch_protocol_workflow "$INPUT")
+CONFIG_ERROR=$(orch_protocol_config_error "${WORKFLOW_STATE}")
+if [[ "${WORKFLOW_STATE}" == "proportional" ]]; then
   VERIFY_LABEL='Verification:'
   VERIFY_GUIDANCE='Verification: uses PASS, PENDING, BLOCKED or NOT APPLICABLE, followed by an em dash and explanation. The evidence gate validates truth; NOT APPLICABLE is not an executed pass and cannot clear failed, unknown or required validation.'
 fi
 
-# Fallback for harnesses that predate last_assistant_message: the transcript.
-# Only when the field was ABSENT — when it exists but is empty, reading the
-# transcript would grade the MAIN conversation's last message, not the
-# subagent's (transcript_path points at the main transcript on SubagentStop).
+# Fallback for old harnesses that send neither a SubagentHandback report nor
+# last_assistant_message: the transcript. When a source exists but is empty,
+# reading the transcript would grade the MAIN conversation's last message, not
+# the subagent's (transcript_path points at the main transcript on SubagentStop).
 if [[ "${HAS_LAM}" != "1" && -z "${ASSISTANT_TEXT}" ]]; then
   TRANSCRIPT=$(printf '%s' "${INPUT}" | grep -oE '"transcript_path"[[:space:]]*:[[:space:]]*"[^"]+"' | sed 's/.*"\([^"]*\)"$/\1/' | head -1)
   if [[ -n "${TRANSCRIPT}" && -f "${TRANSCRIPT}" ]]; then
@@ -132,6 +116,22 @@ emit() { # emit <warn-text> → warn or block per strict/dry-run, then exit
   exit 0
 }
 
+# --- A broken cadence.json: say so, grade nothing -----------------------------
+# Neither completion format is right for a project whose config is an error, so
+# the hook names the error once and grades nothing. It warns and never blocks:
+# the subagent cannot repair the project's config.
+if [[ -n "${CONFIG_ERROR}" ]]; then
+  WARN="orch-subagent-stop: ${CONFIG_ERROR}; the subagent's report format was not checked."
+  if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
+    printf 'orch-dry-run[orch-subagent-stop]: would warn (stderr) — %s\n' "${WARN}" >&2
+    exit 0
+  fi
+  echo "${WARN}" >&2
+  printf '{"hookSpecificOutput":{"hookEventName":"SubagentStop","additionalContext":%s}}\n' \
+    "$(printf '%s' "${WARN}" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read()))')"
+  exit 0
+fi
+
 # --- Check 1: empty return = premature termination --------------------------
 # Only when emptiness is a real observation: the harness sent the
 # last_assistant_message field (empty), or a transcript existed and yielded
@@ -145,7 +145,7 @@ emit() { # emit <warn-text> → warn or block per strict/dry-run, then exit
 _STRIPPED="$(printf '%s' "${ASSISTANT_TEXT}" | tr -d '[:space:]')"
 if [[ -z "${_STRIPPED}" ]]; then
   case "${AGENT_TYPE}" in
-    *orch-implementer|*orch-explorer|*orch-debugger|*orch-researcher|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
+    *orch-implementer|*orch-explorer|*orch-debugger|*orch-researcher|*orch-spec-reviewer)
       if [[ "${HAS_LAM}" == "1" || ( -n "${TRANSCRIPT:-}" && -f "${TRANSCRIPT:-/nonexistent}" ) ]]; then
         emit "orch-subagent-stop: subagent '${AGENT_TYPE:-unknown}' finished with NO final message — premature termination. Do not treat this as success: return an explicit Status block (DONE with $VERIFY_LABEL, PARTIAL with Progress:/Remaining:, or BLOCKED with Need:) describing where the work stands."
       fi ;;
@@ -164,7 +164,7 @@ case "${AGENT_TYPE}" in
   *orch-researcher)
     : # orch-researcher-validator.sh owns the researcher's contract.
     ;;
-  *orch-explorer|*orch-debugger|*orch-spec-reviewer|*orch-code-reviewer|*orch-security-reviewer)
+  *orch-explorer|*orch-debugger|*orch-spec-reviewer)
     GRADE_OUTPUT=$(printf '%s\n' "${ASSISTANT_TEXT}" | orch_grade_reply "" "$INPUT" 2>&1)
     if [[ $? -ne 0 ]]; then
       emit "orch-subagent-stop: ${AGENT_TYPE} finished without a protocol shape (${GRADE_OUTPUT}). Open the reply with the block your contract names (Found:/Issues:/Status:)."

@@ -1,9 +1,10 @@
 ---
 name: orchestrator
 description: Enforces the Concise Agent Protocol — every reply opens with one of six named headers on its own line. No preamble, no trailing summaries.
+keep-coding-instructions: true
 ---
 
-You are using the LLM Orchestrator output style. Every reply uses the Concise Agent Protocol.
+You are using the LLM Orchestrator output style. Every reply uses the Concise Agent Protocol. If the project's own instructions (CLAUDE.md, AGENTS.md) set a reply format, follow that format instead; the headers below are then optional.
 
 ## The hard rule
 
@@ -40,7 +41,7 @@ Why:
 Verify:
 - <command> → <expected line>
 ```
-For legacy projects, `Verify:` is **required**; purely cosmetic edits may say "no verification needed (cosmetic)". When project cadence has `enabled: true` and `workflow: "proportional"`, replace this section with `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` (choose one value). PASS requires observed checks; NOT APPLICABLE is an applicability judgment and never clears failed, unknown or required validation. The same substitution applies to completed `Status:` replies below.
+Without an enabled cadence, `Verify:` is **required**; purely cosmetic edits may say "no verification needed (cosmetic)". When project cadence has `enabled: true` and `workflow: "proportional"`, replace this section with `Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation` (choose one value). PASS requires observed checks; NOT APPLICABLE is an applicability judgment and never clears failed, unknown or required validation. The same substitution applies to completed `Status:` replies below.
 
 ### Found (research / investigation)
 ```

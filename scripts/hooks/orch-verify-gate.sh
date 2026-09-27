@@ -37,17 +37,7 @@ CHECK="${HOOK_DIR}/../lib/orch-completion-check.py"
 [[ -f "${CHECK}" ]] || exit 0
 command -v python3 >/dev/null 2>&1 || exit 0
 
-# Which commands count as a real check, and which only print, are already
-# described once in orch-signals.sh. Reuse that rather than writing a second,
-# narrower pattern that misses `uv run pytest` and `./gradlew test`.
-SIG_LIB="${HOOK_DIR}/../lib/orch-signals.sh"
-# shellcheck source=scripts/lib/orch-signals.sh
-[[ -f "${SIG_LIB}" ]] && source "${SIG_LIB}"
-
 # The payload goes in on stdin, never argv: a long reply overflows ARG_MAX and
 # the check would silently vanish.
-printf '%s' "${INPUT}" \
-  | ORCH_VERIFY_CMD_RE="${ORCH_SIG_VERIFY_CMD:-}" \
-    ORCH_VERIFY_NONRUN_RE="${ORCH_SIG_VERIFY_NONRUN:-}" \
-    python3 "${CHECK}"
+printf '%s' "${INPUT}" | python3 "${CHECK}"
 exit 0

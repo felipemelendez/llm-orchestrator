@@ -1,5 +1,5 @@
 ---
-description: Turn a spec into a dated, checklist-shaped plan at docs/llm-orchestrator/plans/. Uses the writing-plans skill.
+description: Turn a spec into a checklist plan under docs/llm-orchestrator/plans/.
 ---
 
 You are running `/llm-orchestrator:plan`.

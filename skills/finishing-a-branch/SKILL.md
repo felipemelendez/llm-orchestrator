@@ -1,6 +1,6 @@
 ---
 name: finishing-a-branch
-description: Use when implementation is complete and tests pass. Decides between merge, PR, keep, or discard — without destructive actions unless the user confirms.
+description: Use when a branch's work is done and tests pass, to choose merge, PR, keep or discard. Nothing destructive without confirmation.
 ---
 
 # Finishing a branch
@@ -11,14 +11,14 @@ For enabled `workflow: proportional`, finish the cadence's selected path.
 Reuse valid checks; validate changed inputs. Follow authorized delivery without
 another menu. Commit/push/merge/discard need authorization. After consumers stop
 and work is preserved, finish resources through the task helper: clean disposable
-copies; retain unique/dirty/active work and report its path. Stop here; legacy
-preconditions below add no requirements to proportional work.
+copies; retain unique/dirty/active work and report its path. Stop here; the
+preconditions below are for projects without an enabled cadence.
 
 ## Preconditions
 
 Before this skill runs:
 - `/llm-orchestrator:verify` has been run; tests pass.
-- `/llm-orchestrator:review` has been run; verdict is yes or with-fixes already addressed.
+- `/llm-orchestrator:review` has been run; the verdict is `READY`, or `READY-WITH-FIXES` with the mild findings already handled.
 - **Regression check passes.** Run:
   ```bash
   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
@@ -92,7 +92,7 @@ Found:
 - Branch: feat/x
 - Worktree: .worktrees/feat-x (LLM Orchestrator-created)
 - Tests: 142 passed
-- Review: yes
+- Review: READY
 Options:
 - 1. Merge into main
 - 2. Push and open PR

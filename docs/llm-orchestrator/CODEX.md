@@ -5,14 +5,17 @@ proportional cadence the plugin ships; read `AGENTS.md` and `LAWS.md` first.
 
 ## Hooks and trust
 
-`scripts/install.sh --codex`, run from this checkout, registers two hooks in
-`~/.codex/hooks.json` pointing at this checkout: the file guard
-(`codex-cadence-adapter.sh`, PreToolUse) and the completion check
-(`codex-verify-gate.sh`, Stop), plus the task-scratch cleanup on Stop. A
-changed hook definition runs only after the person reviews it with `/hooks` in
-a fresh Codex session; installation is not trust. The copied skill lives at
-`~/.agents/skills/cadence`; refresh it with the installer after any change
-under `skills/cadence/`.
+The Codex plugin (`.codex-plugin/plugin.json`, installed with
+`codex plugin marketplace add <this checkout>` and
+`codex plugin add llm-orchestrator@llm-orchestrator`) registers the cadence
+skill and two hooks: the file guard (`codex-cadence-adapter.sh`, PreToolUse)
+and the completion check (`codex-verify-gate.sh`, Stop), plus the
+task-scratch cleanup on Stop. `scripts/install.sh --codex` adds only the
+instructions block to `~/.codex/AGENTS.md`. Codex runs the plugin from its
+copy under `~/.codex/plugins/cache/`; run `codex plugin add` again after any
+change to the skill or the hooks. A changed hook definition runs only after
+the person reviews it with `/hooks` in a fresh Codex session; installation is
+not trust.
 
 The file guard refuses commands and patches that name `LAWS.md`,
 `cadence.json`, `LOCK.sha256`, `orch-cadence-check.sh`, `.claude/settings.json`

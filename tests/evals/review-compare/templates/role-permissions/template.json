@@ -1,0 +1,152 @@
+{
+  "title": "Add permission checks to the document service",
+  "spec": "docs/specs/document-permissions.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "admin-of-any-org",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "is_org_admin",
+      "what": "An admin of any organization gets admin rights on every document.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "return ADMIN in user.roles and user.org == doc.org",
+          "replace": "return ADMIN in user.roles"
+        }
+      ]
+    },
+    {
+      "id": "suspended-can-read",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "can_read",
+      "what": "A suspended user can still read documents.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "def can_read(user, doc):\n    if user.suspended:\n        return False\n",
+          "replace": "def can_read(user, doc):\n"
+        }
+      ]
+    },
+    {
+      "id": "view-share-can-edit",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "can_edit",
+      "what": "A user shared at level view can edit.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "return is_owner(user, doc) or share_level(user, doc) == EDIT",
+          "replace": "return is_owner(user, doc) or share_level(user, doc) in SHARE_LEVELS"
+        }
+      ]
+    },
+    {
+      "id": "org-visible-any-org",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "can_read",
+      "what": "A viewer from another organization can read org-visible documents.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "return doc.org_visible and user.org == doc.org and VIEWER in user.roles",
+          "replace": "return doc.org_visible and VIEWER in user.roles"
+        }
+      ]
+    },
+    {
+      "id": "archived-still-editable",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "can_edit",
+      "what": "The owner and shared editors can still edit an archived document.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "    if doc.archived:\n        return False\n    return is_owner(user, doc) or",
+          "replace": "    return is_owner(user, doc) or"
+        }
+      ]
+    },
+    {
+      "id": "share-outside-org",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "can_share",
+      "what": "A document can be shared with a user in another organization.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "    if target.org != doc.org:\n        return False\n",
+          "replace": ""
+        }
+      ]
+    },
+    {
+      "id": "any-share-level",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "can_share",
+      "what": "Any non-empty share level is accepted.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "if level not in SHARE_LEVELS:",
+          "replace": "if not level:"
+        }
+      ]
+    },
+    {
+      "id": "editor-can-delete",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "can_delete",
+      "what": "A user the document was shared with for editing can delete it.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "    return is_org_admin(user, doc) or is_owner(user, doc)\n",
+          "replace": "    return is_org_admin(user, doc) or is_owner(user, doc) or share_level(user, doc) == EDIT\n"
+        }
+      ]
+    },
+    {
+      "id": "update-checks-read",
+      "rank": "serious",
+      "kind": "test-tampering",
+      "symbol": "update",
+      "what": "update checks read permission instead of edit permission, and the viewer test was changed to expect the edit to succeed.",
+      "edits": [
+        {
+          "file": "docsvc/service.py",
+          "find": "        if not permissions.can_edit(user, doc):\n            raise PermissionDenied(f\"{user.id} may not edit {doc_id}\")",
+          "replace": "        if not permissions.can_read(user, doc):\n            raise PermissionDenied(f\"{user.id} may not edit {doc_id}\")"
+        },
+        {
+          "file": "tests/test_service.py",
+          "find": "        with self.assertRaises(PermissionDenied):\n            self.service.update(DAN, doc.id, \"vandalism\")",
+          "replace": "        self.service.update(DAN, doc.id, \"edited\")\n        self.assertEqual(doc.body, \"edited\")"
+        }
+      ]
+    },
+    {
+      "id": "owner-shares-archived",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "can_share",
+      "what": "The owner can still share an archived document.",
+      "edits": [
+        {
+          "file": "docsvc/permissions.py",
+          "find": "        return True\n    return is_owner(user, doc) and not doc.archived",
+          "replace": "        return True\n    return is_owner(user, doc)"
+        }
+      ]
+    }
+  ]
+}

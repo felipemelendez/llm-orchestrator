@@ -5,7 +5,8 @@
       "Edit(docs/llm-orchestrator/cadence.json)",
       "Edit(docs/llm-orchestrator/LOCK.sha256)",
       "Edit(.claude/settings.json)",
-      "Edit(.githooks/**)"
+      "Edit(.githooks/**)",
+      "Bash(*cadence-ruling.sh*)"
     ]
   }
 }

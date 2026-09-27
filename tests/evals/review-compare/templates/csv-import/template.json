@@ -1,0 +1,157 @@
+{
+  "title": "Import customers from CSV with row validation and an error report",
+  "spec": "docs/specs/customer-import.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "min-age-excluded",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "check_age",
+      "what": "An age of exactly 13 is rejected.",
+      "edits": [
+        {
+          "file": "importer/fields.py",
+          "find": "if not MIN_AGE <= age <= MAX_AGE:",
+          "replace": "if not MIN_AGE < age <= MAX_AGE:"
+        }
+      ]
+    },
+    {
+      "id": "email-case-kept",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "check_email",
+      "what": "Emails are not lowercased, so the same address in another case is imported twice.",
+      "edits": [
+        {
+          "file": "importer/fields.py",
+          "find": "    email = value.strip().lower()",
+          "replace": "    email = value.strip()"
+        }
+      ]
+    },
+    {
+      "id": "today-rejected",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "check_signup_date",
+      "what": "A signup date of today is rejected as in the future.",
+      "edits": [
+        {
+          "file": "importer/fields.py",
+          "find": "if day > today:",
+          "replace": "if day >= today:"
+        }
+      ]
+    },
+    {
+      "id": "plan-case-sensitive",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "check_plan",
+      "what": "A plan written in capitals, such as PRO, is rejected.",
+      "edits": [
+        {
+          "file": "importer/fields.py",
+          "find": "    plan = value.strip().lower()",
+          "replace": "    plan = value.strip()"
+        }
+      ]
+    },
+    {
+      "id": "duplicates-not-tracked",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "import_customers",
+      "what": "Accepted emails are never recorded, so duplicate rows are all imported.",
+      "edits": [
+        {
+          "file": "importer/load.py",
+          "find": "        seen.add(row[\"email\"])\n        result.rows.append(row)",
+          "replace": "        result.rows.append(row)"
+        }
+      ]
+    },
+    {
+      "id": "line-numbers-off-by-one",
+      "rank": "mild",
+      "kind": "test-tampering",
+      "symbol": "import_customers",
+      "what": "Errors name the line before the broken row, and the test was changed to expect the wrong line.",
+      "edits": [
+        {
+          "file": "importer/load.py",
+          "find": "enumerate(reader, start=2)",
+          "replace": "enumerate(reader, start=1)"
+        },
+        {
+          "file": "tests/test_import.py",
+          "find": "[(3, \"email\")])",
+          "replace": "[(2, \"email\")])"
+        },
+        {
+          "file": "tests/test_import.py",
+          "find": "\"line 3: email: not a valid address",
+          "replace": "\"line 2: email: not a valid address"
+        }
+      ]
+    },
+    {
+      "id": "space-rows-rejected",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "import_customers",
+      "what": "A row of only spaces and commas is rejected instead of skipped.",
+      "edits": [
+        {
+          "file": "importer/load.py",
+          "find": "if not any(cell.strip() for cell in record):",
+          "replace": "if not record:"
+        }
+      ]
+    },
+    {
+      "id": "max-errors-off-by-one",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "import_customers",
+      "what": "The import stops one rejected row after max_errors.",
+      "edits": [
+        {
+          "file": "importer/load.py",
+          "find": "result.rejected >= max_errors:",
+          "replace": "result.rejected > max_errors:"
+        }
+      ]
+    },
+    {
+      "id": "bad-age-dropped",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "check_age",
+      "what": "A non-numeric age is silently stored as empty instead of rejecting the row.",
+      "edits": [
+        {
+          "file": "importer/fields.py",
+          "find": "    except ValueError:\n        raise FieldError(\"must be a whole number\") from None",
+          "replace": "    except ValueError:\n        return None"
+        }
+      ]
+    },
+    {
+      "id": "rejected-counts-errors",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "rejected",
+      "what": "rejected counts errors, so a row with three broken fields counts as three rejected rows.",
+      "edits": [
+        {
+          "file": "importer/load.py",
+          "find": "return len({error.line for error in self.errors})",
+          "replace": "return len(self.errors)"
+        }
+      ]
+    }
+  ]
+}

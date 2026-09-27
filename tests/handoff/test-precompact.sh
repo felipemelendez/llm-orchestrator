@@ -9,9 +9,10 @@
 #     hookSpecificOutput, so it cannot inject the recovery note, and adopting it
 #     for anything else is an unmeasured behaviour bet — see docs/MEASUREMENTS.md.
 #   - When native compaction fires, session-start.sh runs with source=="compact" and injects
-#     ONLY a lean recovery note via hookSpecificOutput.additionalContext (no
-#     meta-skill body, to stay under the 10,000-char cap), deriving the newest
-#     handoff artifact path inline (by mtime).
+#     a lean recovery note via hookSpecificOutput.additionalContext, deriving
+#     the newest handoff artifact path inline (by mtime). Without the cadence it
+#     adds the short skill-applies core, never the full meta-skill body, to stay
+#     under the 10,000-char cap.
 #   - The note tells the next turn: treat the summary as lossy, reconcile against
 #     the plan-file checkboxes (authoritative), re-verify if the baseline looks
 #     stale, discard a slug-mismatched handoff, stop if all tasks are checked.
@@ -82,10 +83,15 @@ if printf '%s' "$COMPACT_OUT" | grep -q '2026-05-31-demo.md'; then
 else
   fail "SessionStart compact: derives newest handoff path" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
 fi
-if printf '%s' "$COMPACT_OUT" | grep -q 'You are running LLM Orchestrator'; then
-  fail "SessionStart compact: must NOT re-inject the full meta-skill (10K cap risk)" "meta preamble leaked"
+# A project without the cadence gets no format reminder after compaction, so the
+# short skill-applies core goes back in; the full meta-skill body (10K cap risk)
+# must not.
+if printf '%s' "$COMPACT_OUT" | grep -q 'You are running LLM Orchestrator' \
+   && printf '%s' "$COMPACT_OUT" | grep -q 'need no skill' \
+   && ! printf '%s' "$COMPACT_OUT" | grep -q 'Instruction priority'; then
+  ok "SessionStart compact: re-injects the skill-applies core, not the full meta-skill"
 else
-  ok "SessionStart compact: lean — no meta-skill preamble"
+  fail "SessionStart compact: core without full meta-skill" "got: '$(printf '%s' "$COMPACT_OUT" | head -c 200)'"
 fi
 if (( ${#COMPACT_OUT} < 10000 )); then
   ok "SessionStart compact: output ${#COMPACT_OUT} chars (< 10000 additionalContext cap)"
@@ -98,10 +104,12 @@ printf '\n%s== Post-compaction "none" fallback (no handoff yet) ==%s\n' "$DIM" "
 PROJ2="${TMPHOME}/proj2"
 mkdir -p "${PROJ2}/docs/llm-orchestrator/handoffs"   # empty
 NONE_OUT=$(printf '%s' '{"hook_event_name":"SessionStart","source":"compact","session_id":"c2"}' | CLAUDE_PROJECT_DIR="${PROJ2}" bash "$SESSION_HOOK" 2>/dev/null || true)
-if printf '%s' "$NONE_OUT" | grep -q 'Newest handoff artifact: none' && printf '%s' "$NONE_OUT" | grep -q 'rebuild from the plan file and git history'; then
-  ok "SessionStart compact (no artifact): emits 'none' + rebuild-from-plan instruction"
+if printf '%s' "$NONE_OUT" | grep -q 'If a handoff file exists, check' \
+   && ! printf '%s' "$NONE_OUT" | grep -q '(newest:' \
+   && printf '%s' "$NONE_OUT" | grep -q 'rebuild from the plan file and git history'; then
+  ok "SessionStart compact (no artifact): conditional handoff wording, no path, rebuild instruction"
 else
-  fail "SessionStart compact (no artifact): 'none' + rebuild instruction" "got: '$(printf '%s' "$NONE_OUT" | head -c 200)'"
+  fail "SessionStart compact (no artifact): conditional handoff wording" "got: '$(printf '%s' "$NONE_OUT" | head -c 200)'"
 fi
 assert_valid_json "SessionStart compact none" "$NONE_OUT"
 

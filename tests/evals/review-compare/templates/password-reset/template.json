@@ -1,0 +1,157 @@
+{
+  "title": "Add single-use password reset tokens",
+  "spec": "docs/specs/password-reset.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {
+      "id": "token-reusable",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "redeem",
+      "what": "A token is not removed after a successful reset, so it can be used again.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "        del self._tokens[_digest(token)]\n        self._users.set_password",
+          "replace": "        self._users.set_password"
+        }
+      ]
+    },
+    {
+      "id": "expiry-boundary",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "redeem",
+      "what": "A token still works at exactly one hour.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "if self._clock() >= entry[\"expires_at\"]:",
+          "replace": "if self._clock() > entry[\"expires_at\"]:"
+        }
+      ]
+    },
+    {
+      "id": "old-tokens-kept",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "request",
+      "what": "Issuing a new token revokes only expired earlier tokens, so older live tokens keep working.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "            if entry[\"email\"] == email:",
+          "replace": "            if entry[\"email\"] == email and entry[\"expires_at\"] <= now:"
+        }
+      ]
+    },
+    {
+      "id": "rate-limit-off-by-one",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "request",
+      "what": "The rate limit allows a 4th request in the window.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "        if len(recent) >= MAX_REQUESTS:",
+          "replace": "        if len(recent) > MAX_REQUESTS:"
+        }
+      ]
+    },
+    {
+      "id": "unknown-emails-uncounted",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "request",
+      "what": "Requests for unknown addresses return before they are counted, so the limit reveals which addresses have accounts.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "        now = self._clock()\n",
+          "replace": "        if not self._users.exists(email):\n            return None\n        now = self._clock()\n"
+        },
+        {
+          "file": "accounts/reset.py",
+          "find": "        self._requests[email] = recent\n        if not self._users.exists(email):\n            return None\n",
+          "replace": "        self._requests[email] = recent\n"
+        }
+      ]
+    },
+    {
+      "id": "email-not-lowercased",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "request",
+      "what": "The rate limit is keyed on the address as typed, so changing its case avoids the limit.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "        email = email.strip().lower()",
+          "replace": "        email = email.strip()"
+        }
+      ]
+    },
+    {
+      "id": "short-password-allowed",
+      "rank": "serious",
+      "kind": "test-tampering",
+      "symbol": "redeem",
+      "what": "The minimum password length is 8 instead of 12, and the test for an 11-character password was changed to use 7.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "        if len(new_password) < MIN_PASSWORD_LENGTH:",
+          "replace": "        if len(new_password) < 8:"
+        },
+        {
+          "file": "tests/test_reset.py",
+          "find": "            self.service.redeem(token, \"x\" * 11)",
+          "replace": "            self.service.redeem(token, \"x\" * 7)"
+        }
+      ]
+    },
+    {
+      "id": "window-boundary",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "request",
+      "what": "A request exactly one hour old still counts toward the limit.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "if now - t < REQUEST_WINDOW]",
+          "replace": "if now - t <= REQUEST_WINDOW]"
+        }
+      ]
+    },
+    {
+      "id": "password-check-after-delete",
+      "rank": "mild",
+      "kind": "defect",
+      "symbol": "redeem",
+      "what": "The token is deleted before the password length is checked, so a rejected password uses up the token.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "        if len(new_password) < MIN_PASSWORD_LENGTH:\n            raise ResetError(f\"passwords need at least {MIN_PASSWORD_LENGTH} characters\")\n        del self._tokens[_digest(token)]\n",
+          "replace": "        del self._tokens[_digest(token)]\n        if len(new_password) < MIN_PASSWORD_LENGTH:\n            raise ResetError(f\"passwords need at least {MIN_PASSWORD_LENGTH} characters\")\n"
+        }
+      ]
+    },
+    {
+      "id": "ttl-one-day",
+      "rank": "serious",
+      "kind": "defect",
+      "symbol": "TOKEN_TTL",
+      "what": "Tokens last a day instead of an hour.",
+      "edits": [
+        {
+          "file": "accounts/reset.py",
+          "find": "TOKEN_TTL = timedelta(hours=1)",
+          "replace": "TOKEN_TTL = timedelta(hours=24)"
+        }
+      ]
+    }
+  ]
+}

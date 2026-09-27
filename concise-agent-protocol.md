@@ -2,6 +2,12 @@
 
 The central pattern in LLM Orchestrator. Agents respond in fixed shapes (fixed response formats) — six in total: Changed, Found, Blocked, Issues, Plan, Status. Short by default.
 
+## Where it applies
+
+- **Subagent returns** (`Status:`, and `Issues:` or `Found:` from reviewers and the debugger) use their shapes in every project; `scripts/hooks/subagent-stop.sh` checks them.
+- **Replies to the person** use the six headers only in a project whose `docs/llm-orchestrator/cadence.json` sets `enabled: true`. The hooks inject the format rule there and nowhere else.
+- **The project's own format wins.** If the project's instructions (CLAUDE.md, AGENTS.md) set a reply format, follow it; the six headers are then optional.
+
 ## Why
 
 Most agent systems waste tokens on preamble, jargon, restated requirements, hedging, and trailing summaries. The Concise Agent Protocol replaces freeform prose with a small set of named shapes. Each shape has a single purpose and a strict structure.
@@ -25,9 +31,9 @@ remaining validation; BLOCKED names the unavailable prerequisite. NOT APPLICABLE
 states why no meaningful automated check applies and confirms manual diff
 inspection. It is never an executed pass and cannot clear failed, unknown,
 stale or required validation. Use PARTIAL/BLOCKED when the task remains unfinished.
-This vocabulary is checked by
-the separate evidence gate. Missing/legacy workflow and disabled/absent cadence
-retain the original `Verify:` contract below.
+This vocabulary is checked by the separate evidence gate. A project without an
+enabled cadence keeps the `Verify:` contract below, and so do its subagent
+`Status:` returns.
 
 ### 1. Changed — default response for code edits
 
@@ -172,7 +178,7 @@ In every case, ask yourself: would a senior engineer skim this and find it usefu
 
 ## Injected blocks (single source)
 
-Two hooks inject protocol text, on two different schedules, from the two marked blocks below. Edit them HERE — both hooks extract at runtime and only fall back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
+Two hooks inject protocol text, on two different schedules, from the marked blocks below, and only in a project whose `cadence.json` is enabled. Elsewhere the per-turn hook injects nothing, and the post-compaction note carries no format rule; it re-injects the `using-orchestrator` core (when a skill applies) instead. Edit them HERE — both hooks extract at runtime and only fall back to an embedded copy if this file is unreadable. `tests/test-protocol-drift.sh` fails if the surfaces drift.
 
 The two schedules are not interchangeable, and the split follows Anthropic's current guidance:
 
@@ -181,38 +187,19 @@ The two schedules are not interchangeable, and the split follows Anthropic's cur
 
 Anything an agent needs *once* — skill precedence, the working rules, the routing table — belongs in the `using-orchestrator` eager block or the skill body, not here. Repeating it per turn buys nothing on Claude 5 models and teaches the agent that this corpus repeats itself, which is what trains skimming.
 
-### Recovery core — SessionStart, post-compaction only
+### Recovery core and turn nudge
 
-Injected once per session, and again after a compaction (`scripts/hooks/session-start.sh`).
-
-<!-- orch-turn-reminder-start -->
-LLM Orchestrator — the protocol still applies after this compaction boundary:
-- Open with exactly one shape header on its own line: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". "Changed:" blocks REQUIRE a "Verify:" line (real command + its output).
-- When two skills both match: process → implementation → verification (decide how, then build, then check).
-- Cite file:line. Lead with the answer in one plain sentence; no preamble, no trailing summary.
-<!-- orch-turn-reminder-end -->
-
-### Turn nudge — UserPromptSubmit, every turn
-
-Budget: 300 bytes. `tests/test-protocol-drift.sh` enforces the ceiling.
-
-<!-- orch-turn-nudge-start -->
-LLM Orchestrator — open this reply with exactly one shape header: "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". A "Changed:" block REQUIRES a "Verify:" line (real command + its output). Lead with the outcome.
-<!-- orch-turn-nudge-end -->
-
-### Proportional recovery and turn reminders
-
-The hooks select these blocks only from an enabled proportional project config.
-The turn nudge retains the same 300-byte budget. Shape acceptance does not attest
-that verification ran.
+The recovery core is injected after a compaction (`scripts/hooks/session-start.sh`),
+the turn nudge on every prompt (`scripts/hooks/user-prompt-submit.sh`). The turn
+nudge's budget is 273 bytes. Shape acceptance does not attest that verification ran.
 
 <!-- orch-proportional-reminder-start -->
 LLM Orchestrator — the protocol still applies after this compaction boundary:
-- Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:".
+- Unless project instructions set a reply format, open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:".
 - Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". PASS requires observed checks; NOT APPLICABLE never clears failed, unknown or required validation.
 - Preserve the task's pending verification and reuse still-valid evidence. Choose the cadence path required by the work's risk.
 <!-- orch-proportional-reminder-end -->
 
 <!-- orch-proportional-nudge-start -->
-LLM Orchestrator — open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", or "Status:". Completion uses "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — explanation". Only observed checks support PASS; applicability never clears failed or required checks.
+Open with "Changed:", "Found:", "Blocked:", "Issues:", "Plan:", "Status:" unless project instructions set a reply format. End with "Verification: PASS|PENDING|BLOCKED|NOT APPLICABLE — why". PASS needs checks you ran; applicability never clears failed or required checks.
 <!-- orch-proportional-nudge-end -->

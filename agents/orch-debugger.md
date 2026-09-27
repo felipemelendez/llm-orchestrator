@@ -1,6 +1,6 @@
 ---
 name: orch-debugger
-description: Root-cause investigator. Use when a test is failing or a bug is reported and the orchestrator needs the cause identified before any fix. Returns a Found block with the diagnosis; does not patch.
+description: Root-cause investigator for a failing test or reported bug. Returns a Found block with the diagnosis; does not patch.
 tools: Read, Grep, Glob, Bash
 model: opus
 maxTurns: 40

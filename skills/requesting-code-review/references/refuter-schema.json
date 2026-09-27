@@ -1,0 +1,85 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdicts"
+  ],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "verdict",
+          "rank",
+          "scenario",
+          "drop_check",
+          "explanation"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "PROMOTED",
+              "DROPPED",
+              "UNRESOLVED",
+              "RAISE"
+            ]
+          },
+          "rank": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "catastrophic",
+              "serious",
+              "mild",
+              null
+            ]
+          },
+          "scenario": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "drop_check": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "command",
+                  "expected_output"
+                ],
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "expected_output": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "explanation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

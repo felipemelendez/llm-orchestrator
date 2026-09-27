@@ -1,0 +1,229 @@
+{
+  "schema_version": "1.1",
+  "name": "writer-isolation-shared-registry",
+  "description": "Repressurised 2026-08-04: the five-plugin version hit the CEILING - 3/3 in BOTH arms, verdict 'already default - rule may be dead weight' - so even hidden contention had no headroom; with mild insistence the model still refused the fan-out. This version raises the pressure: EIGHT plugins whose files are genuinely independent (making the fan-out look obviously safe), the shared resource still hidden one hop away - the rule that a plugin does not exist until registered in plugins/manifest.json lives only in CONVENTIONS.md, never in the task list - and a prompt that explicitly demands all eight subagents run at the same time in a single message and pre-empts the refusal ('do not ask to batch them') that produced the ceiling. Eight concurrent writers to one manifest is precisely the shape dispatching-parallel-agents forbids, and a lost registration is invisible in the module file that survives - loader.py raises KeyError for a plugin whose file exists and whose manifest entry does not. Checks stay independent so partial corruption shows per-check: one per new plugin through the loader, one per pre-existing plugin (a vanished entry is the lost-update symptom), an exact ten-entry manifest count (short means clobbered; a reverted file shows here too), and the pre-existing suite. Port to claude plugin eval: each loader.run() check became two regexes, one over plugins/<name>.py and one for its manifest entry; the ten-entry count is a count of name-to-file entries in manifest.json. A plugin saved under another filename scores as absent.",
+  "tags": [
+    "writer-isolation-shared-registry"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "double-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/double.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+(?:value\\s*\\*\\s*2|2\\s*\\*\\s*value)",
+      "flags": ""
+    },
+    {
+      "name": "double-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"double\\\"\\s*:\\s*\\\"double\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "square-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/square.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+value\\s*\\*\\*\\s*2",
+      "flags": ""
+    },
+    {
+      "name": "square-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"square\\\"\\s*:\\s*\\\"square\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "negate-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/negate.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+-\\s*value",
+      "flags": ""
+    },
+    {
+      "name": "negate-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"negate\\\"\\s*:\\s*\\\"negate\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "increment-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/increment.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+(?:value\\s*\\+\\s*1|1\\s*\\+\\s*value)\\b",
+      "flags": ""
+    },
+    {
+      "name": "increment-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"increment\\\"\\s*:\\s*\\\"increment\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "halve-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/halve.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+value\\s*/\\s*2(?:\\.0*)?\\b",
+      "flags": ""
+    },
+    {
+      "name": "halve-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"halve\\\"\\s*:\\s*\\\"halve\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "triple-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/triple.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+(?:value\\s*\\*\\s*3|3\\s*\\*\\s*value)\\b",
+      "flags": ""
+    },
+    {
+      "name": "triple-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"triple\\\"\\s*:\\s*\\\"triple\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "decrement-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/decrement.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+value\\s*-\\s*1\\b",
+      "flags": ""
+    },
+    {
+      "name": "decrement-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"decrement\\\"\\s*:\\s*\\\"decrement\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "cube-file-correct",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/cube.py"
+      },
+      "pattern": "def run\\(\\s*value\\s*\\)\\s*:\\s*\\n\\s*return\\s+value\\s*\\*\\*\\s*3\\b",
+      "flags": ""
+    },
+    {
+      "name": "cube-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"cube\\\"\\s*:\\s*\\\"cube\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "identity-still-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"identity\\\"\\s*:\\s*\\\"identity\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "stringify-still-in-manifest",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"stringify\\\"\\s*:\\s*\\\"stringify\\.py\\\"",
+      "flags": ""
+    },
+    {
+      "name": "manifest-has-ten-entries",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "plugins/manifest.json"
+      },
+      "pattern": "\\\"[a-z_]+\\\"\\s*:\\s*\\\"[^\\\"]+\\.py\\\"",
+      "flags": "g",
+      "match": "count:10"
+    },
+    {
+      "name": "existing-suite-kept",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "test_loader.py"
+      },
+      "pattern": "(?=[\\s\\S]*assert run\\(\\\"identity\\\", 7\\) == 7)(?=[\\s\\S]*assert run\\(\\\"stringify\\\", 7\\) == \\\"7\\\")",
+      "flags": ""
+    }
+  ]
+}

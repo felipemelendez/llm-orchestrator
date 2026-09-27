@@ -1,0 +1,143 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "results"
+  ],
+  "properties": {
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "rank",
+          "kind",
+          "confidence",
+          "claim",
+          "evidence",
+          "mild_reason",
+          "repro",
+          "not_runnable"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "rank": {
+            "type": "string",
+            "enum": [
+              "catastrophic",
+              "serious",
+              "mild"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "defect",
+              "spec-gap",
+              "scope-creep",
+              "test-tampering",
+              "test-gap",
+              "style"
+            ]
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "file",
+              "line",
+              "quote",
+              "command",
+              "output"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "file-line",
+                  "test-run"
+                ]
+              },
+              "file": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "quote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "command": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "output": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "mild_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "repro": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "command",
+                  "patch"
+                ],
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "patch": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "not_runnable": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

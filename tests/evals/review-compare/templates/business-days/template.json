@@ -1,0 +1,33 @@
+{
+  "title": "Add business-day arithmetic with holidays",
+  "spec": "docs/specs/business-days.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "observe-flag-inverted", "rank": "mild", "kind": "defect", "symbol": "__init__",
+     "what": "Weekend holidays are moved only when observing is turned off.",
+     "edits": [{"file": "settlement/calendar.py", "find": "if observe_weekend_holidays:", "replace": "if not observe_weekend_holidays:"}]},
+    {"id": "next-not-strictly-after", "rank": "mild", "kind": "defect", "symbol": "next_business_day",
+     "what": "next_business_day returns the same day when it is already a business day.",
+     "edits": [{"file": "settlement/calendar.py", "find": "        day += ONE_DAY\n        while not self.is_business_day(day):", "replace": "        while not self.is_business_day(day):"}]},
+    {"id": "negative-count-moves-forward", "rank": "serious", "kind": "defect", "symbol": "add_business_days",
+     "what": "A negative count moves forward instead of back.",
+     "edits": [{"file": "settlement/calendar.py", "find": "step = ONE_DAY if count >= 0 else -ONE_DAY", "replace": "step = ONE_DAY"}]},
+    {"id": "add-ignores-holidays", "rank": "serious", "kind": "defect", "symbol": "add_business_days",
+     "what": "add_business_days counts holidays as business days.",
+     "edits": [{"file": "settlement/calendar.py", "find": "            if self.is_business_day(day):\n                remaining -= 1", "replace": "            if not is_weekend(day):\n                remaining -= 1"}]},
+    {"id": "between-counts-end", "rank": "mild", "kind": "defect", "symbol": "business_days_between",
+     "what": "business_days_between counts the end day too.",
+     "edits": [{"file": "settlement/calendar.py", "find": "while day < end:", "replace": "while day <= end:"}]},
+    {"id": "reversed-range-positive", "rank": "mild", "kind": "defect", "symbol": "business_days_between",
+     "what": "A reversed range returns a positive count.",
+     "edits": [{"file": "settlement/calendar.py", "find": "return -self.business_days_between(end, start)", "replace": "return self.business_days_between(end, start)"}]},
+    {"id": "sunday-holiday-not-moved", "rank": "mild", "kind": "defect", "symbol": "observed",
+     "what": "A Sunday holiday is not moved to Monday.",
+     "edits": [{"file": "settlement/calendar.py", "find": "    if holiday.weekday() == SUNDAY:\n        return holiday + ONE_DAY", "replace": "    if holiday.weekday() == SUNDAY:\n        return holiday"}]},
+    {"id": "between-skips-start", "rank": "serious", "kind": "test-tampering", "symbol": "business_days_between",
+     "what": "business_days_between leaves out the start day, and the week test was changed to expect 4.",
+     "edits": [
+       {"file": "settlement/calendar.py", "find": "        day = start\n", "replace": "        day = start + ONE_DAY\n"},
+       {"file": "tests/test_calendar.py", "find": "date(2026, 3, 7)), 5)", "replace": "date(2026, 3, 7)), 4)"}]}
+  ]
+}

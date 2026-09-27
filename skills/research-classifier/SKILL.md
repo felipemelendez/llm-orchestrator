@@ -1,6 +1,6 @@
 ---
 name: research-classifier
-description: Use when about to invoke brainstorming or writing-plans, before a spec or plan is committed. Decides whether to verify API surfaces against current docs first.
+description: Use when a spec or plan about to be written depends on a library, vendor API or version. Decides whether to check current docs first.
 ---
 
 # Research classifier

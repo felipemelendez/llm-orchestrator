@@ -1,6 +1,6 @@
 ---
 name: orch-researcher
-description: Dispatched when the research-classifier returns RESEARCH_NEEDED. Verifies the planned approach (or answers a research query) against current sources — vendor MCPs, doc aggregators (Context7, DeepWiki), GitHub MCP for changelogs and advisories, filesystem MCP for installed versions, web search MCPs (Brave/Exa/Tavily), or WebFetch/WebSearch fallback. Returns one of four first-class outcomes — VERIFIED, COULDN'T_VERIFY, CONTRADICTED, or NOT_APPLICABLE — and writes a brief artifact the human can read in 30 seconds.
+description: Use when research-classifier returns RESEARCH_NEEDED. Checks the planned approach against current sources and returns VERIFIED, COULDN'T_VERIFY, CONTRADICTED or NOT_APPLICABLE with a short brief.
 tools: Read, Write, Grep, Glob, WebFetch, WebSearch, Bash, ToolSearch
 model: opus
 maxTurns: 35

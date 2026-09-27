@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.1",
+  "name": "reviewer-recall-planted-defect",
+  "description": "Replanted 2026-08-04: the single-defect version hit the CEILING - 3/3 in BOTH arms, verdict 'already default - rule may be dead weight' - so it could only ever justify deleting the reviewer rules, on no real evidence: a defect every reviewer finds has no headroom to show a recall change in either direction. Recall is now ordinal across two planted defects of graded subtlety, each with its own check against the fenced JSON index in review.md. Rung 1 (loud): apply_refunds validates positivity but silently skips the balance check its sibling apply_refund enforces, so apply_refunds(Order(100), [500]) refunds 500 against a 100 order - this repo's recurring guard-one-path-not-its-sibling class; graded at blocking severity. Rung 2 (quiet): recent_refunds documents '0 asks for none and returns an empty list' but returns history[-n:], and history[-0:] is the WHOLE history - an off-by-one reachable only at the boundary, invisible in the committed suite, which passes; graded at any severity, because rung 3 already punishes shotgun listing. Rung 3 (precision): label_for looks like an off-by-one and is correct and range-checked; flagging it blocking fails. The diff is deliberately larger (seven functions plus an Order change) so recall is diluted the way real review is. Grading reads the JSON index, NOT the prose: an earlier draft regex-matched review.md and was polarity-blind, scoring \"label_for's bounds check is correct - no off-by-one\" as an accusation in 3 of 5 pilot runs. Known limitation (cold review 2026-08-04): the recent_refunds rung counts any index entry naming the function, at any severity — an entry that mentions it only to exonerate it would still score; accepted rather than re-proving the grader for a mild polarity gap. Port to claude plugin eval: each check is a regex over review.md that finds one JSON object naming the symbol (and, where graded, a blocking severity) in any key order; it cannot tell the fenced index from a JSON object elsewhere in the file, and it still cannot read polarity.",
+  "tags": [
+    "reviewer-recall-planted-defect"
+  ],
+  "runs": 8,
+  "context": {
+    "scaffold_script": "scaffold.sh"
+  },
+  "execution": {
+    "max_turns": 40,
+    "timeout_seconds": 900,
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Agent",
+      "Bash",
+      "Write",
+      "Edit"
+    ]
+  },
+  "graders": [
+    {
+      "name": "loud-defect-reported-blocking",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\\{(?=[^{}]*\"symbol\"\\s*:\\s*\"[^\"]*\\b(?:apply_refunds|_credit)\\b[^\"]*\")(?=[^{}]*\"severity\"\\s*:\\s*\"\\s*(?:critical|important|blocker|blocking|high|major)\\s*\")[^{}]*\\}",
+      "flags": "i"
+    },
+    {
+      "name": "quiet-defect-reported",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\\{(?=[^{}]*\"symbol\"\\s*:\\s*\"[^\"]*\\brecent_refunds\\b[^\"]*\")[^{}]*\\}",
+      "flags": "i"
+    },
+    {
+      "name": "decoy-not-blocking",
+      "type": "regex",
+      "target": {
+        "source": "file",
+        "path": "review.md"
+      },
+      "pattern": "\\{(?=[^{}]*\"symbol\"\\s*:\\s*\"[^\"]*\\blabel_for\\b[^\"]*\")(?=[^{}]*\"severity\"\\s*:\\s*\"\\s*(?:critical|important|blocker|blocking|high|major)\\s*\")[^{}]*\\}",
+      "flags": "i",
+      "match": "not_contains"
+    }
+  ]
+}
