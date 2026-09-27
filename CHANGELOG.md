@@ -23,7 +23,7 @@ What matters most:
 - **Rule changes go through one command you run** in your own terminal:
   `cadence-ruling.sh`.
 - **Codex installs through its own plugin** (`codex plugin add`).
-- **Unused code removed**: two guards, the old review agents and scripts, and
+- **Unused code removed**: three guards, the old review agents and scripts, and
   their tests and docs.
 
 ### Upgrading
