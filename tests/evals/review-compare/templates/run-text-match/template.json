@@ -1,0 +1,34 @@
+{
+  "title": "Check usernames, display names and tags at sign-up",
+  "spec": "docs/specs/signup-names.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "lower-not-casefold", "rank": "mild", "kind": "defect", "symbol": "normalize_name",
+     "what": "Display names are lower-cased instead of case-folded, so Straße and STRASSE are not seen as duplicates.",
+     "edits": [{"file": "names/text.py", "find": "    folded = unicodedata.normalize(\"NFC\", name.casefold())", "replace": "    folded = unicodedata.normalize(\"NFC\", name.lower())"}]},
+    {"id": "match-dollar-newline", "rank": "serious", "kind": "defect", "symbol": "valid_username",
+     "what": "The username pattern uses match with ^...$, and $ matches before a trailing newline, so alice\\n is accepted.",
+     "edits": [
+       {"file": "names/text.py", "find": "USERNAME = re.compile(r\"[A-Za-z][A-Za-z0-9_]{2,19}\")", "replace": "USERNAME = re.compile(r\"^[A-Za-z][A-Za-z0-9_]{2,19}$\")"},
+       {"file": "names/text.py", "find": "    return USERNAME.fullmatch(name) is not None", "replace": "    return USERNAME.match(name) is not None"}]},
+    {"id": "no-nfc", "rank": "serious", "kind": "defect", "symbol": "normalize_name",
+     "what": "Display names are not Unicode-normalized, so a name typed with a combining accent passes as a different person's name.",
+     "edits": [{"file": "names/text.py", "find": "    folded = unicodedata.normalize(\"NFC\", name.casefold())\n    return \" \".join(folded.split())", "replace": "    return \" \".join(name.casefold().split())"}]},
+    {"id": "reserved-digits-only", "rank": "serious", "kind": "defect", "symbol": "is_reserved",
+     "what": "Only trailing digits are removed before the reserved-word check, so admin_2 is allowed.",
+     "edits": [{"file": "names/text.py", "find": "    base = name.casefold().rstrip(\"0123456789_\")", "replace": "    base = name.casefold().rstrip(string.digits)"},
+               {"file": "names/text.py", "find": "import re\nimport unicodedata", "replace": "import re\nimport string\nimport unicodedata"}]},
+    {"id": "lstrip-hash", "rank": "mild", "kind": "defect", "symbol": "clean_tag",
+     "what": "lstrip removes every leading #, so ##news is accepted as news instead of rejected.",
+     "edits": [{"file": "names/text.py", "find": "    tag = \" \".join(raw.strip().removeprefix(\"#\").split())", "replace": "    tag = \" \".join(raw.strip().lstrip(\"#\").split())"}]},
+    {"id": "quote-after-space", "rank": "serious", "kind": "defect", "symbol": "parse_tags",
+     "what": "The CSV reader does not skip the space after a comma, so a quoted tag after a space is split apart and the valid field is rejected.",
+     "edits": [{"file": "names/text.py", "find": "    entries = next(csv.reader([field], skipinitialspace=True), [])", "replace": "    entries = next(csv.reader([field]), [])"}]},
+    {"id": "tag-non-ascii", "rank": "mild", "kind": "defect", "symbol": "clean_tag",
+     "what": "The tag character check uses isalnum alone, which is true for accented and non-Latin letters and digits, so café is accepted.",
+     "edits": [{"file": "names/text.py", "find": "    if not all(ch.isascii() and (ch.isalnum() or ch in TAG_PUNCT) for ch in tag):", "replace": "    if not all(ch.isalnum() or ch in TAG_PUNCT for ch in tag):"}]},
+    {"id": "lone-hash-accepted", "rank": "mild", "kind": "defect", "symbol": "clean_tag",
+     "what": "An empty tag is not refused, and all() over no characters is true, so a lone # is stored as an empty tag.",
+     "edits": [{"file": "names/text.py", "find": "    if not tag or len(tag) > MAX_TAG:", "replace": "    if len(tag) > MAX_TAG:"}]}
+  ]
+}

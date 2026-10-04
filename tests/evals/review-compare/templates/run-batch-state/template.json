@@ -1,0 +1,31 @@
+{
+  "title": "Run jobs in batches with retries and a report",
+  "spec": "docs/specs/batches.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "summary-mutable-default", "rank": "mild", "kind": "defect", "symbol": "summary",
+     "what": "The counts dict is a shared default, so every call without counts adds to the totals of earlier calls.",
+     "edits": [{"file": "jobs/queue.py", "find": "def summary(records, counts=None):\n    \"\"\"Count records by state.\"\"\"\n    counts = {} if counts is None else counts\n", "replace": "def summary(records, counts={}):\n    \"\"\"Count records by state.\"\"\"\n"}]},
+    {"id": "records-generator-reused", "rank": "mild", "kind": "defect", "symbol": "report",
+     "what": "The records are a generator, so the summary uses them up and the details list is always empty.",
+     "edits": [{"file": "jobs/queue.py", "find": "records = [self.record(job_id) for job_id in job_ids]", "replace": "records = (self.record(job_id) for job_id in job_ids)"}]},
+    {"id": "start-late-binding", "rank": "serious", "kind": "defect", "symbol": "batch",
+     "what": "Each slot's start callable reads the loop variable when called, so every slot runs the last job in the batch.",
+     "edits": [{"file": "jobs/queue.py", "find": "start = functools.partial(self.run, job_id)", "replace": "start = lambda: self.run(job_id)"}]},
+    {"id": "grid-rows-aliased", "rank": "serious", "kind": "defect", "symbol": "batch",
+     "what": "All grid rows are the same list, so a batch longer than one row shows only the last row's jobs in every row.",
+     "edits": [{"file": "jobs/queue.py", "find": "grid = [[None] * width for _ in range(rows)]", "replace": "grid = [[None] * width] * rows"}]},
+    {"id": "options-shallow-copy", "rank": "serious", "kind": "defect", "symbol": "merge_options",
+     "what": "Defaults are copied shallowly, so a nested override changes the handler's registered defaults and later jobs' options.",
+     "edits": [{"file": "jobs/queue.py", "find": "options = copy.deepcopy(defaults)", "replace": "options = copy.copy(defaults)"}]},
+    {"id": "remove-while-walking", "rank": "mild", "kind": "defect", "symbol": "remove_finished",
+     "what": "Jobs are removed from the list being walked, so the job right after each removed one is skipped and finished jobs stay queued.",
+     "edits": [{"file": "jobs/queue.py", "find": "for job_id in list(self.order):", "replace": "for job_id in self.order:"}]},
+    {"id": "broad-except-retries", "rank": "serious", "kind": "defect", "symbol": "run",
+     "what": "Every exception is treated as retryable, so a non-retryable error is retried and then swallowed instead of reaching the caller.",
+     "edits": [{"file": "jobs/queue.py", "find": "except RetryableError as exc:", "replace": "except Exception as exc:"}]},
+    {"id": "empty-batch-succeeds", "rank": "mild", "kind": "defect", "symbol": "succeeded",
+     "what": "all() is true for an empty list, so an empty batch counts as succeeded.",
+     "edits": [{"file": "jobs/queue.py", "find": "return bool(states) and all(state == \"done\" for state in states)", "replace": "return all(state == \"done\" for state in states)"}]}
+  ]
+}

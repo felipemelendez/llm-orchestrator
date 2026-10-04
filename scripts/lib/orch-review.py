@@ -39,6 +39,12 @@ BLOCKING = {"verified", "unverified", "promoted", "unresolved", "unjudged"}
 BUILTIN = {"claude": "code-review", "codex": "codex-review"}
 OTHER = {"claude": "codex", "codex": "claude"}
 REVIEW_TOOLS = "Read,Grep,Glob,Bash,Agent"
+# A codex log event: time, level, an optional span, the logger, then the event name. A log_only
+# tool_result line also carries the tool's raw output, which may quote anything, so only the
+# trace_safe one is read for mcp_tool. Output that copies a whole log line verbatim, at the start of a
+# line, still counts; that fails closed.
+CODEX_EVENT = re.compile(r'\d{4}-\d\d-\d\dT[\d:.]+Z\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+(?:\S+\s+)?codex_otel\.(log_only|trace_safe): '
+                         r'event\.name="(codex\.[a-z_]+)"')
 REVIEW_INSTRUCTION = ("The change must implement the spec in {spec}. Read it, and report every place where the "
                       "change does not meet it, as well as any other defect.")
 SPEC_IN_COPY = ".git/orch-review/spec.md"
@@ -1469,15 +1475,26 @@ def rollout_message(events):
 
 def codex_log_mcp(stderr):
     """R6: MCP use in the codex log: a tool result from an MCP tool, or a start line naming a server."""
+    calls = {"log_only": set(), "trace_safe": set()}
     for line in (stderr or "").splitlines():
-        if 'event.name="codex.tool_result"' in line and "mcp_tool=true" in line:
-            return "an MCP tool ran (codex.tool_result has mcp_tool=true)"
-        if 'event.name="codex.conversation_starts"' in line:
+        event = CODEX_EVENT.match(line)
+        if not event:
+            continue
+        logger, name = event.groups()
+        if name == "codex.tool_result":
+            # Pair the two lines of one call by call_id, which comes before the raw output.
+            call = re.search(r"\scall_id=(\S+)", line)
+            calls[logger].add(call and call.group(1))
+            if logger == "trace_safe" and re.search(r"\smcp_tool=true(\s|$)", line):
+                return "an MCP tool ran (codex.tool_result has mcp_tool=true)"
+        elif name == "codex.conversation_starts":
             # The log_only line names the servers; the trace_safe line gives only their count.
             names = re.search(r'mcp_servers="([^"]*)"', line)
             count = re.search(r"mcp_server_count=(\d+)", line)
             if (names and names.group(1).strip()) or (count and count.group(1) != "0") or not (names or count):
                 return "an MCP server started (a codex.conversation_starts line names or counts one)"
+    if calls["log_only"] - calls["trace_safe"]:
+        return "a codex.tool_result has no trace_safe line to show whether it was an MCP tool"
     return None
 
 

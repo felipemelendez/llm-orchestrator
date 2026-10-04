@@ -103,7 +103,12 @@ match), which covers the spec's item 7. Four templates change more than 150
 lines.
 
 The set has 134 planted defects in 83 cases (69 with defects,
-14 clean). The literature research estimates 100 to 170 defects to detect a
+14 clean). Five more templates, named `run-*`, hold 40 defects that look right
+when read and fail only on an odd input the spec requires to work (rounding,
+month ends, symbolic links, Unicode, mutable defaults); `build` with no
+`--template` builds all 19 templates; give `--template 'run-*'` for these alone,
+or one glob per original template for the 83 cases. They answered whether an adversarial brief
+helps `/code-review` (`docs/MEASUREMENTS.md`, 2026-10-04). The literature research estimates 100 to 170 defects to detect a
 rise in detection from 50% to 65% with a paired test.
 
 Arms (`review-compare/arms.json`) all run on the same cases, with the change

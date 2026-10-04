@@ -1,0 +1,33 @@
+{
+  "title": "Export a user's files into an export folder",
+  "spec": "docs/specs/export.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "absolute-name-escapes", "rank": "serious", "kind": "defect", "symbol": "target_path",
+     "what": "A user-chosen absolute name such as /tmp/x.txt replaces the export folder in os.path.join, so the file is written outside it.",
+     "edits": [{"file": "exporter/export.py", "find": "export_name(os.path.basename(name))", "replace": "export_name(name.replace(\"../\", \"\"))"}]},
+    {"id": "strip-not-prefix", "rank": "serious", "kind": "defect", "symbol": "export_name",
+     "what": "str.lstrip removes any of the characters of draft- from the start, so data.csv is exported as .csv.",
+     "edits": [{"file": "exporter/export.py", "find": "    name = name.removeprefix(STRIP_PREFIX)", "replace": "    name = name.lstrip(STRIP_PREFIX)"}]},
+    {"id": "first-dot-extension", "rank": "mild", "kind": "defect", "symbol": "export_name",
+     "what": "The extension is taken from the first dot, so photo.v2.jpeg is not renamed to photo.v2.jpg.",
+     "edits": [{"file": "exporter/export.py", "find": "    stem, ext = os.path.splitext(name)", "replace": "    stem, dot, ext = name.partition(\".\")\n    ext = dot + ext"}]},
+    {"id": "hidden-folders-walked", "rank": "serious", "kind": "defect", "symbol": "export_files",
+     "what": "The filtered folder list is rebound instead of assigned in place, so os.walk still enters hidden folders such as .git and exports their files.",
+     "edits": [{"file": "exporter/export.py", "find": "        dirs[:] = [d for d in dirs if not d.startswith(\".\")]", "replace": "        dirs = [d for d in dirs if not d.startswith(\".\")]"}]},
+    {"id": "shell-splits-spaces", "rank": "serious", "kind": "defect", "symbol": "compress_file",
+     "what": "The compress command is run through the shell with an unquoted path, so a path with a space fails.",
+     "edits": [{"file": "exporter/export.py", "find": "    subprocess.run([sys.executable, \"-c\", GZIP_SCRIPT, path, str(level)], check=True)", "replace": "    subprocess.run(f\"{sys.executable} -c '{GZIP_SCRIPT}' {path} {level}\", shell=True, check=True)"}]},
+    {"id": "symlink-to-file-exported", "rank": "serious", "kind": "defect", "symbol": "export_files",
+     "what": "os.path.isfile follows symbolic links, so a link to a file outside the folder is exported.",
+     "edits": [{"file": "exporter/export.py", "find": "            if filename.startswith(\".\") or os.path.islink(source):", "replace": "            if filename.startswith(\".\") or not os.path.isfile(source):"}]},
+    {"id": "empty-export-no-folder", "rank": "mild", "kind": "defect", "symbol": "export_files",
+     "what": "The export folder is only created when a file is copied, so an empty source leaves no export folder.",
+     "edits": [
+       {"file": "exporter/export.py", "find": "    os.makedirs(export_dir, exist_ok=True)\n    exported = []", "replace": "    exported = []"},
+       {"file": "exporter/export.py", "find": "            shutil.copyfile(source, target)", "replace": "            os.makedirs(export_dir, exist_ok=True)\n            shutil.copyfile(source, target)"}]},
+    {"id": "level-zero-ignored", "rank": "mild", "kind": "defect", "symbol": "export_files",
+     "what": "level 0 is falsy, so `level or DEFAULT_LEVEL` compresses at level 6 instead of storing.",
+     "edits": [{"file": "exporter/export.py", "find": "    level = DEFAULT_LEVEL if level is None else level", "replace": "    level = level or DEFAULT_LEVEL"}]}
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "title": "Total line items and format a money report",
+  "spec": "docs/specs/money-report.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "banker-rounding", "rank": "serious", "kind": "defect", "symbol": "to_minor",
+     "what": "Rounding uses round(), which rounds halves to even, so 0.125 becomes 12 cents instead of 13.",
+     "edits": [{"file": "ledger/report.py", "find": "    rounded = value.quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)", "replace": "    rounded = round(value, places)"}]},
+    {"id": "unicode-digits-quantity", "rank": "mild", "kind": "defect", "symbol": "parse_quantity",
+     "what": "The quantity check uses isdigit() alone, so a superscript 2 crashes with ValueError and an Arabic-Indic 3 is accepted.",
+     "edits": [{"file": "ledger/report.py", "find": "    if not (text.isascii() and text.isdigit()):", "replace": "    if not text.isdigit():"}]},
+    {"id": "zero-qty-becomes-one", "rank": "serious", "kind": "defect", "symbol": "line_total",
+     "what": "A quantity of 0 is replaced by the default 1, so a zero-quantity line is charged once.",
+     "edits": [{"file": "ledger/report.py", "find": "    qty = parse_quantity(item.get(\"qty\", 1))", "replace": "    qty = parse_quantity(item.get(\"qty\") or 1)"}]},
+    {"id": "negative-divmod", "rank": "serious", "kind": "defect", "symbol": "format_money",
+     "what": "divmod is applied to the signed amount, so -150 cents is written as -$-2.50.",
+     "edits": [{"file": "ledger/report.py", "find": "    whole, frac = divmod(abs(minor), 10**places)", "replace": "    whole, frac = divmod(minor, 10**places)"}]},
+    {"id": "sku-string-sort", "rank": "mild", "kind": "defect", "symbol": "build_report",
+     "what": "Rows are sorted by the sku string, so sku 10 comes before sku 9.",
+     "edits": [{"file": "ledger/report.py", "find": "    ordered = sorted(items, key=lambda item: int(item[\"sku\"]))", "replace": "    ordered = sorted(items, key=lambda item: item[\"sku\"])"}]},
+    {"id": "symbol-lstrip", "rank": "mild", "kind": "defect", "symbol": "parse_amount",
+     "what": "The symbol is removed with lstrip, which strips any number of them, so $$5 is accepted.",
+     "edits": [{"file": "ledger/report.py", "find": "    text = text.removeprefix(symbol)", "replace": "    text = text.lstrip(symbol)"}]},
+    {"id": "match-not-fullmatch", "rank": "mild", "kind": "defect", "symbol": "parse_amount",
+     "what": "The pattern only has to match the start, so 1,23 is read as 123 and 12abc crashes with InvalidOperation.",
+     "edits": [{"file": "ledger/report.py", "find": "    if not AMOUNT_RE.fullmatch(text):", "replace": "    if not AMOUNT_RE.match(text):"}]},
+    {"id": "empty-sum-int", "rank": "serious", "kind": "defect", "symbol": "build_report",
+     "what": "sum() starts from the int 0, so an empty item list crashes in to_minor instead of giving Total: $0.00.",
+     "edits": [{"file": "ledger/report.py", "find": "    grand = sum(totals, Decimal(0))", "replace": "    grand = sum(totals)"}]}
+  ]
+}

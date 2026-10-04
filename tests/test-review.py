@@ -723,6 +723,28 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("Security lens", self.calls("claude", "code-review")[0]["prompt"])
         self.assertIn("Security lens", self.calls("codex", "codex-review")[0]["instruction"])
 
+    def test_r6_only_codex_log_events_count_and_tool_output_is_not_read(self):
+        # A reviewer that reads orch-review.py prints the check's own strings: in its command line, and in
+        # the log_only tool_result line, which carries the raw output. Neither is MCP use.
+        quoted = '\'event.name="codex.tool_result"\' in line and "mcp_tool=true" event.name="codex.conversation_starts"'
+        prefix = "2026-10-04T19:34:15Z  INFO codex_otel."
+        tool = ' event.name="codex.tool_result" tool_name=exec_command'
+        log_only = f"{prefix}log_only:{tool} output={quoted}\n"
+        trace_safe = f"{prefix}trace_safe:{tool} output_length=9 mcp_tool=false\n"
+        self.assertIsNone(MOD.codex_log_mcp(f"/bin/zsh -lc \"rg {quoted}\"\n{log_only}{trace_safe}"))
+        self.assertIn("mcp_tool=true", MOD.codex_log_mcp(trace_safe.replace("mcp_tool=false", "mcp_tool=true")))
+        # Output that quotes a log line behind a prefix, as grep prints it, is not an event either.
+        self.assertIsNone(MOD.codex_log_mcp("saved.log:12:" + trace_safe.replace("mcp_tool=false", "mcp_tool=true")))
+        # A log_only result with no trace_safe line of its own cannot be cleared, so it fails closed,
+        # even when another call's trace_safe line is there.
+        self.assertIn("no trace_safe line", MOD.codex_log_mcp(log_only))
+        first = f"{prefix}log_only: event.name=\"codex.tool_result\" call_id=A tool_name=figma output=x\n"
+        second = f"{prefix}trace_safe: event.name=\"codex.tool_result\" call_id=B mcp_tool=false\n"
+        self.assertIn("no trace_safe line", MOD.codex_log_mcp(first + second))
+        self.assertIsNone(MOD.codex_log_mcp(first + second.replace("call_id=B", "call_id=A")))
+        started = f'{prefix}log_only: event.name="codex.conversation_starts" mcp_servers="figma"\n'
+        self.assertIn("MCP server", MOD.codex_log_mcp(started))
+
     # Step 3
     def test_step3_the_copy_head_is_the_merge_base_so_the_whole_change_is_uncommitted(self):
         self.git("checkout", "-q", "-b", "work")
