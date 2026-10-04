@@ -135,6 +135,50 @@ seats, the last four never run; the built-in arms are `full-builtin`,
 `standard-builtin`, `standard-builtin-codex` and `full-builtin-single`, not yet
 run.
 
+### 2026-10-04 — An adversarial brief added nothing to /code-review (negative result)
+Question: in Full, should one of the two reviews be told to attack the change
+(run it with odd inputs and try to break it), since `/code-review` can run
+commands and `codex review` cannot? Arms: `code-review` (`/code-review high`
+with the spec sentence) and the same command with an adversarial brief after
+the sentence, both on claude-opus-5-5, one try per case, same scorer as above.
+The brief told the reviewer to run the changed code on odd inputs (empty, zero,
+negative, boundary, paths with spaces, symbolic links, repeated calls), check
+whether each test would notice the code it protects being removed, and prefer
+findings it ran.
+
+The 83 planted-defect cases above measure bugs a reader can see, which plain
+reviewers already find 93-97% of, so five templates were added whose defects
+look right when read and fail only on an odd input the spec requires to work:
+`run-money-report` (half-up rounding, zero quantity, negative amounts, numeric
+SKU order, an empty list), `run-file-export` (absolute names, `lstrip` for a
+prefix, multi-dot extensions, hidden folders, spaces with `shell=True`,
+symbolic links), `run-schedule` (month ends, Feb 29, a DST change, offsets,
+naive times, window edges), `run-text-match` (`casefold`, NFC, `$` before a
+newline, non-ASCII digits, quoted CSV tags) and `run-batch-state` (mutable
+defaults, a generator read twice, late-binding lambdas, aliased rows, a shallow
+copy, changing a list while walking it). 25 cases, 40 defects, 21 serious;
+every defect passes the committed tests and fails the held-out check. A later
+`codex review` of the templates found four unplanted bugs in the clean versions
+(a symbolic link already in the export folder, day arithmetic on an aware
+local start, a shared override dict, a `Decimal` quantity); like the clean-case
+bugs above, findings on them count as false, the same for both arms.
+
+| arm | found | serious | mild | false/run | clean runs with no finding | minutes per case | $ per case |
+|---|---|---|---|---|---|---|---|
+| `code-review` | 36/40 | 21/21 | 15/19 | 6.5 | 0/5 | 0.7 | 0.15 |
+| adversarial | 36/40 | 20/21 | 16/19 | 7.2 | 0/5 | 1.0 | 0.21 |
+
+Paired on the 40 defects: 3 found only by each arm, p = 1.0. More extra
+findings from the adversarial arm on 13 of 25 cases, from `code-review` on 7,
+p = 0.26. A first, stopped run on 30 of the 83 old cases agreed: 45 and 43 of 46.
+
+**Conclusion.** The adversarial brief found the same defects, including the
+ones meant to need running, and took about 40% longer and cost about 40% more,
+with slightly more noise. Strong reviewers already know these traps from
+reading. **Acted on:** the brief was not adopted; Full keeps `/code-review` and
+`codex review` with the same instruction. The five templates stay in
+`tests/evals/review-compare/templates/` (prefix `run-`).
+
 ## Field records (not A/B)
 
 Everything above this line is an A/B run. Everything below it is not, and the

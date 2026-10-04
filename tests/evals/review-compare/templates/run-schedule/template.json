@@ -1,0 +1,31 @@
+{
+  "title": "Remind users before a subscription charges them",
+  "spec": "docs/specs/reminders.md",
+  "test_command": "python3 -m unittest discover -q -s tests -t .",
+  "defects": [
+    {"id": "month-end-drift", "rank": "serious", "kind": "defect", "symbol": "billing_dates",
+     "what": "Each charge is counted from the previous charge, so a plan started on the 31st drifts to the 28th or 29th for good after February.",
+     "edits": [{"file": "subs/schedule.py", "find": "    n = 0\n    while True:\n        yield nth_billing_date(sub, n)\n        n += 1", "replace": "    day = sub.start\n    while True:\n        yield day\n        day = add_months(day, 12 if sub.period == \"yearly\" else 1)"}]},
+    {"id": "offset-overwritten", "rank": "serious", "kind": "defect", "symbol": "parse_timestamp",
+     "what": "A timestamp with a non-zero offset keeps its wall-clock time and is relabelled UTC, so it names the wrong moment.",
+     "edits": [{"file": "subs/schedule.py", "find": "    return value.astimezone(UTC)", "replace": "    return value.replace(tzinfo=UTC)"}]},
+    {"id": "leap-day-crash", "rank": "serious", "kind": "defect", "symbol": "nth_billing_date",
+     "what": "A yearly plan started on 29 February raises ValueError in the next non-leap year.",
+     "edits": [{"file": "subs/schedule.py", "find": "        return add_months(sub.start, 12 * n)", "replace": "        return sub.start.replace(year=sub.start.year + n)"}]},
+    {"id": "dst-shift", "rank": "mild", "kind": "defect", "symbol": "reminder_at",
+     "what": "Days are subtracted after converting to UTC, so a reminder across a daylight saving change fires an hour off the user's remind time.",
+     "edits": [{"file": "subs/schedule.py", "find": "    local = datetime.combine(bills_on - timedelta(days=days), sub.remind_time, tzinfo=ZoneInfo(sub.tz))\n    return local.astimezone(UTC)", "replace": "    local = datetime.combine(bills_on, sub.remind_time, tzinfo=ZoneInfo(sub.tz))\n    return local.astimezone(UTC) - timedelta(days=days)"}]},
+    {"id": "fraction-rejected", "rank": "mild", "kind": "defect", "symbol": "parse_timestamp",
+     "what": "Timestamps with fractional seconds raise ValueError.",
+     "edits": [{"file": "subs/schedule.py", "find": "    value = datetime.fromisoformat(text)", "replace": "    value = datetime.strptime(text, \"%Y-%m-%dT%H:%M:%S%z\")"}]},
+    {"id": "naive-now-local", "rank": "serious", "kind": "defect", "symbol": "upcoming",
+     "what": "A naive now is read as the computer's local time instead of UTC, shifting the window by the machine's offset.",
+     "edits": [{"file": "subs/schedule.py", "find": "    if now.tzinfo is None:\n        now = now.replace(tzinfo=UTC)", "replace": "    now = now.astimezone(UTC)"}]},
+    {"id": "zero-days-default", "rank": "mild", "kind": "defect", "symbol": "reminder_at",
+     "what": "days_before=0 is treated as unset, so a same-day reminder comes three days early.",
+     "edits": [{"file": "subs/schedule.py", "find": "    days = DEFAULT_DAYS_BEFORE if sub.days_before is None else sub.days_before", "replace": "    days = sub.days_before or DEFAULT_DAYS_BEFORE"}]},
+    {"id": "window-midnight", "rank": "mild", "kind": "defect", "symbol": "upcoming",
+     "what": "The window ends at midnight of the last day instead of exactly days x 24 hours after now, dropping reminders later that day.",
+     "edits": [{"file": "subs/schedule.py", "find": "    end = now + timedelta(days=days)", "replace": "    end = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days)"}]}
+  ]
+}

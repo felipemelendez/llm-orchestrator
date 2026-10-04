@@ -17,8 +17,9 @@ Steps:
      and `origin/main` if that fails.
 
 3. Find the spec the change must implement: the plan or spec named in this
-   conversation, else the newest file in `docs/llm-orchestrator/specs/`. If
-   there is none, ask the person which file states what the change must do.
+   conversation. If there is none, write what the person asked for, in a few
+   plain lines, to a new file outside the repository, and use that. Never pick
+   a spec file just because it is the newest; it may be about other work.
 
 4. Start the run in a new directory outside the repository and outside any
    temporary directory, then wait:

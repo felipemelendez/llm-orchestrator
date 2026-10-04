@@ -449,7 +449,12 @@ choice can only turn a review toward `INCOMPLETE` or `NOT-READY`, never toward
   in both, for the exact `<session-id>` only.
 - **R6.** `codex review` writes two start lines; the `trace_safe` one carries
   `mcp_server_count=<n>` instead of `mcp_servers=""`. Either must show none; a
-  start line with neither fails.
+  start line with neither fails. Only codex's own events count (a line
+  that starts with the time, then the level, `codex_otel.log_only:` or `trace_safe:`, then `event.name`), and
+  `mcp_tool` is read from the `trace_safe` tool result only: the `log_only`
+  one carries the tool's raw output, so a reviewer that read `orch-review.py`
+  once made a review a dropout. A `log_only` tool result without a
+  `trace_safe` line of the same `call_id` fails closed.
 - **R7.** Zero findings count only when the reviewer read the change: a tool
   call in the `/code-review` transcript or the `codex review` rollout names a
   changed file, or a tool result shows its diff. A `codex review` reply with no
