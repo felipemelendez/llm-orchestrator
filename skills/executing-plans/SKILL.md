@@ -21,7 +21,7 @@ Use when a plan exists at `docs/llm-orchestrator/plans/`, more than one task rem
 
 5. **Run continuously**, group to group, without asking the user. Stops: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
 
-6. **When all groups complete:** run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the combined diff; `READY`, or `READY-WITH-FIXES` with the mild findings handled → `/llm-orchestrator:finish`. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
+6. **When all groups complete:** run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the combined diff; `READY`, or `READY-WITH-FIXES` with the mild findings handled → `/llm-orchestrator:finish`, which lands the ticket through a pull request (`finishing-a-branch` option 1). Landing many tickets: one PR at a time in merge order, pulling the base and running its checks between PRs. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
 
 ## Resuming from a handoff
 
@@ -55,5 +55,5 @@ Verify:
 - <full test suite command> → <line>
 Next:
 - /llm-orchestrator:review for combined-diff sweep
-- (or) /llm-orchestrator:finish if review already happened per-task
+- (or) /llm-orchestrator:finish to land through a PR if review already happened per-task
 ```
