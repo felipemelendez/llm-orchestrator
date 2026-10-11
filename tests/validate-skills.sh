@@ -141,8 +141,8 @@ while IFS= read -r dir; do
     verification-before-completion) limit=942   ;;
     executing-plans)               limit=903   ;;
     writing-skills)                limit=847   ;;
-    # 2026-10-10: +212 for the PR-first landing (push, PR body shape, merge, base checks).
-    finishing-a-branch)            limit=981   ;;
+    # 2026-10-10: +233 for the PR-first landing (push, PR body shape, merge, base checks).
+    finishing-a-branch)            limit=1002  ;;
     requesting-code-review)        limit=647   ;;
     receiving-code-review)         limit=619   ;;
     *)                              limit=500  ;;

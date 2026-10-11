@@ -57,7 +57,8 @@ Also confirm this is a worktree and not a submodule before treating it as one:
 ## Behaviors
 
 ### 1. Push and open PR (default)
-- Base branch: `git symbolic-ref refs/remotes/origin/HEAD`, or ask.
+- Base branch: `git symbolic-ref --short refs/remotes/origin/HEAD` without its `origin/`
+  prefix (`main`, not `origin/main`), or ask.
 - `git push -u origin <branch>` (detached HEAD: `git push origin HEAD:refs/heads/<new-branch>`).
   Never rewrite pushed history. Investigate a rejected push; force-push only with explicit
   user authorization.
@@ -72,8 +73,9 @@ Also confirm this is a worktree and not a submodule before treating it as one:
   ## Open items — what is left, or "None"
   ```
 - Merge only when the laws' Landing rule or the user authorizes it and the PR's checks are
-  green: `gh pr merge <n> --merge` (a merge commit). Then `git checkout <base> && git pull
-  --ff-only` and run the full suite on the base, one suite at a time. Red: stop and report.
+  green: `gh pr merge <n> --merge` (a merge commit). Then, in the checkout that holds `<base>`
+  (`git worktree list`; from a ticket worktree it is usually the main checkout), `git pull
+  --ff-only` and run the full suite there, one suite at a time. Red: stop and report.
 - Many tickets: one PR at a time, in merge order, base checks green between them.
 - Keep the worktree until the PR is merged, then offer cleanup if marked `.orch-worktree` and
   `git branch -d <branch>`. Not authorized to merge: stop after opening and report the URL.

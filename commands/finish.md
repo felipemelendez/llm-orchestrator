@@ -22,7 +22,8 @@ Steps:
    - Detached HEAD?
    - In a worktree (`git rev-parse --git-dir` vs `--git-common-dir`)?
    - Worktree marked (`.orch-worktree` present)?
-   - Base branch (`git symbolic-ref refs/remotes/origin/HEAD` or ask).
+   - Base branch (`git symbolic-ref --short refs/remotes/origin/HEAD` without its `origin/`
+     prefix, or ask).
 
 3. If `$ARGUMENTS` is empty, present the options menu with a one-line recommendation:
 
@@ -37,9 +38,9 @@ Steps:
    - **1**: `git push -u origin <branch>`, then `gh pr create --base <base> --head <branch>`
      with a body of Summary / Decisions / Review / Verification / Manual checklist for the
      owner / Open items (the shape is in `finishing-a-branch`). When merging is authorized
-     and the PR's checks are green: `gh pr merge <n> --merge`, then
-     `git checkout <base> && git pull --ff-only` and run the full suite on the base. Offer
-     worktree cleanup only after the merge.
+     and the PR's checks are green: `gh pr merge <n> --merge`, then, in the checkout that
+     holds `<base>` (`git worktree list`), `git pull --ff-only` and run the full suite there.
+     Offer worktree cleanup only after the merge.
    - **2**: `git checkout <base> && git pull --ff-only && git merge --no-ff <branch>`, then run
      the suite on the merged tree. Offer worktree cleanup.
    - **3**: Print where branch + worktree live.
