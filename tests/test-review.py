@@ -165,6 +165,10 @@ def code_review():
         reply = ("I reviewed the change.\n\n```json\n" + json.dumps(spec.get("findings", []), indent=2) + "\n```\n")
     else:
         reply = spec["reply"]
+    for role in ("user", "assistant"):
+        if spec.get(f"subagent_{role}_text") is not None:
+            events.append({"type": role, "message": {"role": role, "content": [
+                {"type": "text", "text": spec[f"subagent_{role}_text"]}]}})
     if not spec.get("no_transcript"):
         (project / session / "subagents").mkdir(parents=True, exist_ok=True)
         (project / f"{session}.jsonl").write_text(json.dumps({"type": "user", "message": {"content": prompt}}) + "\n")
@@ -1089,6 +1093,17 @@ class ReviewTests(unittest.TestCase):
             with self.subTest(reply=reply):
                 self.scenario["claude"]["code-review"] = {"reply": reply}
                 self.assert_incomplete(self.review(), "code-review: dropout")
+
+    def test_r7_a_prose_reply_falls_back_to_the_subagents_own_findings(self):
+        # The session restated the findings in prose; the /code-review subagent's last message kept the array.
+        fenced = "```json\n" + json.dumps([code_finding()]) + "\n```\n"
+        self.scenario["claude"]["code-review"] = {"reply": "One problem in calc.py.", "subagent_assistant_text": fenced}
+        review = self.review()
+        self.assertEqual([f["id"] for f in review["findings"]], ["code-review-1"])
+        self.assertEqual(review["verdict"], "READY-WITH-FIXES")
+        # Only the subagent's own words count: a fenced array in a user turn is never its findings.
+        self.scenario["claude"]["code-review"] = {"reply": "Looks fine.", "subagent_user_text": "```json\n[]\n```"}
+        self.assert_incomplete(self.review(), "code-review: dropout")
 
     def test_r7_an_empty_array_before_a_full_one_gives_its_findings(self):
         reply = ("Nothing in the first pass.\n```json\n[]\n```\nSecond pass:\n```json\n"
