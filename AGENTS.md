@@ -20,6 +20,11 @@ How much process a change needs — Simple, Standard or Full — is in
 Every agent ends with `Verification: PASS | PENDING | BLOCKED | NOT APPLICABLE — reason`.
 Only a check you actually ran supports PASS.
 
+Every review, at every path and on Claude Code and Codex alike, also asks:
+Is this the simplest correct version? A design finding names its simpler
+alternative; the question and the finding definition are
+`skills/requesting-code-review/references/design-simplicity.md`.
+
 <!-- ORCH:LAWS:START -->
 ## The cadence
 

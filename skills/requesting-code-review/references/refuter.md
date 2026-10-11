@@ -51,5 +51,11 @@ mild id are ignored.
 7. **Wording is the owner's call.** A finding about a sentence a person reads
    is promoted, never dropped.
 8. **Add no findings.** Judge only the ids you were given.
+9. **Design findings are judged like the rest.** A `design-simplicity`
+   finding asks: Is this the simplest correct version? It is promoted unless
+   your drop check shows the problem it names is not there, or that its
+   `simpler_alternative` does not stay correct ("simpler but subtly wrong",
+   the one drop the `design-simplicity.md` text below allows). Its rank
+   follows the harm it names.
 
 Set unused fields to null. Put your reasons in `explanation`.

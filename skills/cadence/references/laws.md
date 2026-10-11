@@ -83,6 +83,11 @@ two reviewers are optional unless stated here.>
   independent review. Full: a reviewed design, two independent reviews, fixes,
   and verification by someone other than the writer. The person who wrote a
   change never supplies its required review.
+- **Design:** every review, self-check and gate also answers
+  `Is this the simplest correct version?` and reports a design finding with
+  its simpler alternative, graded by the harm ranking above; the question and
+  the finding definition are the `requesting-code-review` skill's
+  `references/design-simplicity.md`.
 - **Checks:** <the test, lint and type-check commands for this project, and
   when the full suite is required — for example only for hub changes.>
 - **Completion:** every reply ends with `Verification: PASS | PENDING | BLOCKED

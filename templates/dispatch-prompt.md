@@ -34,6 +34,7 @@ ends and the pasted file begins.
 ## Constraints
 - Do not edit files outside scope.
 - Do not invent new dependencies.
+- Reviewers ask: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`.)
 - Follow the project's Concise Agent Protocol.
 
 ## Verify

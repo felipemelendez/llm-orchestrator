@@ -10,7 +10,7 @@ This project uses LLM Orchestrator's subagent roles. When a coding agent dispatc
 | orch-debugger      | Root-cause investigator. Diagnoses; does not fix.                       |
 | Cadence refuter (role, not a shipped agent type) | Assesses only disputed findings or a catastrophic/serious finding from one reviewer alone, after two complete blind reviews. Agreement skips it regardless of count; it originates no new findings. |
 
-Code review is not a subagent role: `/llm-orchestrator:review` runs the plugin's review script, which starts its own reviewers.
+Code review is not a subagent role: `/llm-orchestrator:review` runs the plugin's review script, which starts its own reviewers. Every review, on Claude Code or Codex, also asks `Is this the simplest correct version?` and reports a design finding with its simpler alternative; the question and the finding definition are the `requesting-code-review` skill's `references/design-simplicity.md`.
 
 Projects that opt into the cadence carry a marked laws block in this file — see the `cadence` skill.
 

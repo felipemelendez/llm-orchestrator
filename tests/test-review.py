@@ -1898,12 +1898,76 @@ class ReviewTests(unittest.TestCase):
         for text in (spec, skill):
             self.assertIn("`refuted`, with a `file-line` quote", " ".join(text.split()))
 
+    # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
+    def test_design_every_rendered_brief_carries_the_simplicity_question(self):
+        snippet = (ROOT / "skills/requesting-code-review/references/design-simplicity.md").read_text().strip()
+        self.assertIn("Is this the simplest correct version?", snippet)
+        self.reviewer("claude", code_finding())
+        self.reviewer("codex", codex_finding())
+        self.prove({"code-review-1": proof(), "codex-review-1": proof()})
+        self.refute(verdict("code-review-1", "PROMOTED"), verdict("codex-review-1", "PROMOTED"))
+        review = self.review("full", "claude")
+        self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
+        rendered = {"code-review prompt": self.calls("claude", "code-review")[0]["prompt"],
+                    "codex review instruction": self.calls("codex", "codex-review")[0]["instruction"],
+                    "prover prompt": self.calls("claude", "prover")[0]["prompt"],
+                    "refuter prompt": self.calls("claude", "refuter")[0]["prompt"]}
+        for path in sorted(self.run_dir.glob("launches/*/instruction.txt")):
+            rendered[str(path.relative_to(self.run_dir))] = path.read_text()
+        self.assertEqual(len(rendered), 6)
+        for name, text in rendered.items():
+            self.assertIn(snippet, text, name)
+        # The question comes before the security lens, and without security it still comes.
+        instruction = self.calls("codex", "codex-review")[0]["instruction"]
+        self.assertLess(instruction.index("The change must implement the spec"), instruction.index(snippet))
+        self.assertNotIn("Security lens", instruction)
+
+    def test_design_a_design_simplicity_finding_carries_its_simpler_alternative(self):
+        schema = json.loads((ROOT / "skills/requesting-code-review/references/prover-schema.json").read_text())
+        item = schema["properties"]["results"]["items"]
+        self.assertIn("design-simplicity", item["properties"]["kind"]["enum"])
+        self.assertIn("simpler_alternative", item["required"])
+        self.assertEqual(MOD.KINDS, ("defect", "spec-gap", "scope-creep", "test-tampering", "test-gap",
+                                     "design-simplicity", "style"))
+        self.reviewer("claude", code_finding(summary="a second adder duplicates calc.add"),
+                      code_finding(summary="a flag nothing reads"), code_finding(summary="a wrapper layer"))
+        self.prove({"code-review-1": mild("design-simplicity", reason="cosmetic: one extra call",
+                                          simpler_alternative="call calc.add directly; same result"),
+                    "code-review-2": proof(kind="design-simplicity", repro=None,
+                                           not_runnable="no command shows a design problem",
+                                           simpler_alternative="drop the flag; the default path is the only caller"),
+                    "code-review-3": mild("design-simplicity", reason="cosmetic")})
+        review = self.review("standard", "codex")
+        one, two, three = (self.found(review, f"code-review-{n}") for n in (1, 2, 3))
+        self.assertEqual((one["kind"], one["rank"], one["status"], one["simpler_alternative"]),
+                         ("design-simplicity", "mild", "mild", "call calc.add directly; same result"))
+        self.assertEqual((two["kind"], two["rank"], two["status"], two["simpler_alternative"]),
+                         ("design-simplicity", "serious", "verified", "drop the flag; the default path is the only caller"))
+        self.assertTrue(three["missing_alternative"])
+        self.assertIsNone(three["simpler_alternative"])
+        self.assert_incomplete(review, "code-review-3: a design-simplicity finding names no simpler alternative")
+        # With every alternative named, design findings decide the verdict like any other kind.
+        self.log.unlink()
+        self.prove({"code-review-3": mild("design-simplicity", reason="cosmetic", simpler_alternative="inline it")})
+        review = self.review("standard", "codex")
+        self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
+        self.assertEqual([f["status"] for f in review["findings"]], ["mild", "verified", "mild"])
+        self.assertFalse(any(f["missing_alternative"] for f in review["findings"]))
+        # A defect keeps a null alternative: the field belongs to the design kind.
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof()})
+        self.log.unlink()
+        review = self.review("standard", "codex")
+        self.assertIsNone(self.found(review, "code-review-1")["simpler_alternative"])
+        self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
+
     # Nothing unused stays
     def test_the_removed_seat_machinery_is_gone(self):
         references = ROOT / "skills/requesting-code-review/references"
         for name in ("contract.md", "adversarial.md", "seat-schema.json"):
             self.assertFalse((references / name).exists(), name)
-        for name in ("prover.md", "prover-schema.json", "refuter.md", "refuter-schema.json", "security-lens.md"):
+        for name in ("prover.md", "prover-schema.json", "refuter.md", "refuter-schema.json", "security-lens.md",
+                     "design-simplicity.md"):
             self.assertTrue((references / name).is_file(), name)
         text = SCRIPT.read_text()
         for word in ("SEAT_RULES", "seat_prompt", "PART_LINES", "parts.json", "not_checked", "SEAT_TIMEOUT",

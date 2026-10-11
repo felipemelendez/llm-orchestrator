@@ -143,8 +143,12 @@ while IFS= read -r dir; do
     writing-skills)                limit=847   ;;
     # 2026-10-10: +260 for the PR-first landing (push, PR body shape, merge, base checks).
     finishing-a-branch)            limit=1029  ;;
-    requesting-code-review)        limit=647   ;;
-    receiving-code-review)         limit=619   ;;
+    # 2026-10-11: +35, +35 and +40 for the design-simplicity check every review
+    # asks (Felipe): the question, the finding kind and how a design finding is
+    # handled are facts the three skills now carry, not narration.
+    requesting-code-review)        limit=682   ;;
+    receiving-code-review)         limit=659   ;;
+    cadence)                       limit=540   ;;
     *)                              limit=500  ;;
   esac
   if (( body_words > limit )); then

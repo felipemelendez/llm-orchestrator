@@ -86,8 +86,10 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 - **R4.** Both reviewers get the comparison's instruction: "The change must
   implement the spec in `<copy>/.git/orch-review/spec.md`. Read it, and
   report every place where the change does not meet it, as well as any other
-  defect." When the diff matches `ORCH_SIG_SECURITY_DIFF`, the text of
-  `references/security-lens.md` follows. Each built-in keeps its own brief.
+  defect." The text of `references/design-simplicity.md` (Is this the
+  simplest correct version?) always follows it; when the diff matches
+  `ORCH_SIG_SECURITY_DIFF`, the text of `references/security-lens.md` follows
+  that. Each built-in keeps its own brief.
   It goes to `/code-review` as `-p` text (R5) and to `codex review` as
   `developer_instructions` (R6).
 
@@ -202,20 +204,22 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   launches, at most 4 running at once per review. A launch is T5's model
   launch on the R3 provider (Claude: sandbox, probe, schema, no MCP; Codex:
   `codex exec` as in T5). Its brief (`references/prover.md`) carries the
-  spec, the harm ranking, `runner.test_cmd` (or "find and run the project's
+  design simplicity text, the spec, the harm ranking, `runner.test_cmd` (or "find and run the project's
   tests"), the diff, and each finding's id, file, line, priority and the
   reviewer's words. One result per id: `rank`, `kind` (`defect | spec-gap |
-  scope-creep | test-tampering | test-gap | style`), `confidence`, `claim`,
-  `evidence`, `mild_reason` when mild, and for serious or catastrophic
-  `repro {command, patch}` or `not_runnable`. The prover ranks the
+  scope-creep | test-tampering | test-gap | design-simplicity | style`),
+  `confidence`, `claim`, `evidence`, `mild_reason` when mild, for
+  `design-simplicity` the `simpler_alternative` (without it: `INCOMPLETE`),
+  and for serious or catastrophic `repro {command, patch}` or `not_runnable`. The prover ranks the
   consequence if the claim is true; truth is for the experiment and refuter.
   It cannot drop or add findings; an extra id is ignored and counted. A
   prover dropout, or a missing result for any id: `INCOMPLETE`.
 - **Rank floors**, set by the script, not the prover, in this order:
   1. `defect` and `spec-gap` are at least `serious`; so is `test-tampering`
-     unless `--allow-test-changes`. Only `test-gap`, `scope-creep` and
-     `style` (wording, naming, maintainability) may be `mild`, and only with
-     a `mild_reason`; without one they become `serious`.
+     unless `--allow-test-changes`. Only `test-gap`, `scope-creep`,
+     `design-simplicity` (ranked by the harm it names) and `style` (wording,
+     naming, maintainability) may be `mild`, and only with a `mild_reason`;
+     without one they become `serious`.
   2. A `test-gap` claims only missing coverage, which a passing run cannot
      disprove: without a failing receipt 1 on the unpatched copy it is
      `mild` (`rank_lowered`); with one it keeps its serious rank.
