@@ -1535,15 +1535,18 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed):
     write_json(launch_dir / "commands.json", calls)
     reply = result.get("result") if result else None
     findings, parse_problem = code_review_findings(reply)
-    if findings is None and transcript:
+    if (findings is None or parse_problem) and transcript:
         # The top-level session often restates the /code-review subagent's findings in prose and drops
-        # the fenced JSON array; the subagent's own last message still carries it. (2026-10-10)
+        # or mangles the fenced JSON array; the subagent's own last message still carries it. A reply
+        # with no array takes whatever the subagent has; a malformed one only a clean parse. (2026-10-10)
         texts = [block.get("text") for event in transcript if event.get("type") == "assistant"
                  for block in ((event.get("message") or {}).get("content") or [])
                  if isinstance(block, dict) and block.get("type") == "text" and isinstance(block.get("text"), str)]
         for text in reversed(texts):
             if "```" in text:
-                findings, parse_problem = code_review_findings(text)
+                found, problem = code_review_findings(text)
+                if found is not None and (findings is None or not problem):
+                    findings, parse_problem = found, problem
                 break
     if findings is not None:
         write_json(launch_dir / "findings.json", findings)

@@ -1101,6 +1101,11 @@ class ReviewTests(unittest.TestCase):
         review = self.review()
         self.assertEqual([f["id"] for f in review["findings"]], ["code-review-1"])
         self.assertEqual(review["verdict"], "READY-WITH-FIXES")
+        # A malformed array in the reply also falls back, but only to a clean parse.
+        self.scenario["claude"]["code-review"] = {"reply": "```json\n[{\"file\": \"calc.py\"", "subagent_assistant_text": fenced}
+        self.assertEqual([f["id"] for f in self.review()["findings"]], ["code-review-1"])
+        self.scenario["claude"]["code-review"] = {"reply": "```json\n[1]\n```", "subagent_assistant_text": "```json\n[2]\n```"}
+        self.assert_incomplete(self.review(), "code-review: dropout")
         # Only the subagent's own words count: a fenced array in a user turn is never its findings.
         self.scenario["claude"]["code-review"] = {"reply": "Looks fine.", "subagent_user_text": "```json\n[]\n```"}
         self.assert_incomplete(self.review(), "code-review: dropout")
