@@ -34,8 +34,9 @@ they cannot supply a required independent review or gate.
    change. Use the deterministic gate and targeted probes where they test the
    affected contracts; inspect individual outcomes, not merely its final exit.
    Unsupported checks remain explicit. Do not repeat valid checks for ceremony.
-6. Deliver within the user's commit/push/merge scope. Retain useful spec/research/
-   design/runbook updates. Finish task-owned temporary resources after consumers
+6. Land through a pull request (`finishing-a-branch` option 1) unless the laws
+   or the user say otherwise. Retain useful spec/research/design/runbook
+   updates. Finish task-owned temporary resources after consumers
    stop and deliverables are preserved; explain concrete preservation reasons.
 
 The built-in reviewers keep their own briefs. The review script gives the

@@ -109,8 +109,13 @@ hooks, then make the arming commit.
 Then help the user write the laws. Point them at the filled-in example beside
 the template, `skills/cadence/references/laws-example.md`, and offer to draft
 wording for each placeholder in the conversation: the project's purpose, its
-promises, the harm ranking, standing orders and hub files. Ask what is true for
-this project rather than inventing it. The user pastes what they approve into
+promises, the harm ranking, standing orders, the Landing rule and hub files.
+Ask what is true for this project rather than inventing it. Landing through a
+pull request is the default the template drafts: ticket branches are pushed and
+merged through one PR each, with a full PR summary. "Never push" is not a
+template value; a "never" is for what is truly the owner's alone, such as
+deploys and migrations. Draft a local-merge-only rule only when the owner asks
+for one. The user pastes what they approve into
 `LAWS.md`; you never write to that file yourself. Its last step is the CI one: run
 `.githooks/orch-cadence-check.sh --audit HEAD` in the project's pipeline, which
 is the layer that still speaks when a clone's hooks were never routed. Relay

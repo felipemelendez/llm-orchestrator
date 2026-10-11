@@ -24,14 +24,16 @@ Reassess if scope grows. Honour requested reviewers and models.
 
 | Path | Use when | Required work |
 |---|---|---|
-| Simple | Clear, local, reversible and low risk | Edit, inspect the full diff, run applicable existing checks, deliver. |
-| Standard | Bounded behavior with meaningful edge cases | State acceptance criteria, implement, check, run the Standard review (`requesting-code-review`), resolve findings. |
-| Full | Interacting architecture, difficult recovery, substantial uncertainty or consequential contracts | Review the spec, implement, run the Full review, resolve findings, independently verify. |
+| Simple | Clear, local, reversible and low risk | Edit, inspect the full diff, run applicable existing checks, land through a PR. |
+| Standard | Bounded behavior with meaningful edge cases | State acceptance criteria, implement, check, run the Standard review (`requesting-code-review`), resolve findings, land through a PR. |
+| Full | Interacting architecture, difficult recovery, substantial uncertainty or consequential contracts | Review the spec, implement, run the Full review, resolve findings, independently verify, land through a PR. |
 
 Simple needs no extra agent, spec, worktree, report or invented test; Standard
 adds only one independent review and fixes for its findings.
 Writers can inspect diffs and run checks, but cannot provide independent
 review or gates.
+
+Land via `finishing-a-branch`; never merge locally unasked.
 
 Read the [Full path](CADENCE.md#proportional-full-path) only when
 required. Simple and Standard need only this page.
