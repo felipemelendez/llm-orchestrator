@@ -1,6 +1,6 @@
 ---
 name: finishing-a-branch
-description: Use when a branch's work is done and tests pass, to choose merge, PR, keep or discard. Nothing destructive without confirmation.
+description: Use when a branch's work is done and tests pass, to land it through a pull request (the default), or merge locally, keep or discard. Nothing destructive without confirmation.
 ---
 
 # Finishing a branch
@@ -8,8 +8,9 @@ description: Use when a branch's work is done and tests pass, to choose merge, P
 ## Proportional cadence
 
 For enabled `workflow: proportional`, finish the cadence's selected path.
-Reuse valid checks; validate changed inputs. Follow authorized delivery without
-another menu. Commit/push/merge/discard need authorization. After consumers stop
+Reuse valid checks; validate changed inputs. Land through option 1 below (push,
+PR, merge, base checks) without another menu when the laws' Landing rule or the
+user authorizes it. Commit/push/merge/discard need authorization. After consumers stop
 and work is preserved, finish resources through the task helper: clean disposable
 copies; retain unique/dirty/active work and report its path. Stop here; the
 preconditions below are for projects without an enabled cadence.
@@ -37,8 +38,8 @@ git rev-parse --git-common-dir
 git status --porcelain                    # clean tree?
 ```
 
-If HEAD is detached, drop options 1 and 4 — there is no branch to merge and none to delete.
-Options 2 and 3 still apply; push with `git push origin HEAD:refs/heads/<new-branch>`.
+If HEAD is detached, drop options 2 and 4 — there is no branch to merge and none to delete.
+Options 1 and 3 still apply; push with `git push origin HEAD:refs/heads/<new-branch>`.
 
 Also confirm this is a worktree and not a submodule before treating it as one:
 `git rev-parse --show-superproject-working-tree` returns a path inside a submodule, where
@@ -47,16 +48,38 @@ Also confirm this is a worktree and not a submodule before treating it as one:
 ## Options (always present this menu)
 
 ```
-1. Merge locally into <base>
-2. Push and open PR
+1. Push and open PR (default)
+2. Merge locally into <base> (only when the user picks it)
 3. Keep as-is (no action; come back later)
 4. Discard
 ```
 
 ## Behaviors
 
-### 1. Merge
-- Confirm base branch with user.
+### 1. Push and open PR (default)
+- Base branch: `git symbolic-ref refs/remotes/origin/HEAD`, or ask.
+- `git push -u origin <branch>` (detached HEAD: `git push origin HEAD:refs/heads/<new-branch>`).
+  Never rewrite pushed history. Investigate a rejected push; force-push only with explicit
+  user authorization.
+- One PR per ticket, keeping the project's naming:
+  `gh pr create --base <base> --head <branch> --title "<title>" --body-file <file>`. Body:
+  ```
+  ## Summary — what changed and why
+  ## Decisions — choices made, alternatives not taken
+  ## Review — verdict, findings and how each was handled
+  ## Verification — commands run and their result lines
+  ## Manual checklist for the owner — what only a person can check
+  ## Open items — what is left, or "None"
+  ```
+- Merge only when the laws' Landing rule or the user authorizes it and the PR's checks are
+  green: `gh pr merge <n> --merge` (a merge commit). Then `git checkout <base> && git pull
+  --ff-only` and run the full suite on the base, one suite at a time. Red: stop and report.
+- Many tickets: one PR at a time, in merge order, base checks green between them.
+- Keep the worktree until the PR is merged, then offer cleanup if marked `.orch-worktree` and
+  `git branch -d <branch>`. Not authorized to merge: stop after opening and report the URL.
+
+### 2. Merge locally (opt-out)
+- Only when the user chose it. Confirm base branch with user.
 - `git checkout <base> && git pull --ff-only` — the point of this step is that base moved,
   so merge into the current base, not a stale local copy.
 - `git merge --no-ff <branch>`
@@ -68,12 +91,6 @@ Also confirm this is a worktree and not a submodule before treating it as one:
   or reset the base branch to its pre-merge commit).
 - Only once green: offer cleanup if the branch lived in a worktree marked `.orch-worktree`,
   then `git branch -d <branch>`.
-
-### 2. PR
-- `git push -u origin <branch>` (detached HEAD: `git push origin HEAD:refs/heads/<new-branch>`)
-- Investigate rejected pushes; force-push only with explicit user authorization.
-- `gh pr create` — title from branch name, body from latest commit + plan link.
-- Do not clean up the worktree (the user may need to push more commits).
 
 ### 3. Keep
 - No-op. Print where the branch + worktree live so they're easy to find later.
@@ -94,20 +111,23 @@ Found:
 - Tests: 142 passed
 - Review: READY
 Options:
-- 1. Merge into main
-- 2. Push and open PR
+- 1. Push and open PR (default)
+- 2. Merge locally into main
 - 3. Keep
 - 4. Discard (requires "discard" confirmation)
 Recommendation:
-- 2 — change touches public API; PR review is cheap insurance
+- 1 — the default; the PR carries the summary and the review record
 ```
 
-After the user picks:
+After landing:
 
 ```
 Changed:
 - Pushed feat/x to origin
 - Opened PR #142: <title> — <url>
+- Merged PR #142 with a merge commit; pulled main
+Verify:
+- <full suite command on main> → <result line>
 Next:
-- Watch CI; merge when green.
+- PR for the next ticket, or none.
 ```
