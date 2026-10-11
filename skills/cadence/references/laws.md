@@ -92,9 +92,9 @@ two reviewers are optional unless stated here.>
   work with no meaningful automated check.>
 - **Landing:** when a branch's review is READY and its checks are green, the
   coordinator pushes the branch (never force-pushed, history never rewritten)
-  and opens one pull request per ticket, with a body in this shape: Summary /
-  Decisions / Review / Verification / Manual checklist for the owner / Open
-  items. It merges the pull request with a merge commit, keeping the project's
+  and opens one pull request per ticket, with a short body in plain words that
+  a person who was not there can follow, in this shape: Summary / Decisions /
+  Review / Verification / Manual checklist for the owner / Open items. It merges the pull request with a merge commit, keeping the project's
   branch and commit naming, pulls the base branch, runs the full checks on the
   base one suite at a time, and only then moves to the next pull request.
   <ANY CHANGE — for example a required approving reviewer before the merge;

@@ -14,6 +14,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   `finishing-a-branch` and `/finish` make "Push and open PR" option 1; merging
   locally is an opt-out. The cadence paths, the routing and `executing-plans`
   end a ticket with "land through a PR"; implementers commit and never push.
+- **Pull requests a person can read.** A new guide,
+  `skills/finishing-a-branch/references/pr-body.md`, tells agents how to write
+  the pull request: plain words, about one screen, what changed first, one
+  result line per check, an honest list of what is left, and a worked example.
+  `/finish`, `finishing-a-branch` and the drafted rulebook point to it.
 - **The review reads `/code-review` findings from its subagent** when the
   top-level reply restates them in prose without the fenced JSON array.
 
