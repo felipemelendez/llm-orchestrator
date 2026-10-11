@@ -24,7 +24,7 @@ Reassess if scope grows. Honour requested reviewers and models.
 
 | Path | Use when | Required work |
 |---|---|---|
-| Simple | Clear, local, reversible and low risk | Edit, inspect the full diff, run applicable existing checks, land through a PR. |
+| Simple | Clear, local, reversible and low risk | Edit, inspect the full diff and ask whether it is the simplest correct version, run applicable existing checks, land through a PR. |
 | Standard | Bounded behavior with meaningful edge cases | State acceptance criteria, implement, check, run the Standard review (`requesting-code-review`), resolve findings, land through a PR. |
 | Full | Interacting architecture, difficult recovery, substantial uncertainty or consequential contracts | Review the spec, implement, run the Full review, resolve findings, independently verify, land through a PR. |
 
@@ -32,6 +32,9 @@ Simple needs no extra agent, spec, worktree, report or invented test; Standard
 adds only one independent review and fixes for its findings.
 Writers can inspect diffs and run checks, but cannot provide independent
 review or gates.
+Every review, self-check and gate asks: Is this the simplest correct version?
+A design finding names its simpler alternative (`requesting-code-review`'s
+`references/design-simplicity.md`).
 
 Land via `finishing-a-branch`; never merge locally unasked.
 

@@ -1,6 +1,6 @@
 # Plan document reviewer — prompt
 
-Dispatch this to a fresh subagent after a plan is written, before execution handoff to /dispatch.
+Dispatch this to a fresh subagent after a plan is written, before execution handoff to /dispatch. Paste the design simplicity text where marked; the reviewer may not find the plugin's files.
 
 You are a plan document reviewer. Verify this plan is complete and buildable, and that it covers the spec.
 
@@ -15,6 +15,11 @@ You are a plan document reviewer. Verify this plan is complete and buildable, an
 | Spec alignment    | Plan covers spec requirements; no major scope creep |
 | Task decomposition| Tasks have clear boundaries; steps are actionable |
 | Buildability      | Could an engineer follow this plan without getting stuck? |
+| Design simplicity | Is this the simplest correct version? A simpler plan that still covers the spec is an issue naming that plan (`skills/requesting-code-review/references/design-simplicity.md`, pasted below). |
+
+<design_simplicity>
+[paste skills/requesting-code-review/references/design-simplicity.md]
+</design_simplicity>
 
 ## Calibration
 

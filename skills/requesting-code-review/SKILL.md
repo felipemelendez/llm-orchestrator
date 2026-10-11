@@ -20,14 +20,18 @@ step is yours to skip. The rules are in `docs/specs/review-design.md`.
   says both reviews came from one provider. A refuter then judges each
   serious or catastrophic finding.
 
-Each reviewer is told to check the change against the spec and report any
-other defect; the security lens (`references/security-lens.md`) is added when
-the diff touches authentication, secrets, tokens or payments. Neither sees the
-other's reply or your report.
+Each reviewer is told to check the change against the spec, report any other
+defect, and answer the design question in `references/design-simplicity.md`:
+Is this the simplest correct version? The security lens
+(`references/security-lens.md`) is added when the diff touches
+authentication, secrets, tokens or payments. Neither sees the other's reply
+or your report.
 
 A prover (`references/prover.md`) ranks each finding and writes a failing
 command and fix, which the script runs; it cannot drop a finding. A defect, a
-spec gap and a `codex review` priority 0 or 1 finding are at least serious.
+spec gap and a `codex review` priority 0 or 1 finding are at least serious. A
+`design-simplicity` finding carries its `simpler_alternative`; without one
+the review is incomplete. The prover and the refuter read the same design text.
 
 ## Running it
 

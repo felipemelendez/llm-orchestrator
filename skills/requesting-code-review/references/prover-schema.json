@@ -19,7 +19,8 @@
           "evidence",
           "mild_reason",
           "repro",
-          "not_runnable"
+          "not_runnable",
+          "simpler_alternative"
         ],
         "properties": {
           "id": {
@@ -41,6 +42,7 @@
               "scope-creep",
               "test-tampering",
               "test-gap",
+              "design-simplicity",
               "style"
             ]
           },
@@ -131,6 +133,12 @@
             ]
           },
           "not_runnable": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "simpler_alternative": {
             "type": [
               "string",
               "null"

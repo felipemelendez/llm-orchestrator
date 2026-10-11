@@ -34,7 +34,7 @@ SIGNALS = HERE / "orch-signals.sh"
 CLAUDE_ALIAS = "opus"
 EFFORT = "high"
 RANKS = ("mild", "serious", "catastrophic")
-KINDS = ("defect", "spec-gap", "scope-creep", "test-tampering", "test-gap", "style")
+KINDS = ("defect", "spec-gap", "scope-creep", "test-tampering", "test-gap", "design-simplicity", "style")
 BLOCKING = {"verified", "unverified", "promoted", "unresolved", "unjudged"}
 BUILTIN = {"claude": "code-review", "codex": "codex-review"}
 OTHER = {"claude": "codex", "codex": "claude"}
@@ -429,6 +429,7 @@ class Review:
             record["copy_fingerprint"] = fingerprint
             changed = [item["file"] for item in state["files"]]
             instruction = REVIEW_INSTRUCTION.format(spec=copy / SPEC_IN_COPY)
+            instruction += "\n\n" + (REFERENCES / "design-simplicity.md").read_text().strip()
             if state["security"]:
                 instruction += "\n\n" + (REFERENCES / "security-lens.md").read_text()
             (directory / "instruction.txt").write_text(instruction)
@@ -458,7 +459,8 @@ class Review:
                 "prover_result": None, "prover_rank": None, "rank": None, "kind": None, "mild_reason": None,
                 "floors": [], "floor_rank": "mild", "rank_raised": False, "rank_lowered": False,
                 "rank_replaced": False, "kind_replaced": False, "evidence_valid": False, "evidence_reason": None,
-                "repro": None, "not_runnable": None, "missing_repro": False, "receipts": {}, "reproduced": False})
+                "repro": None, "not_runnable": None, "missing_repro": False, "receipts": {}, "reproduced": False,
+                "simpler_alternative": None, "missing_alternative": False})
         return findings
 
     # Step 6: the prover (R8, R9, R12, R13)
@@ -467,6 +469,7 @@ class Review:
                   "priority": f["priority"], "words": f["words"]} for f in batch]
         return "\n".join([
             "Brief: prover", "", (REFERENCES / "prover.md").read_text(),
+            (REFERENCES / "design-simplicity.md").read_text().strip(), "",
             "## The specification", "", preflight["spec"], "",
             "## Harm ranking", "", preflight["harm_ranking"], "",
             "## Test command", "",
@@ -561,6 +564,11 @@ class Review:
                                  and not found["repro"] else None)
         # R12: a serious or catastrophic rank the prover gave itself needs a repro or not_runnable.
         found["missing_repro"] = rank != "mild" and not found["repro"] and not found["not_runnable"]
+        # A design-simplicity finding names the simpler version that stays correct; without it the
+        # finding cannot be acted on or argued with, so the review is incomplete.
+        alternative = result.get("simpler_alternative")
+        found["simpler_alternative"] = alternative if isinstance(alternative, str) and alternative.strip() else None
+        found["missing_alternative"] = kind == "design-simplicity" and not found["simpler_alternative"]
         at_least_serious = kind in ("defect", "spec-gap") or (
             kind == "test-tampering" and not self.options["allow_test_changes"])
         codex_floor = found["builtin"] == "codex-review" and found["priority"] in (0, 1)
@@ -678,6 +686,7 @@ class Review:
             for f in judged + raisable]
         return "\n".join([
             "Brief: refuter", "", (REFERENCES / "refuter.md").read_text(),
+            (REFERENCES / "design-simplicity.md").read_text().strip(), "",
             "## The specification", "", preflight["spec"], "",
             "## Harm ranking", "", preflight["harm_ranking"], "",
             "## The findings, with the prover's results and the receipts of each fix experiment", "",
@@ -1888,6 +1897,8 @@ def decide(run_dir):
         if found.get("missing_repro"):
             reasons.append(f"{found['id']}: the prover ranked it {found.get('prover_rank')} with neither repro "
                            "nor not_runnable (R12)")
+        if found.get("missing_alternative"):
+            reasons.append(f"{found['id']}: a design-simplicity finding names no simpler alternative")
         receipts = found.get("receipts") or {}
         if (receipts.get("apply") or {}).get("exit_code") not in (None, 0):
             counts["patches_not_applied"] += 1

@@ -73,6 +73,10 @@ not require different models for the two reviewers.
   diff, run the relevant tests, deliver. Standard adds acceptance criteria and
   one independent review. Full follows the cadence skill's Full path. The
   person who wrote a change never supplies its required review.
+- **Design:** every review also answers
+  `Is this the simplest correct version?`; a design finding names the simpler
+  alternative and is graded by the harm ranking (the `requesting-code-review`
+  skill's `references/design-simplicity.md`).
 - **Checks:** `npm test` for the affected area with two workers; `npm run
   typecheck` after any TypeScript change. Full suites only for hub changes.
 - **Completion:** end every reply with `Verification: PASS | PENDING | BLOCKED |

@@ -9,7 +9,8 @@ one-line fix (`"workflow": "proportional"`); correct it before working.
 Project amendments and current user instructions take precedence.
 
 Simple means a clear, reversible, local low-risk change: implement, inspect the
-diff, run relevant existing checks, deliver. Standard adds acceptance criteria
+diff and ask whether it is the simplest correct version, run relevant existing
+checks, deliver. Standard adds acceptance criteria
 and one independent reviewer. Neither needs a role pipeline, permanent
 reports, worktrees, broad floors or mutation probes. Select by consequences and
 uncertainty, not file/line counts. Writers may run tests and inspect their diff;
@@ -18,7 +19,8 @@ they cannot supply a required independent review or gate.
 ### Proportional Full path
 
 1. Write or update the maintained specification when the change needs one.
-   Independently review the contract and resolve material gaps before coding.
+   Independently review the contract, including whether a simpler design
+   meets the requirements, and resolve material gaps before coding.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
 3. Run the Full review with `requesting-code-review` (`orch-review.py run
@@ -31,7 +33,7 @@ they cannot supply a required independent review or gate.
    for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
    the cause and run a new review. Do not add a third general review.
 5. Fix material issues, verify affected fixes and independently assess the final
-   change. Use the deterministic gate and targeted probes where they test the
+   change, including whether it is the simplest correct version. Use the deterministic gate and targeted probes where they test the
    affected contracts; inspect individual outcomes, not merely its final exit.
    Unsupported checks remain explicit. Do not repeat valid checks for ceremony.
 6. Land through a pull request (`finishing-a-branch` option 1) unless the laws
@@ -39,7 +41,11 @@ they cannot supply a required independent review or gate.
    updates. Finish task-owned temporary resources after consumers
    stop and deliverables are preserved; explain concrete preservation reasons.
 
-The built-in reviewers keep their own briefs. The review script gives the
+The built-in reviewers keep their own briefs. Every reviewer, the prover and
+the refuter get the
+[design simplicity](../requesting-code-review/references/design-simplicity.md)
+text: Is this the simplest correct version? A design finding names its simpler
+alternative and ranks by harm. The review script gives the
 [prover](../requesting-code-review/references/prover.md) and the
 [refuter](../requesting-code-review/references/refuter.md) theirs from
 `requesting-code-review` and, when the diff touches security, adds the

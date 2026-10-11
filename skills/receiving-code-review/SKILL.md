@@ -50,7 +50,11 @@ apology, no defence of why you pushed back — both cost words and neither chang
 Findings are ranked by the project's harm ranking (`LAWS.md`). Catastrophic and
 serious findings block the work until each is fixed or refuted; mild findings
 are fixed now or recorded with a reason, but "mild" is a judgment about impact,
-not a label for work you'd rather avoid. Reply to a GitHub review thread on the
+not a label for work you'd rather avoid. A `design-simplicity` finding asks:
+Is this the simplest correct version? (`requesting-code-review`'s
+`references/design-simplicity.md`). It is fixed, or refuted with evidence that
+its simpler alternative is not correct for this codebase; it is never set aside
+as style. Reply to a GitHub review thread on the
 thread itself — `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies` —
 not as a new top-level PR comment, which detaches the answer from the question.
 

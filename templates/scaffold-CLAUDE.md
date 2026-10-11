@@ -27,5 +27,6 @@ When LLM Orchestrator is installed, these slash commands work in this project:
 
 - Plan before non-trivial implementation.
 - Verify before claiming "done" — run the command, paste the line.
+- Reviews ask `Is this the simplest correct version?`; a design finding names its simpler alternative (`references/design-simplicity.md` in the `requesting-code-review` skill) and is fixed or argued like any other.
 - Use git worktrees for parallel-branch work.
 - Ask one targeted question rather than guessing.

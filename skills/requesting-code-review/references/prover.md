@@ -18,7 +18,9 @@ incomplete.
   what the spec asks), `test-tampering` (a test deleted, skipped or weakened,
   an assertion changed to match the code, or code that treats test inputs
   specially), `test-gap` (behavior no test covers, with no wrong result
-  shown), `scope-creep` (a change the spec did not ask for) or `style`
+  shown), `scope-creep` (a change the spec did not ask for),
+  `design-simplicity` (the change is not the simplest correct version: see
+  the design simplicity text below, `design-simplicity.md`) or `style`
   (wording, naming, maintainability).
 - `confidence`: 0.0 to 1.0, how sure you are the claim is true.
 - `claim`: the state, and the wrong result it gives, in one or two sentences.
@@ -30,6 +32,10 @@ incomplete.
     copied whole from its output. The script checks both against your session.
 - `mild_reason`: why the finding is only mild. Required for a `mild` rank;
   null otherwise.
+- `simpler_alternative`: for a `design-simplicity` result, the simpler
+  version the finding proposes and why it stays correct, in one or two
+  sentences; null for every other kind. A design result without one makes
+  the review incomplete.
 - `repro` or `not_runnable`, for every serious or catastrophic result:
   - `repro`: `command` fails on the change as it is; `patch` is your proposed
     fix as a unified diff that `git apply` accepts at the repository root,
@@ -42,8 +48,11 @@ Set unused fields to null.
 ## The rules the script applies after you
 
 1. A `defect` or `spec-gap` is at least serious; so is `test-tampering`
-   unless the task may change tests. Only `test-gap`, `scope-creep` and
-   `style` may be mild, and only with a `mild_reason`.
+   unless the task may change tests. Only `test-gap`, `scope-creep`,
+   `design-simplicity` and `style` may be mild, and only with a
+   `mild_reason`. A design finding answers the question
+   Is this the simplest correct version? and its rank follows the harm the
+   design simplicity text names.
 2. A `test-gap` claims only missing coverage. Without a failing `repro`
    command it is mild; with one it keeps your rank. If the uncovered code is
    also wrong, rank it as a `defect` instead.

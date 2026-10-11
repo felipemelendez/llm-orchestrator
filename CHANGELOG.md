@@ -3,6 +3,49 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] - 2026-10-11
+
+- **Every review asks whether the change is the simplest correct version.**
+  One shared text, `skills/requesting-code-review/references/design-simplicity.md`,
+  carries the question and the finding definition: unnecessary abstraction or
+  indirection, extra state, flags or configuration, a duplicated mechanism, a
+  new helper where an existing one fits, more code or moving parts than the
+  problem needs, or coupling without a stated reason is a finding that names
+  the simpler alternative, ranked by harm, never a style note; "simpler but
+  subtly wrong" is not a finding. The review script appends that text to every
+  reviewer instruction (`/code-review` and `codex review`, so Claude Code and
+  Codex alike) and to the prover's and refuter's prompts. The prover's new kind
+  `design-simplicity` carries a `simpler_alternative`; a design finding without
+  one makes the review `INCOMPLETE`. The cadence's Simple self-check, the
+  Standard and Full paths, the gate, the spec and plan reviewers (the old YAGNI
+  row), the receiving skill, the dispatch envelopes and the rulebook and
+  instruction templates all reference the same text.
+  `tests/test-design-simplicity.sh` fails when a brief lacks it;
+  `tests/test-review.py` checks the rendered briefs with fake CLIs.
+
+### Upgrading
+
+- New projects get the rule from the templates. A project whose `LAWS.md` and
+  marked `CLAUDE.md`/`AGENTS.md` block are already locked keeps its text until
+  its owner amends it by a numbered ruling. The amendment, for the rulebook's
+  standard-of-work section:
+
+  > **Design:** every review, self-check and gate also answers `Is this the
+  > simplest correct version?` and reports a design finding with its simpler
+  > alternative, graded by the harm ranking above; the question and the finding
+  > definition are the `requesting-code-review` skill's
+  > `references/design-simplicity.md`.
+
+  The owner's patch adds that line to `LAWS.md` together with the next
+  `Ruling <N>` line (the command refuses a patch without it), then the owner
+  runs the cadence skill's `cadence-ruling.sh <patch> "<wording>"` in their
+  own terminal; it checks the patch, re-records the lock and commits. A
+  project whose cadence files are older than this plugin's first runs
+  `/llm-orchestrator:cadence-init`: it says so, writes an upgrade ruling
+  patch outside the project and prints that same command, and the design
+  line can ride along in that patch. An agent proposes patches and never runs
+  the command.
+
 ## [0.13.0] - 2026-10-10
 
 - **Ticket work lands through a pull request by default.** The drafted

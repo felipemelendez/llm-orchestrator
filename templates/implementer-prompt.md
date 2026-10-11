@@ -161,6 +161,7 @@ Ask:
 - Solve the problem, not the assertion. The verify command checks your work; it does not define it. A branch keyed on the test's own input, or a literal returned because that is what the assertion compares against, is a green line with the bug still in it. If a test is wrong or the task cannot be done as written, return `BLOCKED` rather than working around it.
 - Run the verify command as one plain foreground command, and paste the actual output line. Nothing watches you do it: a Stop hook reads the transcript and warns if a reply says PASS with no check behind it, and that is all. The honesty is yours to supply.
 - Don't refactor adjacent code "while you're there".
+- Reviewers ask: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`.) Reuse what exists; anything more than the task needs is a finding against your work.
 - Don't invent new dependencies.
 - Apply the `// docs:` comment policy above. Brief findings beat training knowledge; if the brief contradicts an instinct, follow the brief.
 - If you encounter an API surface in scope that the brief didn't cover and you suspect it may have shifted, return `Status: NEEDS_CONTEXT` and ask for a follow-up research dispatch rather than guessing.

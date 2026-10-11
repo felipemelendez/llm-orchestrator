@@ -18,6 +18,9 @@ Otherwise, before anything else:
   catastrophic finding. Missing reviews are never agreement. Name dispatch models.
 - Writers may run checks and inspect their diff; they cannot supply a required
   independent review/gate.
+- Every review and self-check asks
+  `Is this the simplest correct version?`; a design finding names its simpler
+  alternative (`requesting-code-review`'s `references/design-simplicity.md`).
 - Keep useful specs/research/design/runbooks. Reports and copies live outside
   Git; finish cleanup after consumers stop and work is preserved.
 - `LAWS.md`, `cadence.json`, `LOCK.sha256`, the deny rules in
