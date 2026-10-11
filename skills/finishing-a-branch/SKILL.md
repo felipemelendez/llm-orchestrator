@@ -75,7 +75,9 @@ Also confirm this is a worktree and not a submodule before treating it as one:
 - Merge only when the laws' Landing rule or the user authorizes it and the PR's checks are
   green: `gh pr merge <n> --merge` (a merge commit). Then, in the checkout that holds `<base>`
   (`git worktree list`; from a ticket worktree it is usually the main checkout), `git pull
-  --ff-only` and run the full suite there, one suite at a time. Red: stop and report.
+  --ff-only` and run the full suite there, one suite at a time. If no checkout holds it, do not
+  switch branches: `git fetch origin <base>:<base>`, run the suite in a new detached worktree
+  of `<base>`, then remove that worktree. Red: stop and report.
 - Many tickets: one PR at a time, in merge order, base checks green between them.
 - Keep the worktree until the PR is merged, then offer cleanup if marked `.orch-worktree` and
   `git branch -d <branch>`. Not authorized to merge: stop after opening and report the URL.

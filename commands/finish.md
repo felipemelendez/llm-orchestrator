@@ -39,8 +39,9 @@ Steps:
      with a body of Summary / Decisions / Review / Verification / Manual checklist for the
      owner / Open items (the shape is in `finishing-a-branch`). When merging is authorized
      and the PR's checks are green: `gh pr merge <n> --merge`, then, in the checkout that
-     holds `<base>` (`git worktree list`), `git pull --ff-only` and run the full suite there.
-     Offer worktree cleanup only after the merge.
+     holds `<base>` (`git worktree list`), `git pull --ff-only` and run the full suite there;
+     if none holds it, `git fetch origin <base>:<base>` and run the suite in a new detached
+     worktree of `<base>`, removed afterwards. Offer worktree cleanup only after the merge.
    - **2**: `git checkout <base> && git pull --ff-only && git merge --no-ff <branch>`, then run
      the suite on the merged tree. Offer worktree cleanup.
    - **3**: Print where branch + worktree live.
