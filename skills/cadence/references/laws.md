@@ -44,8 +44,12 @@ mild findings are fixed when convenient.
 ## 2. The laws and rulings — never re-ask
 
 - **Standing orders:** <the owner's own instructions, quoted word for word, that
-  bind every session whatever the task is — for example never commit or push
-  unless asked, never deploy, which files only the owner edits.>
+  bind every session whatever the task is — for example "ticket branches are
+  pushed to the project's remote and landed as pull requests", never deploy,
+  never run a migration against production, which files only the owner edits.
+  A "never" belongs here only for what is truly the owner's alone, such as
+  deploys and migrations; "never push" is not a default, because it leaves
+  finished work as local merges nobody can review.>
 - **Rulings that govern the build:** one line each, newest last, in this shape:
   `Ruling <N> (YYYY-MM-DD, <OWNER>): <one sentence>`. Numbering starts at one
   and only rises. The first ruling is the setup itself: record it here. The
@@ -86,6 +90,15 @@ two reviewers are optional unless stated here.>
   final code. <STRICTER RULE if any — for example "every code change needs a
   passing automated test"; otherwise NOT APPLICABLE is allowed for low-risk
   work with no meaningful automated check.>
+- **Landing:** when a branch's review is READY and its checks are green, the
+  coordinator pushes the branch (never force-pushed, history never rewritten)
+  and opens one pull request per ticket, with a body in this shape: Summary /
+  Decisions / Review / Verification / Manual checklist for the owner / Open
+  items. It merges the pull request with a merge commit, keeping the project's
+  branch and commit naming, pulls the base branch, runs the full checks on the
+  base one suite at a time, and only then moves to the next pull request.
+  <ANY CHANGE — for example a required approving reviewer before the merge;
+  otherwise delete this line.>
 - **Cleanup:** temporary reviews, logs and copies live outside the repository
   and are removed when the task finishes. Specs, research conclusions, design
   decisions and runbooks are kept.

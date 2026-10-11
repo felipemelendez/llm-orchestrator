@@ -44,7 +44,8 @@ mild findings are fixed when convenient.
 
 ## 2. The laws and rulings — never re-ask
 
-- **Standing orders:** never commit or push unless Ana asks in that turn;
+- **Standing orders:** each ticket is worked on its own branch, pushed to
+  the project's remote and landed as a pull request (see Landing below);
   never run database migrations against anything but the local database;
   Ana deploys, assistants never do.
 - **Rulings that govern the build:**
@@ -79,6 +80,13 @@ not require different models for the two reviewers.
   Ledgerly is deliberately stricter than the skill's default: every completed
   code change needs a passing automated test, so NOT APPLICABLE is reserved for
   documentation and configuration text.
+- **Landing:** when a branch's review is READY and its checks are green, the
+  assistant pushes the branch (never force-pushed, history never rewritten)
+  and opens one pull request per ticket, with a body in this shape: Summary /
+  Decisions / Review / Verification / Manual checklist for Ana / Open items.
+  It merges the pull request with a merge commit, keeping the project's branch
+  and commit naming, pulls `main`, runs the full checks on `main` one suite at
+  a time, and only then moves to the next pull request.
 - **Cleanup:** temporary reviews and copies live outside the repository and
   are removed when the task finishes; keep specs and design notes.
 - **Talking to Ana:** lead with the result, plain words, say clearly what is
