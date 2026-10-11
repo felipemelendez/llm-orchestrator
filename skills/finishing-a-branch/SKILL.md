@@ -63,15 +63,12 @@ Also confirm this is a worktree and not a submodule before treating it as one:
   Never rewrite pushed history. Investigate a rejected push; force-push only with explicit
   user authorization.
 - One PR per ticket, keeping the project's naming:
-  `gh pr create --base <base> --head <branch> --title "<title>" --body-file <file>`. Body:
-  ```
-  ## Summary — what changed and why
-  ## Decisions — choices made, alternatives not taken
-  ## Review — verdict, findings and how each was handled
-  ## Verification — commands run and their result lines
-  ## Manual checklist for the owner — what only a person can check
-  ## Open items — what is left, or "None"
-  ```
+  `gh pr create --base <base> --head <branch> --title "<title>" --body-file <file>`.
+  The PR is how a person learns what the agents did: write the title and body by
+  [references/pr-body.md](references/pr-body.md) — plain words, short, outcome first, in six
+  sections: Summary / Decisions / Review / Verification / Manual checklist for the owner /
+  Open items. Read the body back before creating the PR and cut anything a newcomer would
+  not need.
 - Merge only when the laws' Landing rule or the user authorizes it and the PR's checks are
   green: `gh pr merge <n> --merge` (a merge commit). Then, in the checkout that holds `<base>`
   (`git worktree list`; from a ticket worktree it is usually the main checkout), `git pull

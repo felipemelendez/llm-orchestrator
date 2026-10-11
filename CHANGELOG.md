@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] - 2026-10-11
+
+- **Pull requests a person can read.** A new guide,
+  `skills/finishing-a-branch/references/pr-body.md`, tells agents how to write
+  the pull request: plain words, about one screen, what changed first, one
+  result line per check, an honest list of what is left, and a worked example.
+  `/finish`, `finishing-a-branch` and the drafted rulebook point to it.
+
 ## [0.13.0] - 2026-10-10
 
 - **Ticket work lands through a pull request by default.** The drafted

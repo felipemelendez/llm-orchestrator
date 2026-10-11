@@ -82,8 +82,9 @@ not require different models for the two reviewers.
   documentation and configuration text.
 - **Landing:** when a branch's review is READY and its checks are green, the
   assistant pushes the branch (never force-pushed, history never rewritten)
-  and opens one pull request per ticket, with a body in this shape: Summary /
-  Decisions / Review / Verification / Manual checklist for Ana / Open items.
+  and opens one pull request per ticket, with a short body in plain words that
+  Ana can follow without the conversation, in this shape: Summary / Decisions /
+  Review / Verification / Manual checklist for Ana / Open items.
   It merges the pull request with a merge commit, keeping the project's branch
   and commit naming, pulls `main`, runs the full checks on `main` one suite at
   a time, and only then moves to the next pull request.

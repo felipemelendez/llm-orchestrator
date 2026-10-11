@@ -36,9 +36,10 @@ Steps:
 
 4. On user choice (or `$ARGUMENTS` if provided):
    - **1**: `git push -u origin <branch>`, then `gh pr create --base <base> --head <branch>`
-     with a body of Summary / Decisions / Review / Verification / Manual checklist for the
-     owner / Open items (the shape is in `finishing-a-branch`). When merging is authorized
-     and the PR's checks are green: `gh pr merge <n> --merge`, then, in the checkout that
+     with a short, plain-words body of Summary / Decisions / Review / Verification / Manual
+     checklist for the owner / Open items, written by `finishing-a-branch`'s
+     `references/pr-body.md` for a person who was not in the conversation. When merging is
+     authorized and the PR's checks are green: `gh pr merge <n> --merge`, then, in the checkout that
      holds `<base>` (`git worktree list`), `git pull --ff-only` and run the full suite there;
      if none holds it, `git fetch origin <base>:<base>` and run the suite in a new detached
      worktree of `<base>`, removed afterwards. Offer worktree cleanup only after the merge.
