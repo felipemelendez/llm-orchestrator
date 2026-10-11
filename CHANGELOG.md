@@ -3,6 +3,25 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] - 2026-10-10
+
+- **Ticket work lands through a pull request by default.** The drafted
+  rulebook (`skills/cadence/references/laws.md` and its example) no longer
+  carries "never commit or push" as a standing order; it gets a Landing rule:
+  push the branch without force, one PR per ticket with a Summary / Decisions /
+  Review / Verification / Manual checklist / Open items body, merge it with a
+  merge commit, pull the base and run its checks before the next PR.
+  `finishing-a-branch` and `/finish` make "Push and open PR" option 1; merging
+  locally is an opt-out. The cadence paths, the routing and `executing-plans`
+  end a ticket with "land through a PR"; implementers commit and never push.
+- **The review reads `/code-review` findings from its subagent** when the
+  top-level reply restates them in prose without the fenced JSON array.
+
+### Upgrading
+
+- Projects whose `LAWS.md` already says "never push" keep it until their owner
+  changes it by a ruling; the plugin's defaults only shape newly drafted laws.
+
 ## [0.12.0] - 2026-09-26
 
 What matters most:
