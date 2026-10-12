@@ -142,12 +142,17 @@ while IFS= read -r dir; do
     executing-plans)               limit=903   ;;
     writing-skills)                limit=847   ;;
     # 2026-10-10: +260 for the PR-first landing (push, PR body shape, merge, base checks).
-    finishing-a-branch)            limit=1029  ;;
+    # 2026-10-12: +29 for the mild-only and all-settled landing preconditions (Felipe).
+    finishing-a-branch)            limit=1058  ;;
     # 2026-10-11: +35, +35 and +40 for the design-simplicity check every review
     # asks (Felipe): the question, the finding kind and how a design finding is
     # handled are facts the three skills now carry, not narration.
-    requesting-code-review)        limit=682   ;;
-    receiving-code-review)         limit=659   ;;
+    # 2026-10-12: +101 for the settled-decisions rule the reviewers get, the
+    # `settled` disposition (R22) and the mild-only landing (Felipe).
+    requesting-code-review)        limit=783   ;;
+    # 2026-10-12: +213 for the rank-by-consequence rule, the mild-only
+    # landing and the `settled` disposition (R22) (Felipe).
+    receiving-code-review)         limit=872   ;;
     cadence)                       limit=540   ;;
     *)                              limit=500  ;;
   esac

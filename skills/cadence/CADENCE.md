@@ -31,7 +31,12 @@ they cannot supply a required independent review or gate.
    substitute.
 4. Handle the findings with `receiving-code-review` and record a disposition
    for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
-   the cause and run a new review. Do not add a third general review.
+   the cause and run a new review. Do not add a third general review. Rounds
+   are bounded, a mild-only review is the last one unless a fix changed
+   behaviour, and a decision ruled a second time goes into the spec's
+   `## Settled` section before the next
+   review (`dispatching-subagents`, the fix loop; `receiving-code-review`;
+   R22).
 5. Fix material issues, verify affected fixes and independently assess the final
    change, including whether it is the simplest correct version. Use the deterministic gate and targeted probes where they test the
    affected contracts; inspect individual outcomes, not merely its final exit.

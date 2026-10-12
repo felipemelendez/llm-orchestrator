@@ -8,7 +8,7 @@ User input: $ARGUMENTS (optional — chosen option number 1-4)
 
 Preconditions:
 - `/llm-orchestrator:verify` returned green.
-- `/llm-orchestrator:review` verdict is `READY`, or `READY-WITH-FIXES` with the mild findings handled.
+- `/llm-orchestrator:review` verdict is `READY`; or `READY-WITH-FIXES` with the mild findings handled; or `NOT-READY` with every blocking finding recorded `refuted` or `settled` and the mild ones handled (a mild fix that changed behaviour goes back for review first).
 - Every task heading checkbox in the plan file is ticked.
 
 If preconditions are not met, stop and report which one.

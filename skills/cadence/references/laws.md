@@ -88,6 +88,14 @@ two reviewers are optional unless stated here.>
   its simpler alternative, graded by the harm ranking above; the question and
   the finding definition are the `requesting-code-review` skill's
   `references/design-simplicity.md`.
+- **Rounds:** review rounds are bounded (the `dispatching-subagents` fix
+  loop). A finding is ranked by its consequence under the harm ranking above,
+  as the prover ranks it, never by the reviewer's label; a serious or
+  catastrophic one is fixed and its fix re-reviewed, and a review that returns
+  only mild findings is the last one unless a fix changed behaviour. A decision reviewed and ruled twice is
+  written into the spec's `## Settled` section with the reason it stands; a
+  later finding against it needs a new argument against that reason, or it is
+  recorded as settled (never a reproduced, catastrophic or unranked one).
 - **Checks:** <the test, lint and type-check commands for this project, and
   when the full suite is required — for example only for hub changes.>
 - **Completion:** every reply ends with `Verification: PASS | PENDING | BLOCKED
@@ -95,8 +103,10 @@ two reviewers are optional unless stated here.>
   final code. <STRICTER RULE if any — for example "every code change needs a
   passing automated test"; otherwise NOT APPLICABLE is allowed for low-risk
   work with no meaningful automated check.>
-- **Landing:** when a branch's review is READY and its checks are green, the
-  coordinator pushes the branch (never force-pushed, history never rewritten)
+- **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
+  mild findings handled and recorded, or NOT-READY with every blocking finding
+  recorded refuted or settled; none of these needs another review unless a mild fix changed behaviour) and its checks
+  are green, the coordinator pushes the branch (never force-pushed, history never rewritten)
   and opens one pull request per ticket, with a short body in plain words that
   a person who was not there can follow, in this shape: Summary / Decisions /
   Review / Verification / Manual checklist for the owner / Open items. It merges the pull request with a merge commit, keeping the project's

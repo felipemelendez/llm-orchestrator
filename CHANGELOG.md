@@ -3,6 +3,61 @@
 All notable changes to this project will be documented in this file.
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+- **Settled decisions stop review rounds from relitigating.** A spec may
+  carry a `## Settled` section: decisions already reviewed and ruled, one list
+  item each, with the reason it stands (`templates/spec.md`; the plan template
+  points at it, since the review reads the file passed as `--spec`).
+  The reviewers' instruction names it: a finding against a settled decision
+  is reported only with a new argument against that reason, and reviewers
+  report only a wrong result, a departure from the spec or a failure of the
+  design question, fewer findings being the expected result on a mature
+  change, wording notes in one mild finding at most. Every reviewer copy now
+  holds the spec text the preflight read, so reviewers and `record` read one
+  text. `orch-review.py record` takes a fourth disposition, `settled`, whose
+  `entry` must be one whole entry of that section; a reproduced, catastrophic
+  or unranked finding (by the prover's rank or the final one) is never settled
+  and never refuted by a quote either — such a finding is fixed, or ignored by
+  the person — and a `NOT-READY` review whose blocking findings are all
+  refuted or settled lands like `READY-WITH-FIXES` (R21 and R22 in
+  `docs/specs/review-design.md`; `tests/test-review.py`; `/finish`,
+  `executing-plans` and the Codex provider table route it).
+- **A mild-only review is the last one.** `READY-WITH-FIXES` now means:
+  handle the mild findings in one commit (fix, or record why not), run the
+  checks, read the diff, record each disposition, land; no further review
+  unless a fix changed behaviour (`dispatching-subagents`, `receiving-code-review`, `finishing-a-branch`,
+  the cadence's Full path and the rulebook template's new Rounds line and
+  Landing line). A finding is ranked by its consequence under the harm
+  ranking, as the prover ranks it, never by the reviewer's label; a serious
+  or catastrophic one is fixed and its fix re-reviewed whatever it was
+  called. Learned on a project where four branches ran 35 to 74 review rounds
+  each: every round returned the reviewers' full quota, a decision ruled at
+  one round was demanded back at a later one, and a round of wording fixes
+  triggered a full review that returned ten more.
+
+### Upgrading
+
+- A locked project keeps its rulebook text until its owner amends it by a
+  numbered ruling. The amendment, for the standard-of-work section, is the
+  template's new line and its changed Landing line:
+
+  > **Rounds:** review rounds are bounded (the `dispatching-subagents` fix
+  > loop). A finding is ranked by its consequence under the harm ranking
+  > above, as the prover ranks it, never by the reviewer's label; a serious or
+  > catastrophic one is fixed and its fix re-reviewed, and a review that
+  > returns only mild findings is the last one unless a fix changed behaviour.
+  > A decision reviewed and ruled
+  > twice is written into the spec's `## Settled` section with the reason it
+  > stands; a later finding against it needs a new argument against that
+  > reason, or it is recorded as settled (never a reproduced, catastrophic or
+  > unranked one).
+  >
+  > **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
+  > mild findings handled and recorded, or NOT-READY with every blocking
+  > finding recorded refuted or settled; none of these needs another review
+  > unless a mild fix changed behaviour) and its checks are green, …
+
 ## [0.14.0] - 2026-10-11
 
 - **Every review asks whether the change is the simplest correct version.**

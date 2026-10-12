@@ -25,7 +25,10 @@ defect, and answer the design question in `references/design-simplicity.md`:
 Is this the simplest correct version? The security lens
 (`references/security-lens.md`) is added when the diff touches
 authentication, secrets, tokens or payments. Neither sees the other's reply
-or your report.
+or your report. Each is also told to report only a wrong result, a
+departure from the spec or a failure of the design question, and to reopen a
+decision the spec lists under `## Settled` only with a new argument against
+its recorded reason (R22).
 
 A prover (`references/prover.md`) ranks each finding and writes a failing
 command and fix, which the script runs; it cannot drop a finding. A defect, a
@@ -71,8 +74,8 @@ session it could not delete).
 | Verdict | Meaning |
 |---|---|
 | `READY` | Every reviewer finished and nothing it reported survived. |
-| `READY-WITH-FIXES` | Only mild findings. Fix them or record why not. |
-| `NOT-READY` | At least one blocking finding (verified, unverified, promoted, unresolved or unjudged). |
+| `READY-WITH-FIXES` | Only mild findings. Fix them or record why not, check, record, land; no further review unless a fix changed behaviour. |
+| `NOT-READY` | At least one blocking finding (verified, unverified, promoted, unresolved or unjudged). Lands like `READY-WITH-FIXES` once every blocking finding is recorded `refuted` or `settled`. |
 | `INCOMPLETE` | Something is missing: a launch dropped out, a reply was not parsed, a serious finding had no repro, a finding went unjudged, or the checkout changed. Never report it as a pass. |
 
 A finding never disappears: only a refuter drop the script proved with its
@@ -90,4 +93,8 @@ python3 "$REVIEW" record "$RUN_DIR" --dispositions <file>
 ```
 
 Each finding gets one disposition (R21). `record` takes `refuted`, with a
-`file-line` quote, never a test run, and rejects omissions.
+`file-line` quote, never a test run and never for a reproduced, catastrophic
+or unranked finding, and rejects omissions. It also takes
+`settled`, with one whole entry quoted from the spec's `## Settled` section,
+for a finding that reopens a settled decision with no new argument; never for
+a reproduced, catastrophic or unranked finding (R22).

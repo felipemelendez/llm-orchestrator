@@ -19,7 +19,7 @@ preconditions below are for projects without an enabled cadence.
 
 Before this skill runs:
 - `/llm-orchestrator:verify` has been run; tests pass.
-- `/llm-orchestrator:review` has been run; the verdict is `READY`, or `READY-WITH-FIXES` with the mild findings already handled.
+- `/llm-orchestrator:review` has been run; the verdict is `READY`; or `READY-WITH-FIXES` with its mild findings handled and recorded; or `NOT-READY` with every blocking finding recorded `refuted` or `settled` and the mild ones handled. None of these needs another review, unless a mild fix changed behaviour (`receiving-code-review`).
 - **Regression check passes.** Run:
   ```bash
   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }

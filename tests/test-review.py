@@ -720,6 +720,8 @@ class ReviewTests(unittest.TestCase):
         for text, cwd in ((claude["prompt"], claude["cwd"]), (codex["instruction"], codex["cwd"])):
             self.assertIn(f"The change must implement the spec in {cwd}/.git/orch-review/spec.md. Read it, and "
                           "report every place where the change does not meet it, as well as any other defect.", text)
+            self.assertIn("`## Settled`", text)
+            self.assertIn("fewer findings is the expected result on a mature change", text)
             self.assertNotIn("Security lens", text)
         (self.project / "auth.py").write_text("password = input()\n")
         self.log.unlink()
@@ -1897,6 +1899,133 @@ class ReviewTests(unittest.TestCase):
         skill = (ROOT / "skills/requesting-code-review/SKILL.md").read_text()
         for text in (spec, skill):
             self.assertIn("`refuted`, with a `file-line` quote", " ".join(text.split()))
+
+    # R22
+    def test_r22_settled_quotes_one_whole_entry_and_never_a_reproduced_or_catastrophic_finding(self):
+        self.spec.write_text("# Settled decisions and more: the title\n\nadd(a, b) returns the sum of a and b.\n\n"
+                             "## Settled, do not reopen\n\n"
+                             "- **add never rounds.** Callers pass integers;\n  rounding was deleted in round 2.\n"
+                             "- `add` takes two arguments. A third was ruled out.\n\n"
+                             "A plain paragraph is not an entry.\n\n# Appendix\n- outside the section\n")
+        self.reviewer("claude", code_finding(), code_finding(line=1), code_finding(line=1, summary="third"))
+        self.prove({"code-review-1": proof(),
+                    "code-review-2": proof(repro=None, not_runnable="no command shows it"),
+                    "code-review-3": proof("catastrophic", repro=None, not_runnable="no command shows it")})
+        review = self.review()
+        self.assertTrue(review["findings"][0]["reproduced"])
+        self.assertFalse(review["findings"][1]["reproduced"])
+        self.assertEqual(review["findings"][2]["rank"], "catastrophic")
+        self.assertEqual(self.calls("claude", "code-review")[0]["spec_copy"], self.spec.read_text())
+        dispositions = self.root / "dispositions.json"
+        entry = "add never rounds. Callers pass integers; rounding was deleted in round 2."
+        fixed = {"disposition": "fixed", "check": CHECK}
+        settled = lambda text: {"disposition": "settled", "entry": text}
+        for case, why in (
+                ({"code-review-1": settled(entry), "code-review-2": fixed, "code-review-3": fixed},
+                 "never settled: a reproduced finding showed a wrong result"),
+                ({"code-review-1": fixed, "code-review-2": fixed, "code-review-3": settled(entry)},
+                 "never settled: a catastrophic or unranked finding reaches the person"),
+                ({"code-review-1": fixed, "code-review-2": fixed, "code-review-3": {"disposition": "refuted", "evidence": {
+                    "type": "file-line", "file": "calc.py", "line": 2, "quote": "return a - b"}}},
+                 "never refuted: a catastrophic or unranked finding reaches the person"),
+                ({"code-review-1": fixed, "code-review-2": settled("add never rounds"), "code-review-3": fixed},
+                 "quoted whole"),
+                ({"code-review-1": fixed, "code-review-2": settled("outside the section"), "code-review-3": fixed},
+                 "quoted whole"),
+                ({"code-review-1": fixed, "code-review-2": settled("*"), "code-review-3": fixed},
+                 "settled needs the entry"),
+                ({"code-review-1": fixed, "code-review-2": {"disposition": "settled"}, "code-review-3": fixed},
+                 "settled needs the entry")):
+            with self.subTest(case=case):
+                dispositions.write_text(json.dumps(case))
+                result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(why, result.stderr)
+        self.assertEqual(MOD.settled_entries(self.spec.read_text()),
+                         [entry, "add takes two arguments. A third was ruled out."])
+        dispositions.write_text(json.dumps({
+            "code-review-1": fixed, "code-review-2": settled("`add` takes two arguments.  A third was ruled out."),
+            "code-review-3": {"disposition": "ignored", "reason": "the person chose to ship", "person_approved": True}}))
+        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
+        rows = [row for row in self.outcome_rows() if row["row"] == "finding"]
+        self.assertEqual([(row["finding"], row["disposition"]) for row in rows],
+                         [("code-review-1", "fixed"), ("code-review-2", "settled"), ("code-review-3", "ignored")])
+
+    def test_r22_settled_reads_entries_outside_fences_and_comments_and_never_an_unranked_finding(self):
+        entries = MOD.settled_entries
+        for spec in ("add(a, b) returns the sum of a and b.\n", "# Settled decisions: a title\n- not a section\n",
+                     "## settled questions\n- lower case is not the word\n",
+                     "```\n## Settled\n- inside a fence\n```\n~~~\n## Settled\n- in a tilde fence\n~~~\n"
+                     "````\n```js\n## Settled\n- nested, with an info string\n```\n````\n"
+                     "## Settledness\n- wrong heading\n## Settled-ish\n- wrong heading too\n"):
+            with self.subTest(spec=spec):
+                self.assertIsNone(entries(spec))
+        self.assertEqual(entries("## Settled\n<!-- guidance,\n```\n     not an entry -->\n- one\n\n  not one\n\n"
+                                 "two, a paragraph, is not an entry\n### sub\n - three, indented\n\tstill three\n"
+                                 "<!-- aside --> - four\n```html\n<!-- code, not a comment\n## Settled\n```\n"
+                                 "- five\n<!-- invisible,\nstill -->\nstill five\n    ```\n    - code\n    ```\n"
+                                 "    # not a heading\n\n---\n-\n  six, after a bare marker\n<!-- a --> ```\n- fenced\n```\n"
+                                 "<!-- b\nc --> ```\n- fenced too\n```\n```html <!-- in an info string\n- fenced three\n```\n- seven\n## Next\n- outside\n"),
+                         ["one", "three, indented still three", "four", "five still five # not a heading",
+                          "six, after a bare marker", "seven"])
+        self.assertEqual(entries((ROOT / "templates/spec.md").read_text()), [])
+        self.assertIsNone(entries((ROOT / "templates/plan.md").read_text()))
+        self.reviewer("claude", code_finding(), code_finding(line=1))
+        self.prove({"code-review-1": proof(repro=None, not_runnable="no command shows it")}, omit=["code-review-2"])
+        self.review()
+        dispositions = self.root / "dispositions.json"
+        settled = {"disposition": "settled", "entry": "add never rounds"}
+        dispositions.write_text(json.dumps({"code-review-1": settled, "code-review-2": settled}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("code-review-1: the spec the run read has no `## Settled` section", result.stderr)
+        preflight = self.run_dir / "preflight.json"
+        kept = json.loads(preflight.read_text())
+        preflight.write_text(json.dumps(dict(kept, spec=None)))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertIn("code-review-1: the spec the run read has no `## Settled` section", result.stderr)
+        preflight.write_text(json.dumps(kept))
+        kept_from = MOD.kept_from_the_person
+        self.assertIsNone(kept_from({"prover_rank": "serious", "rank": "serious", "reproduced": False}))
+        for found in ({"prover_rank": "serious", "rank": "catastrophic", "reproduced": False},
+                      {"prover_rank": "catastrophic", "rank": "serious", "reproduced": False},
+                      {"prover_rank": None, "rank": None, "reproduced": False}):
+            self.assertIn("catastrophic or unranked", kept_from(found), found)
+        self.spec.write_text("add(a, b) returns the sum of a and b.\n\n## Settled\n- add never rounds\n")
+        self.log.unlink()
+        self.reviewer("claude", code_finding(), code_finding(line=1), code_finding(line=1, summary="third"))
+        self.prove({"code-review-3": proof("critical", repro=None, not_runnable="no command shows it")})
+        review = self.review()
+        self.assertEqual(review["findings"][1]["status"], "unjudged")
+        self.assertTrue(review["findings"][2]["rank_replaced"])
+        dispositions.write_text(json.dumps({"code-review-1": settled, "code-review-2": settled, "code-review-3": settled}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertEqual(result.stderr.strip(),
+                         "orch-review: code-review-2: never settled: a catastrophic or unranked finding reaches the person; "
+                         "the person decides it; code-review-3: never settled: a catastrophic or unranked finding reaches "
+                         "the person; the person decides it")
+        self.spec.write_text("add(a, b) returns the sum of a and b.\n\n## Settled\n- add never rounds\n- added after the run\n")
+        approved = {"disposition": "ignored", "reason": "x", "person_approved": True}
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "settled", "entry": "added after the run"},
+                                            "code-review-2": approved, "code-review-3": approved}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertIn("code-review-1: the entry is not an entry of the spec's `## Settled` section", result.stderr)
+        for text in ((ROOT / "docs/specs/review-design.md").read_text(),
+                     (ROOT / "skills/requesting-code-review/SKILL.md").read_text(),
+                     (ROOT / "skills/receiving-code-review/SKILL.md").read_text()):
+            self.assertIn("`settled`", text)
+
+    def test_r21_refuted_never_covers_a_reproduced_finding(self):
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof()})
+        review = self.review()
+        self.assertTrue(review["findings"][0]["reproduced"])
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "refuted", "evidence": {
+            "type": "file-line", "file": "calc.py", "line": 2, "quote": "return a - b"}}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("never refuted: a reproduced finding showed a wrong result", result.stderr)
 
     # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
     def test_design_every_rendered_brief_carries_the_simplicity_question(self):

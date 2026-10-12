@@ -311,10 +311,54 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 - **R20.** Unchanged: one row per run in
   `${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/review-outcomes.jsonl`,
   naming reviewers instead of briefs, with no claim text or code.
-- **R21.** Unchanged: `record <run-dir> --dispositions <file>`, one per
+- **R21.** `record <run-dir> --dispositions <file>`, one per
   finding id: `fixed` with the check; `refuted`, with a `file-line` quote
   that `record` checks; `ignored` with a reason, for a blocking finding only
-  when the person said so. It rejects omissions.
+  when the person said so. It rejects omissions. A finding the record alone
+  may not set aside (R22's guard: reproduced, catastrophic, or without a valid
+  prover rank, judged on the prover's rank and the final one) is never
+  `refuted` either: it is fixed, or ignored by the person.
+- **R22. Settled decisions.** A spec may carry a section under a level-2
+  heading whose first word is `Settled` (`## Settled`, `## Settled, do not
+  reopen`): decisions already reviewed and ruled, one list item each, with the
+  reason it stands. The reviewers'
+  instruction names it and tells them to report a finding against one only
+  with a new argument against that reason (a case the reason does not cover,
+  or a wrong result it causes); it also tells them to report only a wrong
+  result, a departure from the spec or a failure of the design question, that
+  fewer findings is the expected result on a mature change, and that wording
+  notes go into one mild finding at most. Every reviewer copy holds the spec
+  text the preflight read, so the reviewers and `record` read one text. A
+  fourth disposition, `settled`, carries `entry`: one whole entry of that
+  section. The section is a defined format, not general Markdown: a `##`
+  heading whose first word is `Settled` (case as written; trailing `,:;.`
+  dropped) opens it and the next `#` or `##` heading ends it (ATX headings
+  indented at most three spaces; a setext underline or a rule of dashes is
+  not a heading here); an entry is a list item (`-`, `*`, `+` or a number,
+  any indent, the marker alone on its line allowed) with the unbroken lines
+  after it, and a blank line or a `###`-or-deeper heading ends it; HTML
+  comments and fenced code (backtick or tilde, any indent, closed by a bare
+  marker of the same kind at least as long) are skipped, whichever opens
+  first, and a line that is only a comment, or only the end of one, is
+  invisible; nothing else in the section is an entry. The entry is compared with white space collapsed and
+  emphasis and code markers removed, so it may be quoted without its bold.
+  The templates put no placeholder in the section, because every entry can
+  settle a finding. `record` refuses it when the spec has no such section, the entry
+  is not one of its entries quoted whole, the finding was reproduced (it
+  showed a wrong result, which is a new argument), or the finding is
+  catastrophic or unranked by the prover's rank or the final one (the harm
+  ranking's first class, and a finding with no valid prover rank, reach the
+  person, as `ignored` does; a serious one may be settled, because the
+  section is part of the spec the person approved). The same guard applies
+  to `refuted` (R21), so the landing below never rests on a quote against a
+  reproduced or catastrophic finding. A settled finding blocks nothing: a
+  `NOT-READY` review whose every blocking finding is recorded `refuted` or
+  `settled` lands like `READY-WITH-FIXES`, and a review whose surviving
+  findings are all mild is the last one: they are fixed or recorded with a
+  reason in one commit, the checks run, the diff is read, the dispositions are
+  recorded, and the change lands with no further review, unless a fix turned
+  out to change behaviour; every statement of "no further review" in the
+  skills and the rulebook template carries that exception by pointer.
 
 ## What stays, what goes
 

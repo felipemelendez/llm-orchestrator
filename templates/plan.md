@@ -1,7 +1,7 @@
 # <Title> — Plan
 
 Date: YYYY-MM-DD
-Spec: docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md
+Spec: docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md (settled decisions live in its `## Settled` section; the review reads the file passed as `--spec`)
 
 ## Goal
 - one line

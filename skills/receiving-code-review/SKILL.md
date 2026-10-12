@@ -47,14 +47,26 @@ apology, no defence of why you pushed back — both cost words and neither chang
 
 ## Working through a batch
 
-Findings are ranked by the project's harm ranking (`LAWS.md`). Catastrophic and
-serious findings block the work until each is fixed or refuted; mild findings
-are fixed now or recorded with a reason, but "mild" is a judgment about impact,
-not a label for work you'd rather avoid. A `design-simplicity` finding asks:
+Findings are ranked by the project's harm ranking (`LAWS.md`) as the prover
+ranked them: the consequence if the claim is true, never the reviewer's label.
+A catastrophic finding blocks the work until it is fixed, or ignored by the
+person; a serious one until it is fixed, refuted or settled; their fixes are
+re-reviewed. Mild findings are fixed now or
+recorded with a reason, and a review that returned only mild findings
+(`READY-WITH-FIXES`) is the last one: handle them in one commit, run the
+checks, read the diff, record each disposition, land — unless a fix turned out
+to change behaviour, which goes back for review. "Mild" is a judgment about
+impact, not a label for work you'd rather avoid.
+
+A finding that reopens a decision the spec lists under `## Settled` with no
+new argument against its reason is recorded `settled`; it blocks nothing and
+costs no round. A reproduced, catastrophic or unranked finding is never settled. A
+decision ruled a second time goes into `## Settled`, with its reason, in the
+file the review reads as `--spec`, before the next review. A `design-simplicity` finding asks:
 Is this the simplest correct version? (`requesting-code-review`'s
-`references/design-simplicity.md`). It is fixed, or refuted with evidence that
-its simpler alternative is not correct for this codebase; it is never set aside
-as style. Reply to a GitHub review thread on the
+`references/design-simplicity.md`). It is fixed, refuted with evidence that
+its simpler alternative is not correct for this codebase, or settled by the
+spec; it is never set aside as style. Reply to a GitHub review thread on the
 thread itself — `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies` —
 not as a new top-level PR comment, which detaches the answer from the question.
 
@@ -70,13 +82,18 @@ twice):
   "code-review-1": {"disposition": "fixed", "check": "python3 tests/test-x.py"},
   "codex-review-2": {"disposition": "refuted",
                      "evidence": {"type": "file-line", "file": "src/a.py", "line": 12, "quote": "return total"}},
-  "codex-review-3": {"disposition": "ignored", "reason": "wording only"}
+  "codex-review-3": {"disposition": "ignored", "reason": "wording only"},
+  "codex-review-4": {"disposition": "settled", "entry": "the cache is keyed by user id"}
 }
 ```
 
 - `fixed` names the check that failed before the fix and passes after it.
 - `refuted` quotes one line of the reviewed files that contradicts the claim;
-  the script checks the quote.
+  the script checks the quote, and refuses it for a reproduced, catastrophic
+  or unranked finding (those are fixed, or ignored by the person).
+- `settled` quotes one whole entry of the spec's `## Settled` section; the
+  script checks it against the spec the run read and refuses it for a
+  reproduced, catastrophic or unranked finding.
 - `ignored` gives a reason. A blocking finding may be ignored only when the
   person said so; add `"person_approved": true`.
 
@@ -99,7 +116,7 @@ Deferred:
 Verify:
 - <command> → <line>
 Next:
-- Record the dispositions, then re-run /llm-orchestrator:review on the updated change.
+- Record the dispositions, then re-run /llm-orchestrator:review on the fix of a serious or catastrophic finding; a mild-only fix lands without another review unless it changed behaviour.
 ```
 
 The `Verify:` line is the check that the reviewer's fix actually compiles and tests green in this

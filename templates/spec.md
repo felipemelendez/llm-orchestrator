@@ -32,6 +32,12 @@ Status: draft | approved
 
 If outcome was COULDN'T_VERIFY, this section explicitly records "proceeding on training knowledge only" so a reviewer knows the gate didn't have current sources. If outcome was CONTRADICTED, the spec's `## Approach` above already incorporates the revision — this section names the original assumption and the source that contradicted it.
 
+## Settled
+<!-- Decisions already reviewed and ruled, one list item each: **<decision>.** <the reason it stands>.
+     Add one the moment a decision is ruled a second time; a review finding against it needs a new
+     argument against the reason, or it is recorded `settled`. Leave the section empty until then:
+     every item here can settle a finding, so no placeholder. -->
+
 ## Open questions
 - one bullet per question, or "none"
 - close every question before approving

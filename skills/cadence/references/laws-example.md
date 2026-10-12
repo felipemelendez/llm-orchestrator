@@ -84,8 +84,18 @@ not require different models for the two reviewers.
   Ledgerly is deliberately stricter than the skill's default: every completed
   code change needs a passing automated test, so NOT APPLICABLE is reserved for
   documentation and configuration text.
-- **Landing:** when a branch's review is READY and its checks are green, the
-  assistant pushes the branch (never force-pushed, history never rewritten)
+- **Rounds:** review rounds are bounded (the `dispatching-subagents` fix
+  loop). A finding is ranked by its consequence under the harm ranking above,
+  as the prover ranks it, never by the reviewer's label; a serious or
+  catastrophic one is fixed and its fix re-reviewed, and a review that returns
+  only mild findings is the last one unless a fix changed behaviour. A decision reviewed and ruled twice is
+  written into the spec's `## Settled` section with the reason it stands; a
+  later finding against it needs a new argument against that reason, or it is
+  recorded as settled (never a reproduced, catastrophic or unranked one).
+- **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
+  mild findings handled and recorded, or NOT-READY with every blocking finding
+  recorded refuted or settled; none of these needs another review unless a mild fix changed behaviour) and its checks
+  are green, the assistant pushes the branch (never force-pushed, history never rewritten)
   and opens one pull request per ticket, with a short body in plain words that
   Ana can follow without the conversation, in this shape: Summary / Decisions /
   Review / Verification / Manual checklist for Ana / Open items.

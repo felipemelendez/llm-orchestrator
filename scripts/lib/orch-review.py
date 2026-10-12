@@ -5,7 +5,7 @@
 disposable clones, has a prover rank each finding and write its repro, runs each repro in a
 sandbox, runs the refuter on Full, and writes review.json. `wait` reports when a detached run
 has finished. `record` appends the agent's disposition of each finding to the outcome log.
-The rules (R1 to R21) are in docs/specs/review-design.md.
+The rules (R1 to R22) are in docs/specs/review-design.md.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -46,7 +46,15 @@ REVIEW_TOOLS = "Read,Grep,Glob,Bash,Agent"
 CODEX_EVENT = re.compile(r'\d{4}-\d\d-\d\dT[\d:.]+Z\s+(?:TRACE|DEBUG|INFO|WARN|ERROR)\s+(?:\S+\s+)?codex_otel\.(log_only|trace_safe): '
                          r'event\.name="(codex\.[a-z_]+)"')
 REVIEW_INSTRUCTION = ("The change must implement the spec in {spec}. Read it, and report every place where the "
-                      "change does not meet it, as well as any other defect.")
+                      "change does not meet it, as well as any other defect.\n\n"
+                      "Report only a wrong result, a departure from the spec or a failure of the design question "
+                      "below (and of the security lens, when one follows); fewer findings is the expected result on "
+                      "a mature change, and wording notes go into "
+                      "one mild finding at most. The spec may carry a section under a level-2 heading whose first "
+                      "word is Settled (`## Settled`, `## Settled, do not reopen`): decisions already reviewed and "
+                      "ruled, one list item each, with the reason it stands. Report a finding against one of them "
+                      "only with a new argument against that reason, a case the reason does not cover or a wrong "
+                      "result it causes; without one, do not report it.")
 SPEC_IN_COPY = ".git/orch-review/spec.md"
 PATCH_IN_COPY = ".git/orch-review/patch.diff"
 PROVER_BATCH = 10
@@ -138,6 +146,91 @@ def file_line_valid(project, tree, evidence):
     if line > len(lines) or lines[line - 1].strip() != quote.strip():
         return False, "the quote does not match that line"
     return True, "the quote matches the reviewed line"
+
+
+ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:\s+(\S+)|\s*$)")
+FENCE_MARKER = re.compile(r"^\s*(`{3,}|~{3,})")
+COMMENT = re.compile(r"<!--.*?-->")
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])(?:\s+|$)")
+
+
+def settled_entries(spec_text):
+    """R22: the entries of the spec's Settled section. The format: a `##` heading whose first word is Settled
+    opens it and the next `#` or `##` heading ends it (ATX only); an entry is a list item with the unbroken
+    lines after it, ended by a blank line or a `###`-or-deeper heading; HTML comments and fenced code are
+    skipped, whichever opens first, and a comment-only line is invisible; nothing else is an entry. None
+    without the section."""
+    if not isinstance(spec_text, str):
+        return None
+    entries, inside, fence, comment, item = None, False, None, False, False
+    for raw in spec_text.splitlines():
+        line = raw
+        if fence:
+            marker = FENCE_MARKER.match(line)
+            if marker and marker.group(1)[0] == fence[0] and len(marker.group(1)) >= len(fence) \
+                    and not line[marker.end():].strip():
+                fence = None
+            continue
+        if comment:
+            if "-->" not in line:
+                continue
+            line, comment = line.split("-->", 1)[1], False
+        marker = FENCE_MARKER.match(line)  # a marker at the start opens a fence before any comment on the line
+        if not marker:
+            line = COMMENT.sub("", line)
+            if "<!--" in line:
+                line, comment = line.split("<!--", 1)[0], True
+            if line != raw and not line.strip():
+                continue  # a comment-only line is invisible
+            marker = FENCE_MARKER.match(line)
+        if marker:
+            fence = marker.group(1)
+            continue
+        heading = ATX_HEADING.match(line)
+        if heading and len(heading.group(1)) <= 2:
+            if inside:
+                break
+            inside = len(heading.group(1)) == 2 and (heading.group(2) or "").rstrip(",:;.") == "Settled"
+            if inside:
+                entries = []
+            continue
+        if not inside:
+            continue
+        if not line.strip() or heading:
+            item = False
+        elif LIST_ITEM.match(line):
+            entries.append(LIST_ITEM.sub("", line, count=1))
+            item = True
+        elif item:
+            entries[-1] += " " + line
+    return [entry for entry in map(plain, entries) if entry] if entries is not None else None
+
+
+def plain(text):
+    """Text with emphasis and code markers removed and white space collapsed: how an entry is quoted."""
+    return " ".join(re.sub(r"[*`]", "", text).split())
+
+
+def kept_from_the_person(found):
+    """R21/R22: why a finding may not be set aside by the record alone, or None. A reproduced finding showed a
+    wrong result; a catastrophic finding, or one with no valid prover rank, reaches the person as `ignored` does."""
+    if found.get("reproduced"):
+        return "a reproduced finding showed a wrong result; the person decides it"
+    if not {found.get("prover_rank"), found.get("rank")} <= {"mild", "serious"}:
+        return "a catastrophic or unranked finding reaches the person; the person decides it"
+    return None
+
+
+def settled_valid(entries, entry):
+    """R22: the entry is one whole entry of the spec's Settled section (entries, or None without the section)."""
+    wanted = plain(entry) if isinstance(entry, str) else ""
+    if not wanted:
+        return False, "settled needs the entry quoted whole from the spec's `## Settled` section"
+    if entries is None:
+        return False, "the spec the run read has no `## Settled` section"
+    if wanted not in entries:
+        return False, "the entry is not an entry of the spec's `## Settled` section, quoted whole"
+    return True, "the entry is settled in the spec"
 
 
 def command_variants(command):
@@ -384,7 +477,7 @@ class Review:
         created = self.manager.create(self.task["id"], self.token, "clone", tree=self.tree, head=self.head)
         copy = Path(created["path"])
         (copy / SPEC_IN_COPY).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(preflight["spec_path"], copy / SPEC_IN_COPY)
+        (copy / SPEC_IN_COPY).write_text(preflight["spec"])  # the text the preflight read: what `record` checks
         for name in preflight["copy_ignored"]:
             source = self.project / name
             if not os.path.lexists(source):
@@ -2080,6 +2173,7 @@ def command_record(args):
     run_dir = Path(args.run_dir).expanduser().absolute()
     review = read_json(run_dir / "review.json")
     run = read_json(run_dir / "run.json", {})
+    preflight = read_json(run_dir / "preflight.json", {})
     if review is None:
         return fail("the run has no review.json")
     if (run_dir / "dispositions.json").exists():
@@ -2091,6 +2185,7 @@ def command_record(args):
     problems = [f"{name}: no disposition" for name in ids if name not in dispositions]
     problems += [f"{name}: not a finding of this review" for name in dispositions if name not in ids]
     project = Path(run.get("project", "."))
+    settled = settled_entries(preflight.get("spec"))
     for found in review["findings"]:
         entry = dispositions.get(found["id"])
         if entry is None:
@@ -2099,10 +2194,18 @@ def command_record(args):
         if kind == "fixed":
             if not (isinstance(entry.get("check"), str) and entry["check"].strip()):
                 problems.append(f"{found['id']}: fixed needs the check that failed before and passes after")
-        elif kind == "refuted":
-            valid, why = file_line_valid(project, review["tree"], entry.get("evidence"))
-            if not valid:
-                problems.append(f"{found['id']}: refuted needs a file-line quote from the reviewed files ({why})")
+        elif kind in ("refuted", "settled"):
+            kept = kept_from_the_person(found)
+            if kept:
+                problems.append(f"{found['id']}: never {kind}: {kept}")
+            elif kind == "refuted":
+                valid, why = file_line_valid(project, review["tree"], entry.get("evidence"))
+                if not valid:
+                    problems.append(f"{found['id']}: refuted needs a file-line quote from the reviewed files ({why})")
+            else:
+                valid, why = settled_valid(settled, entry.get("entry"))
+                if not valid:
+                    problems.append(f"{found['id']}: {why}")
         elif kind == "ignored":
             if not (isinstance(entry.get("reason"), str) and entry["reason"].strip()):
                 problems.append(f"{found['id']}: ignored needs a reason")
@@ -2110,7 +2213,7 @@ def command_record(args):
                 problems.append(f"{found['id']}: a blocking finding is ignored only when the person said so "
                                 "(person_approved: true)")
         else:
-            problems.append(f"{found['id']}: the disposition must be fixed, refuted or ignored")
+            problems.append(f"{found['id']}: the disposition must be fixed, refuted, settled or ignored")
     if problems:
         return fail("; ".join(problems))
     write_json(run_dir / "dispositions.json", dispositions)

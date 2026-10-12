@@ -29,8 +29,8 @@ repository.
 | Verdict | Meaning | What to do |
 |---|---|---|
 | `READY` | Every reviewer finished and nothing it reported held up. | Go ahead. |
-| `READY-WITH-FIXES` | Only mild findings. | Fix each one or note why not. |
-| `NOT-READY` | At least one serious finding blocks. | Fix it, or show with evidence that it is wrong, then run a new review. |
+| `READY-WITH-FIXES` | Only mild findings. | Fix each one or note why not, record, land; no further review unless a fix changed behaviour. |
+| `NOT-READY` | At least one serious finding blocks. | Fix it and run a new review on the fix; or, for a serious finding that was not reproduced, record it `refuted` (a quote) or `settled` (a decision the spec already rules, with no new argument); a catastrophic one is fixed or ignored by the person. Once every blocking finding is refuted or settled, it lands like `READY-WITH-FIXES`. |
 | `INCOMPLETE` | Something is missing: a reviewer dropped out or is not signed in, a reply could not be read, or the checkout changed during the run. | Never treat it as a pass. Fix the cause and run a new review. |
 
 After handling the findings, the assistant records what happened to each with
