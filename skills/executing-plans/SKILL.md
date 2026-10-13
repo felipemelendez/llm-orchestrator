@@ -9,6 +9,13 @@ The controller that walks a plan from first task to last, routing each group to 
 
 Use when a plan exists at `docs/llm-orchestrator/plans/`, more than one task remains, and you're the top-level controller. A single task → dispatch it directly. A plan with TBDs → back to `writing-plans` first.
 
+## Before the first dispatch: the landing rules
+
+A plan is one ticket branch. The rules for how many may be open and when each lands are `finishing-a-branch`'s `references/landing-rules.md`; read the landing board the session opened with. Two checks gate the first dispatch:
+
+- **Work in progress.** `git branch --no-merged <base>` (less the base and non-ticket branches) already at the limit (two by default; the project's laws may set another) → land one first, do not dispatch. Research and planning may continue.
+- **Dependencies landed.** The plan's `Requires landed:` line names branches or PRs that must be on main before this ticket is cut (a shared hub file's change above all). `git merge-base --is-ancestor <sha> <base>` false → land that first; then cut this branch from main. Never cut from a sibling's branch, and never carry a copy of its code.
+
 ## Steps
 
 1. **Verify the plan's dependency claims before trusting them.** Plans routinely mark tasks `Independent: yes` that aren't: an API spec depends on the routes it documents, tests on the code they exercise, a migration runbook on the migration it describes. If a task declares an `Interfaces:` block, treat it as authoritative — A consumes what B introduces → A depends on B. For tasks without one, scan bodies for symbols, endpoints, schemas, or files that a later task introduces (check those tasks' `Files:` and bodies). When a semantic dependency contradicts `Independent: yes`, fix the plan file in place (downgrade to `depends on B`) and continue — routing on the wrong claim dispatches a writer against ground truth that doesn't exist yet.
@@ -21,7 +28,7 @@ Use when a plan exists at `docs/llm-orchestrator/plans/`, more than one task rem
 
 5. **Run continuously**, group to group, without asking the user. Stops: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
 
-6. **When all groups complete:** run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the combined diff; `READY`, or `READY-WITH-FIXES` with the mild findings handled, or `NOT-READY` with every blocking finding recorded `refuted` or `settled` → `/llm-orchestrator:finish`, which lands the ticket through a pull request (`finishing-a-branch` option 1). Landing many tickets: one PR at a time in merge order, pulling the base and running its checks between PRs. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
+6. **When all groups complete:** merge the base into the branch, run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the whole branch (`--base <base>`); `READY`, or `READY-WITH-FIXES` with the mild findings handled, or `NOT-READY` with every blocking finding recorded `refuted`, `settled` or `follow-up` → `/llm-orchestrator:finish` now, in this session, which lands the ticket through a pull request (`finishing-a-branch` option 1); nothing new is committed on that head first. The branch's review budget is one review, one fix wave, one scoped re-review (landing rule 6); at the cap, record a disposition for every open finding and land or split. Landing many tickets: one PR at a time, base checks green between them, then the base merged into every still-open branch. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
 
 ## Resuming from a handoff
 

@@ -103,10 +103,20 @@ two reviewers are optional unless stated here.>
   final code. <STRICTER RULE if any — for example "every code change needs a
   passing automated test"; otherwise NOT APPLICABLE is allowed for low-risk
   work with no meaningful automated check.>
+- **Branches:** at most two unmerged ticket branches at a time; a third
+  ticket waits for a landing. Every branch is cut from main after the hub
+  change it depends on has landed, never from a sibling's branch. Main is
+  merged into every open branch at every landing. A branch gets one
+  whole-branch review at landing, one fix wave and one scoped re-review; a
+  serious finding the prover could not reproduce is recorded as a follow-up,
+  not another round. A branch not landed within a working day of its first
+  green test is split (the `finishing-a-branch` skill's
+  `references/landing-rules.md`). <OTHER NUMBERS if the project wants them;
+  otherwise delete this sentence.>
 - **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
   mild findings handled and recorded, or NOT-READY with every blocking finding
-  recorded refuted or settled; none of these needs another review unless a mild fix changed behaviour) and its checks
-  are green, the coordinator pushes the branch (never force-pushed, history never rewritten)
+  recorded refuted, settled or follow-up; none of these needs another review unless a mild fix changed behaviour) and its checks
+  are green, the coordinator lands it in that session, never holding it for a sibling: it pushes the branch (never force-pushed, history never rewritten)
   and opens one pull request per ticket, with a short body in plain words that
   a person who was not there can follow, in this shape: Summary / Decisions /
   Review / Verification / Manual checklist for the owner / Open items. It merges the pull request with a merge commit, keeping the project's

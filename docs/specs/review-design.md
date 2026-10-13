@@ -359,6 +359,23 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   recorded, and the change lands with no further review, unless a fix turned
   out to change behaviour; every statement of "no further review" in the
   skills and the rulebook template carries that exception by pointer.
+- **R23. Reproduce to block.** A fifth disposition, `follow-up`, carries
+  `reference`: the pull request, issue or plan task that will carry the
+  finding. `record` accepts it only for a finding that was not reproduced,
+  whose status is `unverified`, or `promoted` or `unresolved` after a Full
+  path's refuter (the refuter judges the words; the experiment decides
+  reproduction), whose repro either was never given (a floor raised the rank)
+  or ran on the unpatched copy and passed, and only under the R21/R22 guard: a
+  reproduced, catastrophic or unranked finding is never a follow-up, and
+  neither is one whose repro failed on the unpatched copy (the failure showed)
+  or never ran (nothing is known). A `NOT-READY` review whose every blocking
+  finding is recorded `refuted`, `settled` or `follow-up` lands like
+  `READY-WITH-FIXES`. The verdict itself does not change: `review.json` still
+  says `NOT-READY` and keeps the finding's status; the record says where it
+  went.
+  Decided on 2026-10-13 after a project whose reviews returned about twenty
+  findings a round, many serious and unreproduced, blocked every landing for
+  four days (`docs/specs/landing-discipline.md`).
 
 ## What stays, what goes
 

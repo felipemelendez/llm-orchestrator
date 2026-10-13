@@ -129,7 +129,8 @@ while IFS= read -r dir; do
   body_words=$(awk '/^---$/{c++; next} c>=2' "$file" | wc -w | tr -d ' ')
   case "$name" in
     dispatching-subagents)         limit=2202  ;;
-    using-orchestrator)            limit=1535  ;;
+    # 2026-10-13: +25 for the landing rules in the eager core and the routing table.
+    using-orchestrator)            limit=1560  ;;
     dispatching-parallel-agents)   limit=1389  ;;
     test-driven-development)       limit=1247  ;;
     research-classifier)           limit=1094  ;;
@@ -143,17 +144,23 @@ while IFS= read -r dir; do
     writing-skills)                limit=847   ;;
     # 2026-10-10: +260 for the PR-first landing (push, PR body shape, merge, base checks).
     # 2026-10-12: +29 for the mild-only and all-settled landing preconditions (Felipe).
-    finishing-a-branch)            limit=1058  ;;
+    # 2026-10-13: +102 for the landing-event rule (land now, nothing new on the
+    # head, base merged into open branches) and the follow-up precondition.
+    finishing-a-branch)            limit=1160  ;;
     # 2026-10-11: +35, +35 and +40 for the design-simplicity check every review
     # asks (Felipe): the question, the finding kind and how a design finding is
     # handled are facts the three skills now carry, not narration.
     # 2026-10-12: +101 for the settled-decisions rule the reviewers get, the
     # `settled` disposition (R22) and the mild-only landing (Felipe).
-    requesting-code-review)        limit=783   ;;
+    # 2026-10-13: +92 for the one-review-per-landing shape and the `follow-up`
+    # disposition (R23): a project ran 370 reviews in four days with no exit.
+    requesting-code-review)        limit=875   ;;
     # 2026-10-12: +213 for the rank-by-consequence rule, the mild-only
     # landing and the `settled` disposition (R22) (Felipe).
-    receiving-code-review)         limit=872   ;;
-    cadence)                       limit=540   ;;
+    # 2026-10-13: +63 for the `follow-up` disposition (R23) and the three-run cap.
+    receiving-code-review)         limit=935   ;;
+    # 2026-10-13: +17 for the pointer to the landing rules.
+    cadence)                       limit=557   ;;
     *)                              limit=500  ;;
   esac
   if (( body_words > limit )); then

@@ -2027,6 +2027,94 @@ class ReviewTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("never refuted: a reproduced finding showed a wrong result", result.stderr)
 
+    # R23
+    def test_r23_follow_up_lands_an_unverified_finding_whose_failure_did_not_show(self):
+        # Three serious findings from one reviewer: a repro that passed on the unpatched copy, a repro that
+        # failed there (the bug showed) but whose patch did not fix it, and a reproduced one. Only the first
+        # may become a follow-up.
+        self.reviewer("claude", code_finding(), code_finding(line=1), code_finding(line=1, summary="third"))
+        self.prove({"code-review-1": proof(repro={"command": "true", "patch": FIX}),
+                    "code-review-2": proof(repro={"command": CHECK, "patch": BAD_PATCH}),
+                    "code-review-3": proof()})
+        review = self.review()
+        by_id = {f["id"]: f for f in review["findings"]}
+        self.assertEqual((by_id["code-review-1"]["status"], by_id["code-review-1"]["receipts"]["1"]["exit_code"]),
+                         ("unverified", 0))
+        self.assertEqual(by_id["code-review-2"]["status"], "unverified")
+        self.assertNotEqual(by_id["code-review-2"]["receipts"]["1"]["exit_code"], 0)
+        self.assertTrue(by_id["code-review-3"]["reproduced"])
+        self.assertEqual(review["verdict"], "NOT-READY")
+        dispositions = self.root / "dispositions.json"
+        follow_up = {"disposition": "follow-up", "reference": "PR #14: the retry path"}
+        fixed = {"disposition": "fixed", "check": CHECK}
+        for case, why in (
+                ({"code-review-1": follow_up, "code-review-2": follow_up, "code-review-3": fixed},
+                 "code-review-2: never a follow-up: the repro failed on the unpatched copy, so the failure showed"),
+                ({"code-review-1": follow_up, "code-review-2": fixed, "code-review-3": follow_up},
+                 "code-review-3: never a follow-up: a reproduced finding showed a wrong result"),
+                ({"code-review-1": {"disposition": "follow-up"}, "code-review-2": fixed, "code-review-3": fixed},
+                 "code-review-1: follow-up needs the reference")):
+            with self.subTest(case=case):
+                dispositions.write_text(json.dumps(case))
+                result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn(why, result.stderr)
+        dispositions.write_text(json.dumps({"code-review-1": follow_up, "code-review-2": fixed, "code-review-3": fixed}))
+        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
+        rows = [row for row in self.outcome_rows() if row["row"] == "finding"]
+        self.assertEqual([(row["finding"], row["disposition"]) for row in rows],
+                         [("code-review-1", "follow-up"), ("code-review-2", "fixed"), ("code-review-3", "fixed")])
+        spec = (ROOT / "docs/specs/review-design.md").read_text()
+        skill = (ROOT / "skills/requesting-code-review/SKILL.md").read_text()
+        rules = (ROOT / "skills/finishing-a-branch/references/landing-rules.md").read_text()
+        for text in (spec, skill, rules):
+            self.assertIn("`follow-up`", text)
+
+    def test_r23_a_full_path_finding_the_refuter_promoted_may_be_a_follow_up_when_its_repro_passed(self):
+        self.reviewer("codex", codex_finding())
+        self.prove({"codex-review-1": proof(repro={"command": "true", "patch": FIX})})
+        self.refute(verdict("codex-review-1", "PROMOTED"))
+        review = self.review("full", "claude")
+        found = self.found(review, "codex-review-1")
+        self.assertEqual((found["status"], found["reproduced"], found["receipts"]["1"]["exit_code"]),
+                         ("promoted", False, 0))
+        self.assertEqual(review["verdict"], "NOT-READY")
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"codex-review-1": {"disposition": "follow-up", "reference": "PR #15"}}))
+        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
+        rows = [row for row in self.outcome_rows() if row["row"] == "finding"]
+        self.assertEqual([(row["finding"], row["disposition"]) for row in rows], [("codex-review-1", "follow-up")])
+
+    def test_r23_a_floor_raised_finding_with_no_repro_may_be_a_follow_up(self):
+        # The prover ranked it mild; the priority-0 floor made it serious with no repro attempted (R8 step 3).
+        self.reviewer("codex", codex_finding(priority=0))
+        self.prove({"codex-review-1": mild("style", reason="a matter of taste")})
+        review = self.review("standard", "claude")
+        found = self.found(review, "codex-review-1")
+        self.assertEqual((found["status"], found["receipts"]), ("unverified", {}))
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"codex-review-1": {"disposition": "follow-up", "reference": "issue #9"}}))
+        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
+        rows = [row for row in self.outcome_rows() if row["row"] == "finding"]
+        self.assertEqual([(row["finding"], row["disposition"]) for row in rows], [("codex-review-1", "follow-up")])
+
+    def test_r23_follow_up_is_refused_for_a_mild_finding_and_for_a_repro_that_never_ran(self):
+        self.scenario["codex"]["sandbox"] = False
+        self.reviewer("claude", code_finding(), code_finding(line=1, summary="wording"))
+        self.prove({"code-review-1": proof(), "code-review-2": mild()})
+        review = self.review()
+        first, second = review["findings"]
+        self.assertEqual((first["status"], first["receipts"]["1"]["ran"]), ("unverified", False))
+        self.assertEqual(second["status"], "mild")
+        dispositions = self.root / "dispositions.json"
+        follow_up = {"disposition": "follow-up", "reference": "issue #9"}
+        dispositions.write_text(json.dumps({"code-review-1": follow_up, "code-review-2": follow_up}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("code-review-1: follow-up needs a check that ran", result.stderr)
+        self.assertIn("code-review-2: follow-up is for an unreproduced serious finding only (status mild)",
+                      result.stderr)
+
     # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
     def test_design_every_rendered_brief_carries_the_simplicity_question(self):
         snippet = (ROOT / "skills/requesting-code-review/references/design-simplicity.md").read_text().strip()

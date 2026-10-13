@@ -10,6 +10,11 @@ built-in reviewers (Claude Code's `/code-review` and `codex review`), proves
 their findings, and decides the verdict from files it wrote. Start it once; no
 step is yours to skip. The rules are in `docs/specs/review-design.md`.
 
+A ticket branch gets one whole-branch review at landing (`--base` at the base
+branch, after main is merged in), one fix wave and one scoped re-review of the
+fix; then it lands or is split, and a landing verdict goes straight to
+`finishing-a-branch` (its `references/landing-rules.md`, rules 2, 6 and 7).
+
 ## Which review
 
 - **Standard:** one reviewer, from the provider that did not write the change
@@ -75,7 +80,7 @@ session it could not delete).
 |---|---|
 | `READY` | Every reviewer finished and nothing it reported survived. |
 | `READY-WITH-FIXES` | Only mild findings. Fix them or record why not, check, record, land; no further review unless a fix changed behaviour. |
-| `NOT-READY` | At least one blocking finding (verified, unverified, promoted, unresolved or unjudged). Lands like `READY-WITH-FIXES` once every blocking finding is recorded `refuted` or `settled`. |
+| `NOT-READY` | At least one blocking finding (verified, unverified, promoted, unresolved or unjudged). Lands like `READY-WITH-FIXES` once every blocking finding is recorded `refuted`, `settled` or `follow-up`. |
 | `INCOMPLETE` | Something is missing: a launch dropped out, a reply was not parsed, a serious finding had no repro, a finding went unjudged, or the checkout changed. Never report it as a pass. |
 
 A finding never disappears: only a refuter drop the script proved with its
@@ -97,4 +102,7 @@ Each finding gets one disposition (R21). `record` takes `refuted`, with a
 or unranked finding, and rejects omissions. It also takes
 `settled`, with one whole entry quoted from the spec's `## Settled` section,
 for a finding that reopens a settled decision with no new argument; never for
-a reproduced, catastrophic or unranked finding (R22).
+a reproduced, catastrophic or unranked finding (R22). And it takes
+`follow-up`, with the `reference` of the PR, issue or plan task that will
+carry an `unverified` serious finding whose repro passed on the unpatched
+copy, or had none (R23); a repro that failed, or never ran, is refused.

@@ -23,26 +23,32 @@ they cannot supply a required independent review or gate.
    meets the requirements, and resolve material gaps before coding.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
-3. Run the Full review with `requesting-code-review` (`orch-review.py run
-   --path full`). It runs two blind reviews, Claude Code's `/code-review` and
-   `codex review` (with one CLI, its reviewer twice, which the verdict says),
-   proves each finding and, when a serious or catastrophic one exists, runs
-   the refuter. A dropout gives `INCOMPLETE`, never a completed review or a
-   substitute.
+3. Merge the base into the branch, run the checks, then run the Full review
+   with `requesting-code-review` (`orch-review.py run --path full --base
+   <base>`) on the whole branch. It runs two blind reviews, Claude Code's
+   `/code-review` and `codex review` (with one CLI, its reviewer twice, which
+   the verdict says), proves each finding and, when a serious or catastrophic
+   one exists, runs the refuter. A dropout gives `INCOMPLETE`, never a
+   completed review or a substitute.
 4. Handle the findings with `receiving-code-review` and record a disposition
    for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
-   the cause and run a new review. Do not add a third general review. Rounds
-   are bounded, a mild-only review is the last one unless a fix changed
-   behaviour, and a decision ruled a second time goes into the spec's
-   `## Settled` section before the next
-   review (`dispatching-subagents`, the fix loop; `receiving-code-review`;
+   the cause and run a new review. Do not add a third general review. The
+   branch's budget is one review, one fix wave, one scoped re-review of the
+   fix (`finishing-a-branch`'s `references/landing-rules.md`, rule 6); at the
+   cap every open finding gets a disposition and the branch lands or is split.
+   A mild-only review is the last one unless a fix changed behaviour, an
+   unreproduced serious finding is recorded `follow-up` (R23), and a decision
+   ruled a second time goes into the spec's `## Settled` section before the
+   next review (`dispatching-subagents`, the fix loop; `receiving-code-review`;
    R22).
 5. Fix material issues, verify affected fixes and independently assess the final
    change, including whether it is the simplest correct version. Use the deterministic gate and targeted probes where they test the
    affected contracts; inspect individual outcomes, not merely its final exit.
    Unsupported checks remain explicit. Do not repeat valid checks for ceremony.
 6. Land through a pull request (`finishing-a-branch` option 1) unless the laws
-   or the user say otherwise. Retain useful spec/research/design/runbook
+   or the user say otherwise, in the same session as the landing verdict and
+   with nothing new committed on that head; then merge the base into every
+   still-open branch. Retain useful spec/research/design/runbook
    updates. Finish task-owned temporary resources after consumers
    stop and deliverables are preserved; explain concrete preservation reasons.
 

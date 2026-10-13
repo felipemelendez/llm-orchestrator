@@ -266,6 +266,7 @@ case "${cmd}" in
              scripts/lib/orch-detect.sh scripts/lib/check-hook-paths.py \
              scripts/lib/orch-git-classify.py \
              scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh \
+             scripts/orch-landing-board.sh \
              scripts/statusline.sh scripts/protocol-lint.sh output-styles/orchestrator.md \
              docs/install.md templates/settings.json scripts/lib/orch-review.py \
              skills/requesting-code-review/references/prover-schema.json \
@@ -556,6 +557,7 @@ case "${cmd}" in
     [[ -f "${ROOT}/scripts/protocol-lint.sh" ]] && cp "${ROOT}/scripts/protocol-lint.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/orch-worktree-materialize.sh" ]] && cp "${ROOT}/scripts/orch-worktree-materialize.sh" "${dest}/.claude/scripts/"
     [[ -f "${ROOT}/scripts/orch-worktree-integrate.sh" ]] && cp "${ROOT}/scripts/orch-worktree-integrate.sh" "${dest}/.claude/scripts/"
+    [[ -f "${ROOT}/scripts/orch-landing-board.sh" ]] && cp "${ROOT}/scripts/orch-landing-board.sh" "${dest}/.claude/scripts/"
     # Copy EVERY lib, not only the shell ones. This loop was `*.sh` and the two
     # PreToolUse guards source scripts/lib/orch-git-classify.py — so a --copy
     # install shipped both guards with their semantic classifier missing, and
@@ -586,7 +588,8 @@ case "${cmd}" in
         [[ -d "${d}" ]] && find "${d}" -type f
       done
       for f in scripts/hooks/*.sh scripts/statusline.sh scripts/protocol-lint.sh \
-               scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh scripts/lib/* \
+               scripts/orch-worktree-materialize.sh scripts/orch-worktree-integrate.sh \
+               scripts/orch-landing-board.sh scripts/lib/* \
                concise-agent-protocol.md docs/install.md docs/anthropic-ecosystem.md; do
         [[ -f "${f}" ]] && printf '%s\n' "${f}"
       done

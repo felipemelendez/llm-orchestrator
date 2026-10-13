@@ -83,7 +83,8 @@ twice):
   "codex-review-2": {"disposition": "refuted",
                      "evidence": {"type": "file-line", "file": "src/a.py", "line": 12, "quote": "return total"}},
   "codex-review-3": {"disposition": "ignored", "reason": "wording only"},
-  "codex-review-4": {"disposition": "settled", "entry": "the cache is keyed by user id"}
+  "codex-review-4": {"disposition": "settled", "entry": "the cache is keyed by user id"},
+  "codex-review-5": {"disposition": "follow-up", "reference": "PR #14: retry on a closed socket"}
 }
 ```
 
@@ -94,6 +95,10 @@ twice):
 - `settled` quotes one whole entry of the spec's `## Settled` section; the
   script checks it against the spec the run read and refuses it for a
   reproduced, catastrophic or unranked finding.
+- `follow-up` names the PR, issue or plan task that will carry an unreproduced
+  serious finding whose repro passed or was never attempted (rule 7 of
+  `finishing-a-branch`'s `references/landing-rules.md`); the script refuses it
+  for a reproduced finding or a failed or unrun repro.
 - `ignored` gives a reason. A blocking finding may be ignored only when the
   person said so; add `"person_approved": true`.
 
@@ -116,7 +121,7 @@ Deferred:
 Verify:
 - <command> → <line>
 Next:
-- Record the dispositions, then re-run /llm-orchestrator:review on the fix of a serious or catastrophic finding; a mild-only fix lands without another review unless it changed behaviour.
+- Record the dispositions, then one scoped re-review of the fix of a serious or catastrophic finding (the last run of the branch's three); a mild-only fix lands without another review unless it changed behaviour; then /llm-orchestrator:finish.
 ```
 
 The `Verify:` line is the check that the reviewer's fix actually compiles and tests green in this

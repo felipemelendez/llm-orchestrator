@@ -12,6 +12,20 @@ User input: $ARGUMENTS — task selector. Forms accepted:
 
 Steps:
 
+0. Check the landing rules (`finishing-a-branch`'s `references/landing-rules.md`)
+   before dispatching anything. Run the board with its check:
+   ```bash
+   orch_board() { local p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/orch-landing-board.sh" "$HOME/.claude/llm-orchestrator/scripts/orch-landing-board.sh" "$(pwd)/.claude/scripts/orch-landing-board.sh"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name orch-landing-board.sh -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
+   bash "$(orch_board)" --check    # exit 3: no room for one more ticket branch (limit two, or the project's cadence.json wip_limit)
+   ```
+   Exit 3 → report `Blocked:` with the branches it names and land one first.
+   Any other non-zero exit means the check could not run: stop and say so;
+   never dispatch on an unchecked count.
+   The plan's `Requires landed:` naming a branch or PR not yet on main
+   (`git merge-base --is-ancestor <sha> <base>` false) → land that first and
+   cut this branch from main afterwards. A READY branch on the board is landed
+   before any new dispatch.
+
 1. Load the latest plan from `docs/llm-orchestrator/plans/` (or accept `--plan <path>` if passed).
 
 2. Resolve `$ARGUMENTS` into a task set.
@@ -52,8 +66,8 @@ Found:
 - DONE_WITH_CONCERNS: <list>
 - BLOCKED: <list, if any>
 Next:
-- /llm-orchestrator:review on the combined diff (if not already done per-task)
-- (or) /llm-orchestrator:verify then /llm-orchestrator:finish
+- merge the base in, /llm-orchestrator:verify, /llm-orchestrator:review on the whole branch
+- then /llm-orchestrator:finish in this session (landing rule 2)
 ```
 
 Constraints:
