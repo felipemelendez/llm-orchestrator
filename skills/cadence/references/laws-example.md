@@ -92,10 +92,19 @@ not require different models for the two reviewers.
   written into the spec's `## Settled` section with the reason it stands; a
   later finding against it needs a new argument against that reason, or it is
   recorded as settled (never a reproduced, catastrophic or unranked one).
+- **Branches:** at most two unmerged ticket branches at a time; a third
+  ticket waits for a landing. Every branch is cut from `main` after the hub
+  change it depends on has landed, never from a sibling's branch. `main` is
+  merged into every open branch at every landing. A branch gets one
+  whole-branch review at landing, one fix wave and one scoped re-review; a
+  serious finding the prover could not reproduce is recorded as a follow-up,
+  not another round. A branch not landed within a working day of its first
+  green test is split (the `finishing-a-branch` skill's
+  `references/landing-rules.md`).
 - **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
   mild findings handled and recorded, or NOT-READY with every blocking finding
-  recorded refuted or settled; none of these needs another review unless a mild fix changed behaviour) and its checks
-  are green, the assistant pushes the branch (never force-pushed, history never rewritten)
+  recorded refuted, settled or follow-up; none of these needs another review unless a mild fix changed behaviour) and its checks
+  are green, the assistant lands it in that session, never holding it for a sibling: it pushes the branch (never force-pushed, history never rewritten)
   and opens one pull request per ticket, with a short body in plain words that
   Ana can follow without the conversation, in this shape: Summary / Decisions /
   Review / Verification / Manual checklist for Ana / Open items.

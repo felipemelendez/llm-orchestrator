@@ -160,6 +160,7 @@ Ask:
 - Follow TDD: failing test before implementation.
 - Solve the problem, not the assertion. The verify command checks your work; it does not define it. A branch keyed on the test's own input, or a literal returned because that is what the assertion compares against, is a green line with the bug still in it. If a test is wrong or the task cannot be done as written, return `BLOCKED` rather than working around it.
 - Run the verify command as one plain foreground command, and paste the actual output line. Nothing watches you do it: a Stop hook reads the transcript and warns if a reply says PASS with no check behind it, and that is all. The honesty is yours to supply.
+- If something fails or produces unexpected results, report what happened honestly: do not silently retry, work around the issue, or modify tests and checks to force a passing result. A `BLOCKED` with one specific question is a good outcome; a `DONE` that is not true is the worst one. Some tests passing is not the task done.
 - Don't refactor adjacent code "while you're there".
 - Reviewers ask: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`.) Reuse what exists; anything more than the task needs is a finding against your work.
 - Don't invent new dependencies.

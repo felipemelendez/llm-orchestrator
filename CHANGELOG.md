@@ -5,6 +5,58 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-13 — ticket work lands under landing rules, and a finding must reproduce to block
+
+- **Landing rules for long projects, in one place.** A project run with this
+  plugin opened ten ticket branches at once, cut from an unmerged sibling,
+  ran 370 reviews in four days (319 NOT-READY), spent every READY verdict on
+  new commits or on a wait for a sibling, and merged nothing until its owner
+  wrote a landing process by hand; four branches then landed in nine hours.
+  The rules now ship as `skills/finishing-a-branch/references/landing-rules.md`
+  and every flow skill cites the one it enforces: at most two unmerged ticket
+  branches (`executing-plans`, `/dispatch` refuse a third); a READY verdict is
+  landed in the same session, nothing new committed on that head, never held
+  for a sibling (`finishing-a-branch`, `/finish`, `requesting-code-review`,
+  the cadence paths); every branch is cut from main after the hub change it
+  depends on has landed, named by the plan's new `Requires landed:` line
+  (`writing-plans`, `templates/plan.md`, `brainstorming` sequences
+  sub-projects the same way); main is merged into every open branch at each
+  landing; one whole-branch review per landing, one fix wave, one scoped
+  re-review, then land or split (`dispatching-subagents`, the Full path);
+  `dispatching-parallel-agents` says plainly it fans out the tasks of one
+  ticket, not tickets. The rulebook template and example gain a **Branches**
+  line and their Landing line says "in that session".
+- **Reproduce to block.** `orch-review.py record` takes a fifth disposition,
+  `follow-up`, with the `reference` of the PR, issue or plan task that will
+  carry the finding, for an unreproduced serious finding (`unverified`, or
+  `promoted` or `unresolved` after the Full path's refuter) whose repro passed
+  on the unpatched copy or had none; a repro that failed (the bug showed) or
+  never ran (nothing is known) is refused, as are reproduced, catastrophic and
+  unranked findings. A `NOT-READY` review whose blocking findings are all
+  `refuted`, `settled` or `follow-up` lands like `READY-WITH-FIXES` (R23 in
+  `docs/specs/review-design.md`; `tests/test-review.py`).
+- **The landing board.** `scripts/orch-landing-board.sh` prints the unmerged
+  ticket branches against the base (the remote's view of it when there is
+  one; the `orch/` task branches of the materialize engine are not counted),
+  the oldest one's age counted from its first commit off the base, and a
+  warning at or over the limit (`--limit`, else `ORCH_WIP_LIMIT`, else
+  `wip_limit` in `cadence.json`, else 2). `--check` exits 3 when the open
+  branches already fill the limit, which `/dispatch` runs before cutting a
+  ticket branch. The session-start hook prints the same line in front of the
+  body. Read-only git, no network; off with
+  `ORCH_DISABLED_HOOKS=orch-landing-board` (`tests/test-landing-rules.sh`,
+  `tests/test-cadence-session-start.sh`).
+- The implementer template carries the vendor's own wording for a stuck
+  writer: report honestly, do not silently retry or modify tests and checks to
+  force a pass; a `BLOCKED` with one question is a good outcome.
+- Research and design: `docs/llm-orchestrator/research/2026-10-13-long-running-projects-brief.md`,
+  `docs/specs/landing-discipline.md`.
+
+### Upgrading
+
+- A locked project adopts the Branches line and the changed Landing line by a
+  numbered ruling (the text is in `skills/cadence/references/laws.md`).
+
 - **Settled decisions stop review rounds from relitigating.** A spec may
   carry a `## Settled` section: decisions already reviewed and ruled, one list
   item each, with the reason it stands (`templates/spec.md`; the plan template

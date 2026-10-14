@@ -23,7 +23,7 @@ The plan file is the only task state: flip each task's `### N. <name>  - [ ]` he
    - `NEEDS_CONTEXT` → answer the `Ask:` via `SendMessage` to that agentId. The agent resumes with everything it already read and reasoned; a cold re-dispatch pays to re-derive all of it. The resume returns in the background — never spawn a duplicate while waiting.
    - `PARTIAL` → its Stop-if fired. Record `Progress:`, then resume with unblocking guidance (the partial work and context survive) — unless the transcript shows repeated failed attempts (a retry-cap warning), in which case re-dispatch fresh with `Progress:`/`Remaining:` pasted into the new envelope: a context polluted by failures hurts more than a cold start costs.
 
-3. **Review the task** with `requesting-code-review`: `orch-review.py` with `--base` at the commit before this task's first commit, so the review covers the whole task. Not `HEAD~1`: a task is often several commits, and `HEAD~1` silently reviews only the last one. Standard is the default; use `--path full` when the task is Full work. The reviewers work in their own clones and never see the implementer's report. Besides correctness they ask: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`); the implementer envelope tells the writer so. Verdict routing: `READY` → proceed; `NOT-READY` → the fix loop; `READY-WITH-FIXES` → handle the mild findings in one commit (fix, or record why not), run the checks, read the diff, record each disposition and note the deferred ones in the plan file, proceed (no re-review of a mild-only fix, unless a fix changed behaviour); `NOT-READY` whose every blocking finding is recorded `refuted` or `settled` → the same; `INCOMPLETE` → fix the cause it names and run the review again.
+3. **Review the task** when the plan marks it sensitive (security, a public contract, a hub file) or the user asked for per-task review; a routine task is covered by the whole-branch review at landing (landing rule 6), so skip to step 4. The per-task review is `requesting-code-review`: `orch-review.py` with `--base` at the commit before this task's first commit, so the review covers the whole task. Not `HEAD~1`: a task is often several commits, and `HEAD~1` silently reviews only the last one. Standard is the default; use `--path full` when the task is Full work. The reviewers work in their own clones and never see the implementer's report. Besides correctness they ask: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`); the implementer envelope tells the writer so. Verdict routing: `READY` → proceed; `NOT-READY` → the fix loop; `READY-WITH-FIXES` → handle the mild findings in one commit (fix, or record why not), run the checks, read the diff, record each disposition and note the deferred ones in the plan file, proceed (no re-review of a mild-only fix, unless a fix changed behaviour); `NOT-READY` whose every blocking finding is recorded `refuted` or `settled` → the same; `INCOMPLETE` → fix the cause it names and run the review again.
 
 4. **Tick and continue.** Flip the task's plan heading checkbox, start the next task without asking the user.
 
@@ -54,7 +54,7 @@ At the cap, stop dispatching and adjudicate. Every still-open finding gets one w
 
 ## After the last task
 
-One fix wave, not one fixer per finding: dispatch a single implementer with the complete findings list from the final review (per-finding fixers each rebuild the same context and re-run the same suite — a cost exceeding the tasks themselves), then exactly one scoped re-review of the fix diff. Anything still open goes through the adjudication table; there is no second wave.
+Merge the base into the branch, run the checks, then one whole-branch review (`--base <base>`). One fix wave, not one fixer per finding: dispatch a single implementer with the complete findings list from that review (per-finding fixers each rebuild the same context and re-run the same suite — a cost exceeding the tasks themselves), then exactly one scoped re-review of the fix diff. Anything still open gets a disposition: `fixed`, `refuted`, `settled`, `follow-up` for an unreproduced serious finding, or the adjudication table above; there is no second wave and no fourth run. Then `finishing-a-branch`, in this session (`finishing-a-branch`'s `references/landing-rules.md`, rules 2, 6 and 7).
 
 ## Continuous execution
 
@@ -83,5 +83,5 @@ Concerns:
 Verify:
 - <combined test command> → <line>
 Next:
-- /llm-orchestrator:verify, then /llm-orchestrator:finish
+- /llm-orchestrator:verify, the whole-branch review, then /llm-orchestrator:finish in this session
 ```

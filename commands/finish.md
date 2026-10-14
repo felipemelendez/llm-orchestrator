@@ -8,10 +8,12 @@ User input: $ARGUMENTS (optional — chosen option number 1-4)
 
 Preconditions:
 - `/llm-orchestrator:verify` returned green.
-- `/llm-orchestrator:review` verdict is `READY`; or `READY-WITH-FIXES` with the mild findings handled; or `NOT-READY` with every blocking finding recorded `refuted` or `settled` and the mild ones handled (a mild fix that changed behaviour goes back for review first).
+- `/llm-orchestrator:review` verdict is `READY`; or `READY-WITH-FIXES` with the mild findings handled; or `NOT-READY` with every blocking finding recorded `refuted`, `settled` or `follow-up` and the mild ones handled (a mild fix that changed behaviour goes back for review first).
 - Every task heading checkbox in the plan file is ticked.
 
-If preconditions are not met, stop and report which one.
+If preconditions are not met, stop and report which one. If they are met, this
+runs now: a landing verdict is landed in the session it arrives, never held
+for a sibling (`finishing-a-branch`'s `references/landing-rules.md`).
 
 Steps:
 
@@ -42,7 +44,8 @@ Steps:
      authorized and the PR's checks are green: `gh pr merge <n> --merge`, then, in the checkout that
      holds `<base>` (`git worktree list`), `git pull --ff-only` and run the full suite there;
      if none holds it, `git fetch origin <base>:<base>` and run the suite in a new detached
-     worktree of `<base>`, removed afterwards. Offer worktree cleanup only after the merge.
+     worktree of `<base>`, removed afterwards. Then merge `<base>` into every still-open ticket
+     branch and run its checks (landing rule 5). Offer worktree cleanup only after the merge.
    - **2**: `git checkout <base> && git pull --ff-only && git merge --no-ff <branch>`, then run
      the suite on the merged tree. Offer worktree cleanup.
    - **3**: Print where branch + worktree live.

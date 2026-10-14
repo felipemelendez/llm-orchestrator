@@ -221,6 +221,24 @@ def kept_from_the_person(found):
     return None
 
 
+def follow_up_refused(found):
+    """R23: why a finding may not be recorded `follow-up`, or None. A follow-up is for an unreproduced serious
+    finding whose claimed failure did not show: the prover gave no repro (a floor raised its rank), or the repro
+    ran on the unpatched copy and passed. Its status is `unverified`, or after a Full path's refuter `promoted`
+    or `unresolved` (the refuter judges the words; the experiment decides reproduction). A receipt that failed
+    showed the failure; one that never ran proved nothing."""
+    if found.get("status") not in ("unverified", "promoted", "unresolved") or found.get("reproduced"):
+        return f"follow-up is for an unreproduced serious finding only (status {found.get('status')})"
+    first = (found.get("receipts") or {}).get("1")
+    if not first:
+        return None
+    if not first.get("ran") or first.get("exit_code") is None:
+        return "follow-up needs a check that ran: the repro never ran on the unpatched copy, so nothing is known"
+    if first.get("exit_code") != 0:
+        return "never a follow-up: the repro failed on the unpatched copy, so the failure showed; fix it"
+    return None
+
+
 def settled_valid(entries, entry):
     """R22: the entry is one whole entry of the spec's Settled section (entries, or None without the section)."""
     wanted = plain(entry) if isinstance(entry, str) else ""
@@ -2206,6 +2224,16 @@ def command_record(args):
                 valid, why = settled_valid(settled, entry.get("entry"))
                 if not valid:
                     problems.append(f"{found['id']}: {why}")
+        elif kind == "follow-up":
+            kept = kept_from_the_person(found)
+            why = follow_up_refused(found)
+            if kept:
+                problems.append(f"{found['id']}: never a follow-up: {kept}")
+            elif why:
+                problems.append(f"{found['id']}: {why}")
+            elif not (isinstance(entry.get("reference"), str) and entry["reference"].strip()):
+                problems.append(f"{found['id']}: follow-up needs the reference of the PR, issue or plan task "
+                                "that carries it")
         elif kind == "ignored":
             if not (isinstance(entry.get("reason"), str) and entry["reason"].strip()):
                 problems.append(f"{found['id']}: ignored needs a reason")
@@ -2213,7 +2241,7 @@ def command_record(args):
                 problems.append(f"{found['id']}: a blocking finding is ignored only when the person said so "
                                 "(person_approved: true)")
         else:
-            problems.append(f"{found['id']}: the disposition must be fixed, refuted, settled or ignored")
+            problems.append(f"{found['id']}: the disposition must be fixed, refuted, settled, follow-up or ignored")
     if problems:
         return fail("; ".join(problems))
     write_json(run_dir / "dispositions.json", dispositions)

@@ -244,6 +244,43 @@ case "$C" in "cadence: check script missing at "*) ok "a missing check script is
 esac
 
 # =============================================================================
+printf '%s== the landing board rides in front of the body ==%s\n' "$DIM" "$RESET"
+# =============================================================================
+if command -v git >/dev/null 2>&1; then
+  GITPROJ="$TMP/gitproj"; mkproj "$GITPROJ"
+  ( cd "$GITPROJ" && git init -q 2>/dev/null && git checkout -q -b main 2>/dev/null; \
+    git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base; \
+    for b in w-a w-b w-c; do \
+      git branch "$b" main; \
+      sha=$(GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+            git commit-tree "$(git rev-parse main^{tree})" -p "$(git rev-parse "$b")" -m "$b"); \
+      git update-ref "refs/heads/$b" "$sha"; \
+    done ) >/dev/null 2>&1
+  run_hook "$HOOK" "$GITPROJ" "$STARTUP" >/dev/null
+  C=$(ctx)
+  case "$C" in "landing board: 3 unmerged branch(es) against main"*"over the limit of 2"*) ok "three unmerged branches open the session with the board and the warning" ;;
+    *) fail "three unmerged branches open the session with the board and the warning" "context: $(printf '%s' "$C" | head -c 200)" ;;
+  esac
+  run_hook "$HOOK" "$GITPROJ" "$COMPACT" >/dev/null
+  C=$(ctx)
+  case "$C" in "landing board: "*) ok "the board also opens the post-compaction note" ;;
+    *) fail "the board also opens the post-compaction note" "context: $(printf '%s' "$C" | head -c 120)" ;;
+  esac
+  run_hook "$HOOK" "$GITPROJ" "$STARTUP" ORCH_DISABLED_HOOKS=orch-landing-board >/dev/null
+  C=$(ctx)
+  case "$C" in *"landing board"*) fail "ORCH_DISABLED_HOOKS=orch-landing-board removes the board" "still printed" ;;
+    *) ok "ORCH_DISABLED_HOOKS=orch-landing-board removes the board" ;;
+  esac
+  run_hook "$HOOK" "$PLAIN" "$STARTUP" >/dev/null
+  C=$(ctx)
+  case "$C" in *"landing board"*) fail "a project without a repository gets no board" "printed" ;;
+    *) ok "a project without a repository gets no board" ;;
+  esac
+else
+  printf '%s  (git unavailable: board checks skipped)%s\n' "$DIM" "$RESET"
+fi
+
+# =============================================================================
 printf '%s== the verdict is a report, never enforcement ==%s\n' "$DIM" "$RESET"
 # =============================================================================
 rc=$(run_hook "$HOOK" "$PROJ" "$STARTUP" ORCH_DISABLED_HOOKS=orch-session-start)

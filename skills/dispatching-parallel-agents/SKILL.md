@@ -21,6 +21,8 @@ Every writer envelope declares its mode: a worktree path, or the shared-checkout
 
 3+ read-only agents, or 3+ writer tasks all `Independent: yes` in separate worktrees, with no two tasks touching the same file (so the merges stay trivial). Not for: tasks with dependencies (sequential), fewer than 3 tasks (coordination cost beats the speedup), writers you can't or won't isolate on a project that allows worktrees (sequential), or a problem you haven't understood — don't parallelize confusion.
 
+**Tasks of one ticket, not tickets.** This skill fans out the tasks of one plan into task worktrees that the integration engine (step 7) lands back on the ticket branch in the same session. It is not how several *tickets* run at once: unmerged ticket branches are limited to two, each is cut from main after what it depends on has landed, and each lands the session its review is READY (`finishing-a-branch`'s `references/landing-rules.md`, rules 1 to 4). Ten tickets dispatched "at once" with a hand-written merge order is the failure those rules come from.
+
 ## Read-only fan-out
 
 Build N envelopes (`templates/dispatch-prompt.md`), each stating explicitly: read-only — do not edit files or run any mutating git (`stash`/`reset`/`clean`/`checkout --`/`add`/`commit`). Spell that out because the destructive-git guard is only a backstop: it blocks stash/reset/clean/checkout/restore but not `git add`/`commit` or `Edit`/`Write` tool calls. Send in one message, wait for all returns, triage by Status, synthesize. Nothing to merge — they wrote nothing.

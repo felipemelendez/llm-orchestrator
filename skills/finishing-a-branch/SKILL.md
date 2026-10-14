@@ -5,12 +5,21 @@ description: Use when a branch's work is done and tests pass, to land it through
 
 # Finishing a branch
 
+## A READY verdict is a landing event
+
+[references/landing-rules.md](references/landing-rules.md) holds the rules for
+ticket work on a long project. This skill enforces three: a landing verdict is
+landed now, in this session, never held for a sibling; nothing new is
+committed on that head; after the merge, the base is merged into every
+still-open branch. The landing board at session start lists what is waiting.
+
 ## Proportional cadence
 
 For enabled `workflow: proportional`, finish the cadence's selected path.
 Reuse valid checks; validate changed inputs. Land through option 1 below (push,
 PR, merge, base checks) without another menu when the laws' Landing rule or the
-user authorizes it. Commit/push/merge/discard need authorization. After consumers stop
+user authorizes it. Commit/push/merge/discard need authorization; the laws'
+Landing rule is that authorization. After consumers stop
 and work is preserved, finish resources through the task helper: clean disposable
 copies; retain unique/dirty/active work and report its path. Stop here; the
 preconditions below are for projects without an enabled cadence.
@@ -19,7 +28,7 @@ preconditions below are for projects without an enabled cadence.
 
 Before this skill runs:
 - `/llm-orchestrator:verify` has been run; tests pass.
-- `/llm-orchestrator:review` has been run; the verdict is `READY`; or `READY-WITH-FIXES` with its mild findings handled and recorded; or `NOT-READY` with every blocking finding recorded `refuted` or `settled` and the mild ones handled. None of these needs another review, unless a mild fix changed behaviour (`receiving-code-review`).
+- `/llm-orchestrator:review` has been run on the whole branch; the verdict is `READY`; or `READY-WITH-FIXES` with its mild findings handled and recorded; or `NOT-READY` with every blocking finding recorded `refuted`, `settled` or `follow-up` and the mild ones handled. None of these needs another review, unless a mild fix changed behaviour (`receiving-code-review`).
 - **Regression check passes.** Run:
   ```bash
   orch_lib() { local n="$1" p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/lib/$n" "$HOME/.claude/llm-orchestrator/scripts/lib/$n" "$(pwd)/.claude/scripts/lib/$n"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name "$n" -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
@@ -75,7 +84,9 @@ Also confirm this is a worktree and not a submodule before treating it as one:
   --ff-only` and run the full suite there, one suite at a time. If no checkout holds it, do not
   switch branches: `git fetch origin <base>:<base>`, run the suite in a new detached worktree
   of `<base>`, then remove that worktree. Red: stop and report.
-- Many tickets: one PR at a time, in merge order, base checks green between them.
+- Many tickets: one PR at a time, base checks green between them. After each merge, merge the
+  base into every still-open ticket branch and run its checks (landing rule 5), so the next
+  landing is a merge, not a reconciliation.
 - Keep the worktree until the PR is merged, then offer cleanup if marked `.orch-worktree` and
   `git branch -d <branch>`. Not authorized to merge: stop after opening and report the URL.
 

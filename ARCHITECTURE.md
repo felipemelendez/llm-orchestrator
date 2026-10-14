@@ -41,6 +41,8 @@ The `executing-plans` skill walks a plan task-by-task. The plan file's checkboxe
 
 If you `/clear` mid-orchestration, the next session reads the plan file, counts checked boxes, and knows exactly where to resume.
 
+Above the plan sits the landing discipline for a project with many tickets (`skills/finishing-a-branch/references/landing-rules.md`): at most two unmerged ticket branches, each cut from main after the hub change it depends on has landed (`Requires landed:` in the plan header), one whole-branch review per landing with one fix wave and one scoped re-review, a READY verdict landed in the same session, main merged into every open branch at each landing, and a serious finding the prover could not reproduce recorded as a `follow-up` instead of another round. The session-start hook prints the landing board (unmerged branches, oldest age, a warning past the limit) so a session opens knowing what is waiting. The spec is `docs/specs/landing-discipline.md`; the failure it answers is in `docs/llm-orchestrator/research/2026-10-13-long-running-projects-brief.md`.
+
 ### Layer 4 — Parallel dispatch when work allows it
 
 When multiple tasks are truly independent (no shared files, no order dependency), the controller dispatches them in **one batch** of parallel implementers. Three implementers running concurrently complete in roughly the time of one. The `dispatching-parallel-agents` skill encodes the routing logic.
