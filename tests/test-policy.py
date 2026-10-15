@@ -43,12 +43,13 @@ class PolicyTests(unittest.TestCase):
         self.bin.mkdir()
         self.home = self.root / "home"
         self.home.mkdir()
+        (self.root / "tmp").mkdir()  # the fakes read TMPDIR; Linux does not set it
         self.codex = self.home / ".codex"
         self.codex.mkdir()
         (self.codex / "config.toml").write_text('model = "gpt-test"\n')
         self.environment = patch.dict(os.environ, {"PATH": str(self.bin) + os.pathsep + os.environ["PATH"],
             "HOME": str(self.home), "CODEX_HOME": str(self.codex), "CLAUDE_CONFIG_DIR": str(self.home / ".claude"),
-            "XDG_STATE_HOME": str(self.root / "state"), "GIT_AUTHOR_NAME": "Synthetic",
+            "XDG_STATE_HOME": str(self.root / "state"), "TMPDIR": str(self.root / "tmp"), "GIT_AUTHOR_NAME": "Synthetic",
             "GIT_AUTHOR_EMAIL": "synthetic@example.invalid", "GIT_COMMITTER_NAME": "Synthetic",
             "GIT_COMMITTER_EMAIL": "synthetic@example.invalid"})
         self.environment.start()
