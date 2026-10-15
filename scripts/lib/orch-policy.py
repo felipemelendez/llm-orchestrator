@@ -25,7 +25,7 @@ class PolicyError(ValueError):
 ROLES = {"lead": "medium", "writer": "medium", "reviewer": "high", "debugger": "high",
          "clerical": "low", "prover": "high", "refuter": "high", "runner": "low"}
 PROVIDERS = {"codex", "claude"}
-CHECK_KEYS = {"argv", "inputs", "environment", "tools", "timeout_s", "reuse", "immutable"}
+CHECK_KEYS = {"argv", "inputs", "environment", "tools", "timeout_s"}
 
 
 def digest(value):
@@ -94,11 +94,22 @@ class Policy:
         self.path = self.project / ".llm-orchestrator.json"
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
+        # Set before anything is validated, so a policy that fails is still named as present.
         if revision is not None:
-            raw = self.show(".llm-orchestrator.json", follow=False)
-            self.enabled = raw is not None
+            self.present = self.listed(".llm-orchestrator.json") is not None
         else:
-            self.enabled = self.path.exists() or self.path.is_symlink()
+            self.present = self.path.exists() or self.path.is_symlink()
+        try:
+            self.load()
+        except PolicyError as error:
+            error.policy = self
+            raise
+
+    def load(self):
+        self.enabled = self.present
+        if self.revision is not None:
+            raw = self.show(".llm-orchestrator.json", follow=False) if self.enabled else None
+        else:
             if self.enabled and self.path.is_symlink():
                 raise PolicyError("project configuration must not be a symlink")
             try:
@@ -113,18 +124,25 @@ class Policy:
             self._config_digest = digest(raw)
             self.validate()
 
+    def listed(self, name):
+        """(mode, kind, object) of exactly name at self.revision, or None when absent there."""
+        listed = subprocess.run(["git", "-C", str(self.project), "ls-tree", "-z", self.revision, "--", name],
+                                stdin=subprocess.DEVNULL, capture_output=True)
+        if listed.returncode:
+            raise PolicyError(f"cannot read revision {self.revision}")
+        entry, _, listed_name = listed.stdout.split(b"\0", 1)[0].partition(b"\t")
+        # A folder name lists the folder's files; only the exact name counts.
+        if not listed.stdout or os.fsdecode(listed_name) != posixpath.normpath(name):
+            return None
+        return entry.decode().split()
+
     def show(self, name, follow=True):
         """Bytes of name at self.revision, or None when absent there; never the working tree."""
         for _ in range(8):
-            listed = subprocess.run(["git", "-C", str(self.project), "ls-tree", "-z", self.revision, "--", name],
-                                    stdin=subprocess.DEVNULL, capture_output=True)
-            if listed.returncode:
-                raise PolicyError(f"cannot read revision {self.revision}")
-            entry, _, listed_name = listed.stdout.split(b"\0", 1)[0].partition(b"\t")
-            # A folder name lists the folder's files; only the exact name counts.
-            if not listed.stdout or os.fsdecode(listed_name) != posixpath.normpath(name):
+            entry = self.listed(name)
+            if entry is None:
                 return None
-            mode, kind, blob = entry.decode().split()
+            mode, kind, blob = entry
             if kind != "blob":
                 raise PolicyError(f"{name} is not a file at {self.revision}")
             data = subprocess.run(["git", "-C", str(self.project), "cat-file", "blob", blob],
@@ -197,6 +215,9 @@ class Policy:
         for name, check in checks.items():
             if not isinstance(name, str) or not name:
                 raise PolicyError("check names must be nonempty")
+            for key in ("reuse", "immutable"):
+                if isinstance(check, dict) and key in check:
+                    raise PolicyError(f"checks.{name}.{key}: receipts are record-only in this release; remove this key")
             object_keys(check, CHECK_KEYS, f"checks.{name}")
             strings(check.get("argv"), f"checks.{name}.argv", True)
             strings(check.get("inputs"), f"checks.{name}.inputs", True)
@@ -209,9 +230,6 @@ class Policy:
             if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", value) for value in check.get("tools", [])):
                 raise PolicyError(f"checks.{name}.tools: expected binary names")
             integer(check.get("timeout_s", 600), 1, 86400, "check timeout_s")
-            for key in ("reuse", "immutable"):
-                if type(check.get(key, False)) is not bool:
-                    raise PolicyError(f"checks.{name}.{key} must be boolean")
         # These validate coordinator obligations; this does not install a GitHub gate.
         rules = data.get("project_rules", {})
         object_keys(rules, {"review", "wip", "delivery"}, "project_rules")
@@ -286,20 +304,25 @@ class Policy:
             f"File: {item['path']}\nSHA256: {item['sha256']}\n{item['text']}" for item in context["files"]], text])
 
     def catalog(self, provider):
+        """The provider's observed capability catalog, always read from disk outside the project.
+
+        A catalog is a reading taken on this machine, so the reviewed revision never
+        supplies it and a path inside the project, which the author controls, is refused.
+        """
         entry = self.data.get("catalogs", {}).get(provider, {})
-        default = str(Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "models_cache.json")
         if provider == "claude" and not entry.get("path"):
             raise PolicyError("Claude needs an explicit observed capability catalog; no equivalent efforts are invented")
-        path = Path(entry.get("path", default)).expanduser()
-        # A review reads a project catalog from its base, like the configuration;
-        # a catalog outside the project, such as Codex's own cache, is read as it is.
-        from_revision = self.revision is not None and not path.is_absolute()
-        if not path.is_absolute():
-            path = self.project / path
+        if entry.get("path"):
+            path = self.project / Path(entry["path"]).expanduser()
+        else:
+            path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser() / "models_cache.json"
+        path = Path(os.path.abspath(path))
+        for candidate in (path, path.resolve()):
+            if candidate == self.project or self.project in candidate.parents:
+                raise PolicyError(f"{provider} capability catalog {path} is inside the project; the catalog is a "
+                                  "fact about this machine and must live outside the repository")
         try:
-            raw = self.show(entry["path"]) if from_revision else path.read_bytes()
-            if raw is None:
-                raise OSError(f"{entry['path']} is absent at {self.revision}")
+            raw = path.read_bytes()
             data = json.loads(raw)
         except (OSError, ValueError) as error:
             raise PolicyError(f"{provider} capability catalog: {error}") from error
@@ -330,7 +353,7 @@ class Policy:
             raise PolicyError("Claude capabilities require explicit observation provenance")
         if not isinstance(data.get("models"), list):
             raise PolicyError("catalog has no models list")
-        provenance = {"path": f"{self.revision}:{entry['path']}" if from_revision else str(path.resolve()),
+        provenance = {"path": str(path.resolve()),
                       "sha256": digest(raw),
                       "fetched_at": data["fetched_at"], "client_version": client,
                       "provenance": data.get("provenance", "Codex CLI model catalog cache"),

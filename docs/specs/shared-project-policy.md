@@ -26,9 +26,11 @@ and helper command arguments. A review reads `.llm-orchestrator.json` and every
 listed policy document from the merge-base revision, never from the working
 tree under review, and records `policy_source`: `merge-base <sha>` whenever the
 file is at the base, even if it then fails validation, else `none`. Without the
-file at the base the review runs without policy. A project-relative catalog path
-is read from the base too; an absolute one, such as Codex's own cache, is outside
-the repository and read as it is. The injected text says the base copy is
+file at the base the review runs without policy. A capability catalog is a
+reading of this machine, never part of the revision: it is always read from
+disk, a configured path resolved against the project root and the `CODEX_HOME`
+default against the current directory, and a path that resolves inside the
+project root is refused by name. The injected text says the base copy is
 authoritative and a differing working-tree file is part of the change. Codex
 review launches pass `-c project_doc_max_bytes=0` so Codex does not load the
 copy's `AGENTS.md` itself; the user's global `~/.codex/AGENTS.md` still loads.
@@ -58,39 +60,27 @@ Extend existing completion check recognition with Node's built-in test runner
 and exact configured custom command argv, without requiring Cadence. Reject
 Node help/list/syntax-only modes. Preserve existing warning semantics.
 
-An explicit check runner records the actual argv, working directory, start/end,
-exit code, output digest, repository/worktree identity, source scope and
-configuration fingerprints, environment fingerprint and revision. Receipts
-live outside Git. Reuse requires a complete successful receipt, matching check
-definition, same project, identical scoped file content and configuration,
-identical declared environment/toolchain, and unchanged supported inputs.
-Capture dirty/untracked scoped inputs. Reusable checks run in task-owned,
-isolated snapshots with OS-enforced read-only source inputs through the
-existing Codex sandbox; verify a write probe is refused before execution.
-The snapshot is built from the scoped inputs only. If this sandbox is
-unavailable, snapshots require unsupported dependencies,
-or source immutability cannot be established, checks may still execute but
-their receipts are explicitly ineligible for reuse. Pre/post hashes alone
-are not proof against edit-and-restore (ABA) mutation. Reject symlink,
-submodule and external inputs inside the declared scope; ones outside it do not
-block a check. A declared directory covers every file under it. A
-project-relative executable resolves against the project and is an input.
-A receipt is reusable only when a known test runner's output (unittest,
-pytest, `node --test`, `go test -v`, `cargo test`) shows at least one test
-actually executed, skipped tests subtracted. `tests_ran` records that count, 0
-for none or for list/collect-only modes, or `unknown` for a known runner without
-a readable summary and for every other command. 0 and `unknown` are recorded,
-never reused. Receipts are read only to reuse one; an unreadable receipt (any
-parse failure) is skipped, named in the result, and disables reuse for that run;
-only a signature mismatch on a receipt for this check is tampering. An interrupted check stops the
-run and is recorded as failed. After a sandbox fallback the receipt records the
-environment that actually ran. Changed revision alone is permitted if
-covered inputs are identical. Reject changed inputs, stale/missing environment,
-incomplete/failed/tampered receipts and mutations during a check. Record failed
-and actual repeated executions; a newer failure is not erased by an old pass.
-Never reuse independent review, required hosted CI or final non-author approval
-as a software check. Scope is a declared coverage boundary, not proof that the
-test covers all behavior. Mandatory current checks can opt out of reuse.
+An explicit check runner always runs the check and writes a signed receipt
+outside Git: the actual argv, working directory, start/end, exit code, output
+digest, repository/worktree identity and revision, the scoped inputs and their
+digests (dirty and untracked included), configuration and policy fingerprints,
+environment fingerprint, and executable and toolchain identity. A receipt is a
+record of what ran; it is never reused, and no command reads one to skip a run.
+`tests_ran` records the count a known runner printed (unittest, pytest,
+`node --test`, `go test -v`, `cargo test`), or `unknown`; it is what the runner
+printed, not proof, because no reader of runner output can prove a test body
+ran. Reuse is out of scope for this release; it returns, if ever, one runner at
+a time behind its own spec with real-output fixtures.
+
+Reject symlink, submodule and external inputs inside the declared scope; ones
+outside it do not block a check. A declared directory covers every file under
+it. A project-relative executable resolves against the project and is an input.
+Whether inputs or environment changed while the check ran is recorded as
+`stable`, not enforced. A failed or interrupted check is recorded as failed;
+an interrupted one stops the run. The usage report counts this project's
+receipts and names every unreadable one it skipped; a signature mismatch on a
+receipt for this project is tampering and stops the report. Scope is a declared
+coverage boundary, not proof that the test covers all behavior.
 
 ## Sessions, diagnostics and measurement
 
@@ -103,8 +93,8 @@ claiming unobservable hook execution. No service, daemon or extra LLM call.
 
 Extend existing usage/outcome mechanisms with intended/observed role settings,
 tokens/provider-reported cost when available, capacity wait (`capacity_wait_s`,
-unknown when no launch recorded one), checks executed
-or reused, repeated work, and explicit delivery IDs. Aggregate cost per
+unknown when no launch recorded one), checks executed, receipts,
+repeated work, and explicit delivery IDs. Aggregate cost per
 validated delivery only from linked observed receipts, preserving unknown
 costs and failed attempts. No invented dollar prices or performance improvement.
 An independent review verdict alone is not a validated delivery. Until an
@@ -127,11 +117,10 @@ pending separately. Do not edit unrelated projects or add a tracked live board.
 
 Regression tests cover a generic non-Mia fixture and Mia-shaped policy; fresh
 session loading; argv for review/exec and helpers; invalid/unavailable models
-and efforts; shared capacity under concurrent processes and failure; changed
-revision with identical inputs, stale environment, dirty/untracked changes,
-mutations, failure shadowing and malformed receipts; Node/custom recognition
-and per-runner test counts;
-disabled hooks; honest usage aggregation and install diagnostics. Fixtures use
+and efforts; shared capacity under concurrent processes and failure; signed receipts for
+passing, failing and interrupted runs, recorded inputs, fingerprints and
+`tests_ran`, rejected `reuse`/`immutable` keys and malformed receipts;
+catalogs refused inside the project; Node/custom recognition; disabled hooks; honest usage aggregation and install diagnostics. Fixtures use
 fake CLIs for deterministic failure coverage, and are labeled synthetic.
 Perform bounded live exec/review served-model/effort checks and Claude built-in
 review where available, and report their exact
@@ -146,3 +135,11 @@ source validation; preserve prior installed artifacts and do not alter unrelated
 projects' settings. User authorization covers implementation, tests, reviews,
 installation update and verification; repository-specific commit/merge authority
 is handled separately.
+
+## Settled
+
+- **Receipts record; they do not reuse.** No reader of runner output can prove
+  a test body ran (Node counts an empty file as one passing test; a module can
+  print a fake summary). Reuse returns one runner at a time behind its own spec.
+- **The catalog lives outside the repository.** It is a reading of this
+  machine, so it is read from disk and refused inside the project root.

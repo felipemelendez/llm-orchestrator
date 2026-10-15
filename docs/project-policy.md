@@ -31,9 +31,7 @@ copy. It has `validate`, `session`, `doctor`, `launch`, `capacity`, `check` and 
       "inputs": ["**"],
       "environment": [],
       "tools": ["node", "codex"],
-      "timeout_s": 120,
-      "reuse": true,
-      "immutable": true
+      "timeout_s": 120
     }
   }
 }
@@ -46,7 +44,9 @@ signed-in CLI, so if Claude is also signed in, add Claude `reviewer`, `prover`,
 `refuter` and `runner` (or `clerical`) profiles and a Claude catalog too;
 otherwise the review stops at preflight. It never picks another model instead.
 `validate` asks the review's own plan which roles it may need and lists the
-signed-in providers that lack one in `review_profiles_missing`.
+signed-in providers that lack one in `review_profiles_missing`, and, separately,
+installed CLIs that are signed out now and would need profiles once they sign
+in, in `review_profiles_missing_if_signed_in`.
 Validate against the target account's current catalog before launch:
 
 ```sh
@@ -54,14 +54,16 @@ python3 scripts/lib/orch-control.py validate --project /path/to/project
 python3 scripts/lib/orch-control.py doctor --project /path/to/project
 python3 scripts/lib/orch-control.py session --project /path/to/project
 python3 scripts/lib/orch-control.py launch --project /path/to/project --provider codex --role writer --prompt "Inspect the assigned task and report its next step."
-python3 scripts/lib/orch-control.py check --project /path/to/project --name unit --reuse
+python3 scripts/lib/orch-control.py check --project /path/to/project --name unit
 python3 scripts/lib/orch-control.py usage --project /path/to/project
 ```
 
 The last command reports observed attempts, grouped intended/served role profiles,
 tokens and known/unknown costs, total capacity wait (`capacity_wait_s`, null when
 no launch recorded one), plus caller-linked delivery attempts. It does not label an unmerged or
-unverified result a validated delivery. Repeated same-revision executions include legitimate invalidations and failures;
+unverified result a validated delivery. It also counts this project's check
+receipts and names any receipt it could not read under `skipped_receipts`.
+Repeated same-revision executions include legitimate reruns and failures;
 they are not automatically avoidable work. Costs absent from provider output remain
 unknown; token counts are not converted into invented dollar estimates.
 
@@ -88,9 +90,11 @@ for clerical/runner. `xhigh`, `max` and `ultra` require explicit justification
 and must also be advertised by the selected model. No automatic escalation.
 
 `catalogs.codex.path` defaults to the CLI's model cache under `CODEX_HOME` or
-`~/.codex`. A review reads a catalog path inside the project from the merge-base,
-like the configuration; a catalog outside the project, such as that default
-cache, is read from disk as it is. An observation needs a timezone-aware `fetched_at`, matching
+`~/.codex`. A catalog is a reading taken on this machine, so it lives outside
+the repository and is always read from disk, for a review too. A configured
+path is resolved against the project root, and a relative `CODEX_HOME` against
+the current directory; a catalog that resolves inside the project is refused
+with an error naming its path. An observation needs a timezone-aware `fetched_at`, matching
 `client_version`, and the model's advertised `supported_reasoning_levels`.
 Default maximum age is one day; configuration can shorten it. A catalog is
 local capability evidence, not a successful remote inference. Authentication,
@@ -152,72 +156,42 @@ required review stays incomplete rather than being silently replaced. Projects
 without opt-in policy do not participate in this configured ledger. This is not
 a cap on every model call on the machine.
 
-## Check receipts and reuse
+## Check receipts
 
 Node's `node --test` and exact custom check argv are recognized by the existing
 Claude/Codex completion checks even when Cadence is absent. Inspection/help,
 syntax checking and echoed command text do not establish test execution. The
 completion hook still warns about a claim; it is not a coverage certificate.
 
-An explicit `check` records actual completion, scoped working-tree content
-(including dirty and nonignored untracked files), command definition, canonical
-policy/configuration, platform, declared environment, actual executable bytes and
-declared toolchain identity,
-output digest and revision. Receipt files are locally signed, outside Git, and
-append concise rows to the existing review-outcomes log. Failed/pending newer
-attempts prevent borrowing an older success. Reuse also rejects altered output,
-unreadable receipts, source/configuration/tool/environment changes and another
-repository's receipt. A revision can change while identical declared inputs
-remain eligible. Coverage depends on the declared scope; start with `**` when
-dependencies are uncertain. A directory input such as `src` covers every file
-under it. A project-relative command such as `./scripts/check.sh` runs the
-project's own file, which is then part of the scope. Receipts are read only when
-reuse is asked for; a receipt that cannot be read is skipped, named under
-`skipped_receipts`, and that run executes fresh. Pressing Ctrl-C stops the
-check and the run, and the receipt is marked failed.
+A `check` always runs the command and leaves a receipt: a signed record of what
+ran, so you can later see exactly which command ran on which files and what it
+printed. A receipt is never used to skip a run. It records the command and
+working directory, start and end, exit code, a digest of the output, the
+repository and revision, the scoped files and their digests (including dirty
+and nonignored untracked files), the configuration and policy fingerprints,
+platform and declared environment, and the actual executable bytes and declared
+tool versions. Receipt files are locally signed, live outside Git, and append
+short rows to the existing review-outcomes log.
 
-Reusable checks require a task-owned source snapshot through the existing
-resource manager and a demonstrated OS read-only sandbox. The snapshot holds
-only the scoped inputs, so nothing outside the scope is visited. Pre/post hashes alone
-cannot establish immutability against edit-and-restore. The sandbox probe must
-actually refuse a source write and an external-input read. Only declared source
-inputs are materialized; user Git configuration and user Python site packages
-are isolated. Tests receive their own writable home and temporary directory.
-Opaque inline interpreters, common command wrappers and absolute external data
-arguments run record-only. Version probes use an absolute owned temporary home;
-stable hash placeholders are never passed as real paths.
-A receipt is reusable only when a known test runner's output shows at least one
-test actually ran, with skipped tests left out. The known runners are
-`python -m unittest`, pytest, `node --test`, `go test -v` and `cargo test`.
-The receipt's `tests_ran` is that count, or `unknown`. A count of 0 covers
-wholly skipped or todo suites (unittest `OK (skipped=3)` with `Ran 3`), empty
-suites and runs that only list or collect tests (pytest `--collect-only`,
-`go test -list`, go `[no tests to run]`). `unknown` covers a known runner whose
-output has no summary that can be read (such as a Node reporter that prints no
-counts, or `go test` without `-v`, whose `ok` line hides skipped tests) and any
-command that is not a known runner, such as `./check.sh`. Both are recorded and
-never reused.
-A state directory inside a writable temporary root is
-not eligible. Symlinks, submodules and external inputs inside the scope are
-rejected; ones outside it do not block a check. A sandbox fallback records the
-environment that actually ran.
-Ignored dependencies are deliberately not copied into source snapshots. A check
-requiring those dependencies must run without reuse until it has a supported,
-fingerprinted immutable execution environment. The minimal OS sandbox can deny third-party runtimes (including Homebrew Node)
-and network access. Select `immutable: false, reuse: false` for such checks rather
-than broadening the read boundary. Node built-in checks still execute and record
-results without Cadence. Build output, browser artifacts and hosted CI usually
-need separate execution paths.
+`tests_ran` is the count a known runner printed (`python -m unittest`, pytest,
+`node --test`, `go test -v`, `cargo test`), or `unknown` for anything else. It
+is what the runner printed, not proof that a test ran: Node counts a file with
+no tests as one passing test, and a module can print a fake summary. `stable`
+says whether the scoped files or environment changed while the check ran.
 
-If the sandbox is unavailable, the command can execute in record-only mode in
-the real project. Its receipt clearly says reuse is unavailable. Hook absence
-cannot silently turn this into a reusable pass. `reuse: false` always requires a
-new execution. Independent review, required hosted CI and final non-author
-verification cannot be replaced by a local reused software check.
+Coverage depends on the declared scope; start with `**` when dependencies are
+uncertain. A directory input such as `src` covers every file under it. A
+project-relative command such as `./scripts/check.sh` runs the project's own
+file, which is then part of the scope. Symlinks, submodules and external inputs
+inside the scope are rejected; ones outside it do not block a check. A failing
+check leaves a receipt with its exit code. Pressing Ctrl-C stops the check and
+the run, and the receipt is marked failed. The `usage` report names any receipt
+it could not read; a receipt for this project whose signature does not match
+stops the report. `reuse` and `immutable` are not check keys in this release; a
+configuration that still sets them fails validation and says so.
 
 This is local execution evidence, not a defense against a determined process
-that replaces the CLI, steals the signing key or edits another session's owned
-snapshot. Source policy, installation trust and operating-system isolation
+that replaces the CLI or steals the signing key. Source policy, installation trust and operating-system isolation
 remain separate boundaries.
 
 ## Project differences and delivery measurements

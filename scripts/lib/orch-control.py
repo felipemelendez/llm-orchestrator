@@ -89,22 +89,29 @@ def doctor(policy, installed_root=None):
 
 
 def review_profiles_missing(policy):
-    """Signed-in providers a review may plan a role on that this policy gives no profile for."""
+    """Providers a review may plan a role on that this policy gives no profile for.
+
+    Returns (signed-in providers missing a profile now, installed but signed-out
+    providers that would miss one once they sign in).
+    """
     review = module("orch-review")
-    checks = {"claude": review.Review.check_claude, "codex": review.Review.check_codex}
-    ready = [name for name in ("claude", "codex") if checks[name]()["ready"]]
-    needed = set()
-    for path in ("standard", "full"):
-        for writer in ("claude", "codex"):
-            plan = review.review_plan(path, writer, ready)
-            needed |= review.policy_roles(plan) if plan else set()
-    missing = set()
-    for provider, role in needed:
-        try:
-            policy.intended(provider, role)
-        except policy_module.PolicyError:
-            missing.add(provider)
-    return sorted(missing)
+    states = {"claude": review.Review.check_claude(), "codex": review.Review.check_codex()}
+    def missing(providers):
+        needed = set()
+        for path in ("standard", "full"):
+            for writer in ("claude", "codex"):
+                plan = review.review_plan(path, writer, providers)
+                needed |= review.policy_roles(plan) if plan else set()
+        result = set()
+        for provider, role in needed:
+            try:
+                policy.intended(provider, role)
+            except policy_module.PolicyError:
+                result.add(provider)
+        return result
+    now = missing([name for name, state in states.items() if state["ready"]])
+    later = missing([name for name, state in states.items() if state["state"] != "not installed"])
+    return sorted(now), sorted(later - now)
 
 
 def launch(args, policy):
@@ -204,12 +211,16 @@ def main(argv=None):
         if args.command == "validate":
             result["roles"] = policy.validate_launches()
             if policy.enabled:
-                result["review_profiles_missing"] = review_profiles_missing(policy)
+                now, later = review_profiles_missing(policy)
+                result["review_profiles_missing"] = now
+                result["review_profiles_missing_if_signed_in"] = later
                 result["review_note"] = ("orch-review can plan reviewers, the prover, the refuter and the Claude "
                                          "runner on every installed and signed-in CLI, so each such provider needs a "
-                                         "profile for every role it may get, and a catalog, committed at the review's "
-                                         "base; otherwise the review stops at preflight. No other model is chosen "
-                                         "in its place.")
+                                         "profile for every role it may get, committed at the review's base, and a "
+                                         "fresh catalog on this machine outside the repository; otherwise the review "
+                                         "stops at preflight. No other model is chosen in its place. "
+                                         "review_profiles_missing_if_signed_in names installed CLIs that are signed "
+                                         "out now and would need profiles once they sign in.")
         else:
             result["coordinator_obligations"] = policy.data.get("project_rules", {})
             result["hook_execution_observed"] = False

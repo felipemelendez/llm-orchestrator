@@ -35,16 +35,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 - **Reviews read the landed settings, not the change under review.** The
   review runner takes the settings file and the policy documents from the last
   landed version, so a change cannot tell its own reviewers what to think or
-  hand them a weaker model. The explicit commands (`validate`, `session`,
+  hand them a weaker model. A model catalog is a reading of this machine, so
+  it is always read from disk and refused if it sits inside the project. The
+  explicit commands (`validate`, `session`,
   `doctor`, `launch`, `check`) still read the working tree.
 - **A check leaves a receipt.** `orch-control.py check` runs a configured test
   command and writes a signed receipt outside Git: what ran, where, when, with
-  which files, settings, tools and environment, and how it ended. A later run
-  with identical inputs can reuse a passing receipt instead of rerunning.
-  Anything changed, failed, interrupted, run on zero tests, or run outside a
-  verified read-only sandbox is never reused. One corrupt receipt no longer
-  blocks other checks. Ctrl-C stops the run instead of being recorded as a
-  timeout.
+  which files, settings, tools and environment, what it printed and how it
+  ended, so you can see later exactly what was checked. Every check runs; a
+  receipt is a record, never a reason to skip a run. Reusing a passing receipt
+  was built and then removed before release, because no runner's output proves
+  a test ran: Node counts a file with no tests as one passing test, and a test
+  module can print a fake summary. A configuration that still sets `reuse` or
+  `immutable` fails with a message saying so. `usage` names any receipt it
+  could not read. Ctrl-C stops the run and marks the receipt failed.
 - **The completion check knows more commands.** Node's built-in `node --test`
   and the exact test commands in `.llm-orchestrator.json` count as checks on
   both Claude Code and Codex. Help, list, syntax-only and other inspection

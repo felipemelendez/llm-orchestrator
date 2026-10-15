@@ -6,7 +6,7 @@
 
 LLM Orchestrator is a plugin for Claude Code, with a smaller part for Codex. It helps the assistant turn an idea into a saved plan, build it task by task, have the change reviewed by independent reviewers, and run the tests before it says the work is done.
 
-New in 0.16.0: one optional settings file per project chooses the model and effort for every role, on Codex and on Claude, and every launch records what was actually served. A configured test command leaves a signed receipt that can be reused only while nothing it depends on has changed. Reviews read the landed settings, never the change under review. A review loop now runs until it stops finding real defects, never landing over one, instead of stopping after three runs. [All changes](./CHANGELOG.md).
+New in 0.16.0: one optional settings file per project chooses the model and effort for every role, on Codex and on Claude, and every launch records what was actually served. A configured test command leaves a signed receipt: a record of what ran, on which files, and what it printed. Reviews read the landed settings, never the change under review. A review loop now runs until it stops finding real defects, never landing over one, instead of stopping after three runs. [All changes](./CHANGELOG.md).
 
 ## Is it right for you?
 
@@ -78,7 +78,7 @@ The rulebook and config are protected by a lock with two layers: Claude Code den
 
 ## Where to go next
 
-- [Project policy, role settings, shared capacity and check reuse](./docs/project-policy.md) — opt-in capabilities that do not require Cadence.
+- [Project policy, role settings, shared capacity and check receipts](./docs/project-policy.md) — opt-in capabilities that do not require Cadence.
 - [Install and settings](./docs/install.md) · [The cadence](./docs/cadence.md) · [Codex](./docs/codex.md) · [Running a review by hand](./docs/codex-provider.md)
 - [Commands](./docs/commands-guide.md) · [What Claude Code does and what this adds](./docs/anthropic-ecosystem.md)
 - [Measurements](./docs/MEASUREMENTS.md) — what has been measured, including what did not help.

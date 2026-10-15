@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Observed check receipts and conservative reuse, independent of Cadence.
+"""Signed receipts of checks that ran, independent of Cadence.
 
-Receipts are local guardrails, not an adversarial attestation service. Only
-owned source snapshots with an observed read-only sandbox are reusable.
-Review, hosted CI and final approval remain separate, current obligations.
+A receipt records what ran, on which inputs, and what it printed. It is never
+reused: every check runs. Receipts are local records, not an adversarial
+attestation service. Review, hosted CI and final approval remain separate.
 """
 import argparse
 import fnmatch
@@ -21,7 +21,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
@@ -42,11 +41,6 @@ def canonical(value):
 
 def digest(value):
     return hashlib.sha256(canonical(value)).hexdigest()
-
-
-def engine_fingerprint():
-    return {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in
-            ('orch-evidence.py', 'orch-policy.py', 'orch-task-resources.py')}
 
 
 def atomic(path, value):
@@ -149,8 +143,7 @@ def scoped(names, definition, policy):
 def resolved(definition, project):
     """The definition whose executable is the project's own file when argv[0] is project-relative.
 
-    The command still runs as written from the project or its snapshot, whose copy
-    of that file is a verified input; the caller's directory never matters.
+    That file is a fingerprinted input; the caller's directory never matters.
     """
     executable = definition['argv'][0]
     if not project_relative(executable):
@@ -163,23 +156,9 @@ def environment(definition):
     allowed = {'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL', 'TZ', 'SYSTEMROOT', 'WINDIR'}
     allowed.update(definition.get('environment', []))
     env = {key: value for key, value in os.environ.items() if key in allowed}
-    immutable = definition.get('immutable', False)
-    if immutable:
-        # Stable placeholders are replaced with owned per-run paths only after
-        # admission. Neither user Git configuration nor user site packages are
-        # an undeclared dependency of a reusable source check.
-        env.update(HOME='__ORCH_OWNED_HOME__', TMPDIR='__ORCH_OWNED_TMPDIR__',
-                   GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL='/dev/null',
-                   PYTHONNOUSERSITE='1', PYTHONDONTWRITEBYTECODE='1')
     versions = {}
     names = list(dict.fromkeys([definition['argv'][0], *definition.get('tools', [])]))
-    # Version probes may themselves write HOME/TMPDIR (Codex does). Never
-    # launch a probe with the stable fingerprint placeholders as real paths.
-    with tempfile.TemporaryDirectory(prefix='orch-tool-probe-') as temporary:
-      probe_env = dict(env)
-      if immutable:
-        probe_env.update(HOME=temporary, TMPDIR=temporary)
-      for name in names:
+    for name in names:
         binary = shutil.which(name, path=env.get('PATH'))
         if not binary:
             raise ValueError('required check tool is unavailable: ' + name)
@@ -190,7 +169,7 @@ def environment(definition):
         observed = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                     'identity': [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]}
         if name in definition.get('tools', []):
-            result = subprocess.run([str(path), '--version'], env=probe_env, capture_output=True, timeout=15)
+            result = subprocess.run([str(path), '--version'], env=env, capture_output=True, timeout=15)
             if result.returncode:
                 raise ValueError('cannot observe tool version: ' + name)
             observed['version_sha256'] = hashlib.sha256(result.stdout).hexdigest()
@@ -200,7 +179,7 @@ def environment(definition):
 
 
 class Tampered(Exception):
-    """A receipt that claims this check but fails its signature."""
+    """A receipt that claims this project but fails its signature."""
 
 
 class Store:
@@ -237,12 +216,12 @@ class Store:
         record['signature'] = hmac.new(self.key, canonical(record), hashlib.sha256).hexdigest()
         atomic(self.path / (record['id'] + '.json'), record)
 
-    def records(self, project_id, name):
-        """This check's signed receipts, oldest first.
+    def records(self, project_id, name=None):
+        """This project's signed receipts, for one check or all of them, oldest first.
 
-        Unreadable receipts are skipped and named in self.skipped; the caller then
-        refuses reuse, because a skipped receipt might be a newer failure. A receipt
-        that claims this check but fails its signature is tampering and raises.
+        Unreadable receipts are skipped and named in self.skipped, so a report can
+        say what it could not read. A receipt that claims this project (and check)
+        but fails its signature is tampering and raises.
         """
         result, self.skipped = [], []
         for path in sorted(self.path.glob('*.json')):
@@ -251,7 +230,7 @@ class Store:
                     raise ValueError('symlink receipt')
                 record = json.loads(path.read_text())
                 signature = record.pop('signature')
-                ours = record.get('project_id') == project_id and record.get('check') == name
+                ours = record.get('project_id') == project_id and name in (None, record.get('check'))
                 if not isinstance(signature, str) or not hmac.compare_digest(
                         signature, hmac.new(self.key, canonical(record), hashlib.sha256).hexdigest()):
                     if ours:
@@ -293,69 +272,13 @@ def execute(argv, cwd, env, output, timeout):
             module('orch-review').kill_group(process)
 
 
-def readonly_argv(snapshot, env):
-    """A bounded, actual sandbox probe. Failure means record-only execution."""
-    binary = shutil.which('codex', path=env.get('PATH'))
-    if not binary:
-        return None, 'Codex sandbox unavailable; execution cannot be reused'
-    # Temporary roots may be writable by the sandbox independently of the profile.
-    roots = {Path(tempfile.gettempdir()).resolve(), Path('/tmp').resolve(), Path('/var/tmp').resolve()}
-    if any(snapshot == path or path in snapshot.parents for path in roots):
-        return None, 'snapshot state is inside a writable temporary root; execution cannot be reused'
-    # Give tests a separate owned writable workspace and normal temporary
-    # storage, while source lives outside both roots. The wrapper enters source
-    # only after the OS policy has been resolved for the output workspace.
-    writable = snapshot.parent / ('output-' + snapshot.name)
-    writable.mkdir(mode=0o700)
-    for name in ('home', 'tmp'):
-        (writable / name).mkdir(mode=0o700)
-    env.update(HOME=str(writable / 'home'), TMPDIR=str(writable / 'tmp'))
-    enter = 'cd "$1" || exit; shift; exec "$@"'
-    filesystem = {':minimal': 'read', str(snapshot): 'read', str(writable): 'write'}
-    settings = '{' + ','.join(json.dumps(key) + '=' + json.dumps(value) for key, value in filesystem.items()) + '}'
-    prefix = [binary, 'sandbox', '-P', 'orch-immutable-check', '-C', str(writable),
-              '-c', 'permissions.orch-immutable-check.filesystem=' + settings,
-              '-c', 'permissions.orch-immutable-check.network.enabled=false', '--',
-              '/bin/sh', '-c', enter, 'orch-check', str(snapshot)]
-    probe = snapshot / '.orch-immutability-probe'
-    code = 'if (printf probe > "$1") 2>/dev/null; then exit 1; fi; printf ORCH-READONLY-CONFIRMED'
-    try:
-        result = subprocess.run([*prefix, '/bin/sh', '-c', code, 'orch-probe', str(probe)], env=env,
-                                capture_output=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return None, 'sandbox probe unavailable: ' + str(error)
-    if result.returncode or result.stdout.strip() != b'ORCH-READONLY-CONFIRMED' or probe.exists():
-        return None, 'read-only sandbox was not demonstrated; execution cannot be reused'
-    outside = snapshot.parent / ('outside-' + snapshot.name)
-    outside.write_text('private canary')
-    read_probe = 'if /bin/cat "$1" >/dev/null 2>&1; then exit 1; fi; printf ORCH-READ-BOUNDARY-CONFIRMED'
-    try:
-        result = subprocess.run([*prefix, '/bin/sh', '-c', read_probe, 'orch-probe', str(outside)], env=env,
-                                capture_output=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        return None, 'read boundary probe unavailable: ' + str(error)
-    if result.returncode or result.stdout.strip() != b'ORCH-READ-BOUNDARY-CONFIRMED':
-        return None, 'external read boundary was not demonstrated; execution cannot be reused'
-    return prefix, 'read-only source snapshot demonstrated'
-
-
-def supported_reuse_command(argv):
-    # Opaque inline interpreters and external data arguments cannot establish a
-    # portable source dependency boundary. They can still run record-only.
-    if Path(argv[0]).name in ('env', 'timeout', 'nice', 'stdbuf', 'uv', 'npx', 'npm', 'pnpm', 'yarn'):
-        return False
-    return not any(word in ('-c', '-e', '--eval', '--print') or Path(word).is_absolute()
-                   for word in argv[1:])
-
-
 def tests_ran(argv, output):
-    """How many tests the output shows actually executed, skipped tests left out.
+    """How many tests the output says ran, skipped tests left out: information only.
 
-    A count only for a recognised runner whose summary can be read: unittest,
-    pytest, node --test, go test -v and cargo test. 0 when that runner shows none
-    ran, or it only listed or collected tests. 'unknown' for anything else,
-    including any command that is not a recognised runner. Only a positive count
-    can make a receipt reusable (see nonempty_execution).
+    This is what the runner printed, not proof. No reading of runner output can
+    prove a test body ran: Node counts a file with no tests as one passing test,
+    and a module can print a fake summary. A count for unittest, pytest,
+    node --test, go test -v and cargo test; 'unknown' for anything else.
     """
     text = output.decode(errors='replace')
     name = Path(argv[0]).name
@@ -405,22 +328,11 @@ def tests_ran(argv, output):
     return 'unknown'
 
 
-def nonempty_execution(argv, output):
-    """The one reuse rule on output: a recognised runner shows at least one executed test."""
-    ran = tests_ran(argv, output)
-    return type(ran) is int and ran > 0
+TESTS_RAN_IS = 'what the runner printed, not proof'
 
 
-def copy_inputs(inputs, project, destination):
-    """Fill the owned snapshot with the scoped input files and nothing else."""
-    for name, expected in inputs.items():
-        if expected is not None:
-            target = destination / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(project / name, target, follow_symlinks=False)
-
-
-def run_check(project, name, reuse=False, state_dir=None):
+def run_check(project, name, state_dir=None):
+    """Run the configured check and write its signed receipt. Every call runs it."""
     project = root(project)
     policy = module('orch-policy').Policy(project)
     definition = policy.data.get('checks', {}).get(name)
@@ -430,118 +342,50 @@ def run_check(project, name, reuse=False, state_dir=None):
     context = policy.policy_context()
     if any(item['path'] not in names for item in context['files']):
         raise ValueError('ignored or external policy inputs are unsupported; include canonical policy in source inventory')
-    selected = scoped(names, definition, policy)
-    inputs = fingerprint(project, selected)
+    inputs = fingerprint(project, scoped(names, definition, policy))
     runs = resolved(definition, project)
     env, observed_env = environment(runs)
     project_id = identity(project)
     revision = os.fsdecode(git(project, 'rev-parse', 'HEAD')).strip()
-    key = digest({'check': definition, 'inputs': inputs, 'environment': observed_env,
-                  'engine': engine_fingerprint(),
-                  'policy_context_sha256': digest(context)})
     store = Store(state_dir, project)
-    # Receipts are read only to reuse one: someone else's bad receipt never blocks a fresh run.
-    wants_reuse = reuse and definition.get('reuse', False)
-    prior = store.records(project_id, name) if wants_reuse else []
-    skipped = store.skipped if wants_reuse else []
-    latest = prior[-1] if prior else None
-    if wants_reuse and not skipped and latest and latest.get('reusable') is True and latest.get('key') == key:
-        output = store.path / (latest['id'] + '.log')
-        if not output.is_file() or output.is_symlink() or hashlib.sha256(output.read_bytes()).hexdigest() != latest.get('output_sha256'):
-            raise ValueError('receipt output is missing or changed')
-        record_outcome({'row': 'check', 'project_id': project_id, 'repository': project.name, 'check': name,
-                        'receipt_id': latest['id'], 'revision': revision, 'source_revision': latest['revision'],
-                        'reused': True, 'exit_code': 0, 'duration_s': 0, 'date': time.time()})
-        return {'status': 'reused', 'receipt_id': latest['id'], 'revision': revision,
-                'source_revision': latest['revision'], 'exit_code': 0,
-                'scope': definition['inputs'], 'limitations': 'declared coverage; hosted CI and independent gates are not reused'}
     record = {'schema': 1, 'id': uuid.uuid4().hex, 'started_ns': time.time_ns(), 'project_id': project_id,
               'project': str(project), 'revision': revision, 'check': name, 'argv': definition['argv'],
-              'inputs': inputs, 'environment': observed_env, 'key': key, 'status': 'running', 'reusable': False}
-    if skipped:
-        record['skipped_receipts'] = skipped  # named, never reused
+              'cwd': str(project), 'check_sha256': digest(definition),
+              'policy_context_sha256': digest(context), 'inputs': inputs, 'environment': observed_env,
+              'status': 'running'}
     store.write(record)
     start = time.monotonic()
-    snapshot = manager = task = token = None
     try:
-        prefix, reason = None, 'record-only check; no immutable execution requested'
-        cwd = project
-        if definition.get('immutable', False):
-            manager = module('orch-task-resources').Manager(store.path / 'resources')
-            task = manager.start(str(project), 'verification-' + record['id'])
-            token = manager.acquire(task['id'], 'check-runner')['token']
-            # Copy only the scoped inputs: a submodule or link outside the scope is never visited.
-            manager.snapshot = functools.partial(copy_inputs, inputs)
-            snapshot = Path(manager.create(task['id'], token, 'copy')['path'])
-            for path, expected in inputs.items():
-                target = snapshot / path
-                if expected is not None and (not target.is_file() or target.is_symlink() or
-                        hashlib.sha256(target.read_bytes()).hexdigest() != expected['sha256']):
-                    raise ValueError('source changed while preparing snapshot: ' + path)
-            if fingerprint(project, scoped(inventory(project), definition, policy)) != inputs:
-                raise ValueError('source changed before snapshot execution')
-            prefix, reason = readonly_argv(snapshot, env)
-            if prefix:
-                cwd = snapshot
-            else:
-                # Record the environment that actually runs, not the sandbox's.
-                runs = dict(runs, immutable=False)
-                env, observed_env = environment(runs)
-                record['environment'] = observed_env
         output = store.path / (record['id'] + '.log')
-        argv = [*(prefix or []), *definition['argv']]
-        exit_code, timed_out = execute(argv, cwd, env, output, definition.get('timeout_s', 600))
-        after = fingerprint(project, scoped(inventory(project), definition, policy))
-        stable = inputs == after and observed_env == environment(runs)[1]
-        if prefix:
-            # The command cannot mutate inputs. This also detects interference by
-            # a cooperating outside process; source snapshots have unique ownership.
-            for path, expected in inputs.items():
-                target = snapshot / path
-                if path in inputs and expected is not None and (not target.is_file() or target.is_symlink() or
-                        hashlib.sha256(target.read_bytes()).hexdigest() != expected['sha256']):
-                    stable = False
+        exit_code, timed_out = execute(definition['argv'], project, env, output, definition.get('timeout_s', 600))
+        # Recorded, not enforced: did the inputs or environment change while it ran?
+        stable = (inputs == fingerprint(project, scoped(inventory(project), definition, policy))
+                  and observed_env == environment(runs)[1])
         content = output.read_bytes()
-        ran = tests_ran(definition['argv'], content)
-        reusable = bool(definition.get('reuse') and prefix and stable and exit_code == 0
-                        and supported_reuse_command(definition['argv'])
-                        and nonempty_execution(definition['argv'], content))
-        record.update(status='complete', exit_code=exit_code, timed_out=timed_out, tests_ran=ran,
-                      duration_s=round(time.monotonic() - start, 6), reusable=reusable,
-                      immutable_observed=bool(prefix), stable=stable, execution_cwd=str(cwd),
-                      output_sha256=hashlib.sha256(content).hexdigest(),
-                      reason=reason if stable else 'inputs or environment changed during execution',
-                      finished_ns=time.time_ns())
+        record.update(status='complete', exit_code=exit_code, timed_out=timed_out, stable=stable,
+                      tests_ran=tests_ran(definition['argv'], content), tests_ran_is=TESTS_RAN_IS,
+                      duration_s=round(time.monotonic() - start, 6),
+                      output_sha256=hashlib.sha256(content).hexdigest(), finished_ns=time.time_ns())
         store.write(record)
         record_outcome({'row': 'check', 'project_id': project_id, 'repository': project.name,
-                        'check': name, 'receipt_id': record['id'], 'revision': revision, 'reused': False,
-                        'exit_code': exit_code, 'duration_s': record['duration_s'],
-                        'reusable': reusable, 'date': time.time()})
-        result = {key: record.get(key) for key in ('status', 'id', 'revision', 'exit_code', 'timed_out',
-                  'reusable', 'immutable_observed', 'stable', 'reason', 'duration_s', 'tests_ran')}
-        if skipped:
-            result['skipped_receipts'] = skipped
-        return result
+                        'check': name, 'receipt_id': record['id'], 'revision': revision,
+                        'exit_code': exit_code, 'duration_s': record['duration_s'], 'date': time.time()})
+        return {key: record[key] for key in ('status', 'id', 'revision', 'exit_code', 'timed_out',
+                                             'stable', 'duration_s', 'tests_ran', 'tests_ran_is')}
     except BaseException as error:
-        record.update(status='failed', reusable=False, reason=str(error) or type(error).__name__,
-                      finished_ns=time.time_ns())
+        record.update(status='failed', reason=str(error) or type(error).__name__, finished_ns=time.time_ns())
         store.write(record)
         record_outcome({'row': 'check', 'project_id': project_id, 'repository': project.name,
-                        'check': name, 'receipt_id': record['id'], 'revision': revision, 'reused': False,
+                        'check': name, 'receipt_id': record['id'], 'revision': revision,
                         'exit_code': None, 'failed': True, 'date': time.time()})
         raise
-    finally:
-        if manager and task:
-            if token:
-                manager.release(task['id'], token, stopped=True)
-            cleanup = manager.finish(task['id'])
-            record['snapshot_cleanup'] = cleanup
-            store.write(record)
 
 
-def report(project):
+def report(project, state_dir=None):
     project = root(project)
     project_id = identity(project)
+    store = Store(state_dir, project)
+    receipts = store.records(project_id)
     review = module('orch-review')
     rows = []
     path = review.outcome_path()
@@ -557,7 +401,8 @@ def report(project):
     launches = [row for row in rows if row.get('row') == 'launch']
     reviews = [row for row in rows if row.get('row') == 'review']
     costs = [row['cost_usd'] for row in launches + reviews if type(row.get('cost_usd')) in (int, float)]
-    executed = [row for row in checks if row.get('reused') is False]
+    # Rows from older releases may say reused; those ran nothing.
+    executed = [row for row in checks if row.get('reused') is not True]
     repeated = len(executed) - len({(row['check'], row['revision']) for row in executed})
     # Reviews already contain their launches; expanding those rows preserves
     # the existing outcome sink without counting both a review and its helpers.
@@ -593,7 +438,7 @@ def report(project):
             if row.get('cost_usd') is None or row.get('cost_complete') is False:
                 item['unknown_cost_records'] += 1
     return {'project_id': project_id, 'checks_executed': len(executed),
-            'checks_reused': sum(row.get('reused') is True for row in checks),
+            'receipts': len(receipts), 'skipped_receipts': store.skipped,
             'repeated_same_revision_checks': repeated, 'launches': len(launches), 'reviews': len(reviews),
             'observed_cost_usd': round(sum(costs), 6) if costs else None,
             'unknown_cost_records': sum(row.get('cost_usd') is None or row.get('cost_complete') is False for row in launches + reviews),
@@ -610,12 +455,13 @@ def main(argv=None):
     check.add_argument('--project', default='.')
     check.add_argument('--name', required=True)
     check.add_argument('--state-dir')
-    check.add_argument('--reuse', action='store_true')
     stats = sub.add_parser('report')
     stats.add_argument('--project', default='.')
+    stats.add_argument('--state-dir')
     args = parser.parse_args(argv)
     try:
-        result = report(args.project) if args.command == 'report' else run_check(args.project, args.name, args.reuse, args.state_dir)
+        result = report(args.project, args.state_dir) if args.command == 'report' else run_check(
+            args.project, args.name, args.state_dir)
         print(json.dumps(result, sort_keys=True))
         return 0 if args.command == 'report' or result.get('exit_code') == 0 else 1
     except (OSError, ValueError, subprocess.SubprocessError) as error:

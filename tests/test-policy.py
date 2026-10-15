@@ -81,8 +81,8 @@ class PolicyTests(unittest.TestCase):
                                for provider, model in (("codex", "gpt-test"), ("claude", "opus"))},
                      "catalogs": {provider: {"path": str(path)} for provider, path in self.catalog_paths.items()},
                      "capacity": {"max_processes": 4, "external_slots": 1, "wait_timeout_s": 0},
-                     "checks": {"unit": {"argv": ["node", "--test"], "inputs": ["**"], "reuse": True,
-                                         "immutable": True, "environment": [], "tools": ["node"], "timeout_s": 30}}}
+                     "checks": {"unit": {"argv": ["node", "--test"], "inputs": ["**"],
+                                         "environment": [], "tools": ["node"], "timeout_s": 30}}}
         self.write_policy()
 
     def git(self, *args):
@@ -124,7 +124,7 @@ class PolicyTests(unittest.TestCase):
         POLICY.Policy(self.project)
         for mutation in (
             lambda d: d.update(unknown=True),
-            lambda d: d["checks"]["unit"].update(reuse=1),
+            lambda d: d["checks"]["unit"].update(timeout_s=0),
             lambda d: d["checks"]["unit"].pop("inputs"),
             lambda d: d["project_rules"]["wip"].update(total=2),
             lambda d: d["project_rules"]["review"].update(high_risk_independent_reviews=0),
@@ -225,27 +225,78 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(POLICY.PolicyError, "outside"):
             POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip())
 
-    def test_base_revision_reads_a_project_catalog_from_the_base(self):
-        # code-review-2: the change under review must not supply the base policy's catalog.
+    def test_reuse_and_immutable_check_keys_are_rejected_by_name(self):
+        # Receipts are record-only in this release; an old configuration must say so.
+        for key in ("reuse", "immutable"):
+            saved = json.loads(json.dumps(self.data))
+            self.data["checks"]["unit"][key] = False
+            self.write_policy()
+            with self.subTest(key=key), self.assertRaisesRegex(
+                    POLICY.PolicyError, rf"checks\.unit\.{key}: .*record-only in this release"):
+                POLICY.Policy(self.project)
+            self.data = saved
+        self.assertNotIn("reuse", POLICY.CHECK_KEYS)
+        self.assertNotIn("immutable", POLICY.CHECK_KEYS)
+
+    def test_a_catalog_inside_the_project_is_rejected_by_name(self):
+        # A catalog is a reading of this machine; the change under review must never supply it.
         (self.project / "catalog").mkdir()
-        relative = self.project / "catalog/codex.json"
-        data = json.loads(self.catalog_paths["codex"].read_text())
-        relative.write_text(json.dumps(dict(data, models=[{"slug": "other-model", "supported_reasoning_levels": [
-            {"effort": "high"}]}])))
-        self.data["catalogs"]["codex"] = {"path": "catalog/codex.json"}
+        (self.project / "catalog/codex.json").write_text(self.catalog_paths["codex"].read_text())
+        (self.project / "outside-link.json").symlink_to(self.catalog_paths["codex"])
+        self.git("add", "POLICY.md", "catalog/codex.json")
+        self.git("commit", "-qm", "synthetic project catalog")
+        for path in ("catalog/codex.json", str(self.project / "catalog/codex.json"), "./catalog/../catalog/codex.json"):
+            self.data["catalogs"]["codex"] = {"path": path}
+            self.write_policy()
+            self.git("add", ".llm-orchestrator.json")
+            self.git("commit", "-qm", "synthetic catalog path", "--allow-empty")
+            for revision in (None, self.git("rev-parse", "HEAD").strip()):
+                with self.subTest(path=path, revision=revision), self.assertRaisesRegex(
+                        POLICY.PolicyError, r"catalog/codex\.json.*must live outside the repository"):
+                    POLICY.Policy(self.project, revision=revision).resolve("codex", "reviewer")
+        # A link in the project is still a path in the project.
+        self.data["catalogs"]["codex"] = {"path": "outside-link.json"}
         self.write_policy()
-        self.git("add", "POLICY.md", ".llm-orchestrator.json", "catalog/codex.json")
-        self.git("commit", "-qm", "synthetic base catalog")
+        with self.assertRaisesRegex(POLICY.PolicyError, "must live outside the repository"):
+            POLICY.Policy(self.project).resolve("codex", "reviewer")
+
+    def test_relative_codex_home_is_read_from_disk_against_the_current_directory(self):
+        # code-review: a relative CODEX_HOME once raised KeyError under a review revision.
+        del self.data["catalogs"]["codex"]
+        self.write_policy()
+        self.git("add", "POLICY.md", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic policy without a codex catalog path")
         base = self.git("rev-parse", "HEAD").strip()
-        relative.write_text(json.dumps(data))  # the change adds the configured model
-        self.assertEqual(POLICY.Policy(self.project).resolve("codex", "reviewer")["model"], "gpt-test")
-        with self.assertRaisesRegex(POLICY.PolicyError, "gpt-test|not in|unavailable|catalog"):
-            POLICY.Policy(self.project, revision=base).resolve("codex", "reviewer")
-        relative.unlink()
-        self.git("rm", "-q", "--cached", "catalog/codex.json")
-        self.git("commit", "-qm", "synthetic catalog removed")
-        with self.assertRaisesRegex(POLICY.PolicyError, "capability catalog"):
-            POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip()).resolve("codex", "reviewer")
+        (self.root / "relative-codex").mkdir()
+        (self.root / "relative-codex/models_cache.json").write_text(self.catalog_paths["codex"].read_text())
+        previous = os.getcwd()
+        self.addCleanup(os.chdir, previous)
+        os.chdir(self.root)
+        with patch.dict(os.environ, {"CODEX_HOME": "relative-codex"}):
+            for revision in (None, base):
+                with self.subTest(revision=revision):
+                    settings = POLICY.Policy(self.project, revision=revision).resolve("codex", "reviewer")
+                    self.assertEqual(settings["catalog"]["path"],
+                                     str((self.root / "relative-codex/models_cache.json").resolve()))
+            os.chdir(self.project)
+            (self.project / "relative-codex").mkdir()
+            (self.project / "relative-codex/models_cache.json").write_text(self.catalog_paths["codex"].read_text())
+            with self.assertRaisesRegex(POLICY.PolicyError, "must live outside the repository"):
+                POLICY.Policy(self.project).resolve("codex", "reviewer")
+
+    def test_a_parent_relative_catalog_path_is_read_from_disk(self):
+        # code-review: "../shared/codex.json" is outside the project, so it is never read through Git.
+        (self.root / "shared").mkdir()
+        (self.root / "shared/codex.json").write_text(self.catalog_paths["codex"].read_text())
+        self.data["catalogs"]["codex"] = {"path": "../shared/codex.json"}
+        self.write_policy()
+        self.git("add", "POLICY.md", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic shared catalog")
+        base = self.git("rev-parse", "HEAD").strip()
+        for revision in (None, base):
+            with self.subTest(revision=revision):
+                settings = POLICY.Policy(self.project, revision=revision).resolve("codex", "reviewer")
+                self.assertEqual(settings["catalog"]["path"], str((self.root / "shared/codex.json").resolve()))
 
     def test_policy_name_ending_in_a_slash_is_rejected(self):
         # code-review-9: a folder name must never pick its first file as the policy document.
@@ -330,12 +381,14 @@ class PolicyTests(unittest.TestCase):
         self.write_policy()
         self.scenario["codex"]["login"] = False
         self.write_scenario()
-        def missing():
+        def missing(key="review_profiles_missing"):
             result = subprocess.run([sys.executable, str(ROOT / "scripts/lib/orch-control.py"), "validate",
                                      "--project", str(self.project)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            return json.loads(result.stdout)["review_profiles_missing"]
+            return json.loads(result.stdout)[key]
         self.assertEqual(missing(), ["claude"])
+        # code-review-10: a signed-out CLI is named separately, as needing profiles once it signs in.
+        self.assertEqual(missing("review_profiles_missing_if_signed_in"), ["codex"])
         self.assertIn(("claude", "runner"), REVIEW.policy_roles(REVIEW.review_plan("full", "claude", ["claude"])))
         self.data["roles"]["claude"]["runner"] = {"model": "opus"}
         self.write_policy()

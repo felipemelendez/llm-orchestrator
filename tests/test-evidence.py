@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Deterministic receipt regression tests; sandbox positives are synthetic.
+"""Deterministic receipt tests. Receipts record; nothing is reused.
 
-Live OS sandbox proof is deliberately separate from this portable suite.
 No model calls, provider credentials or paid evaluations.
 """
+from contextlib import redirect_stderr, redirect_stdout
+import hashlib
 import importlib.util
+import inspect
+import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -74,29 +78,21 @@ class Receipts(unittest.TestCase):
         self.run_git('config', 'user.email', 'synthetic@example.invalid')
         (self.project / 'src').mkdir()
         (self.project / 'src/value.txt').write_text('original')
-        # A recognised runner: only a known runner's count of executed tests makes a receipt reusable.
         (self.project / 'src/check.py').write_text(
             'import unittest\nfrom pathlib import Path\n\n\nclass Value(unittest.TestCase):\n'
             '    def test_value(self):\n        print(Path("src/value.txt").read_text())\n')
         (self.project / 'POLICY.md').write_text('Independent review is required.\n')
         self.config = {'schema': 1, 'policies': ['POLICY.md'], 'checks': {'unit': {
             'argv': [sys.executable, '-B', '-m', 'unittest', 'src/check.py'],
-            'inputs': ['src/**'], 'environment': ['ORCH_TEST_VARIANT'], 'tools': [],
-            'timeout_s': 10, 'reuse': True, 'immutable': True}}}
+            'inputs': ['src/**'], 'environment': ['ORCH_TEST_VARIANT'], 'tools': [], 'timeout_s': 10}}}
         self.write_config()
         self.run_git('add', '.')
         self.run_git('commit', '-qm', 'Synthetic fixture baseline')
         self.rows = []
         self.outcomes = patch.object(E, 'record_outcome', self.rows.append)
         self.outcomes.start()
-        # Simulated immutable adapter for receipt state-machine tests only.
-        self.proof = patch.object(E, 'readonly_argv', return_value=(
-            [sys.executable, '-c', 'import os,sys;os.execvp(sys.argv[1],sys.argv[1:])'],
-            'synthetic sandbox adapter'))
-        self.proof.start()
 
     def tearDown(self):
-        self.proof.stop()
         self.outcomes.stop()
         self.env_patch.stop()
         self.temp.cleanup()
@@ -108,23 +104,81 @@ class Receipts(unittest.TestCase):
     def write_config(self):
         (self.project / '.llm-orchestrator.json').write_text(json.dumps(self.config))
 
-    def check(self, reuse=False):
-        return E.run_check(self.project, 'unit', reuse, self.state)
+    def check(self):
+        return E.run_check(self.project, 'unit', self.state)
+
+    def receipt(self, result):
+        return json.loads((self.state / (result['id'] + '.json')).read_text())
+
+    def signed(self):
+        """Every receipt for this project whose signature verifies, oldest first."""
+        return E.Store(self.state).records(E.identity(self.project))
 
     def test_without_cadence_and_with_disabled_hooks(self):
         with patch.dict(os.environ, {'ORCH_DISABLED_HOOKS': 'all', 'ORCH_HOOK_PROFILE': 'minimal'}):
-            first = self.check()
-            second = self.check(True)
-        self.assertEqual(first['exit_code'], 0)
-        self.assertTrue(first['reusable'])
-        self.assertEqual(second['status'], 'reused')
+            self.assertEqual(self.check()['exit_code'], 0)
         self.assertFalse((self.project / 'docs/llm-orchestrator/cadence.json').exists())
-        self.assertEqual(len(self.rows), 2)
+        self.assertEqual(len(self.rows), 1)
 
-    def test_wrapped_empty_node_suite_is_not_reusable(self):
-        output = b'# tests 1\n# pass 0\n# fail 0\n# cancelled 0\n# skipped 1\n'
-        self.assertFalse(E.nonempty_execution(['env', 'node', '--test', 'src/test.mjs'], output))
-        self.assertFalse(E.supported_reuse_command(['env', 'node', '--test', 'src/test.mjs']))
+    def test_a_check_always_runs_and_nothing_is_reused(self):
+        # Receipts record; they do not reuse. The same check on the same inputs runs again.
+        self.assertNotIn('reuse', inspect.signature(E.run_check).parameters)
+        for name in ('nonempty_execution', 'readonly_argv', 'copy_inputs', 'supported_reuse_command'):
+            self.assertFalse(hasattr(E, name), name)
+        first, second = self.check(), self.check()
+        self.assertEqual((first['status'], second['status']), ('complete', 'complete'))
+        self.assertNotEqual(first['id'], second['id'])
+        self.assertEqual([row['receipt_id'] for row in self.rows], [first['id'], second['id']])
+        for result in (first, second):
+            self.assertIn('Ran 1 test', (self.state / (result['id'] + '.log')).read_text())
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            E.main(['check', '--project', str(self.project), '--name', 'unit', '--reuse'])
+
+    def test_a_passing_run_writes_a_signed_receipt_with_what_ran(self):
+        (self.project / 'src/value.txt').write_text('dirty')
+        (self.project / 'src/new.txt').write_text('untracked input')
+        result = self.check()
+        self.assertEqual(result['exit_code'], 0)
+        [receipt] = self.signed()
+        self.assertEqual(receipt['id'], result['id'])
+        self.assertEqual(receipt['status'], 'complete')
+        self.assertEqual(receipt['argv'], self.config['checks']['unit']['argv'])
+        self.assertEqual(receipt['cwd'], str(self.project.resolve()))
+        self.assertLessEqual(receipt['started_ns'], receipt['finished_ns'])
+        self.assertEqual(receipt['revision'], self.run_git('rev-parse', 'HEAD'))
+        self.assertEqual(receipt['project_id'], E.identity(self.project))
+        log = (self.state / (result['id'] + '.log')).read_bytes()
+        self.assertEqual(receipt['output_sha256'], hashlib.sha256(log).hexdigest())
+        self.assertEqual(receipt['inputs']['src/value.txt']['sha256'], hashlib.sha256(b'dirty').hexdigest())
+        self.assertIn('src/new.txt', receipt['inputs'])
+        self.assertIn('POLICY.md', receipt['inputs'])
+        self.assertEqual(receipt['check_sha256'], E.digest(self.config['checks']['unit']))
+        self.assertIn('policy_context_sha256', receipt)
+        self.assertIn('variables_sha256', receipt['environment'])
+        self.assertEqual(receipt['environment']['tools'][sys.executable]['path'], str(Path(sys.executable).resolve()))
+        self.assertTrue(receipt['stable'])
+
+    def test_a_failing_run_writes_a_signed_failed_result(self):
+        (self.project / 'src/check.py').write_text(
+            'import unittest\n\n\nclass Value(unittest.TestCase):\n'
+            '    def test_value(self):\n        self.fail("synthetic failure")\n')
+        result = self.check()
+        self.assertEqual(result['exit_code'], 1)
+        [receipt] = self.signed()
+        self.assertEqual((receipt['status'], receipt['exit_code']), ('complete', 1))
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(E.main(['check', '--project', str(self.project), '--name', 'unit',
+                                     '--state-dir', str(self.state)]), 1)
+
+    def test_environment_and_policy_are_fingerprinted(self):
+        first = self.receipt(self.check())
+        with patch.dict(os.environ, {'ORCH_TEST_VARIANT': 'different'}):
+            second = self.receipt(self.check())
+        (self.project / 'POLICY.md').write_text('Two independent reviews are required.\n')
+        third = self.receipt(self.check())
+        self.assertNotEqual(first['environment']['variables_sha256'], second['environment']['variables_sha256'])
+        self.assertEqual(first['policy_context_sha256'], second['policy_context_sha256'])
+        self.assertNotEqual(second['policy_context_sha256'], third['policy_context_sha256'])
 
     def test_actual_executable_is_fingerprinted_without_tools(self):
         binary = self.base / 'pytest'
@@ -132,33 +186,53 @@ class Receipts(unittest.TestCase):
         binary.chmod(0o755)
         self.config['checks']['unit']['argv'] = [str(binary)]
         self.write_config()
-        first = self.check()
+        first = self.receipt(self.check())
         binary.write_text('#!/bin/sh\necho "2 passed in 0.01s"\n')
-        second = self.check(True)
-        self.assertTrue(first['reusable'])
-        self.assertEqual(second['status'], 'complete')
+        second = self.receipt(self.check())
+        key = str(binary)
+        self.assertNotEqual(first['environment']['tools'][key]['sha256'], second['environment']['tools'][key]['sha256'])
 
-    def test_version_probe_uses_absolute_owned_home(self):
+    def test_tool_versions_are_recorded(self):
         definition = dict(self.config['checks']['unit'], tools=['python3'])
-        original = subprocess.run
-        seen = []
-        def observe(argv, **kwargs):
-            if '--version' in argv:
-                seen.append(kwargs['env']['HOME'])
-                self.assertTrue(Path(seen[-1]).is_absolute())
-                self.assertNotIn('__ORCH_OWNED_HOME__', seen[-1])
-            return original(argv, **kwargs)
-        with patch.object(E.subprocess, 'run', side_effect=observe):
-            env, fingerprint = E.environment(definition)
-        self.assertTrue(seen)
-        self.assertEqual(env['HOME'], '__ORCH_OWNED_HOME__')
-        self.assertIn('python3', fingerprint['tools'])
-        self.assertFalse(Path(seen[0]).exists())
+        env, fingerprint = E.environment(definition)
+        self.assertEqual(env['HOME'], os.environ['HOME'])
+        self.assertIn('version_sha256', fingerprint['tools']['python3'])
+
+    def test_tests_ran_is_recorded_as_what_the_runner_printed(self):
+        result = self.check()
+        receipt = self.receipt(result)
+        self.assertEqual((result['tests_ran'], receipt['tests_ran']), (1, 1))
+        self.assertEqual(receipt['tests_ran_is'], 'what the runner printed, not proof')
+        script = self.project / 'src/check.sh'
+        script.write_text('#!/bin/sh\necho hello\n')
+        script.chmod(0o755)
+        self.config['checks']['unit']['argv'] = ['src/check.sh']
+        self.write_config()
+        self.assertEqual(self.receipt(self.check())['tests_ran'], 'unknown')
+
+    def test_a_printed_fake_summary_is_simply_recorded(self):
+        # A wholly skipped suite whose module prints a fake summary: recorded, never believed.
+        (self.project / 'src/check.py').write_text(
+            'import unittest\nprint("Ran 5 tests in 0.0s")\n\n\nclass Value(unittest.TestCase):\n'
+            '    @unittest.skip("synthetic")\n    def test_value(self):\n        pass\n')
+        receipt = self.receipt(self.check())
+        self.assertEqual((receipt['exit_code'], receipt['tests_ran']), (0, 5))
+        self.assertEqual(receipt['tests_ran_is'], 'what the runner printed, not proof')
+
+    @unittest.skipUnless(shutil.which('node'), 'node is not installed')
+    def test_a_node_file_with_no_tests_is_recorded_as_node_counts_it(self):
+        # Node counts a file with no test() calls as one passing test.
+        (self.project / 'src/empty.test.mjs').write_text('// no tests\n')
+        self.config['checks']['unit']['argv'] = ['node', '--test', 'src/empty.test.mjs']
+        self.write_config()
+        receipt = self.receipt(self.check())
+        self.assertEqual((receipt['exit_code'], receipt['tests_ran']), (0, 1))
+        self.assertEqual(receipt['tests_ran_is'], 'what the runner printed, not proof')
 
     def test_evidence_state_is_rejected_inside_git_before_creation(self):
         state = self.project / 'new-state' / 'receipts'
         with self.assertRaisesRegex(ValueError, 'outside'):
-            E.run_check(self.project, 'unit', False, state)
+            E.run_check(self.project, 'unit', state)
         self.assertFalse(state.exists())
         for directory in (self.project / '.git' / 'new-state', self.base / 'bare.git' / 'new-state'):
             if directory.parent.name == 'bare.git':
@@ -172,7 +246,7 @@ class Receipts(unittest.TestCase):
         path.write_text(json.dumps({'row': 'review', 'project_id': E.identity(self.project),
                                     'cost_usd': 0.12, 'cost_complete': False}) + '\n')
         with patch.object(E.module('orch-review'), 'outcome_path', return_value=path):
-            report = E.report(self.project)
+            report = E.report(self.project, self.state)
         self.assertEqual(report['unknown_cost_records'], 1)
         self.assertEqual(report['observed_cost_usd'], 0.12)
 
@@ -185,135 +259,39 @@ class Receipts(unittest.TestCase):
                'cost_usd': None, 'cost_complete': False, 'launches': [launch]}
         path.write_text(json.dumps(row) + '\n')
         with patch.object(E.module('orch-review'), 'outcome_path', return_value=path):
-            report = E.report(self.project)
+            report = E.report(self.project, self.state)
         profile = report['role_profiles'][0]
         self.assertEqual(profile['served_efforts'], ['medium'])
         self.assertEqual(profile['tokens']['input_tokens'], 12)
         self.assertEqual(profile['unknown_cost_attempts'], 1)
         self.assertIsNone(report['validated_deliveries'])
         self.assertIsNone(report['linked_deliveries']['ticket-1']['validated'])
+        self.assertNotIn('checks_reused', report)
 
-    def test_revision_change_can_reuse_identical_scoped_inputs(self):
-        first = self.check()
-        (self.project / 'README.md').write_text('An unrelated document.\n')
-        self.run_git('add', 'README.md')
-        self.run_git('commit', '-qm', 'Synthetic unrelated revision')
-        second = self.check(True)
-        self.assertEqual(second['status'], 'reused')
-        self.assertNotEqual(first['revision'], second['revision'])
-        self.assertEqual(first['revision'], second['source_revision'])
-
-    def test_dirty_and_untracked_scope_changes_invalidate(self):
-        self.check()
-        (self.project / 'src/value.txt').write_text('dirty')
-        self.assertEqual(self.check(True)['status'], 'complete')
-        (self.project / 'src/new.txt').write_text('untracked input')
-        self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_environment_and_policy_changes_invalidate(self):
-        self.check()
-        with patch.dict(os.environ, {'ORCH_TEST_VARIANT': 'different'}):
-            self.assertEqual(self.check(True)['status'], 'complete')
-        (self.project / 'POLICY.md').write_text('Two independent reviews are required.\n')
-        self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_ignored_policy_is_rejected_instead_of_reused(self):
-        self.check()
+    def test_ignored_policy_is_rejected(self):
         (self.project / 'private-policy.md').write_text('one')
         (self.project / '.gitignore').write_text('private-policy.md\n')
         self.config['policies'].append('private-policy.md')
         self.write_config()
         with self.assertRaisesRegex(ValueError, 'ignored'):
-            self.check(True)
+            self.check()
 
-    def test_unsupported_external_and_inline_commands_are_record_only(self):
-        self.config['checks']['unit']['argv'] = [sys.executable, '-c', 'print("external dependencies unknown")']
-        self.write_config()
-        self.assertFalse(self.check()['reusable'])
-        self.assertFalse(E.supported_reuse_command(['node', 'check.js', '/private/tmp/external-input']))
-
-    def test_wholly_skipped_or_todo_node_suites_do_not_qualify(self):
-        for summary in (b'# tests 0\n# pass 0\n', b'# tests 1\n# pass 0\n# skipped 1\n',
-                        b'# tests 1\n# pass 0\n# todo 1\n'):
-            self.assertFalse(E.nonempty_execution(['node', '--test'], summary))
-        # Failed tests did execute; the nonzero exit code is what keeps such a run from reuse.
-        self.assertEqual(E.tests_ran(['node', '--test'], b'# tests 2\n# pass 1\n# fail 1\n'), 2)
-        self.assertTrue(E.nonempty_execution(['node', '--test'], b'# tests 2\n# pass 1\n# skipped 1\n# fail 0\n'))
-
-    def test_tool_version_change_invalidates(self):
-        self.check()
-        original = E.environment
-        def changed(definition):
-            env, info = original(definition)
-            return env, dict(info, tools={'node': {'version': 'synthetic-changed'}})
-        with patch.object(E, 'environment', side_effect=changed):
-            self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_verification_engine_change_invalidates(self):
-        self.check()
-        with patch.object(E, 'engine_fingerprint', return_value={'version': 'changed engine'}):
-            self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_missing_sandbox_is_record_only_and_never_reuses(self):
-        with patch.object(E, 'readonly_argv', return_value=(None, 'unavailable sandbox')):
-            first = self.check()
-            second = self.check(True)
-        self.assertEqual(first['exit_code'], 0)
-        self.assertFalse(first['reusable'])
-        self.assertEqual(second['status'], 'complete')
-
-    def test_aba_mutation_is_never_reused_without_immutable_execution(self):
-        self.config['checks']['unit'].update(immutable=False, argv=[sys.executable, '-c',
-            'from pathlib import Path;p=Path("src/value.txt");s=p.read_text();p.write_text("mutated");'
-            'assert p.read_text()=="mutated";p.write_text(s);print("ABA restored")'])
-        self.write_config()
-        first = self.check()
-        self.assertTrue(first['stable'])
-        self.assertFalse(first['reusable'])
-        self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_detected_source_mutation_is_not_reusable(self):
-        self.config['checks']['unit'].update(immutable=False, argv=[sys.executable, '-c',
-            'from pathlib import Path;Path("src/value.txt").write_text("changed");print("done")'])
+    def test_input_changed_by_the_check_is_recorded_as_unstable(self):
+        self.config['checks']['unit']['argv'] = [sys.executable, '-c',
+            'from pathlib import Path;Path("src/value.txt").write_text("changed");print("done")']
         self.write_config()
         result = self.check()
         self.assertFalse(result['stable'])
-        self.assertFalse(result['reusable'])
+        self.assertFalse(self.receipt(result)['stable'])
 
-    def test_latest_failure_and_pending_attempt_shadow_old_pass(self):
-        self.check()
-        store = E.Store(self.state)
-        prior = store.records(E.identity(self.project), 'unit')[-1]
-        prior.update(id='a' * 32, started_ns=prior['started_ns'] + 1,
-                     status='running', reusable=False)
-        store.write(prior)
-        self.assertEqual(self.check(True)['status'], 'complete')
-        prior = store.records(E.identity(self.project), 'unit')[-1]
-        prior.update(id='b' * 32, started_ns=prior['started_ns'] + 1,
-                     status='complete', reusable=False, exit_code=1)
-        store.write(prior)
-        self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_tampered_receipt_or_output_rejected(self):
+    def test_tampered_receipt_is_refused_when_reporting(self):
         first = self.check()
         receipt = self.state / (first['id'] + '.json')
-        original = receipt.read_text()
-        altered = json.loads(original)
+        altered = json.loads(receipt.read_text())
         altered['revision'] = 'forged'
         receipt.write_text(json.dumps(altered))
         with self.assertRaisesRegex(ValueError, 'signature'):
-            self.check(True)
-        receipt.write_text(original)
-        (self.state / (first['id'] + '.log')).write_text('changed output')
-        with self.assertRaisesRegex(ValueError, 'output'):
-            self.check(True)
-
-    def test_other_repository_never_borrows_receipt(self):
-        self.check()
-        other = self.base / 'other'
-        subprocess.run(['git', 'clone', '-q', str(self.project), str(other)], check=True)
-        result = E.run_check(other, 'unit', True, self.state)
-        self.assertEqual(result['status'], 'complete')
+            E.report(self.project, self.state)
 
     def test_symlink_and_empty_scope_are_rejected(self):
         (self.project / 'src/link').symlink_to('/etc/hosts')
@@ -324,15 +302,6 @@ class Receipts(unittest.TestCase):
         self.write_config()
         with self.assertRaisesRegex(ValueError, 'scope'):
             self.check()
-
-    def test_explicit_no_reuse_and_no_empty_test_pass(self):
-        self.config['checks']['unit'].update(reuse=False)
-        self.write_config()
-        self.assertFalse(self.check()['reusable'])
-        self.assertEqual(self.check(True)['status'], 'complete')
-        self.config['checks']['unit'].update(reuse=True, argv=[sys.executable, '-c', 'print("# tests 0")'])
-        self.write_config()
-        self.assertFalse(self.check()['reusable'])
 
     def test_mia_rules_preserved_and_custom_checks_recognized(self):
         self.config['project_rules'] = {
@@ -348,12 +317,11 @@ class Receipts(unittest.TestCase):
     def test_directory_input_covers_every_file_under_it(self):
         self.config['checks']['unit']['inputs'] = ['src']
         self.write_config()
-        first = self.check()
-        self.assertTrue(first['reusable'])
-        receipt = json.loads((self.state / (first['id'] + '.json')).read_text())
-        self.assertIn('src/value.txt', receipt['inputs'])
+        first = self.receipt(self.check())
+        self.assertIn('src/value.txt', first['inputs'])
         (self.project / 'src/value.txt').write_text('changed under a directory input')
-        self.assertEqual(self.check(True)['status'], 'complete')
+        second = self.receipt(self.check())
+        self.assertNotEqual(first['inputs']['src/value.txt'], second['inputs']['src/value.txt'])
         self.assertEqual(sorted(E.scoped({'src/a.py': 'file', 'srcx.py': 'file', 'lib/b.py': 'file'},
                                          {'inputs': ['src/', 'lib/*.py']}, type('P', (), {'data': {}}))),
                          ['lib/b.py', 'src/a.py'])
@@ -368,8 +336,6 @@ class Receipts(unittest.TestCase):
         commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=sub, check=True, capture_output=True,
                                 text=True).stdout.strip()
         self.run_git('update-index', '--add', '--cacheinfo', '160000,%s,vendor/sub' % commit)
-        self.config['checks']['unit']['immutable'] = False
-        self.write_config()
         self.assertEqual(self.check()['exit_code'], 0)
         for inputs in (['docs-link.md'], ['vendor/**']):
             self.config['checks']['unit']['inputs'] = inputs
@@ -377,16 +343,31 @@ class Receipts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'unsupported'):
                 self.check()
 
-    def test_a_bad_receipt_never_blocks_a_fresh_run_and_is_named_when_reusing(self):
+    def test_out_of_scope_linked_folder_does_not_block_a_check(self):
+        (self.project / 'other').mkdir()
+        (self.project / 'other/x.txt').write_text('tracked under a folder that becomes a link\n')
+        self.run_git('add', 'other/x.txt')
+        self.run_git('commit', '-qm', 'Synthetic out-of-scope entry')
+        target = self.base / 'elsewhere'
+        target.mkdir()
+        (target / 'x.txt').write_text('tracked under a folder that becomes a link\n')
+        (self.project / 'other/x.txt').unlink()
+        (self.project / 'other').rmdir()
+        (self.project / 'other').symlink_to(target)
+        self.assertEqual(self.check()['exit_code'], 0)
+
+    def test_a_bad_receipt_never_blocks_a_run_and_is_named_when_reporting(self):
         first = self.check()
         (self.state / 'foreign.json').write_text('{"from": "another project or key"}')
+        # code-review-7: a RecursionError while parsing is an unreadable receipt, not tampering.
+        (self.state / 'corrupt.json').write_text('[' * 1000000)
         fresh = self.check()
         self.assertEqual(fresh['exit_code'], 0)
         self.assertNotIn('skipped_receipts', fresh)
-        again = self.check(True)
-        self.assertEqual(again['status'], 'complete')
-        self.assertEqual(again['skipped_receipts'], ['foreign.json'])
-        self.assertNotEqual(again['id'], first['id'])
+        report = E.report(self.project, self.state)
+        self.assertEqual(report['skipped_receipts'], ['corrupt.json', 'foreign.json'])
+        self.assertEqual(report['receipts'], 2)
+        self.assertNotEqual(fresh['id'], first['id'])
 
     def test_interrupt_kills_the_check_and_is_never_a_complete_receipt(self):
         original = subprocess.Popen.wait
@@ -396,15 +377,15 @@ class Receipts(unittest.TestCase):
                 children.append(process.pid)
                 raise KeyboardInterrupt
             return original(process)
-        self.config['checks']['unit'].update(immutable=False, argv=[sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.config['checks']['unit'].update(argv=[sys.executable, '-c', 'import time; time.sleep(30)'])
         self.write_config()
         with patch.object(subprocess.Popen, 'wait', interrupted):
             with self.assertRaises(KeyboardInterrupt):
                 self.check()
         with self.assertRaises(ProcessLookupError):
             os.killpg(children[0], 0)
-        receipts = [json.loads(path.read_text()) for path in self.state.glob('*.json')]
-        self.assertEqual([receipt['status'] for receipt in receipts], ['failed'])
+        [receipt] = self.signed()
+        self.assertEqual(receipt['status'], 'failed')
         self.assertEqual(self.rows[-1]['failed'], True)
 
     def test_usage_reports_capacity_wait(self):
@@ -414,131 +395,10 @@ class Receipts(unittest.TestCase):
                 {'row': 'review', 'project_id': project_id, 'launches': [{'capacity': {'wait_s': 0.5}}]}]
         path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
         with patch.object(E.module('orch-review'), 'outcome_path', return_value=path):
-            self.assertEqual(E.report(self.project)['capacity_wait_s'], 3.0)
+            self.assertEqual(E.report(self.project, self.state)['capacity_wait_s'], 3.0)
         path.write_text(json.dumps({'row': 'launch', 'project_id': project_id}) + '\n')
         with patch.object(E.module('orch-review'), 'outcome_path', return_value=path):
-            self.assertIsNone(E.report(self.project)['capacity_wait_s'])
-
-    def test_zero_test_and_collection_only_runs_are_never_reusable(self):
-        for argv, output in (
-                (['python3', '-m', 'unittest', 'discover'], b'Ran 0 tests in 0.000s\n\nOK\n'),
-                (['python3', '-m', 'pytest', '--collect-only', '-q'], b'tests/test_a.py::test_one\n\n1 test collected\n'),
-                (['pytest'], b'collected 0 items\n\n=== no tests ran in 0.01s ===\n'),
-                (['node', '--test'], b'# tests 0\n# pass 0\n'),
-                (['go', 'test', './...'], b'?   \texample/pkg\t[no test files]\n'),
-                (['go', 'test', './...'], b'ok  \texample/pkg\t0.01s [no tests to run]\n'),
-                (['python3', 'run.py'], b'Ran 0 tests in 0.000s\n\nOK\n'),
-                (['python3', 'run.py'], b'')):
-            with self.subTest(argv=argv, output=output):
-                self.assertIn(E.tests_ran(argv, output), (0, 'unknown'))
-                self.assertFalse(E.nonempty_execution(argv, output))
-        self.assertEqual(E.tests_ran(['python3', '-m', 'pytest'], b'something unreadable\n'), 'unknown')
-        self.assertFalse(E.nonempty_execution(['python3', '-m', 'pytest'], b'something unreadable\n'))
-        self.assertEqual(E.tests_ran(['python3', '-m', 'unittest'], b'Ran 2 tests in 0.1s\n\nOK\n'), 2)
-        self.assertEqual(E.tests_ran(['pytest', '-q'], b'2 passed in 0.01s\n'), 2)
-        # Without -v, go test prints no per-test lines, so skipped tests cannot be subtracted.
-        self.assertEqual(E.tests_ran(['go', 'test', './...'], b'ok  \texample/pkg\t0.01s\n'), 'unknown')
-        self.assertEqual(E.tests_ran(['./check.sh'], b'custom output\n'), 'unknown')
-        # A wrapper whose runner found nothing: exit 0 with a zero-test summary.
-        (self.project / 'src/zero.py').write_text('print("Ran 0 tests in 0.000s")\nprint()\nprint("OK")\n')
-        self.config['checks']['unit']['argv'] = [sys.executable, 'src/zero.py']
-        self.write_config()
-        result = self.check()
-        self.assertEqual(result['exit_code'], 0)
-        self.assertFalse(result['reusable'])
-        receipt = json.loads((self.state / (result['id'] + '.json')).read_text())
-        self.assertEqual(receipt['tests_ran'], 'unknown')
-        self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_go_list_mode_and_unmatched_run_never_count(self):
-        # codex-review-2: -list names tests without running them, yet prints an ok summary.
-        for argv in (['go', 'test', '-list', '.', './...'], ['go', 'test', '-list=Test.*', './...'],
-                     ['go', 'test', '-v', '-test.list', '.']):
-            with self.subTest(argv=argv):
-                self.assertEqual(E.tests_ran(argv, b'TestA\nok  \texample/pkg\t0.003s\n'), 0)
-                self.assertFalse(E.nonempty_execution(argv, b'TestA\nok  \texample/pkg\t0.003s\n'))
-        self.assertEqual(E.tests_ran(['go', 'test', '-v', '-run', 'Nothing', './...'],
-                                     b'testing: warning: no tests to run\nPASS\nok  \tp\t0.01s [no tests to run]\n'), 0)
-        verbose = b'=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- SKIP: TestB (0.00s)\nPASS\nok  \tp\t0.01s\n'
-        self.assertEqual(E.tests_ran(['go', 'test', '-v', './...'], verbose), 1)
-        skipped = b'=== RUN   TestB\n--- SKIP: TestB (0.00s)\nPASS\nok  \tp\t0.01s\n'
-        self.assertEqual(E.tests_ran(['go', 'test', '-v', './...'], skipped), 0)
-
-    def test_skipped_unittest_tests_are_subtracted(self):
-        # code-review-4 and codex-review-3: every test skipped is no test executed.
-        argv = ['python3', '-m', 'unittest', 'discover']
-        self.assertEqual(E.tests_ran(argv, b'sss\n' + b'-' * 70 + b'\nRan 3 tests in 0.001s\n\nOK (skipped=3)\n'), 0)
-        self.assertFalse(E.nonempty_execution(argv, b'Ran 1 test in 0.000s\n\nOK (skipped=1)\n'))
-        self.assertEqual(E.tests_ran(argv, b'Ran 3 tests in 0.001s\n\nOK (skipped=1)\n'), 2)
-        self.assertEqual(E.tests_ran(argv, b'Ran 3 tests in 0.001s\n\nFAILED (failures=1, skipped=2)\n'), 1)
-        # All-skipped through run_check: complete, recorded, never reusable.
-        (self.project / 'src/check.py').write_text(
-            'import unittest\n\n\n@unittest.skip("synthetic")\nclass Value(unittest.TestCase):\n'
-            '    def test_value(self):\n        pass\n')
-        result = self.check()
-        self.assertEqual(result['exit_code'], 0)
-        self.assertEqual(result['tests_ran'], 0)
-        self.assertFalse(result['reusable'])
-
-    def test_output_from_a_command_that_is_not_a_known_runner_is_never_reusable(self):
-        # codex-review-1: an executable that only prints text is recorded, never reused.
-        self.assertEqual(E.tests_ran(['./check.sh'], b'hello\n'), 'unknown')
-        self.assertFalse(E.nonempty_execution(['./check.sh'], b'hello\n'))
-        script = self.project / 'src/check.sh'
-        script.write_text('#!/bin/sh\necho hello\n')
-        script.chmod(0o755)
-        self.config['checks']['unit']['argv'] = ['src/check.sh']
-        self.write_config()
-        result = self.check()
-        self.assertEqual(result['exit_code'], 0)
-        self.assertEqual(result['tests_ran'], 'unknown')
-        self.assertFalse(result['reusable'])
-        self.assertEqual(self.check(True)['status'], 'complete')
-
-    def test_known_runner_without_a_readable_summary_is_unknown(self):
-        # code-review-5: node --test with a reporter that prints no counts cannot be judged.
-        self.assertEqual(E.tests_ran(['node', '--test', '--test-reporter=dot'], b'....\n'), 'unknown')
-        self.assertEqual(E.tests_ran(['python3', '-m', 'unittest'], b'something else\n'), 'unknown')
-        self.assertEqual(E.tests_ran(['cargo', 'test'], b'compiling\n'), 'unknown')
-        self.assertEqual(E.tests_ran(['cargo', 'test'], b'test result: ok. 2 passed; 0 failed; 1 ignored; '
-                                                       b'0 measured; 0 filtered out; finished in 0.00s\n'), 2)
-        self.assertEqual(E.tests_ran(['pytest'], b'==== 3 passed, 1 skipped in 0.12s ====\n'), 3)
-        self.assertEqual(E.tests_ran(['pytest'], b'==== 4 skipped in 0.12s ====\n'), 0)
-
-    def test_out_of_scope_submodule_and_linked_folder_do_not_block_a_snapshot(self):
-        # code-review-1 and codex-review-4: an immutable check copies only its scoped inputs.
-        sub = self.project / 'vendor/sub'
-        sub.mkdir(parents=True)
-        subprocess.run(['git', 'init', '-q'], cwd=sub, check=True)
-        (sub / 'f').write_text('x')
-        subprocess.run(['git', 'add', 'f'], cwd=sub, check=True)
-        subprocess.run(['git', '-c', 'user.name=s', '-c', 'user.email=s@example.invalid', 'commit', '-qm', 's'],
-                       cwd=sub, check=True)
-        commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=sub, check=True, capture_output=True,
-                                text=True).stdout.strip()
-        self.run_git('update-index', '--add', '--cacheinfo', '160000,%s,vendor/sub' % commit)
-        (self.project / 'other').mkdir()
-        (self.project / 'other/x.txt').write_text('tracked under a folder that becomes a link\n')
-        self.run_git('add', 'other/x.txt')
-        self.run_git('commit', '-qm', 'Synthetic out-of-scope entries')
-        target = self.base / 'elsewhere'
-        target.mkdir()
-        (target / 'x.txt').write_text('tracked under a folder that becomes a link\n')
-        (self.project / 'other/x.txt').unlink()
-        (self.project / 'other').rmdir()
-        (self.project / 'other').symlink_to(target)
-        first = self.check()
-        self.assertEqual(first['exit_code'], 0, first)
-        self.assertTrue(first['reusable'])
-        self.assertEqual(self.check(True)['status'], 'reused')
-
-    def test_deeply_nested_corrupt_receipt_is_skipped_and_named(self):
-        # code-review-7: a RecursionError while parsing is an unreadable receipt, not tampering.
-        self.check()
-        (self.state / 'corrupt.json').write_text('[' * 1000000)
-        again = self.check(True)
-        self.assertEqual(again['status'], 'complete')
-        self.assertEqual(again['skipped_receipts'], ['corrupt.json'])
+            self.assertIsNone(E.report(self.project, self.state)['capacity_wait_s'])
 
     def test_relative_executable_resolves_against_the_project(self):
         script = self.project / 'check.sh'
@@ -558,25 +418,21 @@ class Receipts(unittest.TestCase):
         finally:
             os.chdir(previous)
         self.assertEqual(result['exit_code'], 0)
-        receipt = json.loads((self.state / (result['id'] + '.json')).read_text())
+        receipt = self.receipt(result)
         tool = receipt['environment']['tools'][str(script.resolve())]
         self.assertEqual(tool['path'], str(script.resolve()))
         self.assertIn('check.sh', receipt['inputs'])
         self.assertEqual((self.state / (result['id'] + '.log')).read_text(), 'project check\n')
 
-    def test_sandbox_fallback_records_the_environment_that_ran(self):
+    def test_receipt_records_the_environment_that_ran(self):
         seen = {}
         real = E.execute
         def capture(argv, cwd, env, output, timeout):
             seen['env'] = dict(env)
             return real(argv, cwd, env, output, timeout)
-        with patch.object(E, 'readonly_argv', return_value=(None, 'unavailable sandbox')), \
-                patch.object(E, 'execute', side_effect=capture):
-            result = self.check()
-        receipt = json.loads((self.state / (result['id'] + '.json')).read_text())
+        with patch.object(E, 'execute', side_effect=capture):
+            receipt = self.receipt(self.check())
         self.assertEqual(receipt['environment']['variables_sha256'], E.digest(seen['env']))
-        self.assertNotIn('__ORCH_OWNED_HOME__', seen['env'].values())
-        self.assertTrue(result['stable'])
 
 
 if __name__ == '__main__':

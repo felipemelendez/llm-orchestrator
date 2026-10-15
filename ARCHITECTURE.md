@@ -265,12 +265,13 @@ each actual CLI boundary. A single external locked ledger admits outer CLI
 processes across configured projects. Host-native agents and provider-internal
 fanout cannot be counted reliably and are reported as uncontrolled.
 
-`orch-evidence.py` uses the existing task-resource manager for owned source
-snapshots and the existing review-outcomes log for measurements. Locally signed
-receipts bind scope/content, policy, command, executable/toolchain, environment
-and execution-engine identity. Reuse requires observed OS source-write and
-external-read denial and output that shows at least one test ran; unsupported
-environments execute record-only. Node built-in
+`orch-evidence.py` runs a configured check every time and writes a locally
+signed receipt outside Git: a record of the command, scoped files and their
+digests, policy and configuration, executable/toolchain, environment and output,
+so a reader can see what was checked. Receipts are never reused, because no
+runner's output proves a test ran; `tests_ran` is what the runner printed, not
+proof. Measurements go to the existing review-outcomes log. A model catalog is a
+fact about this machine, read from disk and refused inside the project. Node built-in
 and exact configured custom checks also feed the existing completion classifier.
 No new orchestration service or Git-tracked live handoff board is introduced.
 See `docs/project-policy.md` for boundaries, commands and update/rollback.
