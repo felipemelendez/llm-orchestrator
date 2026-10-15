@@ -64,6 +64,13 @@ for n in "docs/llm-orchestrator/LAWS.md" "cadence.json" "LOCK.sha256" \
     || fail "$n in docs/cadence.md" "the cadence guide never spells it"
 done
 
+printf '\n== The signals that force Full ==\n'
+for s in "hard to undo" "cannot be reversed" "concurrency" "shared state" "retries with side effects" \
+         "contracts between components" "invariants" "unknown risk counts as high" "one signal is enough"; do
+  has "$SKILL" "$s" && ok "SKILL.md names the Full signal: $s" || fail "SKILL.md names the Full signal: $s" "missing"
+  has "$FULL" "$s" && ok "CADENCE.md names the Full signal: $s" || fail "CADENCE.md names the Full signal: $s" "missing"
+done
+
 printf '\n== No legacy procedure is left ==\n'
 # The legacy workflow was removed: a missing or "legacy" workflow is an error
 # naming the one-line fix. What must not survive is text describing it.
