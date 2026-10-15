@@ -68,8 +68,8 @@ Is this the simplest correct version? (`requesting-code-review`'s
 `references/design-simplicity.md`). It is fixed, refuted with evidence that
 its simpler alternative is not correct for this codebase, or settled by the
 spec; it is never set aside as style. Reply to a GitHub review thread on the
-thread itself — `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies` —
-not as a new top-level PR comment, which detaches the answer from the question.
+thread itself (`gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`),
+not in a new top-level PR comment.
 
 ## Recording what happened (after `orch-review.py`)
 
@@ -99,7 +99,8 @@ twice):
 - `follow-up` names the PR, issue or plan task that will carry an unreproduced
   serious finding whose repro passed or was never attempted (rule 7 of
   `finishing-a-branch`'s `references/landing-rules.md`); the script refuses it
-  for a reproduced finding or a failed or unrun repro.
+  for a reproduced finding or a failed or unrun repro; a security, privacy or
+  data-integrity finding needs `"person_approved": true`.
 - `ignored` gives a reason. A blocking finding may be ignored only when the
   person said so; add `"person_approved": true`.
 

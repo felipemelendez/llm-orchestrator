@@ -243,6 +243,17 @@ def follow_up_refused(found):
     return None
 
 
+SENSITIVE = re.compile(r"security|privacy|data[-_ ]integrity", re.I)
+
+
+def deferred_only_by_the_person(review, found):
+    """R23: a failed reproduction does not disprove a security, privacy or data-integrity concern, so such a
+    finding is a follow-up only when the person said so: the review ran with the security lens, or the
+    finding's kind or words name one of the three."""
+    return bool(review.get("security")) or any(SENSITIVE.search(str(found.get(key) or ""))
+                                               for key in ("kind", "words"))
+
+
 def settled_valid(entries, entry):
     """R22: the entry is one whole entry of the spec's Settled section (entries, or None without the section)."""
     wanted = plain(entry) if isinstance(entry, str) else ""
@@ -2231,6 +2242,7 @@ def decide(run_dir):
             "writer": run.get("writer"), "same_provider": bool(plan.get("same_provider")),
             "reviewers": [planned["builtin"] for planned in plan.get("reviewers", [])],
             "tree": tree, "base": start["base"] if start else None,
+            "security": bool(start and start.get("security")),
             "diff_lines": start["diff_lines"] if start else 0,
             "launches": [{key: launch.get(key) for key in (
                 "name", "role", "provider", "builtin", "status", "reason", "requested_model", "served_model",
@@ -2423,6 +2435,9 @@ def command_record(args):
             elif not (isinstance(entry.get("reference"), str) and entry["reference"].strip()):
                 problems.append(f"{found['id']}: follow-up needs the reference of the PR, issue or plan task "
                                 "that carries it")
+            elif deferred_only_by_the_person(review, found) and entry.get("person_approved") is not True:
+                problems.append(f"{found['id']}: a security, privacy or data-integrity finding is deferred only "
+                                "when the person said so (person_approved: true)")
         elif kind == "ignored":
             if not (isinstance(entry.get("reason"), str) and entry["reason"].strip()):
                 problems.append(f"{found['id']}: ignored needs a reason")

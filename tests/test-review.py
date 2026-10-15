@@ -2266,6 +2266,41 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("code-review-2: follow-up is for an unreproduced serious finding only (status mild)",
                       result.stderr)
 
+    def test_r23_a_security_privacy_or_data_integrity_finding_is_deferred_only_by_the_person(self):
+        # A security-lens review: the diff names a password, so the lens ran and the record says so.
+        (self.project / "auth.py").write_text("password = input()\n")
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof(repro={"command": "true", "patch": FIX})})
+        review = self.review()
+        self.assertTrue(review["security"])
+        self.assertEqual((self.status(review, "code-review-1"), review["findings"][0]["receipts"]["1"]["exit_code"]),
+                         ("unverified", 0))
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "follow-up", "reference": "issue #9"}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("code-review-1: a security, privacy or data-integrity finding is deferred only when the person "
+                      "said so (person_approved: true)", result.stderr)
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "follow-up", "reference": "issue #9",
+                                                              "person_approved": True}}))
+        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
+        rows = [row for row in self.outcome_rows() if row["row"] == "finding"]
+        self.assertEqual([(row["finding"], row["disposition"]) for row in rows], [("code-review-1", "follow-up")])
+        # An ordinary diff, but the finding's own words name privacy: the same rule.
+        (self.project / "auth.py").unlink()
+        self.log.unlink()
+        self.reviewer("claude", code_finding(summary="privacy: the log keeps the email"))
+        review = self.review()
+        self.assertFalse(review["security"])
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "follow-up", "reference": "issue #9"}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("deferred only when the person said so", result.stderr)
+        for text in ((ROOT / "docs/specs/review-design.md").read_text(),
+                     (ROOT / "skills/finishing-a-branch/references/landing-rules.md").read_text(),
+                     (ROOT / "skills/receiving-code-review/SKILL.md").read_text()):
+            self.assertIn("person_approved", text)
+
     # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
     def test_design_every_rendered_brief_carries_the_simplicity_question(self):
         snippet = (ROOT / "skills/requesting-code-review/references/design-simplicity.md").read_text().strip()

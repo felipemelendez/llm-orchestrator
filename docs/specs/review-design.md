@@ -370,7 +370,11 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   or ran on the unpatched copy and passed, and only under the R21/R22 guard: a
   reproduced, catastrophic or unranked finding is never a follow-up, and
   neither is one whose repro failed on the unpatched copy (the failure showed)
-  or never ran (nothing is known). A `NOT-READY` review whose every blocking
+  or never ran (nothing is known). A finding on a review that ran with the
+  security lens (`review.json` records `security`), or whose kind or words
+  name security, privacy or data integrity, is a follow-up only with
+  `"person_approved": true`, the key `ignored` uses: a failed reproduction
+  does not disprove such a concern (2026-10-15). A `NOT-READY` review whose every blocking
   finding is recorded `refuted`, `settled` or `follow-up` lands like
   `READY-WITH-FIXES`. The verdict itself does not change: `review.json` still
   says `NOT-READY` and keeps the finding's status; the record says where it
