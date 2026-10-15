@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import uuid
@@ -86,6 +87,19 @@ def doctor(policy, installed_root=None):
                                                 "codex", "lead").diagnostics(),
             "uncontrolled": ["native host subagents", "manual CLI launches", "provider/native nested fanout"],
             "governance": "review counts, WIP, final verification and GitHub delivery remain coordinator obligations"}
+
+
+def review_profiles_missing(policy):
+    """Installed providers that orch-review may plan but this policy gives no review profiles."""
+    missing = []
+    for provider in sorted(policy_module.PROVIDERS):
+        if shutil.which(provider):
+            try:
+                for role in ("reviewer", "prover", "refuter"):
+                    policy.intended(provider, role)
+            except policy_module.PolicyError:
+                missing.append(provider)
+    return missing
 
 
 def launch(args, policy):
@@ -183,6 +197,12 @@ def main(argv=None):
                   "policy_context": policy.policy_context()}
         if args.command == "validate":
             result["roles"] = policy.validate_launches()
+            if policy.enabled:
+                result["review_profiles_missing"] = review_profiles_missing(policy)
+                result["review_note"] = ("orch-review can plan reviewers, the prover and the refuter on every installed "
+                                         "CLI, so every installed provider needs reviewer, prover and refuter profiles "
+                                         "and a catalog here, committed at the review's base; otherwise the review "
+                                         "stops at preflight. No other model is chosen in its place.")
         else:
             result["coordinator_obligations"] = policy.data.get("project_rules", {})
             result["hook_execution_observed"] = False

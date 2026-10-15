@@ -22,7 +22,11 @@ must validate against explicit observed provider capabilities rather than
 invent equivalent effort values. Preserve legacy behavior without policy.
 
 Apply resolved settings to actual `codex exec`, `codex review`, Claude review
-and helper command arguments. Preserve authentication, sandbox, MCP isolation,
+and helper command arguments. A review reads `.llm-orchestrator.json` and every
+listed policy document from the merge-base revision, never from the working
+tree under review, and records `policy_source` (`merge-base <sha>` or `none`).
+Without the file at the base the review runs without policy. Explicit
+`orch-control.py` commands read the working tree; they are not reviews. Preserve authentication, sandbox, MCP isolation,
 dropout and served-model validation. Record intended settings separately from
 observed settings. Include role-configured general launch entry points so
 lead/writer settings are executable rather than advisory.
@@ -60,7 +64,16 @@ If this sandbox is unavailable, snapshots require unsupported dependencies,
 or source immutability cannot be established, checks may still execute but
 their receipts are explicitly ineligible for reuse. Pre/post hashes alone
 are not proof against edit-and-restore (ABA) mutation. Reject symlink,
-submodule and external input scopes. Changed revision alone is permitted if
+submodule and external inputs inside the declared scope; ones outside it do not
+block a check. A declared directory covers every file under it. A
+project-relative executable resolves against the project and is an input.
+A reusable receipt needs output showing at least one test ran: recognised
+zero-test or collection-only output is rejected, and a known test runner whose
+output cannot be judged records `tests_ran: unknown` and is not reusable.
+Receipts are read only to reuse one; an unreadable receipt is skipped, named in
+the result, and disables reuse for that run. An interrupted check stops the
+run and is recorded as failed. After a sandbox fallback the receipt records the
+environment that actually ran. Changed revision alone is permitted if
 covered inputs are identical. Reject changed inputs, stale/missing environment,
 incomplete/failed/tampered receipts and mutations during a check. Record failed
 and actual repeated executions; a newer failure is not erased by an old pass.
@@ -78,7 +91,8 @@ hook declarations versus observed trust, and uncontrolled launch paths without
 claiming unobservable hook execution. No service, daemon or extra LLM call.
 
 Extend existing usage/outcome mechanisms with intended/observed role settings,
-tokens/provider-reported cost when available, capacity wait, checks executed
+tokens/provider-reported cost when available, capacity wait (`capacity_wait_s`,
+unknown when no launch recorded one), checks executed
 or reused, repeated work, and explicit delivery IDs. Aggregate cost per
 validated delivery only from linked observed receipts, preserving unknown
 costs and failed attempts. No invented dollar prices or performance improvement.

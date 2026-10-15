@@ -39,8 +39,13 @@ copy. It has `validate`, `session`, `doctor`, `launch`, `capacity`, `check` and 
 }
 ```
 
-The model in this example is an identifier, not an availability promise. Validate
-against the target account's current catalog before launch:
+The model in this example is an identifier, not an availability promise. This
+example configures Codex only. `orch-review.py` can plan its reviewers, prover
+and refuter on every installed CLI, so if Claude is also installed, add Claude
+`reviewer`, `prover` and `refuter` profiles and a Claude catalog too; otherwise
+the review stops at preflight. It never picks another model instead. `validate`
+lists installed providers that lack these profiles in `review_profiles_missing`.
+Validate against the target account's current catalog before launch:
 
 ```sh
 python3 scripts/lib/orch-control.py validate --project /path/to/project
@@ -52,7 +57,8 @@ python3 scripts/lib/orch-control.py usage --project /path/to/project
 ```
 
 The last command reports observed attempts, grouped intended/served role profiles,
-tokens and known/unknown costs, plus caller-linked delivery attempts. It does not label an unmerged or
+tokens and known/unknown costs, total capacity wait (`capacity_wait_s`, null when
+no launch recorded one), plus caller-linked delivery attempts. It does not label an unmerged or
 unverified result a validated delivery. Repeated same-revision executions include legitimate invalidations and failures;
 they are not automatically avoidable work. Costs absent from provider output remain
 unknown; token counts are not converted into invented dollar estimates.
@@ -61,7 +67,13 @@ unknown; token counts are not converted into invented dollar estimates.
 
 Configured launches pass the actual model and effort as CLI arguments. Codex
 review sets both `model` and `review_model`; exec uses `--model`. The existing
-review/prover/refuter/runner pipeline consumes the same policy. Role defaults
+review/prover/refuter/runner pipeline consumes the same policy, but a review
+reads `.llm-orchestrator.json` and the listed policy documents from the
+merge-base commit, never from the change it reviews, so a change cannot coach
+its own reviewers or pick their models. A policy file that exists only in the
+change does not apply to its review; `preflight.json` records `policy_source`.
+A configured full Claude ID such as `claude-opus-4-5` also accepts its dated
+release, such as `claude-opus-4-5-20251101`. Role defaults
 are medium for lead/writer, high for reviewer/debugger/prover/refuter and low
 for clerical/runner. `xhigh`, `max` and `ultra` require explicit justification
 and must also be advertised by the selected model. No automatic escalation.
@@ -146,7 +158,12 @@ attempts prevent borrowing an older success. Reuse also rejects altered output,
 unreadable receipts, source/configuration/tool/environment changes and another
 repository's receipt. A revision can change while identical declared inputs
 remain eligible. Coverage depends on the declared scope; start with `**` when
-dependencies are uncertain.
+dependencies are uncertain. A directory input such as `src` covers every file
+under it. A project-relative command such as `./scripts/check.sh` runs the
+project's own file, which is then part of the scope. Receipts are read only when
+reuse is asked for; a receipt that cannot be read is skipped, named under
+`skipped_receipts`, and that run executes fresh. Pressing Ctrl-C stops the
+check and the run, and the receipt is marked failed.
 
 Reusable checks require a task-owned source snapshot through the existing
 resource manager and a demonstrated OS read-only sandbox. Pre/post hashes alone
@@ -157,9 +174,17 @@ are isolated. Tests receive their own writable home and temporary directory.
 Opaque inline interpreters, common command wrappers and absolute external data
 arguments run record-only. Version probes use an absolute owned temporary home;
 stable hash placeholders are never passed as real paths.
-Wholly skipped/todo or empty Node suites cannot supply reusable evidence.
+Wholly skipped/todo or empty Node suites cannot supply reusable evidence, and
+neither can zero-test or collection-only runs (unittest `Ran 0 tests`, pytest
+`no tests ran`, `collected 0 items` or `--collect-only`, Node `# tests 0`, go
+`[no test files]`). The receipt's `tests_ran` says `true`, `false`, `unknown`
+(a known test runner whose output cannot be judged: not reusable) or `custom`
+(an exact configured command that is not a known test runner, judged by exit
+code and nonempty output).
 A state directory inside a writable temporary root is
-not eligible. Unsupported symlinks/submodules/external inputs are rejected.
+not eligible. Symlinks, submodules and external inputs inside the scope are
+rejected; ones outside it do not block a check. A sandbox fallback records the
+environment that actually ran.
 Ignored dependencies are deliberately not copied into source snapshots. A check
 requiring those dependencies must run without reuse until it has a supported,
 fingerprinted immutable execution environment. The minimal OS sandbox can deny third-party runtimes (including Homebrew Node)

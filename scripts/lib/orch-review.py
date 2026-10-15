@@ -364,22 +364,6 @@ class Review:
                 reasons.append(f"preflight: {name} is installed but not signed in; sign in, or take it off PATH")
         ready = [name for name in ("claude", "codex") if providers[name]["ready"]]
         plan = review_plan(options["path"], options["writer"], ready)
-        policy_context = None
-        try:
-            self.policy = policy_module.Policy(self.project)
-            if self.policy.enabled:
-                self.policy.validate_launches()
-                policy_context = self.policy.policy_context()
-                if plan:
-                    required = {(item["provider"], "reviewer") for item in plan["reviewers"]}
-                    required |= {(plan["helper"], "prover"), (plan["helper"], "refuter")}
-                    if plan["experiments"] == "claude-runner":
-                        required.add(("claude", "runner"))
-                    for provider, role in required:
-                        self.policy.resolve(provider, role)
-                        self.policy.capacity(provider, role)  # rejects unsupported hard inference cap
-        except policy_module.PolicyError as error:
-            reasons.append(f"preflight: project policy: {error}")
         if plan is None:
             reasons.append("preflight: neither claude nor codex is installed and signed in")
         sandbox = providers["codex"]["ready"] and self.sandbox_starts()
@@ -407,6 +391,26 @@ class Review:
                 reasons.append("preflight: the base and HEAD have no merge-base")
             else:
                 merge_base = found.stdout.strip()
+        # Project policy comes from the merge-base, never from the change under review:
+        # its author must not choose the reviewers' instructions, models or capacity.
+        policy_context, policy_source = None, "none"
+        try:
+            if merge_base:
+                self.policy = policy_module.Policy(self.project, revision=merge_base)
+            if self.policy and self.policy.enabled:
+                policy_source = f"merge-base {merge_base}"
+                self.policy.validate_launches()
+                policy_context = self.policy.policy_context()
+                if plan:
+                    required = {(item["provider"], "reviewer") for item in plan["reviewers"]}
+                    required |= {(plan["helper"], "prover"), (plan["helper"], "refuter")}
+                    if plan["experiments"] == "claude-runner":
+                        required.add(("claude", "runner"))
+                    for provider, role in required:
+                        self.policy.resolve(provider, role)
+                        self.policy.capacity(provider, role)  # rejects unsupported hard inference cap
+        except policy_module.PolicyError as error:
+            reasons.append(f"preflight: project policy: {error}")
         try:
             config = load_config(self.project)
         except Failure as error:
@@ -430,7 +434,7 @@ class Review:
                   "spec": spec.read_text() if spec.is_file() else None, "spec_path": str(spec),
                   "base": base.stdout.strip() if base.returncode == 0 else None, "merge_base": merge_base,
                   "copy_ignored": copy_ignored, "setup": setup, "test_cmd": test_cmd,
-                  "policy_context": policy_context}
+                  "policy_context": policy_context, "policy_source": policy_source}
         write_json(self.run_dir / "preflight.json", result)
         return result
 
@@ -1137,8 +1141,9 @@ def stream_events(path):
 
 
 def claude_family(served, requested=CLAUDE_ALIAS):
-    if requested.startswith("claude-") and served == requested:
-        return True
+    if requested.startswith("claude-"):
+        # A configured full ID, exactly or as its dated release (claude-x-y-YYYYMMDD).
+        return bool(re.fullmatch(rf"{re.escape(requested)}(?:-\d{{8}})?", served))
     return requested in {"opus", "sonnet", "haiku"} and bool(re.fullmatch(
         rf"claude-{re.escape(requested)}(?:-[a-zA-Z0-9.]+)+(?:\[[a-z0-9]+\])?", served))
 

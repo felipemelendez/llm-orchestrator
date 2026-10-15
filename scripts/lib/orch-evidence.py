@@ -72,10 +72,13 @@ def identity(project):
 
 
 def inventory(project):
-    """Read actual tracked and nonignored untracked bytes, never follow symlinks."""
+    """Name every tracked and nonignored untracked path and its kind, without reading contents.
+
+    Kinds: file, missing, symlink, submodule, nonregular. Only scoped() decides
+    whether a symlink or submodule matters; one outside the scope never does.
+    """
     rows = git(project, 'ls-files', '-s', '-z').split(b'\0')
-    if any(row.startswith(b'160000 ') for row in rows):
-        raise ValueError('submodules are unsupported verification inputs')
+    gitlinks = {os.fsdecode(row.split(b'\t', 1)[1]) for row in rows if row.startswith(b'160000 ')}
     names = git(project, 'ls-files', '--cached', '--others', '--exclude-standard', '-z').split(b'\0')
     result = {}
     for raw in sorted(set(names) - {b''}):
@@ -84,38 +87,75 @@ def inventory(project):
         if relative.is_absolute() or '..' in relative.parts:
             raise ValueError('input escapes repository')
         path = project / relative
-        for parent in [path, *path.parents]:
-            if parent == project:
-                break
-            if parent.is_symlink():
-                raise ValueError('symlink input is unsupported: ' + name)
-        if not path.exists():
-            result[name] = None
-        elif not path.is_file():
-            raise ValueError('nonregular input is unsupported: ' + name)
+        parents = [path, *path.parents]
+        if name in gitlinks:
+            result[name] = 'submodule'
+        elif any(parent.is_symlink() for parent in parents[:parents.index(project)]):
+            result[name] = 'symlink'
+        elif not path.exists():
+            result[name] = 'missing'
         else:
-            before = path.stat()
-            contents = path.read_bytes()
-            after = path.stat()
-            if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
-                raise ValueError('input changed while fingerprinting: ' + name)
-            result[name] = {'sha256': hashlib.sha256(contents).hexdigest(),
-                            'executable': bool(after.st_mode & 0o111)}
+            result[name] = 'file' if path.is_file() else 'nonregular'
+    return result
+
+
+def fingerprint(project, names):
+    """Read the actual bytes of the scoped files only; never follow a symlink."""
+    result = {}
+    for name, kind in names.items():
+        path = project / name
+        if kind == 'missing' and not os.path.lexists(path):
+            result[name] = None
+            continue
+        if kind != 'file' or path.is_symlink() or not path.is_file():
+            raise ValueError('input changed while fingerprinting: ' + name)
+        before = path.stat()
+        contents = path.read_bytes()
+        after = path.stat()
+        if (before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_ino, after.st_size, after.st_mtime_ns):
+            raise ValueError('input changed while fingerprinting: ' + name)
+        result[name] = {'sha256': hashlib.sha256(contents).hexdigest(),
+                        'executable': bool(after.st_mode & 0o111)}
     return result
 
 
 def matches(path, patterns):
+    # A plain directory input such as "src" or "src/" covers every file under it.
     return any(pattern in ('*', '**', '**/*') or fnmatch.fnmatchcase(path, pattern)
+               or path.startswith(pattern.rstrip('/') + '/')
                or (pattern.startswith('**/') and fnmatch.fnmatchcase(path, pattern[3:])) for pattern in patterns)
 
 
-def scoped(files, definition, policy):
+def project_relative(name):
+    return '/' in name and not Path(name).is_absolute()
+
+
+def scoped(names, definition, policy):
     patterns = definition['inputs']
     required = {'.llm-orchestrator.json', *policy.data.get('policies', [])}
-    result = {name: value for name, value in files.items() if name in required or matches(name, patterns)}
-    if not result or not any(matches(name, patterns) and value is not None for name, value in result.items()):
+    executable = definition.get('argv', [''])[0]
+    if project_relative(executable):
+        # The project's own check script is part of what runs, so it is an input.
+        required.add(os.path.normpath(executable))
+    result = {name: kind for name, kind in names.items() if name in required or matches(name, patterns)}
+    for name, kind in result.items():
+        if kind in ('symlink', 'submodule', 'nonregular'):
+            raise ValueError(f'{kind} input is unsupported: {name}')
+    if not any(matches(name, patterns) and kind == 'file' for name, kind in result.items()):
         raise ValueError('declared scope has no existing input files')
     return result
+
+
+def resolved(definition, project):
+    """The definition whose executable is the project's own file when argv[0] is project-relative.
+
+    The command still runs as written from the project or its snapshot, whose copy
+    of that file is a verified input; the caller's directory never matters.
+    """
+    executable = definition['argv'][0]
+    if not project_relative(executable):
+        return definition
+    return dict(definition, argv=[str(project / os.path.normpath(executable)), *definition['argv'][1:]])
 
 
 def environment(definition):
@@ -194,21 +234,33 @@ class Store:
         atomic(self.path / (record['id'] + '.json'), record)
 
     def records(self, project_id, name):
-        result = []
-        for path in self.path.glob('*.json'):
-            if path.is_symlink():
-                raise ValueError('symlink receipt')
+        """This check's signed receipts, oldest first.
+
+        Unreadable receipts are skipped and named in self.skipped; the caller then
+        refuses reuse, because a skipped receipt might be a newer failure. A receipt
+        that claims this check but fails its signature is tampering and raises.
+        """
+        result, self.skipped = [], []
+        for path in sorted(self.path.glob('*.json')):
             try:
+                if path.is_symlink():
+                    raise ValueError('symlink receipt')
                 record = json.loads(path.read_text())
                 signature = record.pop('signature')
-                if not hmac.compare_digest(signature, hmac.new(self.key, canonical(record), hashlib.sha256).hexdigest()):
-                    raise ValueError('receipt signature mismatch: ' + path.name)
+                ours = record.get('project_id') == project_id and record.get('check') == name
+                if not isinstance(signature, str) or not hmac.compare_digest(
+                        signature, hmac.new(self.key, canonical(record), hashlib.sha256).hexdigest()):
+                    if ours:
+                        raise RuntimeError('receipt signature mismatch: ' + path.name)
+                    raise ValueError('unverified receipt')
                 if path.name != record['id'] + '.json' or not isinstance(record['started_ns'], int):
                     raise ValueError('receipt identity mismatch')
-                if record.get('project_id') == project_id and record.get('check') == name:
+                if ours:
                     result.append(record)
-            except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
-                raise ValueError('malformed receipt: ' + path.name) from error
+            except RuntimeError as error:
+                raise ValueError(str(error)) from None
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+                self.skipped.append(path.name)
         return sorted(result, key=lambda row: (row['started_ns'], row['id']))
 
 
@@ -224,12 +276,14 @@ def execute(argv, cwd, env, output, timeout):
                                    start_new_session=True)
         try:
             return process.wait(timeout=timeout), False
-        except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
             process.wait()
+            if isinstance(error, KeyboardInterrupt):
+                raise  # an interrupted check is never a complete receipt
             return None, True
         finally:
             module('orch-review').kill_group(process)
@@ -290,12 +344,47 @@ def supported_reuse_command(argv):
                    for word in argv[1:])
 
 
-def nonempty_execution(argv, output):
-    counts = {name: int(value) for name, value in re.findall(
-        r'(?m)^(?:#|\u2139) (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$', output.decode(errors='replace'))}
-    if counts or (Path(argv[0]).name == 'node' and '--test' in argv):
+def tests_ran(argv, output):
+    """Whether the output shows at least one test ran.
+
+    True or False when a summary is recognised (Node, unittest, pytest, go test);
+    'unknown' when a known test runner printed no summary that can be judged;
+    'custom' for an exact configured command that is not a known test runner,
+    which is judged by its exit code and nonempty output alone. Empty output is False.
+    """
+    text = output.decode(errors='replace')
+    if not text.strip():
+        return False
+    name = Path(argv[0]).name
+    module = argv[2] if len(argv) > 2 and argv[1] == '-m' else None
+    counts = {key: int(value) for key, value in re.findall(
+        r'(?m)^(?:#|\u2139) (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$', text)}
+    if counts or (name == 'node' and '--test' in argv):
         return counts.get('tests', 0) > 0 and counts.get('pass', 0) > 0 and counts.get('fail', 0) == 0 and counts.get('cancelled', 0) == 0
-    return bool(output.strip())
+    if any(word in ('--collect-only', '--co') for word in argv):
+        return False
+    ran = re.findall(r'(?m)^Ran (\d+) tests? in ', text)  # unittest
+    if ran:
+        return sum(int(value) for value in ran) > 0
+    if re.search(r'\bno tests ran\b|\bcollected 0 items\b', text):  # pytest
+        return False
+    if re.search(r'\b[1-9]\d* passed\b', text):
+        return True
+    if re.search(r'\b\d+ tests? collected\b', text):  # pytest collection-only
+        return False
+    go = name == 'go' and argv[1:2] == ['test']
+    if go:
+        oks = re.findall(r'(?m)^ok\s.*$', text)
+        if oks:
+            return any('[no tests to run]' not in line for line in oks)
+        if '[no test files]' in text:
+            return False
+    runner = go or name in ('pytest', 'py.test') or (name.startswith('python') and module in ('unittest', 'pytest'))
+    return 'unknown' if runner else 'custom'
+
+
+def nonempty_execution(argv, output):
+    return tests_ran(argv, output) in (True, 'custom')
 
 
 def run_check(project, name, reuse=False, state_dir=None):
@@ -304,21 +393,26 @@ def run_check(project, name, reuse=False, state_dir=None):
     definition = policy.data.get('checks', {}).get(name)
     if not definition:
         raise ValueError('unknown configured check: ' + name)
-    files = inventory(project)
+    names = inventory(project)
     context = policy.policy_context()
-    if any(item['path'] not in files for item in context['files']):
+    if any(item['path'] not in names for item in context['files']):
         raise ValueError('ignored or external policy inputs are unsupported; include canonical policy in source inventory')
-    inputs = scoped(files, definition, policy)
-    env, observed_env = environment(definition)
+    selected = scoped(names, definition, policy)
+    inputs = fingerprint(project, selected)
+    runs = resolved(definition, project)
+    env, observed_env = environment(runs)
     project_id = identity(project)
     revision = os.fsdecode(git(project, 'rev-parse', 'HEAD')).strip()
     key = digest({'check': definition, 'inputs': inputs, 'environment': observed_env,
                   'engine': engine_fingerprint(),
                   'policy_context_sha256': digest(context)})
     store = Store(state_dir, project)
-    prior = store.records(project_id, name)
+    # Receipts are read only to reuse one: someone else's bad receipt never blocks a fresh run.
+    wants_reuse = reuse and definition.get('reuse', False)
+    prior = store.records(project_id, name) if wants_reuse else []
+    skipped = store.skipped if wants_reuse else []
     latest = prior[-1] if prior else None
-    if reuse and definition.get('reuse', False) and latest and latest.get('reusable') is True and latest.get('key') == key:
+    if wants_reuse and not skipped and latest and latest.get('reusable') is True and latest.get('key') == key:
         output = store.path / (latest['id'] + '.log')
         if not output.is_file() or output.is_symlink() or hashlib.sha256(output.read_bytes()).hexdigest() != latest.get('output_sha256'):
             raise ValueError('receipt output is missing or changed')
@@ -331,6 +425,8 @@ def run_check(project, name, reuse=False, state_dir=None):
     record = {'schema': 1, 'id': uuid.uuid4().hex, 'started_ns': time.time_ns(), 'project_id': project_id,
               'project': str(project), 'revision': revision, 'check': name, 'argv': definition['argv'],
               'inputs': inputs, 'environment': observed_env, 'key': key, 'status': 'running', 'reusable': False}
+    if skipped:
+        record['skipped_receipts'] = skipped  # named, never reused
     store.write(record)
     start = time.monotonic()
     snapshot = manager = task = token = None
@@ -342,39 +438,42 @@ def run_check(project, name, reuse=False, state_dir=None):
             task = manager.start(str(project), 'verification-' + record['id'])
             token = manager.acquire(task['id'], 'check-runner')['token']
             snapshot = Path(manager.create(task['id'], token, 'copy')['path'])
-            for path, expected in files.items():
-                if path not in inputs and expected is not None:
+            for path, kind in names.items():
+                if path not in inputs and os.path.lexists(snapshot / path):
                     (snapshot / path).unlink()
-            for path, expected in files.items():
+            for path, expected in inputs.items():
                 target = snapshot / path
-                if path in inputs and expected is not None and (not target.is_file() or target.is_symlink() or
+                if expected is not None and (not target.is_file() or target.is_symlink() or
                         hashlib.sha256(target.read_bytes()).hexdigest() != expected['sha256']):
                     raise ValueError('source changed while preparing snapshot: ' + path)
-            if inventory(project) != files:
+            if fingerprint(project, scoped(inventory(project), definition, policy)) != inputs:
                 raise ValueError('source changed before snapshot execution')
             prefix, reason = readonly_argv(snapshot, env)
             if prefix:
                 cwd = snapshot
             else:
-                env = environment(dict(definition, immutable=False))[0]
+                # Record the environment that actually runs, not the sandbox's.
+                runs = dict(runs, immutable=False)
+                env, observed_env = environment(runs)
+                record['environment'] = observed_env
         output = store.path / (record['id'] + '.log')
         argv = [*(prefix or []), *definition['argv']]
         exit_code, timed_out = execute(argv, cwd, env, output, definition.get('timeout_s', 600))
-        after = scoped(inventory(project), definition, policy)
-        stable = inputs == after and observed_env == environment(definition)[1]
+        after = fingerprint(project, scoped(inventory(project), definition, policy))
+        stable = inputs == after and observed_env == environment(runs)[1]
         if prefix:
             # The command cannot mutate inputs. This also detects interference by
             # a cooperating outside process; source snapshots have unique ownership.
-            for path, expected in files.items():
+            for path, expected in inputs.items():
                 target = snapshot / path
                 if path in inputs and expected is not None and (not target.is_file() or target.is_symlink() or
                         hashlib.sha256(target.read_bytes()).hexdigest() != expected['sha256']):
                     stable = False
         content = output.read_bytes()
+        ran = tests_ran(definition['argv'], content)
         reusable = bool(definition.get('reuse') and prefix and stable and exit_code == 0
-                        and supported_reuse_command(definition['argv'])
-                        and nonempty_execution(definition['argv'], content))
-        record.update(status='complete', exit_code=exit_code, timed_out=timed_out,
+                        and supported_reuse_command(definition['argv']) and ran in (True, 'custom'))
+        record.update(status='complete', exit_code=exit_code, timed_out=timed_out, tests_ran=ran,
                       duration_s=round(time.monotonic() - start, 6), reusable=reusable,
                       immutable_observed=bool(prefix), stable=stable, execution_cwd=str(cwd),
                       output_sha256=hashlib.sha256(content).hexdigest(),
@@ -385,10 +484,14 @@ def run_check(project, name, reuse=False, state_dir=None):
                         'check': name, 'receipt_id': record['id'], 'revision': revision, 'reused': False,
                         'exit_code': exit_code, 'duration_s': record['duration_s'],
                         'reusable': reusable, 'date': time.time()})
-        return {key: record.get(key) for key in ('status', 'id', 'revision', 'exit_code', 'timed_out',
-                'reusable', 'immutable_observed', 'stable', 'reason', 'duration_s')}
+        result = {key: record.get(key) for key in ('status', 'id', 'revision', 'exit_code', 'timed_out',
+                  'reusable', 'immutable_observed', 'stable', 'reason', 'duration_s', 'tests_ran')}
+        if skipped:
+            result['skipped_receipts'] = skipped
+        return result
     except BaseException as error:
-        record.update(status='failed', reusable=False, reason=str(error), finished_ns=time.time_ns())
+        record.update(status='failed', reusable=False, reason=str(error) or type(error).__name__,
+                      finished_ns=time.time_ns())
         store.write(record)
         record_outcome({'row': 'check', 'project_id': project_id, 'repository': project.name,
                         'check': name, 'receipt_id': record['id'], 'revision': revision, 'reused': False,
@@ -444,6 +547,8 @@ def report(project):
             profile['known_cost_usd'] = round(profile['known_cost_usd'] + cost, 6)
         if cost is None or attempt.get('cost_complete') is False:
             profile['unknown_cost_attempts'] += 1
+    waits = [attempt['capacity']['wait_s'] for attempt in attempts if isinstance(attempt.get('capacity'), dict)
+             and type(attempt['capacity'].get('wait_s')) in (int, float)]
     linked = {}
     for row in launches + reviews:
         if row.get('delivery_id'):
@@ -459,6 +564,7 @@ def report(project):
             'repeated_same_revision_checks': repeated, 'launches': len(launches), 'reviews': len(reviews),
             'observed_cost_usd': round(sum(costs), 6) if costs else None,
             'unknown_cost_records': sum(row.get('cost_usd') is None or row.get('cost_complete') is False for row in launches + reviews),
+            'capacity_wait_s': round(sum(waits), 4) if waits else None,
             'role_profiles': list(profiles.values()), 'linked_deliveries': linked,
             'validated_deliveries': None, 'cost_per_validated_delivery_usd': None,
             'delivery_measurement': 'pending: review/check results alone do not authenticate delivery and non-author final integration gates'}

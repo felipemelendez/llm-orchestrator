@@ -256,7 +256,9 @@ How the pieces fit together at the file level.
 SessionStart uses `orch-session-context.py` to load fresh canonical text/hashes,
 with an explicit pending-read manifest for oversized policy. Codex uses the
 explicit session API; no new hook definitions are installed. The existing review
-runner delegates configuration and admission to `scripts/lib/orch-policy.py`;
+runner delegates configuration and admission to `scripts/lib/orch-policy.py`,
+reading the configuration and policy documents from the merge-base, never from
+the change under review;
 `orch-control.py` exposes validation, fresh policy loading, diagnostics, configured
 launches and explicit capacity reconciliation. Models/efforts are validated at
 each actual CLI boundary. A single external locked ledger admits outer CLI
@@ -267,7 +269,8 @@ fanout cannot be counted reliably and are reported as uncontrolled.
 snapshots and the existing review-outcomes log for measurements. Locally signed
 receipts bind scope/content, policy, command, executable/toolchain, environment
 and execution-engine identity. Reuse requires observed OS source-write and
-external-read denial; unsupported environments execute record-only. Node built-in
+external-read denial and output that shows at least one test ran; unsupported
+environments execute record-only. Node built-in
 and exact configured custom checks also feed the existing completion classifier.
 No new orchestration service or Git-tracked live handoff board is introduced.
 See `docs/project-policy.md` for boundaries, commands and update/rollback.

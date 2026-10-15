@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
 import time
@@ -82,22 +83,68 @@ def project_id(project):
 
 
 class Policy:
-    def __init__(self, project):
+    """The project's policy, from the working tree or, for a review, from a fixed revision.
+
+    A review passes the merge-base as revision, so the change under review never
+    chooses its reviewers' instructions, models or capacity.
+    """
+    def __init__(self, project, revision=None):
         self.project = git_root(project)
+        self.revision = revision
         self.path = self.project / ".llm-orchestrator.json"
-        self.enabled = self.path.exists() or self.path.is_symlink()
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
-        if self.enabled:
-            if self.path.is_symlink():
+        if revision is not None:
+            raw = self.show(".llm-orchestrator.json", follow=False)
+            self.enabled = raw is not None
+        else:
+            self.enabled = self.path.exists() or self.path.is_symlink()
+            if self.enabled and self.path.is_symlink():
                 raise PolicyError("project configuration must not be a symlink")
             try:
-                raw = self.path.read_bytes()
+                raw = self.path.read_bytes() if self.enabled else None
+            except OSError as error:
+                raise PolicyError(f"project configuration: {error}") from error
+        if self.enabled:
+            try:
                 self.data = json.loads(raw)
-            except (OSError, ValueError) as error:
+            except ValueError as error:
                 raise PolicyError(f"project configuration: {error}") from error
             self._config_digest = digest(raw)
             self.validate()
+
+    def show(self, name, follow=True):
+        """Bytes of name at self.revision, or None when absent there; never the working tree."""
+        for _ in range(8):
+            listed = subprocess.run(["git", "-C", str(self.project), "ls-tree", "-z", self.revision, "--", name],
+                                    stdin=subprocess.DEVNULL, capture_output=True)
+            if listed.returncode:
+                raise PolicyError(f"cannot read revision {self.revision}")
+            if not listed.stdout:
+                return None
+            mode, kind, blob = listed.stdout.split(b"\t", 1)[0].decode().split()
+            if kind != "blob":
+                raise PolicyError(f"{name} is not a file at {self.revision}")
+            data = subprocess.run(["git", "-C", str(self.project), "cat-file", "blob", blob],
+                                  stdin=subprocess.DEVNULL, capture_output=True, check=True).stdout
+            if mode != "120000":
+                return data
+            if not follow:
+                raise PolicyError("project configuration must not be a symlink")
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(name), data.decode("utf-8", "replace")))
+            if posixpath.isabs(target) or target == ".." or target.startswith("../"):
+                raise PolicyError(f"policy document is missing or outside the project: {name}")
+            name = target
+        raise PolicyError(f"policy document link chain is too long: {name}")
+
+    def document(self, name):
+        """Bytes of a listed policy document, or None when it is missing or outside the project."""
+        if self.revision is not None:
+            return self.show(name)
+        path = (self.project / name).resolve()
+        if self.project not in path.parents or not path.is_file():
+            return None
+        return path.read_bytes()
 
     def validate(self):
         data = self.data
@@ -107,8 +154,7 @@ class Policy:
         strings(data.get("policies", []), "policies")
         for name in data.get("policies", []):
             relative(name, "policies")
-            path = (self.project / name).resolve()
-            if self.project not in path.parents or not path.is_file():
+            if self.document(name) is None:
                 raise PolicyError(f"policy document is missing or outside the project: {name}")
         roles = data.get("roles", {})
         object_keys(roles, PROVIDERS, "roles")
@@ -201,16 +247,18 @@ class Policy:
     def policy_context(self):
         files = []
         for name in self.data.get("policies", []):
-            path = (self.project / name).resolve()
-            if self.project not in path.parents or not path.is_file():
-                raise PolicyError(f"policy document is missing or outside the project: {name}")
             try:
-                raw = path.read_bytes()
+                raw = self.document(name)
+                if raw is None:
+                    raise PolicyError(f"policy document is missing or outside the project: {name}")
                 text = raw.decode("utf-8")
             except (OSError, UnicodeError) as error:
                 raise PolicyError(f"cannot load policy document {name}: {error}") from error
             files.append({"path": name, "sha256": digest(raw), "text": text})
-        config_digest = digest(self.path.read_bytes()) if self.enabled else None
+        if self.revision is not None:
+            config_digest = self._config_digest  # a revision cannot change
+        else:
+            config_digest = digest(self.path.read_bytes()) if self.enabled else None
         if config_digest != self._config_digest:
             raise PolicyError("project configuration changed during the session; load a fresh policy")
         context = {"files": files, "config_sha256": config_digest}
@@ -234,7 +282,11 @@ class Policy:
         path = Path(entry.get("path", default)).expanduser()
         if not path.is_absolute():
             path = self.project / path
-        data = read_json(path, f"{provider} capability catalog")
+        try:
+            raw = path.read_bytes()
+            data = json.loads(raw)
+        except (OSError, ValueError) as error:
+            raise PolicyError(f"{provider} capability catalog: {error}") from error
         if not isinstance(data, dict):
             raise PolicyError("capability catalog must be an object")
         try:
@@ -244,6 +296,11 @@ class Policy:
             raise PolicyError("catalog has no valid timezone-aware fetched_at observation") from error
         if not 0 <= age <= entry.get("max_age_s", 86400):
             raise PolicyError("catalog observation is stale or in the future; refresh it through the provider CLI")
+        # The age is checked on every call; the CLI version probe and the rest run
+        # once per catalog content for the life of this Policy.
+        cached = self._catalogs.get(provider)
+        if cached and cached[0] == (str(path), digest(raw)):
+            return cached[1], cached[2]
         try:
             version = subprocess.run([provider, "--version"], stdin=subprocess.DEVNULL, capture_output=True,
                                      text=True, timeout=15)
@@ -257,10 +314,11 @@ class Policy:
             raise PolicyError("Claude capabilities require explicit observation provenance")
         if not isinstance(data.get("models"), list):
             raise PolicyError("catalog has no models list")
-        provenance = {"path": str(path.resolve()), "sha256": digest(path.read_bytes()),
+        provenance = {"path": str(path.resolve()), "sha256": digest(raw),
                       "fetched_at": data["fetched_at"], "client_version": client,
                       "provenance": data.get("provenance", "Codex CLI model catalog cache"),
                       "remote_inference_validated": False}
+        self._catalogs[provider] = ((str(path), digest(raw)), data, provenance)
         return data, provenance
 
     def intended(self, provider, role):

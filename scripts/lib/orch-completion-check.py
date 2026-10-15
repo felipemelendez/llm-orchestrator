@@ -416,8 +416,12 @@ def is_runner(words, i):
     name, rest = base(words[i]), words[i + 1:]
     if name == 'node':
         # Interpreter option, not a script argument. Inspection never counts.
-        if any(word in ('--help', '-h', '--version', '-v', '--check', '-c',
-                        '--eval', '-e', '--print', '-p', '--test-list-only') for word in rest):
+        # The inspection, printing and other-mode options are from `node --help`.
+        if any(word.partition('=')[0] in ('--help', '-h', '--version', '-v', '--check', '-c',
+                                          '--eval', '-e', '--print', '-p', '--test-list-only',
+                                          '--v8-options', '--completion-bash', '--prof-process',
+                                          '--run', '--build-snapshot', '--build-snapshot-config')
+               for word in rest):
             return False
         valued = {'--test-reporter', '--test-reporter-destination', '--test-name-pattern',
                   '--test-skip-pattern', '--test-concurrency', '--test-shard',

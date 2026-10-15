@@ -44,6 +44,13 @@ class Recognition(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertFalse(C.ran_a_check(command))
 
+    def test_node_inspection_only_options_are_not_checks(self):
+        for command in ('node --test --v8-options', 'node --test --completion-bash',
+                        'node --test --prof-process', 'node --run=test --test', 'node --test --eval=1',
+                        'node --build-snapshot --test'):
+            with self.subTest(command=command):
+                self.assertFalse(C.ran_a_check(command))
+
     def test_custom_exact_argv_not_prefix_or_echo(self):
         checks = [['node', 'scripts/catalog.mjs', '--verify']]
         self.assertTrue(C.ran_a_check('node scripts/catalog.mjs --verify', check_commands=checks))
@@ -332,6 +339,148 @@ class Receipts(unittest.TestCase):
         self.write_config()
         self.assertEqual(self.check()['exit_code'], 0)
         self.assertEqual(C.configured_check_commands(self.project), [self.config['checks']['unit']['argv']])
+
+    def test_directory_input_covers_every_file_under_it(self):
+        self.config['checks']['unit']['inputs'] = ['src']
+        self.write_config()
+        first = self.check()
+        self.assertTrue(first['reusable'])
+        receipt = json.loads((self.state / (first['id'] + '.json')).read_text())
+        self.assertIn('src/value.txt', receipt['inputs'])
+        (self.project / 'src/value.txt').write_text('changed under a directory input')
+        self.assertEqual(self.check(True)['status'], 'complete')
+        self.assertEqual(sorted(E.scoped({'src/a.py': 'file', 'srcx.py': 'file', 'lib/b.py': 'file'},
+                                         {'inputs': ['src/', 'lib/*.py']}, type('P', (), {'data': {}}))),
+                         ['lib/b.py', 'src/a.py'])
+
+    def test_out_of_scope_symlink_and_submodule_do_not_block_a_check(self):
+        (self.project / 'docs-link.md').symlink_to('POLICY.md')
+        sub = self.base / 'sub'
+        sub.mkdir()
+        subprocess.run(['git', 'init', '-q'], cwd=sub, check=True)
+        subprocess.run(['git', '-c', 'user.name=s', '-c', 'user.email=s@example.invalid', 'commit', '-q',
+                        '--allow-empty', '-m', 'synthetic'], cwd=sub, check=True)
+        commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=sub, check=True, capture_output=True,
+                                text=True).stdout.strip()
+        self.run_git('update-index', '--add', '--cacheinfo', '160000,%s,vendor/sub' % commit)
+        self.config['checks']['unit']['immutable'] = False
+        self.write_config()
+        self.assertEqual(self.check()['exit_code'], 0)
+        for inputs in (['docs-link.md'], ['vendor/**']):
+            self.config['checks']['unit']['inputs'] = inputs
+            self.write_config()
+            with self.assertRaisesRegex(ValueError, 'unsupported'):
+                self.check()
+
+    def test_a_bad_receipt_never_blocks_a_fresh_run_and_is_named_when_reusing(self):
+        first = self.check()
+        (self.state / 'foreign.json').write_text('{"from": "another project or key"}')
+        fresh = self.check()
+        self.assertEqual(fresh['exit_code'], 0)
+        self.assertNotIn('skipped_receipts', fresh)
+        again = self.check(True)
+        self.assertEqual(again['status'], 'complete')
+        self.assertEqual(again['skipped_receipts'], ['foreign.json'])
+        self.assertNotEqual(again['id'], first['id'])
+
+    def test_interrupt_kills_the_check_and_is_never_a_complete_receipt(self):
+        original = subprocess.Popen.wait
+        children = []
+        def interrupted(process, timeout=None):
+            if timeout is not None and 'time.sleep(30)' in str(process.args):
+                children.append(process.pid)
+                raise KeyboardInterrupt
+            return original(process)
+        self.config['checks']['unit'].update(immutable=False, argv=[sys.executable, '-c', 'import time; time.sleep(30)'])
+        self.write_config()
+        with patch.object(subprocess.Popen, 'wait', interrupted):
+            with self.assertRaises(KeyboardInterrupt):
+                self.check()
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(children[0], 0)
+        receipts = [json.loads(path.read_text()) for path in self.state.glob('*.json')]
+        self.assertEqual([receipt['status'] for receipt in receipts], ['failed'])
+        self.assertEqual(self.rows[-1]['failed'], True)
+
+    def test_usage_reports_capacity_wait(self):
+        path = self.base / 'outcomes.jsonl'
+        project_id = E.identity(self.project)
+        rows = [{'row': 'launch', 'project_id': project_id, 'capacity': {'wait_s': 2.5}},
+                {'row': 'review', 'project_id': project_id, 'launches': [{'capacity': {'wait_s': 0.5}}]}]
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        with patch.object(E.module('orch-review'), 'outcome_path', return_value=path):
+            self.assertEqual(E.report(self.project)['capacity_wait_s'], 3.0)
+        path.write_text(json.dumps({'row': 'launch', 'project_id': project_id}) + '\n')
+        with patch.object(E.module('orch-review'), 'outcome_path', return_value=path):
+            self.assertIsNone(E.report(self.project)['capacity_wait_s'])
+
+    def test_zero_test_and_collection_only_runs_are_never_reusable(self):
+        for argv, output in (
+                (['python3', '-m', 'unittest', 'discover'], b'Ran 0 tests in 0.000s\n\nOK\n'),
+                (['python3', '-m', 'pytest', '--collect-only', '-q'], b'tests/test_a.py::test_one\n\n1 test collected\n'),
+                (['pytest'], b'collected 0 items\n\n=== no tests ran in 0.01s ===\n'),
+                (['node', '--test'], b'# tests 0\n# pass 0\n'),
+                (['go', 'test', './...'], b'?   \texample/pkg\t[no test files]\n'),
+                (['go', 'test', './...'], b'ok  \texample/pkg\t0.01s [no tests to run]\n'),
+                (['python3', 'run.py'], b'Ran 0 tests in 0.000s\n\nOK\n'),
+                (['python3', 'run.py'], b'')):
+            with self.subTest(argv=argv, output=output):
+                self.assertFalse(E.tests_ran(argv, output))
+                self.assertFalse(E.nonempty_execution(argv, output))
+        self.assertEqual(E.tests_ran(['python3', '-m', 'pytest'], b'something unreadable\n'), 'unknown')
+        self.assertFalse(E.nonempty_execution(['python3', '-m', 'pytest'], b'something unreadable\n'))
+        self.assertIs(E.tests_ran(['python3', '-m', 'unittest'], b'Ran 2 tests in 0.1s\n\nOK\n'), True)
+        self.assertIs(E.tests_ran(['pytest', '-q'], b'2 passed in 0.01s\n'), True)
+        self.assertIs(E.tests_ran(['go', 'test', './...'], b'ok  \texample/pkg\t0.01s\n'), True)
+        self.assertEqual(E.tests_ran(['./check.sh'], b'custom output\n'), 'custom')
+        # A wrapper whose runner found nothing: exit 0 with a zero-test summary.
+        (self.project / 'src/zero.py').write_text('print("Ran 0 tests in 0.000s")\nprint()\nprint("OK")\n')
+        self.config['checks']['unit']['argv'] = [sys.executable, 'src/zero.py']
+        self.write_config()
+        result = self.check()
+        self.assertEqual(result['exit_code'], 0)
+        self.assertFalse(result['reusable'])
+        receipt = json.loads((self.state / (result['id'] + '.json')).read_text())
+        self.assertIs(receipt['tests_ran'], False)
+        self.assertEqual(self.check(True)['status'], 'complete')
+
+    def test_relative_executable_resolves_against_the_project(self):
+        script = self.project / 'check.sh'
+        script.write_text('#!/bin/sh\necho project check\n')
+        script.chmod(0o755)
+        self.config['checks']['unit']['argv'] = ['./check.sh']
+        self.write_config()
+        caller = self.base / 'caller'
+        caller.mkdir()
+        decoy = caller / 'check.sh'
+        decoy.write_text('#!/bin/sh\necho decoy\n')
+        decoy.chmod(0o755)
+        previous = os.getcwd()
+        os.chdir(caller)
+        try:
+            result = self.check()
+        finally:
+            os.chdir(previous)
+        self.assertEqual(result['exit_code'], 0)
+        receipt = json.loads((self.state / (result['id'] + '.json')).read_text())
+        tool = receipt['environment']['tools'][str(script.resolve())]
+        self.assertEqual(tool['path'], str(script.resolve()))
+        self.assertIn('check.sh', receipt['inputs'])
+        self.assertEqual((self.state / (result['id'] + '.log')).read_text(), 'project check\n')
+
+    def test_sandbox_fallback_records_the_environment_that_ran(self):
+        seen = {}
+        real = E.execute
+        def capture(argv, cwd, env, output, timeout):
+            seen['env'] = dict(env)
+            return real(argv, cwd, env, output, timeout)
+        with patch.object(E, 'readonly_argv', return_value=(None, 'unavailable sandbox')), \
+                patch.object(E, 'execute', side_effect=capture):
+            result = self.check()
+        receipt = json.loads((self.state / (result['id'] + '.json')).read_text())
+        self.assertEqual(receipt['environment']['variables_sha256'], E.digest(seen['env']))
+        self.assertNotIn('__ORCH_OWNED_HOME__', seen['env'].values())
+        self.assertTrue(result['stable'])
 
 
 if __name__ == '__main__':
