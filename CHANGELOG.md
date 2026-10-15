@@ -5,6 +5,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-15 — every task names its risk
+
+- **Every plan task carries a `Path:` line.** `templates/plan.md` gives each
+  task `Path: Simple | Standard | Full — <why, naming the signal>`. The
+  planner chooses it by the cadence skill's three questions (impact,
+  uncertainty, reversibility) and its Full signals; a task whose risk is
+  unknown is never Simple. The dispatch skills paste the line into the
+  implementer's envelope, give a Full task its own review, and reassess the
+  path when scope grows or a round finds something consequential; a reviewer
+  may raise it, never lower it.
+- **The cadence skill says what forces Full.** One list, in plain words:
+  permissions, identity, privacy, or data whose loss is hard to undo; effects
+  that cannot be reversed, or recovery that is hard; concurrency, shared
+  state, retries with side effects, ordering; contracts between components or
+  repositories whose failure breaks the whole; invariants not obvious from the
+  code. Any one signal is enough, never averaged away, and unknown risk
+  counts as high. A one-line permission change can need Full; a large
+  mechanical change can be Simple. The Full path in `CADENCE.md` repeats the
+  list. The skill stayed within its word ceiling by shortening repeated
+  sentences, not by dropping a rule.
+- **A security finding is never deferred quietly.** A failed reproduction
+  does not disprove a security, privacy or data-integrity concern. When the
+  review ran with the security lens (`review.json` now records `security`), or
+  a finding's kind or words name one of the three, `orch-review.py record`
+  accepts `follow-up` only with `"person_approved": true`, the key `ignored`
+  already uses. Everything else about landing rule 7 stays: an ordinary
+  unreproduced serious finding is still recorded as a follow-up and the
+  branch lands. Spec: R23 in `docs/specs/review-design.md`; design:
+  `docs/specs/path-line-and-full-signals.md`.
+- Tests: `tests/test-landing-rules.sh`, `tests/test-cadence-docs.sh`,
+  `tests/test-review.sh`.
+
+### Upgrading
+
+- Nothing to configure. Existing plans without a `Path:` line still run;
+  add the line to tasks you dispatch from now on.
+- Claude Code: `claude plugin update llm-orchestrator@llm-orchestrator`.
+  Codex: `codex plugin add llm-orchestrator@llm-orchestrator`.
+
 ## [0.16.0] - 2026-10-15 — project settings choose the model
 
 - **The review loop ends on evidence, not on a count.** Release 0.15.0 capped

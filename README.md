@@ -6,7 +6,7 @@
 
 LLM Orchestrator is a plugin for Claude Code, with a smaller part for Codex. It helps the assistant turn an idea into a saved plan, build it task by task, have the change reviewed by independent reviewers, and run the tests before it says the work is done.
 
-New in 0.16.0: one optional settings file per project chooses the model and effort for every role, on Codex and on Claude, and every launch records what was actually served. A configured test command counts as a check in the completion check. Reviews read the landed settings, never the change under review. A review loop now runs until it stops finding real defects, never landing over one, instead of stopping after three runs. [All changes](./CHANGELOG.md).
+New in 0.17.0: every plan task names its review path (Simple, Standard or Full) and the signal behind it; the cadence skill lists in plain words what forces Full, and one signal is enough; a security, privacy or data-integrity finding is deferred only when the person says so, because a failed reproduction does not disprove it. [All changes](./CHANGELOG.md).
 
 ## Is it right for you?
 
