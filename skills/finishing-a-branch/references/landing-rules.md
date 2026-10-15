@@ -67,6 +67,22 @@ applied, four branches landed in nine hours.
      finding (`fixed`, `refuted`, `settled`, `follow-up`, or `ignored` by the
      person), then land or split. Never run the same review again hoping for
      a different answer.
+   - A small fix gets a Standard re-review, not a Full one. A fix is small
+     when all three hold: (1) every finding it answers has a regression test
+     that failed before the fix and passes after it; (2) it touches only the
+     lines the findings name and their tests: no new function, option, field
+     or file, and no behaviour beyond the finding; (3) the production diff
+     (shipped files, tests excluded) is under twenty lines. It gets one
+     scoped Standard review of its diff (`orch-review.py run --path standard
+     --base <the head the previous review saw>`: one independent built-in
+     reviewer, no prover or refuter), and the controller also reads the
+     whole diff and runs each regression test without the fix to see it
+     fail. A finding that review raises is handled like any other finding.
+     A fix for a catastrophic finding, or any fix in a diff the security
+     lens applies to (authentication, secrets, tokens, payments), always gets
+     the Full re-review. The controller records each finding `fixed` with its
+     test and writes one line in the outcome record that the fix was
+     reviewed under the small-fix clause.
    - A reproduced finding is always fixed, never deferred. A branch never
      lands over a known reproduced defect, whatever the round.
    - After two rounds in a row whose re-review found new reproduced defects
@@ -111,6 +127,12 @@ applied, four branches landed in nine hours.
   (`fixed`, `refuted`, `settled`, `follow-up`, or `ignored` by the person),
   then land or split. A reproduced finding is fixed, never given a disposition
   that lets the branch land over it.
+- Before re-reviewing a fix (rule 6): check the small-fix clause. If its
+  three conditions hold and no finding is catastrophic or security-lens, run
+  one scoped Standard review of the fix diff instead of a Full round, read
+  the whole diff, run each regression test without the fix to see it fail,
+  record each finding `fixed` with its test, and write the small-fix line in
+  the outcome record.
 - After two rounds whose fixes each brought new reproduced defects (rule 6):
   dispatch `orch-debugger` for a diagnosis before any third fix wave.
 

@@ -18,7 +18,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   defect is always fixed; no branch lands over one. After two rounds in a row
   whose fixes broke something new, a read-only `orch-debugger` finds why
   before any third fix. Worries nobody reproduced still never extend the
-  loop. The rule is rule 6 of
+  loop. A small fix gets a Standard re-review, not a Full one: when each
+  finding has a regression test the controller sees fail without it, the
+  change touches only the findings' lines and their tests, and the production
+  diff is under twenty lines, one independent reviewer checks the fix diff
+  instead of a Full round; catastrophic and security-lens fixes always get
+  the Full re-review. The rule is rule 6 of
   `skills/finishing-a-branch/references/landing-rules.md`, carried by
   `dispatching-subagents` (its fix loop), `executing-plans`,
   `requesting-code-review`, `receiving-code-review`, the cadence skill and its

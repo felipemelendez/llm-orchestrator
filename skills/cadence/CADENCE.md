@@ -40,6 +40,10 @@ they cannot supply a required independent review or gate.
    open finding gets a disposition and the branch lands or is split; it never
    lands over a reproduced defect. After two rounds whose fixes each broke
    something new, `orch-debugger` finds why before a third fix.
+   A small fix gets a Standard re-review, not a Full one (rule 6's small-fix
+   clause: regression tests that fail without it, only the findings' lines,
+   under twenty production lines; the controller reads the diff and sees the
+   tests fail); catastrophic and security-lens fixes always get the Full one.
    A mild-only review is the last one unless a fix changed behaviour, an
    unreproduced serious finding is recorded `follow-up` (R23), and a decision
    ruled a second time goes into the spec's `## Settled` section before the

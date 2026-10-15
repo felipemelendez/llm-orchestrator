@@ -10,11 +10,11 @@ built-in reviewers (Claude Code's `/code-review` and `codex review`), proves
 their findings, and decides the verdict from files it wrote. Start it once; no
 step is yours to skip. The rules are in `docs/specs/review-design.md`.
 
-A ticket branch gets one whole-branch review at landing (`--base` at the base,
-after main is merged in), then scoped fix-and-re-review rounds while each
-finds new reproduced defects; at a stall it lands or is split. A landing
-verdict goes straight to
-`finishing-a-branch` (its `references/landing-rules.md`, rules 2, 6 and 7).
+A ticket branch gets one whole-branch landing review (`--base <base>`,
+after merging main), then scoped fix-and-re-review rounds while each finds new
+reproduced defects (Standard, not Full, under the small-fix clause); at a stall
+it lands or splits. A landing verdict goes to `finishing-a-branch`
+(`references/landing-rules.md`, rules 2, 6 and 7).
 
 ## Which review
 

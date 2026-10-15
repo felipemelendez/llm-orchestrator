@@ -42,8 +42,8 @@ Disagreed:
 - Reason: <one line — what proves it>
 ```
 
-If you push back and turn out to be wrong, state the correction plainly and implement. No
-apology, no defence of why you pushed back — both cost words and neither changes the code.
+If you push back and are wrong, state the correction plainly and implement. No
+apology or defence.
 
 ## Working through a batch
 
@@ -51,7 +51,8 @@ Findings are ranked by the project's harm ranking (`LAWS.md`) as the prover
 ranked them: the consequence if the claim is true, never the reviewer's label.
 A catastrophic finding blocks the work until it is fixed, or ignored by the
 person; a serious one until it is fixed, refuted or settled; their fixes are
-re-reviewed. Mild findings are fixed now or
+re-reviewed, a serious finding's small fix by Standard review (landing rule
+6's small-fix clause). Mild findings are fixed now or
 recorded with a reason, and a review that returned only mild findings
 (`READY-WITH-FIXES`) is the last one: handle them in one commit, run the
 checks, read the diff, record each disposition, land — unless a fix turned out
@@ -121,7 +122,7 @@ Deferred:
 Verify:
 - <command> → <line>
 Next:
-- Record the dispositions, then one scoped re-review of the fix of a serious or catastrophic finding (new reproduced defects mean another round); a mild-only fix lands without another review unless it changed behaviour; then /llm-orchestrator:finish.
+- Record the dispositions, then one scoped re-review of a serious or catastrophic finding's fix, Standard under the small-fix clause (new reproduced defects mean another round); a mild-only fix lands without another review unless it changed behaviour; then /llm-orchestrator:finish.
 ```
 
 The `Verify:` line is the check that the reviewer's fix actually compiles and tests green in this

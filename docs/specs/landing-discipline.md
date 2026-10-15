@@ -108,6 +108,26 @@ read-only diagnosis before any third fix. What the count got right stays: a
 worry nobody reproduced never extends the loop, and the same review is never
 rerun hoping for a different answer.
 
+**Small fixes (revised 2026-10-15).** The owner ruled that the loop still had
+a gap: it sent every fix, however small, through a full re-review (two
+reviewers, prover, refuter), which made a landing loop feel endless. A small
+fix gets a Standard re-review, not a Full one. A fix is small when all three
+hold: every finding it answers has a regression test that failed before the
+fix and passes after it; it touches only the lines the findings name and
+their tests, with no new function, option, field or file and no behaviour
+beyond the finding; and its production diff (shipped files, tests excluded)
+is under twenty lines. It gets one scoped Standard review of its diff
+(`orch-review.py run --path standard --base <the head the previous review
+saw>`: one independent built-in reviewer, no prover or refuter), and the
+controller also reads the whole diff and runs each regression test without
+the fix to see it fail. A finding that review raises is handled like any
+other. A fix for a catastrophic finding, or any fix in a diff the security
+lens applies to (authentication, secrets, tokens, payments), always gets the
+Full re-review. The controller records each finding `fixed` with its test and
+writes one line in the outcome record that the fix was reviewed under the
+small-fix clause. A small fix is never exempt from independent review; it gets
+the proportionate one.
+
 **Alternatives considered.** A new `landing` skill (rejected: the finish skill
 already does the landing; a second entry point is one more thing to route to).
 Enforcing the limit in the worktree materialize engine (rejected: that engine
@@ -146,6 +166,12 @@ findings (rejected: a disposition reuses the landing path R22 already built).
   finds and fixes reproduced defects continues; a round with no new reproduced
   finding stalls and is adjudicated; a landing never happens over a reproduced
   defect.
+- **A small fix gets a Standard re-review, not a Full one.** Under twenty
+  production lines, only the findings' lines and their tests, no new
+  behaviour, each finding with a regression test: one scoped Standard review
+  of the fix diff (one independent built-in reviewer, no prover or refuter),
+  and the controller reads the whole diff and sees the test fail without the
+  fix. Catastrophic and security-lens fixes always get the Full re-review.
 - **The rules live in one reference file, not in a new skill.** The finish
   skill is the landing step; the rules describe when it runs.
 
