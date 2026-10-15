@@ -41,6 +41,7 @@ passes; this is the durable state across `/clear`.
 ### 1. <task name>  - [ ]
 Independent: yes | no (depends on N)
 Owner: implementer | explorer | debugger
+Path: Simple | Standard | Full — <one sentence: why, naming the signal; the cadence skill's three questions (impact, uncertainty, reversibility) and its Full signals decide; unknown risk is never Simple>
 Files:
 - create: <path>
 - modify: <path>:<line-range>
@@ -61,6 +62,7 @@ Sub-steps (progress notes):
 ### 2. <task name>  - [ ]
 Independent: yes
 Owner: implementer
+Path: <Simple | Standard | Full — why>
 Files:
 - modify: <path>
 Done when: <...>

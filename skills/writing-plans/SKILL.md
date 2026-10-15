@@ -25,6 +25,7 @@ Every task carries a termination contract:
 
 - `Done when:` — the observable end state, usually the verify command's green output.
 - `Stop if:` — the abort conditions: N failed fix attempts on the same test, an edit needed outside the task's `Files:`, a budget. An agent with an acceptance criterion but no stop rule knows how to prove success but not when to stop failing — unawareness of termination conditions is one of the most common multi-agent failure modes (MAST, arXiv:2503.13657). A fired `Stop if:` returns `PARTIAL` or `BLOCKED`, never more attempts.
+- `Path:` — Simple, Standard or Full, with one sentence naming the signal. Every task carries it. The choice follows the cadence skill's three questions (impact, uncertainty, reversibility) and its list of Full signals; a task whose risk is unknown is never Simple. The dispatcher pastes the line with the task and reassesses it when scope grows.
 - `Interfaces:` where independence matters — `introduces:` (symbols/endpoints/files the task creates) and `consumes:` (what it needs from other tasks). The executor treats declared interfaces as authoritative and body-scans only when the block is absent.
 
 Add a `## Risks` line per risk, with the mitigation when it's obvious.

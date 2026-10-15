@@ -22,7 +22,7 @@ research briefs are themselves markdown — they carry `##` headings and ``` fen
 that would otherwise be indistinguishable from this envelope's own structure.
 
 <task>
-{{task_text — paste the full task from the plan, including its Steps and Verify}}
+{{task_text — paste the full task from the plan, including its Path: line, Steps and Verify}}
 </task>
 
 ## Global constraints

@@ -56,6 +56,11 @@ for f in skills/executing-plans/SKILL.md \
 done
 has "$ROOT/templates/plan.md" "Requires landed:" && ok "templates/plan.md carries Requires landed:" \
   || fail "templates/plan.md carries Requires landed:" "missing"
+has "$ROOT/templates/plan.md" "Path: Simple | Standard | Full" && ok "templates/plan.md carries the Path: line" \
+  || fail "templates/plan.md carries the Path: line" "missing"
+for f in skills/writing-plans/SKILL.md skills/dispatching-subagents/SKILL.md skills/dispatching-parallel-agents/SKILL.md; do
+  has "$ROOT/$f" '`Path:`' && ok "$f names the task's Path: line" || fail "$f names the task's Path: line" "missing"
+done
 for f in skills/cadence/references/laws.md skills/cadence/references/laws-example.md; do
   has "$ROOT/$f" "**Branches:**" && ok "$f has the Branches line" || fail "$f has the Branches line" "missing"
 done

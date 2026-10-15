@@ -38,10 +38,10 @@ Build N envelopes (`templates/dispatch-prompt.md`), each stating explicitly: rea
    bash "$MAT" "$SID" <slug1> <slug2> <slug3>
    ```
    It prints one `<slug>\t<path>\t<branch>` line per worktree. Non-zero exit → it found a conflict (duplicate slug, existing path/branch, already-claimed slug) and created nothing — do not dispatch. Write each slug under its unticked plan heading (`Worktree: <slug>`); after `/clear`, an unticked task with a `Worktree:` line was already dispatched, so check that worktree (or the ownership registry) before re-dispatching it. The implementer still self-defends: atomic `.orch-active` mutex on entry, `BLOCKED` if handed neither a worktree nor a shared-checkout declaration.
-3. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its printed worktree path, each self-contained.
+3. **Build N envelopes** (`templates/implementer-prompt.md`), each pinned to its printed worktree path, each self-contained, each carrying its task's `Path:` line.
 4. **Send in parallel, one message. Wait for all N returns** before any follow-up.
 5. **Triage each Status:** `DONE`/`DONE_WITH_CONCERNS` → record concerns and leave the checkbox unticked until the branch lands (step 7). `BLOCKED` → the recovery tree in `dispatching-subagents` (missing context resumes the same agent via `SendMessage` by agentId — its partial context survives; sibling-wait, decomposition, and model escalation re-dispatch fresh). `NEEDS_CONTEXT` → answer the `Ask:` via `SendMessage`; the resume returns in the background — don't spawn a duplicate while waiting. `PARTIAL` → record `Progress:`, resume with unblocking guidance, or re-dispatch fresh with `Progress:`/`Remaining:` pasted if the transcript shows a retry storm.
-6. **Review** after all are done: `requesting-code-review` per task for high-risk surface, or `/llm-orchestrator:review` on the combined diff for low-risk. Every review also asks: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`).
+6. **Review** after all are done: `requesting-code-review` per task whose `Path:` is Full or whose surface is high-risk, or `/llm-orchestrator:review` on the combined diff for low-risk. Every review also asks: Is this the simplest correct version? (`skills/requesting-code-review/references/design-simplicity.md`).
 7. **Merge back with the integration engine — don't merge by hand:**
    ```bash
    cd "$(git rev-parse --show-toplevel)"
