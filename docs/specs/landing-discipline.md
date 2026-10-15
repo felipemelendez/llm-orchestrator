@@ -118,7 +118,7 @@ their tests, with no new function, option, field or file and no behaviour
 beyond the finding; and its production diff (shipped files, tests excluded)
 is under twenty lines. It gets one scoped Standard review of its diff
 (`orch-review.py run --path standard --base <the head the previous review
-saw>`: one independent built-in reviewer, no prover or refuter), and the
+saw>`: one independent built-in reviewer, no refuter), and the
 controller also reads the whole diff and runs each regression test without
 the fix to see it fail. A finding that review raises is handled like any
 other. A fix for a catastrophic finding, or any fix in a diff the security
@@ -169,7 +169,7 @@ findings (rejected: a disposition reuses the landing path R22 already built).
 - **A small fix gets a Standard re-review, not a Full one.** Under twenty
   production lines, only the findings' lines and their tests, no new
   behaviour, each finding with a regression test: one scoped Standard review
-  of the fix diff (one independent built-in reviewer, no prover or refuter),
+  of the fix diff (one independent built-in reviewer, no refuter),
   and the controller reads the whole diff and sees the test fail without the
   fix. Catastrophic and security-lens fixes always get the Full re-review.
 - **The rules live in one reference file, not in a new skill.** The finish

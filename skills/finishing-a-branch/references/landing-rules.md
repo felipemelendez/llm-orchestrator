@@ -75,7 +75,7 @@ applied, four branches landed in nine hours.
      (shipped files, tests excluded) is under twenty lines. It gets one
      scoped Standard review of its diff (`orch-review.py run --path standard
      --base <the head the previous review saw>`: one independent built-in
-     reviewer, no prover or refuter), and the controller also reads the
+     reviewer, no refuter), and the controller also reads the
      whole diff and runs each regression test without the fix to see it
      fail. A finding that review raises is handled like any other finding.
      A fix for a catastrophic finding, or any fix in a diff the security
