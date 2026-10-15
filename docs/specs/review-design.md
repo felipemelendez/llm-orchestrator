@@ -372,7 +372,9 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   finding is recorded `refuted`, `settled` or `follow-up` lands like
   `READY-WITH-FIXES`. The verdict itself does not change: `review.json` still
   says `NOT-READY` and keeps the finding's status; the record says where it
-  went.
+  went. A follow-up never lets a branch land over a reproduced defect; how
+  long the fix rounds run is decided by progress, not by a count
+  (`skills/finishing-a-branch/references/landing-rules.md`, rule 6).
   Decided on 2026-10-13 after a project whose reviews returned about twenty
   findings a round, many serious and unreproduced, blocked every landing for
   four days (`docs/specs/landing-discipline.md`).

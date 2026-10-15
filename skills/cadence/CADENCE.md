@@ -33,9 +33,13 @@ they cannot supply a required independent review or gate.
 4. Handle the findings with `receiving-code-review` and record a disposition
    for each with `orch-review.py record`. `INCOMPLETE` is not agreement: fix
    the cause and run a new review. Do not add a third general review. The
-   branch's budget is one review, one fix wave, one scoped re-review of the
-   fix (`finishing-a-branch`'s `references/landing-rules.md`, rule 6); at the
-   cap every open finding gets a disposition and the branch lands or is split.
+   loop ends on evidence, not on a count (`finishing-a-branch`'s
+   `references/landing-rules.md`, rule 6): one whole-branch review, then rounds
+   of one fix wave and one scoped re-review of the fix while each round finds
+   new reproduced defects or turns a failing check green. At a stall every
+   open finding gets a disposition and the branch lands or is split; it never
+   lands over a reproduced defect. After two rounds whose fixes each broke
+   something new, `orch-debugger` finds why before a third fix.
    A mild-only review is the last one unless a fix changed behaviour, an
    unreproduced serious finding is recorded `follow-up` (R23), and a decision
    ruled a second time goes into the spec's `## Settled` section before the

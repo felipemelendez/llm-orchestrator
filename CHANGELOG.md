@@ -7,6 +7,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [0.16.0] - 2026-10-15 — project settings choose the model, and a check leaves a receipt
 
+- **The review loop ends on evidence, not on a count.** Release 0.15.0 capped
+  a branch at three review runs; the owner ruled that wrong after this
+  release's own re-review found 13 new reproduced defects, three of them
+  catastrophic, that the cap would have shipped. Now each landing starts with
+  one whole-branch review, then rounds of one fix wave and one scoped
+  re-review continue while each finds new reproduced defects or turns a
+  failing check green. A round with neither is a stall: every open finding
+  gets a written disposition and the branch lands or is split. A reproduced
+  defect is always fixed; no branch lands over one. After two rounds in a row
+  whose fixes broke something new, a read-only `orch-debugger` finds why
+  before any third fix. Worries nobody reproduced still never extend the
+  loop. The rule is rule 6 of
+  `skills/finishing-a-branch/references/landing-rules.md`, carried by
+  `dispatching-subagents` (its fix loop), `executing-plans`,
+  `requesting-code-review`, `receiving-code-review`, the cadence skill and its
+  Full path, the rulebook template and example, and
+  `docs/specs/landing-discipline.md`.
 - **One settings file per project, no cadence needed.** An optional
   `.llm-orchestrator.json` at the Git root names the model and effort for each
   role (lead, writer, reviewer, debugger, clerical) on Codex and on Claude.

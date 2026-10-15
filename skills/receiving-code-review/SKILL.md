@@ -121,7 +121,7 @@ Deferred:
 Verify:
 - <command> → <line>
 Next:
-- Record the dispositions, then one scoped re-review of the fix of a serious or catastrophic finding (the last run of the branch's three); a mild-only fix lands without another review unless it changed behaviour; then /llm-orchestrator:finish.
+- Record the dispositions, then one scoped re-review of the fix of a serious or catastrophic finding (new reproduced defects mean another round); a mild-only fix lands without another review unless it changed behaviour; then /llm-orchestrator:finish.
 ```
 
 The `Verify:` line is the check that the reviewer's fix actually compiles and tests green in this

@@ -27,7 +27,7 @@ for phrase in "At most two unmerged implementation branches" \
               "No \"merge after X\" chains" \
               "Every branch is cut from main; a hub change lands first" \
               "Main is merged into every open branch at every landing" \
-              "One whole-branch review per landing" \
+              "The review loop ends on evidence, not on a count" \
               "Reproduce to block" \
               "within one working day of its first green test" \
               "The board is read first"; do
