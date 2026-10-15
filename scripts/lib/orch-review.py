@@ -405,10 +405,14 @@ class Review:
         policy_context, policy_source = None, "none"
         try:
             if merge_base:
-                # Named before validation, so a base policy that fails is still the base's policy.
-                if policy_module.present_at(self.project, merge_base):
+                # A base policy that fails to load is still the base's policy, so it is named either way.
+                try:
+                    self.policy = policy_module.Policy(self.project, revision=merge_base)
+                except policy_module.PolicyError:
                     policy_source = f"merge-base {merge_base}"
-                self.policy = policy_module.Policy(self.project, revision=merge_base)
+                    raise
+                if self.policy.enabled:
+                    policy_source = f"merge-base {merge_base}"
             if self.policy and self.policy.enabled:
                 self.policy.validate_launches()
                 policy_context = self.policy.policy_context()

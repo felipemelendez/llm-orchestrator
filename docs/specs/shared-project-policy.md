@@ -29,10 +29,12 @@ file is at the base, even if it then fails validation, else `none`. Without the
 file at the base the review runs without policy. A capability catalog is a
 reading of this machine, never part of the revision: it is always read from
 disk, a configured path resolved against the project root and the `CODEX_HOME`
-default against the current directory, and a path inside the project root is refused by name. The path read is
-resolved with its links before any `..` is applied; the refusal compares file
-identity, so another spelling of the project folder on a case-insensitive disk
-is still the project. The injected text says the base copy is
+default against the current directory. One rule applies to one path: the
+path's real location, with links resolved before any `..`, is refused when it
+or a folder above it is the project root by file identity, so another spelling
+of the project folder on a case-insensitive disk is still the project, and a
+link in the project that leads outside reads an outside file and is allowed.
+The refusal names the entry as written and the real path it reads. The injected text says the base copy is
 authoritative and a differing working-tree file is part of the change. Codex
 review launches pass `-c project_doc_max_bytes=0` so Codex does not load the
 copy's `AGENTS.md` itself; the user's global `~/.codex/AGENTS.md` still loads.
@@ -98,8 +100,8 @@ pending separately. Do not edit unrelated projects or add a tracked live board.
 Regression tests cover a generic non-Mia fixture and Mia-shaped policy; fresh
 session loading; argv for review/exec and helpers; invalid/unavailable models
 and efforts; shared capacity under concurrent processes and failure; check keys other
-than `argv` rejected by name; catalogs refused inside the project, by file
-identity as well as by text; Node/custom recognition; disabled hooks; launch
+than `argv` rejected by name; catalogs refused when their real path is inside the project, by file
+identity; Node/custom recognition (`tests/test-policy.sh`); disabled hooks; launch
 outcome rows and install diagnostics. Fixtures use
 fake CLIs for deterministic failure coverage, and are labeled synthetic.
 Perform bounded live exec/review served-model/effort checks and Claude built-in

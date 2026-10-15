@@ -29,6 +29,7 @@ POLICY = load("policy_test", ROOT / "scripts/lib/orch-policy.py")
 REVIEW = load("review_test", ROOT / "scripts/lib/orch-review.py")
 CONTROL = load("control_test", ROOT / "scripts/lib/orch-control.py")
 FAKES = load("review_fixtures", ROOT / "tests/test-review.py")
+CHECK = load("completion_check_test", ROOT / "scripts/lib/orch-completion-check.py")
 
 
 class PolicyTests(unittest.TestCase):
@@ -236,16 +237,36 @@ class PolicyTests(unittest.TestCase):
                 POLICY.Policy(self.project)
             self.data = saved
 
-    def test_present_at_names_a_committed_policy_without_validating_it(self):
+    def test_a_policy_at_a_revision_looks_up_its_configuration_once(self):
+        # round-5 code-review-4: presence and the read come from one ls-tree, not two.
         first = self.git("rev-parse", "HEAD").strip()
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1}))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic minimal policy")
+        minimal = self.git("rev-parse", "HEAD").strip()
         (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "unknown_key": True}))
         self.git("add", ".llm-orchestrator.json")
         self.git("commit", "-qm", "synthetic malformed policy")
         malformed = self.git("rev-parse", "HEAD").strip()
-        self.assertFalse(POLICY.present_at(self.project, first))
-        self.assertTrue(POLICY.present_at(self.project, malformed))
+        real_run, lookups = subprocess.run, []
+        def counting(argv, *args, **kwargs):
+            lookups.extend(["ls-tree"] if "ls-tree" in argv else [])
+            return real_run(argv, *args, **kwargs)
+        with patch.object(POLICY.subprocess, "run", counting):
+            self.assertFalse(POLICY.Policy(self.project, revision=first).enabled)
+            self.assertTrue(POLICY.Policy(self.project, revision=minimal).enabled)
+        self.assertEqual(lookups, ["ls-tree", "ls-tree"])
         with self.assertRaises(POLICY.PolicyError):
             POLICY.Policy(self.project, revision=malformed)
+
+    def test_configured_check_commands_read_the_exact_argv(self):
+        self.data["checks"] = {"unit": {"argv": ["node", "scripts/catalog.mjs", "--verify"]}}
+        self.write_policy()
+        self.assertEqual(CHECK.configured_check_commands(self.project), [["node", "scripts/catalog.mjs", "--verify"]])
+
+    def test_an_invalid_policy_configures_no_check_commands(self):
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "unknown_key": True}))
+        self.assertEqual(CHECK.configured_check_commands(self.project), [])
 
     def test_a_catalog_inside_the_project_is_rejected_by_name(self):
         # A catalog is a reading of this machine; the change under review must never supply it.
@@ -263,11 +284,29 @@ class PolicyTests(unittest.TestCase):
                 with self.subTest(path=path, revision=revision), self.assertRaisesRegex(
                         POLICY.PolicyError, r"catalog/codex\.json.*must live outside the repository"):
                     POLICY.Policy(self.project, revision=revision).resolve("codex", "reviewer")
-        # A link in the project is still a path in the project.
+        # The refusal names the entry as written and the real path it reads.
+        self.data["catalogs"]["codex"] = {"path": "./catalog/../catalog/codex.json"}
+        self.write_policy()
+        real = os.path.realpath(self.project / "catalog/codex.json")
+        with self.assertRaises(POLICY.PolicyError) as refused:
+            POLICY.Policy(self.project).resolve("codex", "reviewer")
+        self.assertIn("'./catalog/../catalog/codex.json'", str(refused.exception))
+        self.assertIn(f"(reads {real})", str(refused.exception))
+        # A link in the project that points outside reads a file outside, so it is allowed.
         self.data["catalogs"]["codex"] = {"path": "outside-link.json"}
         self.write_policy()
-        with self.assertRaisesRegex(POLICY.PolicyError, "must live outside the repository"):
-            POLICY.Policy(self.project).resolve("codex", "reviewer")
+        settings = POLICY.Policy(self.project).resolve("codex", "reviewer")
+        self.assertEqual(settings["catalog"]["path"], os.path.realpath(self.catalog_paths["codex"]))
+
+    def test_a_link_in_the_project_leading_out_then_dot_dot_reads_the_outside_file(self):
+        # round-5: "out/../codex.json" where out is a project link to far/sub reads far/codex.json.
+        (self.root / "far/sub").mkdir(parents=True)
+        (self.root / "far/codex.json").write_text(self.catalog_paths["codex"].read_text())
+        (self.project / "out").symlink_to(self.root / "far/sub")
+        self.data["catalogs"]["codex"] = {"path": "out/../codex.json"}
+        self.write_policy()
+        settings = POLICY.Policy(self.project).resolve("codex", "reviewer")
+        self.assertEqual(settings["catalog"]["path"], os.path.realpath(self.root / "far/codex.json"))
 
     def test_a_catalog_inside_the_project_under_another_spelling_is_rejected(self):
         # code-review-4: on a case-insensitive filesystem "../Project/..." names the project itself.
@@ -734,6 +773,38 @@ time.sleep(30)
         (installed / "scripts").mkdir(parents=True)
         (installed / "scripts/stale.py").write_text("stale\n")
         self.assertIn("scripts/stale.py", CONTROL.installation_parity(installed)["different"])
+
+
+class Recognition(unittest.TestCase):
+    def test_node_native_runner_and_inspection(self):
+        for command in ('node --test', 'node --test tests/example.test.mjs',
+                        'node --import loader.mjs --test', 'node --test-reporter tap --test',
+                        'node --test-timeout 300 --test', 'node --env-file .env --test',
+                        'node --test-coverage-include src/** --test',
+                        'node --test-global-setup setup.mjs --test',
+                        'env CI=1 node --test tests/a.js'):
+            with self.subTest(command=command):
+                self.assertTrue(CHECK.ran_a_check(command))
+        for command in ('node program.js --test', 'node -- --test', 'node --test --help',
+                        'node --check --test', 'node -e "console.log(1)" --test',
+                        'node --test-list-only --test', 'echo node --test', 'node --version --test'):
+            with self.subTest(command=command):
+                self.assertFalse(CHECK.ran_a_check(command))
+
+    def test_node_inspection_only_options_are_not_checks(self):
+        for command in ('node --test --v8-options', 'node --test --completion-bash',
+                        'node --test --prof-process', 'node --run=test --test', 'node --test --eval=1',
+                        'node --build-snapshot --test'):
+            with self.subTest(command=command):
+                self.assertFalse(CHECK.ran_a_check(command))
+
+    def test_custom_exact_argv_not_prefix_or_echo(self):
+        checks = [['node', 'scripts/catalog.mjs', '--verify']]
+        self.assertTrue(CHECK.ran_a_check('node scripts/catalog.mjs --verify', check_commands=checks))
+        self.assertTrue(CHECK.ran_a_check('env CI=1 node scripts/catalog.mjs --verify', check_commands=checks))
+        for command in ('node scripts/catalog.mjs --verify --help', 'echo node scripts/catalog.mjs --verify',
+                        'node scripts/catalog.mjs', 'node scripts/catalog.mjs --verify-extra'):
+            self.assertFalse(CHECK.ran_a_check(command, check_commands=checks), command)
 
 
 if __name__ == "__main__":

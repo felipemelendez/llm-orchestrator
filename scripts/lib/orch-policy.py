@@ -84,15 +84,8 @@ def listed(project, revision, name):
     return entry.decode().split()
 
 
-def present_at(project, revision):
-    """Whether the project configuration exists at revision, valid or not."""
-    return listed(git_root(project), revision, ".llm-orchestrator.json") is not None
-
-
 def inside(path, root):
-    """Whether path is root or within it, judged by file identity as well as by text."""
-    if path == root or root in path.parents:
-        return True
+    """Whether the real path is root or within it, judged by file identity alone."""
     for ancestor in (path, *path.parents):
         try:
             if os.path.samefile(ancestor, root):
@@ -125,12 +118,12 @@ class Policy:
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
         if revision is not None:
-            self.enabled = self.listed(".llm-orchestrator.json") is not None
+            # One lookup answers both whether the file is there and where its bytes are.
+            entry = self.listed(".llm-orchestrator.json")
+            self.enabled = entry is not None
+            raw = self.show(".llm-orchestrator.json", follow=False, entry=entry) if self.enabled else None
         else:
             self.enabled = self.path.exists() or self.path.is_symlink()
-        if self.revision is not None:
-            raw = self.show(".llm-orchestrator.json", follow=False) if self.enabled else None
-        else:
             if self.enabled and self.path.is_symlink():
                 raise PolicyError("project configuration must not be a symlink")
             try:
@@ -148,10 +141,13 @@ class Policy:
     def listed(self, name):
         return listed(self.project, self.revision, name)
 
-    def show(self, name, follow=True):
-        """Bytes of name at self.revision, or None when absent there; never the working tree."""
+    def show(self, name, follow=True, entry=None):
+        """Bytes of name at self.revision, or None when absent there; never the working tree.
+
+        entry, when given, is the caller's lookup of name, so it is not listed twice.
+        """
         for _ in range(8):
-            entry = self.listed(name)
+            entry = entry or self.listed(name)
             if entry is None:
                 return None
             mode, kind, blob = entry
@@ -166,7 +162,7 @@ class Policy:
             target = posixpath.normpath(posixpath.join(posixpath.dirname(name), data.decode("utf-8", "replace")))
             if posixpath.isabs(target) or target == ".." or target.startswith("../"):
                 raise PolicyError(f"policy document is missing or outside the project: {name}")
-            name = target
+            name, entry = target, None
         raise PolicyError(f"policy document link chain is too long: {name}")
 
     def document(self, name):
@@ -316,16 +312,17 @@ class Policy:
         entry = self.data.get("catalogs", {}).get(provider, {})
         if provider == "claude" and not entry.get("path"):
             raise PolicyError("Claude needs an explicit observed capability catalog; no equivalent efforts are invented")
-        # The path read is resolved with links before any "..", never collapsed as text.
+        # One rule on one path: resolve links before any "..", then refuse the real path inside the project.
         if entry.get("path"):
-            path = self.project / Path(entry["path"]).expanduser()
+            written = entry["path"]
+            path = self.project / Path(written).expanduser()
         else:
             path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser() / "models_cache.json"
-        named, path = Path(os.path.normpath(os.path.abspath(path))), Path(os.path.realpath(path))
-        # The text as written is checked too: a link kept in the project is the author's to change.
-        if inside(path, self.project) or inside(named, self.project):
-            raise PolicyError(f"{provider} capability catalog {path} is inside the project; the catalog is a "
-                              "fact about this machine and must live outside the repository")
+            written = str(path)
+        path = Path(os.path.realpath(path))
+        if inside(path, self.project):
+            raise PolicyError(f"{provider} capability catalog '{written}' (reads {path}) is inside the project; "
+                              "the catalog is a fact about this machine and must live outside the repository")
         try:
             raw = path.read_bytes()
             data = json.loads(raw)
