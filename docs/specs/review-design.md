@@ -310,10 +310,7 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
 - **R20.** Unchanged: one row per run in
   `${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/review-outcomes.jsonl`,
-  naming reviewers instead of briefs, with no claim text or code. The review
-  row also records `branch`, `head`, `base`, `base_commit` and `merge_base`,
-  and each finding row records `file` and `reproduced`, for later analysis;
-  nothing reads them yet.
+  naming reviewers instead of briefs, with no claim text or code.
 - **R21.** `record <run-dir> --dispositions <file>`, one per
   finding id: `fixed` with the check; `refuted`, with a `file-line` quote
   that `record` checks; `ignored` with a reason, for a blocking finding only

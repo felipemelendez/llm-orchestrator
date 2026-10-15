@@ -897,10 +897,6 @@ class Review:
         errors = []
         try:
             preflight = self.preflight()
-            self.options.update(merge_base=preflight["merge_base"], base_commit=preflight["base"],
-                                branch=git(self.project, "rev-parse", "--abbrev-ref", "HEAD",
-                                           check=False).stdout.strip() or "HEAD")
-            write_json(self.run_dir / "run.json", self.options)
             if preflight["ok"]:
                 self.run_steps(preflight)
             self.finish_state()
@@ -909,9 +905,6 @@ class Review:
             write_json(self.run_dir / "errors.json", errors)
         finally:
             self.cleanup()
-            # The head fingerprinted is the head reviewed; a run that stopped before that has none.
-            self.options["head"] = read_json(self.run_dir / "fingerprint-start.json", {}).get("head")
-            write_json(self.run_dir / "run.json", self.options)
             review = decide(self.run_dir)
             review["duration_s"] = round(time.time() - started, 1)
             write_json(self.run_dir / "review.json", review)
@@ -2270,11 +2263,8 @@ def outcome_row(run_dir, review):
             tokens[key] = tokens.get(key, 0) + value
     return {"row": "review", "run_id": review["run_id"], "date": now(),
             "project": run.get("project"), "delivery_id": run.get("delivery_id"),
-            "project_id": run.get("project_id") or (
-                policy_module.project_id(Path(run["project"])) if run.get("project") else None),
+            "project_id": policy_module.project_id(Path(run["project"])) if run.get("project") else None,
             "repository": Path(run.get("project", "")).name, "path": review["path"],
-            "branch": run.get("branch"), "base": run.get("base"), "base_commit": run.get("base_commit"),
-            "merge_base": run.get("merge_base"), "head": run.get("head"),
             "writer": review["writer"], "reviewers": review["reviewers"], "same_provider": review["same_provider"],
             "diff_lines": review["diff_lines"],
             "launches": [{key: launch.get(key) for key in (
@@ -2311,7 +2301,7 @@ def command_run(args):
         options = {"run_id": uuid.uuid4().hex, "project": str(project), "path": args.path,
                    "writer": args.writer, "base": args.base, "spec": str(Path(args.spec).absolute()),
                    "allow_test_changes": args.allow_test_changes, "started": now(),
-                   "delivery_id": args.delivery_id, "project_id": policy_module.project_id(project)}
+                   "delivery_id": args.delivery_id}
         write_json(run_dir / "run.json", options)
         if args.detach:
             with open(run_dir / "run.log", "ab") as log:
@@ -2438,8 +2428,8 @@ def command_record(args):
     write_json(run_dir / "dispositions.json", dispositions)
     append_outcome(*[{"row": "finding", "run_id": review["run_id"], "date": now(), "finding": f["id"],
                       "reviewer": f.get("reviewer"), "provider": f["provider"], "rank": f.get("rank"),
-                      "kind": f.get("kind"), "status": f["status"], "file": f.get("file"),
-                      "reproduced": bool(f.get("reproduced")), "disposition": dispositions[f["id"]]["disposition"]}
+                      "kind": f.get("kind"), "status": f["status"],
+                      "disposition": dispositions[f["id"]]["disposition"]}
                      for f in review["findings"]])
     print(json.dumps({"status": "recorded", "findings": len(ids)}))
     return 0

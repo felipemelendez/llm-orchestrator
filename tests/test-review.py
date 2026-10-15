@@ -107,11 +107,6 @@ FAKE_CLAUDE = "#!/usr/bin/env python3\n" + FAKE_COMMON + r'''
 args = sys.argv[1:]
 if args[:2] == ["auth", "status"]:
     ok = scenario.get("claude", {}).get("auth", True)
-    moved = FAKE_ROOT / "auth-moved"
-    if scenario.get("claude", {}).get("auth_commands") and not moved.exists():
-        moved.touch()  # a ref or HEAD that moves after launch, once, while preflight runs
-        for command in scenario["claude"]["auth_commands"]:
-            subprocess.run(command, shell=True, cwd=FAKE_ROOT / "project", check=True, capture_output=True)
     print(json.dumps({"loggedIn": ok}))
     sys.exit(0 if ok else 1)
 def usage(spec):
@@ -1940,42 +1935,6 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn("subtracts", text)
         self.assertNotIn("return a - b", text)
 
-    def test_r20_rows_record_the_revisions_reviewed_and_the_reproduced_file(self):
-        # round-7 code-review-5, codex-review-1: HEAD and the base move after launch, before preflight.
-        (self.project / "notes.txt").write_text("notes\n")
-        self.git("add", "notes.txt")
-        self.git("commit", "-qm", "notes", "--", "notes.txt")
-        self.git("branch", "trunk", self.base)
-        identity = "git -c user.name=F -c user.email=f@x.invalid"
-        self.scenario["claude"]["auth_commands"] = [f"{identity} commit -qam moved", "git branch -f trunk HEAD~1"]
-        self.base = "trunk"
-        self.reviewer("claude", code_finding())
-        self.prove({"code-review-1": proof()})
-        self.review()
-        head = self.git("rev-parse", "HEAD").strip()
-        base = self.git("rev-parse", "trunk").strip()
-        self.assertEqual(json.loads((self.run_dir / "fingerprint-start.json").read_text())["head"], head)
-        row = self.outcome_rows()[0]
-        run = json.loads((self.run_dir / "run.json").read_text())
-        for record in (row, run):
-            self.assertEqual((record["branch"], record["base"], record["base_commit"], record["merge_base"],
-                              record["head"]), ("main", "trunk", base, base, head))
-            self.assertTrue(record["project_id"])
-        dispositions = self.root / "dispositions.json"
-        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "fixed", "check": CHECK}}))
-        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
-        self.assertEqual([(row["file"], row["reproduced"]) for row in self.outcome_rows() if row["row"] == "finding"],
-                         [("calc.py", True)])
-
-    def test_r20_a_run_without_a_stored_project_id_computes_it_from_the_project(self):
-        # round-7 code-review-6: a run.json from before project_id was stored still gets one.
-        (self.root / "old-run").mkdir()
-        (self.root / "old-run/run.json").write_text(json.dumps({"project": str(self.project)}))
-        review = {"run_id": "A", "path": "standard", "writer": "codex", "reviewers": [], "same_provider": False,
-                  "diff_lines": 1, "launches": [], "verdict": "READY", "incomplete_reasons": [], "counts": {}}
-        row = MOD.outcome_row(self.root / "old-run", review)
-        self.assertEqual(row["project_id"], MOD.policy_module.project_id(self.project))
-
     def test_policy_source_is_none_when_the_base_tree_cannot_be_read(self):
         # round-6 code-review-6: a failed lookup is not a policy at the merge-base.
         tree = self.git("rev-parse", f"{self.base}^{{tree}}").strip()
@@ -1983,6 +1942,18 @@ class ReviewTests(unittest.TestCase):
         review = self.review()
         self.assert_incomplete(review, "project policy")
         self.assertEqual(self.preflight()["policy_source"], "none")
+
+    def test_policy_whose_blob_cannot_be_read_at_the_merge_base_is_named_and_incomplete(self):
+        # round-8 code-review-6: the file is listed at the base but its bytes are gone.
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1}))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "policy at base")
+        self.base = self.git("rev-parse", "HEAD").strip()
+        blob = self.git("rev-parse", f"{self.base}:.llm-orchestrator.json").strip()
+        (self.project / ".git/objects" / blob[:2] / blob[2:]).unlink()
+        review = self.review()
+        self.assert_incomplete(review, "cannot read .llm-orchestrator.json")
+        self.assertEqual(self.preflight()["policy_source"], f"merge-base {self.base}")
 
     # R21
     def test_r21_record_needs_a_disposition_for_every_finding(self):
