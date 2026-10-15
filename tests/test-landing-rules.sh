@@ -61,6 +61,10 @@ has "$ROOT/templates/plan.md" "Path: Simple | Standard | Full" && ok "templates/
 for f in skills/writing-plans/SKILL.md skills/dispatching-subagents/SKILL.md skills/dispatching-parallel-agents/SKILL.md; do
   has "$ROOT/$f" '`Path:`' && ok "$f names the task's Path: line" || fail "$f names the task's Path: line" "missing"
 done
+for f in skills/dispatching-subagents/SKILL.md skills/dispatching-parallel-agents/SKILL.md; do
+  has "$ROOT/$f" "a reviewer may raise it" && ok "$f says the path is reassessed and a reviewer may raise it" \
+    || fail "$f says the path is reassessed and a reviewer may raise it" "missing"
+done
 for f in skills/cadence/references/laws.md skills/cadence/references/laws-example.md; do
   has "$ROOT/$f" "**Branches:**" && ok "$f has the Branches line" || fail "$f has the Branches line" "missing"
 done
