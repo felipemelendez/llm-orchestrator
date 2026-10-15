@@ -25,7 +25,6 @@ class PolicyError(ValueError):
 ROLES = {"lead": "medium", "writer": "medium", "reviewer": "high", "debugger": "high",
          "clerical": "low", "prover": "high", "refuter": "high", "runner": "low"}
 PROVIDERS = {"codex", "claude"}
-CHECK_KEYS = {"argv", "inputs", "environment", "tools", "timeout_s"}
 
 
 def digest(value):
@@ -72,6 +71,37 @@ def git_root(project):
     return Path(result.stdout.strip()).resolve()
 
 
+def listed(project, revision, name):
+    """(mode, kind, object) of exactly name at revision, or None when absent there."""
+    found = subprocess.run(["git", "-C", str(project), "ls-tree", "-z", revision, "--", name],
+                           stdin=subprocess.DEVNULL, capture_output=True)
+    if found.returncode:
+        raise PolicyError(f"cannot read revision {revision}")
+    entry, _, listed_name = found.stdout.split(b"\0", 1)[0].partition(b"\t")
+    # A folder name lists the folder's files; only the exact name counts.
+    if not found.stdout or os.fsdecode(listed_name) != posixpath.normpath(name):
+        return None
+    return entry.decode().split()
+
+
+def present_at(project, revision):
+    """Whether the project configuration exists at revision, valid or not."""
+    return listed(git_root(project), revision, ".llm-orchestrator.json") is not None
+
+
+def inside(path, root):
+    """Whether path is root or within it, judged by file identity as well as by text."""
+    if path == root or root in path.parents:
+        return True
+    for ancestor in (path, *path.parents):
+        try:
+            if os.path.samefile(ancestor, root):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def project_id(project):
     result = subprocess.run(["git", "-C", str(project), "rev-parse", "--git-common-dir"],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True)
@@ -94,19 +124,10 @@ class Policy:
         self.path = self.project / ".llm-orchestrator.json"
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
-        # Set before anything is validated, so a policy that fails is still named as present.
         if revision is not None:
-            self.present = self.listed(".llm-orchestrator.json") is not None
+            self.enabled = self.listed(".llm-orchestrator.json") is not None
         else:
-            self.present = self.path.exists() or self.path.is_symlink()
-        try:
-            self.load()
-        except PolicyError as error:
-            error.policy = self
-            raise
-
-    def load(self):
-        self.enabled = self.present
+            self.enabled = self.path.exists() or self.path.is_symlink()
         if self.revision is not None:
             raw = self.show(".llm-orchestrator.json", follow=False) if self.enabled else None
         else:
@@ -125,16 +146,7 @@ class Policy:
             self.validate()
 
     def listed(self, name):
-        """(mode, kind, object) of exactly name at self.revision, or None when absent there."""
-        listed = subprocess.run(["git", "-C", str(self.project), "ls-tree", "-z", self.revision, "--", name],
-                                stdin=subprocess.DEVNULL, capture_output=True)
-        if listed.returncode:
-            raise PolicyError(f"cannot read revision {self.revision}")
-        entry, _, listed_name = listed.stdout.split(b"\0", 1)[0].partition(b"\t")
-        # A folder name lists the folder's files; only the exact name counts.
-        if not listed.stdout or os.fsdecode(listed_name) != posixpath.normpath(name):
-            return None
-        return entry.decode().split()
+        return listed(self.project, self.revision, name)
 
     def show(self, name, follow=True):
         """Bytes of name at self.revision, or None when absent there; never the working tree."""
@@ -215,21 +227,13 @@ class Policy:
         for name, check in checks.items():
             if not isinstance(name, str) or not name:
                 raise PolicyError("check names must be nonempty")
-            for key in ("reuse", "immutable"):
-                if isinstance(check, dict) and key in check:
-                    raise PolicyError(f"checks.{name}.{key}: receipts are record-only in this release; remove this key")
-            object_keys(check, CHECK_KEYS, f"checks.{name}")
+            if not isinstance(check, dict):
+                raise PolicyError(f"checks.{name}: expected object with key argv")
+            extra = sorted(set(check) - {"argv"})
+            if extra:
+                raise PolicyError(f"checks.{name}.{extra[0]}: receipts are not part of this release; "
+                                  "a check is only its argv; remove this key")
             strings(check.get("argv"), f"checks.{name}.argv", True)
-            strings(check.get("inputs"), f"checks.{name}.inputs", True)
-            for scope in check.get("inputs", []):
-                relative(scope, f"checks.{name}.inputs")
-            strings(check.get("environment", []), f"checks.{name}.environment")
-            if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) for value in check.get("environment", [])):
-                raise PolicyError(f"checks.{name}.environment: invalid variable name")
-            strings(check.get("tools", []), f"checks.{name}.tools")
-            if any(not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", value) for value in check.get("tools", [])):
-                raise PolicyError(f"checks.{name}.tools: expected binary names")
-            integer(check.get("timeout_s", 600), 1, 86400, "check timeout_s")
         # These validate coordinator obligations; this does not install a GitHub gate.
         rules = data.get("project_rules", {})
         object_keys(rules, {"review", "wip", "delivery"}, "project_rules")
@@ -312,15 +316,16 @@ class Policy:
         entry = self.data.get("catalogs", {}).get(provider, {})
         if provider == "claude" and not entry.get("path"):
             raise PolicyError("Claude needs an explicit observed capability catalog; no equivalent efforts are invented")
+        # The path read is resolved with links before any "..", never collapsed as text.
         if entry.get("path"):
             path = self.project / Path(entry["path"]).expanduser()
         else:
             path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser() / "models_cache.json"
-        path = Path(os.path.abspath(path))
-        for candidate in (path, path.resolve()):
-            if candidate == self.project or self.project in candidate.parents:
-                raise PolicyError(f"{provider} capability catalog {path} is inside the project; the catalog is a "
-                                  "fact about this machine and must live outside the repository")
+        named, path = Path(os.path.normpath(os.path.abspath(path))), Path(os.path.realpath(path))
+        # The text as written is checked too: a link kept in the project is the author's to change.
+        if inside(path, self.project) or inside(named, self.project):
+            raise PolicyError(f"{provider} capability catalog {path} is inside the project; the catalog is a "
+                              "fact about this machine and must live outside the repository")
         try:
             raw = path.read_bytes()
             data = json.loads(raw)
@@ -353,7 +358,7 @@ class Policy:
             raise PolicyError("Claude capabilities require explicit observation provenance")
         if not isinstance(data.get("models"), list):
             raise PolicyError("catalog has no models list")
-        provenance = {"path": str(path.resolve()),
+        provenance = {"path": str(path),
                       "sha256": digest(raw),
                       "fetched_at": data["fetched_at"], "client_version": client,
                       "provenance": data.get("provenance", "Codex CLI model catalog cache"),

@@ -3,7 +3,6 @@
 import argparse
 import importlib.util
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -163,11 +162,6 @@ def launch(args, policy):
 
 
 def main(argv=None):
-    argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] in {"check", "report", "usage"}:
-        if argv[0] == "usage":
-            argv[0] = "report"
-        return module("orch-evidence").main(argv)
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("validate", "session", "doctor", "launch", "capacity"):

@@ -5,7 +5,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
-## [0.16.0] - 2026-10-15 — project settings choose the model, and a check leaves a receipt
+## [0.16.0] - 2026-10-15 — project settings choose the model
 
 - **The review loop ends on evidence, not on a count.** Release 0.15.0 capped
   a branch at three review runs; the owner ruled that wrong after this
@@ -38,17 +38,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   hand them a weaker model. A model catalog is a reading of this machine, so
   it is always read from disk and refused if it sits inside the project. The
   explicit commands (`validate`, `session`,
-  `doctor`, `launch`, `check`) still read the working tree.
-- **A check leaves a receipt.** `orch-control.py check` runs a configured test
-  command and writes a signed receipt outside Git: what ran, where, when, with
-  which files, settings, tools and environment, what it printed and how it
-  ended, so you can see later exactly what was checked. Every check runs; a
-  receipt is a record, never a reason to skip a run. Reusing a passing receipt
-  was built and then removed before release, because no runner's output proves
-  a test ran: Node counts a file with no tests as one passing test, and a test
-  module can print a fake summary. A configuration that still sets `reuse` or
-  `immutable` fails with a message saying so. `usage` names any receipt it
-  could not read. Ctrl-C stops the run and marks the receipt failed.
+  `doctor`, `launch`) still read the working tree. The project check compares
+  real folders, not spelled paths, and follows links before `..`.
+- **Check receipts were removed before release.** A receipt recorded what a
+  test command ran. It was built and reviewed four times, and each round found
+  new real defects, so it was taken out; it returns behind its own spec. A
+  check in `.llm-orchestrator.json` is now just its `argv`, and the completion
+  check still recognises it.
 - **The completion check knows more commands.** Node's built-in `node --test`
   and the exact test commands in `.llm-orchestrator.json` count as checks on
   both Claude Code and Codex. Help, list, syntax-only and other inspection
@@ -65,7 +61,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
   matches the source byte for byte, whether the settings validate, whether the
   cadence is on, and which launch paths the plugin cannot control.
 - Design: `docs/specs/shared-project-policy.md`. Tests: `tests/test-policy.sh`,
-  `tests/test-evidence.sh`, `tests/test-policy-session.sh`, `tests/test-review.sh`.
+  `tests/test-policy-session.sh`, `tests/test-review.sh`.
 
 ### Upgrading
 

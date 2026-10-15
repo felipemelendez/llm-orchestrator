@@ -81,8 +81,7 @@ class PolicyTests(unittest.TestCase):
                                for provider, model in (("codex", "gpt-test"), ("claude", "opus"))},
                      "catalogs": {provider: {"path": str(path)} for provider, path in self.catalog_paths.items()},
                      "capacity": {"max_processes": 4, "external_slots": 1, "wait_timeout_s": 0},
-                     "checks": {"unit": {"argv": ["node", "--test"], "inputs": ["**"],
-                                         "environment": [], "tools": ["node"], "timeout_s": 30}}}
+                     "checks": {"unit": {"argv": ["node", "--test"]}}}
         self.write_policy()
 
     def git(self, *args):
@@ -124,8 +123,8 @@ class PolicyTests(unittest.TestCase):
         POLICY.Policy(self.project)
         for mutation in (
             lambda d: d.update(unknown=True),
-            lambda d: d["checks"]["unit"].update(timeout_s=0),
-            lambda d: d["checks"]["unit"].pop("inputs"),
+            lambda d: d["checks"]["unit"].update(argv=[]),
+            lambda d: d["checks"]["unit"].pop("argv"),
             lambda d: d["project_rules"]["wip"].update(total=2),
             lambda d: d["project_rules"]["review"].update(high_risk_independent_reviews=0),
             lambda d: d["project_rules"]["delivery"].update(exact_revision=False),
@@ -225,18 +224,28 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(POLICY.PolicyError, "outside"):
             POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip())
 
-    def test_reuse_and_immutable_check_keys_are_rejected_by_name(self):
-        # Receipts are record-only in this release; an old configuration must say so.
-        for key in ("reuse", "immutable"):
+    def test_a_check_key_other_than_argv_is_rejected_by_name(self):
+        # Receipts are not part of this release; a check is only the command the completion check knows.
+        for key, value in (("inputs", ["**"]), ("environment", []), ("tools", ["node"]), ("timeout_s", 30),
+                           ("reuse", False), ("immutable", False)):
             saved = json.loads(json.dumps(self.data))
-            self.data["checks"]["unit"][key] = False
+            self.data["checks"]["unit"][key] = value
             self.write_policy()
             with self.subTest(key=key), self.assertRaisesRegex(
-                    POLICY.PolicyError, rf"checks\.unit\.{key}: .*record-only in this release"):
+                    POLICY.PolicyError, rf"checks\.unit\.{key}: receipts are not part of this release"):
                 POLICY.Policy(self.project)
             self.data = saved
-        self.assertNotIn("reuse", POLICY.CHECK_KEYS)
-        self.assertNotIn("immutable", POLICY.CHECK_KEYS)
+
+    def test_present_at_names_a_committed_policy_without_validating_it(self):
+        first = self.git("rev-parse", "HEAD").strip()
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "unknown_key": True}))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic malformed policy")
+        malformed = self.git("rev-parse", "HEAD").strip()
+        self.assertFalse(POLICY.present_at(self.project, first))
+        self.assertTrue(POLICY.present_at(self.project, malformed))
+        with self.assertRaises(POLICY.PolicyError):
+            POLICY.Policy(self.project, revision=malformed)
 
     def test_a_catalog_inside_the_project_is_rejected_by_name(self):
         # A catalog is a reading of this machine; the change under review must never supply it.
@@ -256,6 +265,37 @@ class PolicyTests(unittest.TestCase):
                     POLICY.Policy(self.project, revision=revision).resolve("codex", "reviewer")
         # A link in the project is still a path in the project.
         self.data["catalogs"]["codex"] = {"path": "outside-link.json"}
+        self.write_policy()
+        with self.assertRaisesRegex(POLICY.PolicyError, "must live outside the repository"):
+            POLICY.Policy(self.project).resolve("codex", "reviewer")
+
+    def test_a_catalog_inside_the_project_under_another_spelling_is_rejected(self):
+        # code-review-4: on a case-insensitive filesystem "../Project/..." names the project itself.
+        if not (self.root / "PROJECT" / "calc.py").exists():
+            self.skipTest("the filesystem is case-sensitive, so another spelling is another folder")
+        (self.project / "catalog").mkdir()
+        (self.project / "catalog/codex.json").write_text(self.catalog_paths["codex"].read_text())
+        for path in ("../Project/catalog/codex.json", str(self.root / "PROJECT/catalog/codex.json")):
+            self.data["catalogs"]["codex"] = {"path": path}
+            self.write_policy()
+            with self.subTest(path=path), self.assertRaisesRegex(
+                    POLICY.PolicyError, "must live outside the repository"):
+                POLICY.Policy(self.project).resolve("codex", "reviewer")
+
+    def test_a_catalog_path_through_a_linked_folder_and_dot_dot_follows_the_link(self):
+        # codex-review-1: "link/.." is the link target's parent, not the folder holding the link.
+        (self.root / "far/sub").mkdir(parents=True)
+        (self.root / "far/codex.json").write_text(self.catalog_paths["codex"].read_text())
+        (self.root / "link").symlink_to(self.root / "far/sub")
+        self.data["catalogs"]["codex"] = {"path": str(self.root / "link/../codex.json")}
+        self.write_policy()
+        settings = POLICY.Policy(self.project).resolve("codex", "reviewer")
+        self.assertEqual(settings["catalog"]["path"], str((self.root / "far/codex.json").resolve()))
+        # The same rule keeps a link that leads back into the project from slipping out by text.
+        (self.project / "catalog").mkdir()
+        (self.project / "catalog/codex.json").write_text(self.catalog_paths["codex"].read_text())
+        (self.root / "back").symlink_to(self.project / "catalog")
+        self.data["catalogs"]["codex"] = {"path": str(self.root / "back/../catalog/codex.json")}
         self.write_policy()
         with self.assertRaisesRegex(POLICY.PolicyError, "must live outside the repository"):
             POLICY.Policy(self.project).resolve("codex", "reviewer")

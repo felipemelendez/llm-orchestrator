@@ -402,10 +402,13 @@ class Review:
                 merge_base = found.stdout.strip()
         # Project policy comes from the merge-base, never from the change under review:
         # its author must not choose the reviewers' instructions, models or capacity.
-        policy_context, base_policy = None, None
+        policy_context, policy_source = None, "none"
         try:
             if merge_base:
-                base_policy = self.policy = policy_module.Policy(self.project, revision=merge_base)
+                # Named before validation, so a base policy that fails is still the base's policy.
+                if policy_module.present_at(self.project, merge_base):
+                    policy_source = f"merge-base {merge_base}"
+                self.policy = policy_module.Policy(self.project, revision=merge_base)
             if self.policy and self.policy.enabled:
                 self.policy.validate_launches()
                 policy_context = self.policy.policy_context()
@@ -414,10 +417,7 @@ class Review:
                         self.policy.resolve(provider, role)
                         self.policy.capacity(provider, role)  # rejects unsupported hard inference cap
         except policy_module.PolicyError as error:
-            # A base policy that fails validation is still the base's policy.
-            base_policy = base_policy or getattr(error, "policy", None)
             reasons.append(f"preflight: project policy: {error}")
-        policy_source = f"merge-base {merge_base}" if base_policy and base_policy.present else "none"
         try:
             config = load_config(self.project)
         except Failure as error:

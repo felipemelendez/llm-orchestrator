@@ -29,9 +29,8 @@ alternative; the question and the finding definition are
 
 `docs/project-policy.md` describes opt-in `.llm-orchestrator.json`, independent
 of Cadence. `scripts/lib/orch-control.py` loads fresh canonical policy, diagnoses
-catalogs/installations, launches configured CLI roles, and records checks and
-usage. `orch-policy.py` validates model/effort and coordinates the shared outer
-CLI-process budget; `orch-evidence.py` signs scoped check receipts outside Git.
+catalogs/installations, and launches configured CLI roles. `orch-policy.py`
+validates model/effort and coordinates the shared outer CLI-process budget.
 The existing `orch-review.py` uses these same mechanisms for its subprocesses.
 Native host dispatch remains outside this admission boundary. Review, ownership,
 WIP and delivery rules stay obligations of the coordinator.

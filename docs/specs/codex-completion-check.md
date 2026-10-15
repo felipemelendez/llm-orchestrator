@@ -224,9 +224,8 @@ Rules:
   independently of Cadence. Match the complete command after supported shell
   prefixes; an extra help argument, a mere prefix or echoed text does not count.
   Invalid policy supplies no custom matches; `orch-control.py doctor` reports the
-  configuration error. This recognition is distinct from the explicit check
-  receipt/reuse API in [project policy](../project-policy.md). No receipt is
-  produced or accepted by this transcript hook.
+  configuration error. No receipt is produced or read: a configured check is
+  only a command this hook recognises.
 - A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
   one program, so it is joined with `shlex.join`, which quotes each

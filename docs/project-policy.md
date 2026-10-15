@@ -1,13 +1,13 @@
 # Project policy without Cadence
 
 An optional `.llm-orchestrator.json` at the Git root configures deterministic
-launches, capacity and check receipts. It does not activate Cadence or install
+launches, capacity and test commands. It does not activate Cadence or install
 branch protection. Existing projects without this file retain their model and
 launch defaults. Configuration errors never select a replacement model.
 
 Use Python 3.11 or later and the installed provider CLIs. The control entry
 point is `python3 scripts/lib/orch-control.py` in the plugin source or installed
-copy. It has `validate`, `session`, `doctor`, `launch`, `capacity`, `check` and `usage` commands.
+copy. It has `validate`, `session`, `doctor`, `launch` and `capacity` commands.
 
 ## A minimal project
 
@@ -26,13 +26,7 @@ copy. It has `validate`, `session`, `doctor`, `launch`, `capacity`, `check` and 
   },
   "capacity": {"max_processes": 4, "external_slots": 1, "wait_timeout_s": 30},
   "checks": {
-    "unit": {
-      "argv": ["node", "--test", "tests/example.test.mjs"],
-      "inputs": ["**"],
-      "environment": [],
-      "tools": ["node", "codex"],
-      "timeout_s": 120
-    }
+    "unit": {"argv": ["node", "--test", "tests/example.test.mjs"]}
   }
 }
 ```
@@ -54,18 +48,12 @@ python3 scripts/lib/orch-control.py validate --project /path/to/project
 python3 scripts/lib/orch-control.py doctor --project /path/to/project
 python3 scripts/lib/orch-control.py session --project /path/to/project
 python3 scripts/lib/orch-control.py launch --project /path/to/project --provider codex --role writer --prompt "Inspect the assigned task and report its next step."
-python3 scripts/lib/orch-control.py check --project /path/to/project --name unit
-python3 scripts/lib/orch-control.py usage --project /path/to/project
 ```
 
-The last command reports observed attempts, grouped intended/served role profiles,
-tokens and known/unknown costs, total capacity wait (`capacity_wait_s`, null when
-no launch recorded one), plus caller-linked delivery attempts. It does not label an unmerged or
-unverified result a validated delivery. It also counts this project's check
-receipts and names any receipt it could not read under `skipped_receipts`.
-Repeated same-revision executions include legitimate reruns and failures;
-they are not automatically avoidable work. Costs absent from provider output remain
-unknown; token counts are not converted into invented dollar estimates.
+`launch` appends one row per attempt to the existing review-outcomes log: the
+intended and served model and effort, tokens and cost when the provider reports
+them, and any `--delivery-id` you pass. Costs the provider does not report stay
+unknown; token counts are not turned into invented dollar figures.
 
 ## Models, reasoning and policy loading
 
@@ -156,43 +144,15 @@ required review stays incomplete rather than being silently replaced. Projects
 without opt-in policy do not participate in this configured ledger. This is not
 a cap on every model call on the machine.
 
-## Check receipts
+## Test commands
 
-Node's `node --test` and exact custom check argv are recognized by the existing
-Claude/Codex completion checks even when Cadence is absent. Inspection/help,
-syntax checking and echoed command text do not establish test execution. The
-completion hook still warns about a claim; it is not a coverage certificate.
-
-A `check` always runs the command and leaves a receipt: a signed record of what
-ran, so you can later see exactly which command ran on which files and what it
-printed. A receipt is never used to skip a run. It records the command and
-working directory, start and end, exit code, a digest of the output, the
-repository and revision, the scoped files and their digests (including dirty
-and nonignored untracked files), the configuration and policy fingerprints,
-platform and declared environment, and the actual executable bytes and declared
-tool versions. Receipt files are locally signed, live outside Git, and append
-short rows to the existing review-outcomes log.
-
-`tests_ran` is the count a known runner printed (`python -m unittest`, pytest,
-`node --test`, `go test -v`, `cargo test`), or `unknown` for anything else. It
-is what the runner printed, not proof that a test ran: Node counts a file with
-no tests as one passing test, and a module can print a fake summary. `stable`
-says whether the scoped files or environment changed while the check ran.
-
-Coverage depends on the declared scope; start with `**` when dependencies are
-uncertain. A directory input such as `src` covers every file under it. A
-project-relative command such as `./scripts/check.sh` runs the project's own
-file, which is then part of the scope. Symlinks, submodules and external inputs
-inside the scope are rejected; ones outside it do not block a check. A failing
-check leaves a receipt with its exit code. Pressing Ctrl-C stops the check and
-the run, and the receipt is marked failed. The `usage` report names any receipt
-it could not read; a receipt for this project whose signature does not match
-stops the report. `reuse` and `immutable` are not check keys in this release; a
-configuration that still sets them fails validation and says so.
-
-This is local execution evidence, not a defense against a determined process
-that replaces the CLI or steals the signing key. Source policy, installation trust and operating-system isolation
-remain separate boundaries.
+`checks.<name>.argv` is the exact command of one of your tests, for example
+`"unit": {"argv": ["node", "--test"]}`. The Claude Code and Codex completion
+checks count that command, and Node's `node --test`, as a check even when
+Cadence is off. Help, list, syntax-only and echoed command text do not count.
+The completion check still only warns about a claim; it is not proof of
+coverage. `argv` is the only key a check takes. No receipt is written in this
+release; any other key fails validation and says receipts are not part of it.
 
 ## Project differences and delivery measurements
 
@@ -220,10 +180,9 @@ policy prose retains authority. The supported shape is:
 Types and invariant relationships are checked. These data do not inspect GitHub
 WIP, merge a PR, grant authority or authenticate a non-author final integration
 gate. The coordinator must still apply those obligations. A caller-supplied
-delivery ID links costs/attempts; it never certifies delivery. Until exact
-delivery and independent final gates can be authenticated from maintained
-evidence, `validated_deliveries` and cost per validated delivery stay unknown.
-This prevents counting plans, passing local checks or opened PRs as deliveries.
+delivery ID links attempts in the outcomes log; it never certifies delivery.
+This release does not count deliveries or cost per delivery, so plans, passing
+local checks and opened PRs are never counted as deliveries.
 
 ## Update, verify and roll back
 
@@ -255,5 +214,5 @@ definitions require renewed host trust; installation alone is not trust.
 
 Rollback restores that exact preserved installation, verifies its saved hashes,
 and removes this project's opt-in configuration through its normal reviewed
-change path. Keep execution receipts and review history. Restore no unrelated
+change path. Keep review history. Restore no unrelated
 project settings, Cadence constitution, hook profile or GitHub protection.

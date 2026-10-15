@@ -1,4 +1,4 @@
-# Shared project policy, launches and verification evidence
+# Shared project policy and launches
 
 ## Contract
 
@@ -29,8 +29,10 @@ file is at the base, even if it then fails validation, else `none`. Without the
 file at the base the review runs without policy. A capability catalog is a
 reading of this machine, never part of the revision: it is always read from
 disk, a configured path resolved against the project root and the `CODEX_HOME`
-default against the current directory, and a path that resolves inside the
-project root is refused by name. The injected text says the base copy is
+default against the current directory, and a path inside the project root is refused by name. The path read is
+resolved with its links before any `..` is applied; the refusal compares file
+identity, so another spelling of the project folder on a case-insensitive disk
+is still the project. The injected text says the base copy is
 authoritative and a differing working-tree file is part of the change. Codex
 review launches pass `-c project_doc_max_bytes=0` so Codex does not load the
 copy's `AGENTS.md` itself; the user's global `~/.codex/AGENTS.md` still loads.
@@ -60,27 +62,12 @@ Extend existing completion check recognition with Node's built-in test runner
 and exact configured custom command argv, without requiring Cadence. Reject
 Node help/list/syntax-only modes. Preserve existing warning semantics.
 
-An explicit check runner always runs the check and writes a signed receipt
-outside Git: the actual argv, working directory, start/end, exit code, output
-digest, repository/worktree identity and revision, the scoped inputs and their
-digests (dirty and untracked included), configuration and policy fingerprints,
-environment fingerprint, and executable and toolchain identity. A receipt is a
-record of what ran; it is never reused, and no command reads one to skip a run.
-`tests_ran` records the count a known runner printed (unittest, pytest,
-`node --test`, `go test -v`, `cargo test`), or `unknown`; it is what the runner
-printed, not proof, because no reader of runner output can prove a test body
-ran. Reuse is out of scope for this release; it returns, if ever, one runner at
-a time behind its own spec with real-output fixtures.
+A check is `checks.<name>.argv`, the exact command the completion check
+recognises, and nothing else; any other key under a check fails validation
+and says receipts are not part of this release.
 
-Reject symlink, submodule and external inputs inside the declared scope; ones
-outside it do not block a check. A declared directory covers every file under
-it. A project-relative executable resolves against the project and is an input.
-Whether inputs or environment changed while the check ran is recorded as
-`stable`, not enforced. A failed or interrupted check is recorded as failed;
-an interrupted one stops the run. The usage report counts this project's
-receipts and names every unreadable one it skipped; a signature mismatch on a
-receipt for this project is tampering and stops the report. Scope is a declared
-coverage boundary, not proof that the test covers all behavior.
+Later, behind its own spec: a check runner that writes a record of what ran
+(command, files, environment, output). It returns when something consumes it.
 
 ## Sessions, diagnostics and measurement
 
@@ -91,18 +78,11 @@ reports source/install parity, config/catalog validation, Cadence status,
 hook declarations versus observed trust, and uncontrolled launch paths without
 claiming unobservable hook execution. No service, daemon or extra LLM call.
 
-Extend existing usage/outcome mechanisms with intended/observed role settings,
-tokens/provider-reported cost when available, capacity wait (`capacity_wait_s`,
-unknown when no launch recorded one), checks executed, receipts,
-repeated work, and explicit delivery IDs. Aggregate cost per
-validated delivery only from linked observed receipts, preserving unknown
-costs and failed attempts. No invented dollar prices or performance improvement.
-An independent review verdict alone is not a validated delivery. Until an
-exact-revision, non-author final gate and all required check receipts plus
-delivery integration evidence can be authenticated from existing outcomes,
-report delivery cost as pending and validated-delivery count as unknown/zero.
-Never accept a caller-supplied `validated` boolean as that transition. Prefer
-honest pending measurement to another approval/attestation service.
+A configured launch appends its attempt to the existing review-outcomes log:
+intended and observed role settings, tokens and provider-reported cost when
+available, and an explicit delivery ID when given. Unknown costs stay unknown;
+no invented dollar prices. This release counts no deliveries and no cost per
+delivery; a review verdict or a caller-supplied flag is never a delivery.
 
 ## Mia adoption
 
@@ -117,10 +97,10 @@ pending separately. Do not edit unrelated projects or add a tracked live board.
 
 Regression tests cover a generic non-Mia fixture and Mia-shaped policy; fresh
 session loading; argv for review/exec and helpers; invalid/unavailable models
-and efforts; shared capacity under concurrent processes and failure; signed receipts for
-passing, failing and interrupted runs, recorded inputs, fingerprints and
-`tests_ran`, rejected `reuse`/`immutable` keys and malformed receipts;
-catalogs refused inside the project; Node/custom recognition; disabled hooks; honest usage aggregation and install diagnostics. Fixtures use
+and efforts; shared capacity under concurrent processes and failure; check keys other
+than `argv` rejected by name; catalogs refused inside the project, by file
+identity as well as by text; Node/custom recognition; disabled hooks; launch
+outcome rows and install diagnostics. Fixtures use
 fake CLIs for deterministic failure coverage, and are labeled synthetic.
 Perform bounded live exec/review served-model/effort checks and Claude built-in
 review where available, and report their exact
@@ -143,3 +123,6 @@ is handled separately.
   print a fake summary). Reuse returns one runner at a time behind its own spec.
 - **The catalog lives outside the repository.** It is a reading of this
   machine, so it is read from disk and refused inside the project root.
+- **Receipts are not in 0.16.0.** Four review rounds each found new reproduced
+  defects in the receipt code; it returns when something consumes it, behind
+  its own spec.

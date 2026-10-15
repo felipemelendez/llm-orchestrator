@@ -250,7 +250,7 @@ How the pieces fit together at the file level.
 - Optional `cadence.json` keys: `review.copy_ignored` lists ignored paths (for example a dependency folder) copied into each clone, using copy-on-write where the file system supports it; `review.setup` is a shell command run in each clone. `cadence-init.sh` writes neither.
 - Tests: `tests/test-review.py` (through `tests/test-review.sh`), with fake `claude` and `codex` programs and fake rollouts, one case per rule.
 
-### Optional project policy and receipts
+### Optional project policy
 
 `.llm-orchestrator.json` is a separate opt-in from Cadence. Existing Claude
 SessionStart uses `orch-session-context.py` to load fresh canonical text/hashes,
@@ -265,14 +265,10 @@ each actual CLI boundary. A single external locked ledger admits outer CLI
 processes across configured projects. Host-native agents and provider-internal
 fanout cannot be counted reliably and are reported as uncontrolled.
 
-`orch-evidence.py` runs a configured check every time and writes a locally
-signed receipt outside Git: a record of the command, scoped files and their
-digests, policy and configuration, executable/toolchain, environment and output,
-so a reader can see what was checked. Receipts are never reused, because no
-runner's output proves a test ran; `tests_ran` is what the runner printed, not
-proof. Measurements go to the existing review-outcomes log. A model catalog is a
-fact about this machine, read from disk and refused inside the project. Node built-in
-and exact configured custom checks also feed the existing completion classifier.
+Configured launches append their attempts to the existing review-outcomes log.
+A model catalog is a fact about this machine, read from disk and refused inside
+the project. Node built-in and exact configured custom checks
+(`checks.<name>.argv`) also feed the existing completion classifier.
 No new orchestration service or Git-tracked live handoff board is introduced.
 See `docs/project-policy.md` for boundaries, commands and update/rollback.
 
