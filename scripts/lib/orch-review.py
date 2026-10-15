@@ -333,6 +333,15 @@ def review_plan(path, writer, ready):
             "experiments": "codex-sandbox" if "codex" in ready else "claude-runner"}
 
 
+def policy_roles(plan):
+    """The (provider, role) profiles a review with this plan launches."""
+    required = {(item["provider"], "reviewer") for item in plan["reviewers"]}
+    required |= {(plan["helper"], "prover"), (plan["helper"], "refuter")}
+    if plan["experiments"] == "claude-runner":
+        required.add(("claude", "runner"))
+    return required
+
+
 def verdict_line(verdict, path, plan):
     if not plan or not plan.get("same_provider"):
         return verdict
@@ -396,17 +405,16 @@ class Review:
         policy_context, policy_source = None, "none"
         try:
             if merge_base:
+                # Named before it is validated: a base policy that fails is still the base's policy.
+                if git(self.project, "cat-file", "-e", f"{merge_base}:.llm-orchestrator.json",
+                       check=False).returncode == 0:
+                    policy_source = f"merge-base {merge_base}"
                 self.policy = policy_module.Policy(self.project, revision=merge_base)
             if self.policy and self.policy.enabled:
-                policy_source = f"merge-base {merge_base}"
                 self.policy.validate_launches()
                 policy_context = self.policy.policy_context()
                 if plan:
-                    required = {(item["provider"], "reviewer") for item in plan["reviewers"]}
-                    required |= {(plan["helper"], "prover"), (plan["helper"], "refuter")}
-                    if plan["experiments"] == "claude-runner":
-                        required.add(("claude", "runner"))
-                    for provider, role in required:
+                    for provider, role in policy_roles(plan):
                         self.policy.resolve(provider, role)
                         self.policy.capacity(provider, role)  # rejects unsupported hard inference cap
         except policy_module.PolicyError as error:
@@ -1833,6 +1841,12 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed, policy=None
     return finish_launch(fields, None, launch_dir)
 
 
+# The copy holds the change, so Codex must not load its AGENTS.md on its own; the base
+# policy text is injected instead. The user's own ~/.codex/AGENTS.md still loads.
+# docs: https://learn.chatgpt.com/docs/config-file/config-reference (project_doc_max_bytes, read 2026-10-15)
+NO_PROJECT_DOCS = ["-c", "project_doc_max_bytes=0"]
+
+
 def run_codex_review(copy, instruction, launch_dir, requested, servers, changed, policy=None):
     """R6: `codex review`, proved from its stderr log and the review's rollout."""
     settings = launch_settings(policy, "codex", "reviewer", requested)
@@ -1843,7 +1857,7 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
                   if policy and policy.enabled else [])
     argv = ["codex", "review", "--uncommitted", *model_args, "-c", f'model_reasoning_effort="{effort}"',
             "-c", 'sandbox_mode="read-only"', "-c", "developer_instructions=" + json.dumps(instruction),
-            *codex_mcp_off(servers)]
+            *codex_mcp_off(servers), *NO_PROJECT_DOCS]
     stdout_path = launch_dir / "stdout.txt"
     code = managed_process(argv, copy, None, stdout_path, launch_dir,
                            reduced_env("codex", RUST_LOG="warn,codex_otel=info"), policy, "codex", "reviewer", settings=settings)
@@ -1915,9 +1929,10 @@ def codex_mcp_servers(path):
     return None
 
 
-def run_codex(copy, prompt, schema, launch_dir, requested, servers, role, policy=None):
+def run_codex(copy, prompt, schema, launch_dir, requested, servers, role, policy=None, project_docs=False):
     """The prover or refuter on Codex (T5's `codex exec` launch). Served model and effort come from
-    the session rollout named by the thread id."""
+    the session rollout named by the thread id. A review never lets Codex load the copy's own
+    project docs; a configured launch in the real project passes project_docs=True."""
     schema_path = launch_dir / "schema.json"
     settings = launch_settings(policy, "codex", role, requested)
     requested, effort = settings["model"], settings["effort"]
@@ -1928,7 +1943,7 @@ def run_codex(copy, prompt, schema, launch_dir, requested, servers, role, policy
     argv = ["codex", "exec", "--json", "-s", "workspace-write", "-C", str(copy),
             *(["--model", requested] if policy and policy.enabled else []),
             "-c", f'model_reasoning_effort="{effort}"', *codex_mcp_off(servers),
-            "--output-schema", str(schema_path), "-o", str(result_path), "-"]
+            *([] if project_docs else NO_PROJECT_DOCS), "--output-schema", str(schema_path), "-o", str(result_path), "-"]
     stream = launch_dir / "stream.jsonl"
     # At codex_otel=info, codex logs the MCP servers it started.
     code = managed_process(argv, copy, prompt, stream, launch_dir,

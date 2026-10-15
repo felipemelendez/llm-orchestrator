@@ -199,6 +199,10 @@ def environment(definition):
                  'variables_sha256': digest(env), 'tools': versions}
 
 
+class Tampered(Exception):
+    """A receipt that claims this check but fails its signature."""
+
+
 class Store:
     def __init__(self, path=None, project=None):
         self.path = Path(path) if path else Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'llm-orchestrator' / 'verification'
@@ -251,15 +255,15 @@ class Store:
                 if not isinstance(signature, str) or not hmac.compare_digest(
                         signature, hmac.new(self.key, canonical(record), hashlib.sha256).hexdigest()):
                     if ours:
-                        raise RuntimeError('receipt signature mismatch: ' + path.name)
+                        raise Tampered('receipt signature mismatch: ' + path.name)
                     raise ValueError('unverified receipt')
                 if path.name != record['id'] + '.json' or not isinstance(record['started_ns'], int):
                     raise ValueError('receipt identity mismatch')
                 if ours:
                     result.append(record)
-            except RuntimeError as error:
+            except Tampered as error:
                 raise ValueError(str(error)) from None
-            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            except Exception:  # any other unreadable receipt, a RecursionError included
                 self.skipped.append(path.name)
         return sorted(result, key=lambda row: (row['started_ns'], row['id']))
 
@@ -345,46 +349,75 @@ def supported_reuse_command(argv):
 
 
 def tests_ran(argv, output):
-    """Whether the output shows at least one test ran.
+    """How many tests the output shows actually executed, skipped tests left out.
 
-    True or False when a summary is recognised (Node, unittest, pytest, go test);
-    'unknown' when a known test runner printed no summary that can be judged;
-    'custom' for an exact configured command that is not a known test runner,
-    which is judged by its exit code and nonempty output alone. Empty output is False.
+    A count only for a recognised runner whose summary can be read: unittest,
+    pytest, node --test, go test -v and cargo test. 0 when that runner shows none
+    ran, or it only listed or collected tests. 'unknown' for anything else,
+    including any command that is not a recognised runner. Only a positive count
+    can make a receipt reusable (see nonempty_execution).
     """
     text = output.decode(errors='replace')
-    if not text.strip():
-        return False
     name = Path(argv[0]).name
-    module = argv[2] if len(argv) > 2 and argv[1] == '-m' else None
-    counts = {key: int(value) for key, value in re.findall(
-        r'(?m)^(?:#|\u2139) (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$', text)}
-    if counts or (name == 'node' and '--test' in argv):
-        return counts.get('tests', 0) > 0 and counts.get('pass', 0) > 0 and counts.get('fail', 0) == 0 and counts.get('cancelled', 0) == 0
-    if any(word in ('--collect-only', '--co') for word in argv):
-        return False
-    ran = re.findall(r'(?m)^Ran (\d+) tests? in ', text)  # unittest
-    if ran:
-        return sum(int(value) for value in ran) > 0
-    if re.search(r'\bno tests ran\b|\bcollected 0 items\b', text):  # pytest
-        return False
-    if re.search(r'\b[1-9]\d* passed\b', text):
-        return True
-    if re.search(r'\b\d+ tests? collected\b', text):  # pytest collection-only
-        return False
-    go = name == 'go' and argv[1:2] == ['test']
-    if go:
+    flags = [word.partition('=')[0] for word in argv[1:]]
+    module = None
+    if re.fullmatch(r'python[0-9.]*', name) and '-m' in argv[1:]:
+        at = argv.index('-m', 1)
+        if all(word.startswith('-') for word in argv[1:at]) and at + 1 < len(argv):
+            module = argv[at + 1]
+    if name == 'node' and '--test' in argv:
+        counts = dict(re.findall(r'(?m)^(?:#|\u2139) (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$', text))
+        if 'pass' not in counts:
+            return 'unknown'
+        return int(counts['pass']) + int(counts.get('fail', 0))
+    if module == 'unittest':
+        ran = re.findall(r'(?m)^Ran (\d+) tests? in ', text)
+        if not ran:
+            return 'unknown'
+        skipped = re.findall(r'(?m)^(?:OK|FAILED) \(.*\bskipped=(\d+)', text)
+        return max(0, sum(map(int, ran)) - sum(map(int, skipped)))
+    if module == 'pytest' or name in ('pytest', 'py.test'):
+        if set(flags) & {'--collect-only', '--co', '--setup-only', '--setup-plan', '--fixtures', '--fixtures-per-test'}:
+            return 0
+        for line in reversed(text.splitlines()):
+            if re.search(r'\bin \d+(\.\d+)?s\b', line) and re.search(
+                    r'\b\d+ (passed|failed|skipped|deselected|xfailed|xpassed|errors?)\b|\bno tests ran\b', line):
+                return sum(int(value) for value in re.findall(r'\b(\d+) (?:passed|failed|xfailed|xpassed)\b', line))
+        return 'unknown'
+    if name == 'go' and argv[1:2] == ['test']:
+        if set(flags) & {'-list', '--list', '-test.list'}:
+            return 0  # names tests without running them
+        executed = len(re.findall(r'(?m)^\s*--- (?:PASS|FAIL): ', text))
+        if executed:
+            return executed
         oks = re.findall(r'(?m)^ok\s.*$', text)
-        if oks:
-            return any('[no tests to run]' not in line for line in oks)
-        if '[no test files]' in text:
-            return False
-    runner = go or name in ('pytest', 'py.test') or (name.startswith('python') and module in ('unittest', 'pytest'))
-    return 'unknown' if runner else 'custom'
+        if re.search(r'(?m)^\s*--- SKIP: ', text) or (
+                (oks or '[no test files]' in text) and all('[no tests to run]' in line for line in oks)):
+            return 0
+        return 'unknown'  # without -v, a package's ok line does not show skipped tests
+    if name == 'cargo' and argv[1:2] == ['test']:
+        if '--no-run' in argv or '--list' in argv:
+            return 0
+        results = re.findall(r'(?m)^test result: \w+\. (\d+) passed; (\d+) failed;', text)
+        if not results:
+            return 'unknown'
+        return sum(int(passed) + int(failed) for passed, failed in results)
+    return 'unknown'
 
 
 def nonempty_execution(argv, output):
-    return tests_ran(argv, output) in (True, 'custom')
+    """The one reuse rule on output: a recognised runner shows at least one executed test."""
+    ran = tests_ran(argv, output)
+    return type(ran) is int and ran > 0
+
+
+def copy_inputs(inputs, project, destination):
+    """Fill the owned snapshot with the scoped input files and nothing else."""
+    for name, expected in inputs.items():
+        if expected is not None:
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(project / name, target, follow_symlinks=False)
 
 
 def run_check(project, name, reuse=False, state_dir=None):
@@ -437,10 +470,9 @@ def run_check(project, name, reuse=False, state_dir=None):
             manager = module('orch-task-resources').Manager(store.path / 'resources')
             task = manager.start(str(project), 'verification-' + record['id'])
             token = manager.acquire(task['id'], 'check-runner')['token']
+            # Copy only the scoped inputs: a submodule or link outside the scope is never visited.
+            manager.snapshot = functools.partial(copy_inputs, inputs)
             snapshot = Path(manager.create(task['id'], token, 'copy')['path'])
-            for path, kind in names.items():
-                if path not in inputs and os.path.lexists(snapshot / path):
-                    (snapshot / path).unlink()
             for path, expected in inputs.items():
                 target = snapshot / path
                 if expected is not None and (not target.is_file() or target.is_symlink() or
@@ -472,7 +504,8 @@ def run_check(project, name, reuse=False, state_dir=None):
         content = output.read_bytes()
         ran = tests_ran(definition['argv'], content)
         reusable = bool(definition.get('reuse') and prefix and stable and exit_code == 0
-                        and supported_reuse_command(definition['argv']) and ran in (True, 'custom'))
+                        and supported_reuse_command(definition['argv'])
+                        and nonempty_execution(definition['argv'], content))
         record.update(status='complete', exit_code=exit_code, timed_out=timed_out, tests_ran=ran,
                       duration_s=round(time.monotonic() - start, 6), reusable=reusable,
                       immutable_observed=bool(prefix), stable=stable, execution_cwd=str(cwd),

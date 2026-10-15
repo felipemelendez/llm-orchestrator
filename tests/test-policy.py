@@ -225,6 +225,63 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(POLICY.PolicyError, "outside"):
             POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip())
 
+    def test_base_revision_reads_a_project_catalog_from_the_base(self):
+        # code-review-2: the change under review must not supply the base policy's catalog.
+        (self.project / "catalog").mkdir()
+        relative = self.project / "catalog/codex.json"
+        data = json.loads(self.catalog_paths["codex"].read_text())
+        relative.write_text(json.dumps(dict(data, models=[{"slug": "other-model", "supported_reasoning_levels": [
+            {"effort": "high"}]}])))
+        self.data["catalogs"]["codex"] = {"path": "catalog/codex.json"}
+        self.write_policy()
+        self.git("add", "POLICY.md", ".llm-orchestrator.json", "catalog/codex.json")
+        self.git("commit", "-qm", "synthetic base catalog")
+        base = self.git("rev-parse", "HEAD").strip()
+        relative.write_text(json.dumps(data))  # the change adds the configured model
+        self.assertEqual(POLICY.Policy(self.project).resolve("codex", "reviewer")["model"], "gpt-test")
+        with self.assertRaisesRegex(POLICY.PolicyError, "gpt-test|not in|unavailable|catalog"):
+            POLICY.Policy(self.project, revision=base).resolve("codex", "reviewer")
+        relative.unlink()
+        self.git("rm", "-q", "--cached", "catalog/codex.json")
+        self.git("commit", "-qm", "synthetic catalog removed")
+        with self.assertRaisesRegex(POLICY.PolicyError, "capability catalog"):
+            POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip()).resolve("codex", "reviewer")
+
+    def test_policy_name_ending_in_a_slash_is_rejected(self):
+        # code-review-9: a folder name must never pick its first file as the policy document.
+        (self.project / "docs").mkdir()
+        (self.project / "docs/a.md").write_text("Some unrelated document.\n")
+        self.data["policies"] = ["docs/"]
+        self.write_policy()
+        self.git("add", "docs/a.md", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic folder policy")
+        head = self.git("rev-parse", "HEAD").strip()
+        for revision in (None, head):
+            with self.subTest(revision=revision), self.assertRaisesRegex(POLICY.PolicyError, "policies"):
+                POLICY.Policy(self.project, revision=revision)
+        self.data["policies"] = ["POLICY.md"]
+        self.write_policy()
+        self.git("add", "POLICY.md", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic file policy")
+        policy = POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip())
+        self.assertIsNone(policy.show("docs/"))
+        self.assertIsNone(policy.show("doc"))
+        self.assertIsNotNone(policy.show("./POLICY.md"))
+
+    def test_base_revision_context_is_read_once_and_names_its_authority(self):
+        # code-review-10: a revision cannot change, so its documents are read once.
+        self.git("add", "POLICY.md", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic policy at base")
+        policy = POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip())
+        first = policy.policy_context()
+        with patch.object(POLICY.subprocess, "run", side_effect=AssertionError("read again")):
+            self.assertEqual(policy.policy_context(), first)
+            text = policy.prompt("brief")
+        # code-review-3: the reviewer is told which copy is policy.
+        self.assertIn("authoritative", text)
+        self.assertIn("part of the change under review", text)
+        self.assertNotIn("authoritative", POLICY.Policy(self.project).prompt("brief"))
+
     def test_missing_profile_and_unobserved_claude_capabilities_fail(self):
         del self.data["roles"]["codex"]["writer"]
         del self.data["catalogs"]["claude"]
@@ -265,6 +322,24 @@ class PolicyTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(ROOT / "scripts/lib/orch-control.py"), "validate",
                                  "--project", str(self.project)], capture_output=True, text=True)
         self.assertEqual(json.loads(result.stdout)["review_profiles_missing"], [])
+
+    def test_validate_uses_the_review_plan_and_signed_in_providers(self):
+        # code-review-8: the Claude runner is a review role, and a signed-out CLI is never planned.
+        self.data["roles"] = {"claude": {role: {"model": "opus"} for role in ("reviewer", "prover", "refuter")}}
+        del self.data["catalogs"]["codex"]
+        self.write_policy()
+        self.scenario["codex"]["login"] = False
+        self.write_scenario()
+        def missing():
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/lib/orch-control.py"), "validate",
+                                     "--project", str(self.project)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)["review_profiles_missing"]
+        self.assertEqual(missing(), ["claude"])
+        self.assertIn(("claude", "runner"), REVIEW.policy_roles(REVIEW.review_plan("full", "claude", ["claude"])))
+        self.data["roles"]["claude"]["runner"] = {"model": "opus"}
+        self.write_policy()
+        self.assertEqual(missing(), [])
 
     def test_worktrees_share_project_identity(self):
         other = self.root / "worktree"

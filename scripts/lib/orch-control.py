@@ -5,7 +5,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import uuid
@@ -90,16 +89,22 @@ def doctor(policy, installed_root=None):
 
 
 def review_profiles_missing(policy):
-    """Installed providers that orch-review may plan but this policy gives no review profiles."""
-    missing = []
-    for provider in sorted(policy_module.PROVIDERS):
-        if shutil.which(provider):
-            try:
-                for role in ("reviewer", "prover", "refuter"):
-                    policy.intended(provider, role)
-            except policy_module.PolicyError:
-                missing.append(provider)
-    return missing
+    """Signed-in providers a review may plan a role on that this policy gives no profile for."""
+    review = module("orch-review")
+    checks = {"claude": review.Review.check_claude, "codex": review.Review.check_codex}
+    ready = [name for name in ("claude", "codex") if checks[name]()["ready"]]
+    needed = set()
+    for path in ("standard", "full"):
+        for writer in ("claude", "codex"):
+            plan = review.review_plan(path, writer, ready)
+            needed |= review.policy_roles(plan) if plan else set()
+    missing = set()
+    for provider, role in needed:
+        try:
+            policy.intended(provider, role)
+        except policy_module.PolicyError:
+            missing.add(provider)
+    return sorted(missing)
 
 
 def launch(args, policy):
@@ -128,7 +133,8 @@ def launch(args, policy):
         prompt = args.prompt + "\nReturn your response as a JSON object with a results array of strings."
         if args.provider == "codex":
             attempt.update(review.run_codex(policy.project, prompt, schema, launch_dir, settings["model"],
-                                            provider.get("mcp_servers", []), args.role, policy=policy))
+                                            provider.get("mcp_servers", []), args.role, policy=policy,
+                                            project_docs=True))
         else:
             attempt.update(review.run_claude(policy.project, prompt, schema, launch_dir, run_dir,
                                              args.role, policy=policy))
@@ -199,10 +205,11 @@ def main(argv=None):
             result["roles"] = policy.validate_launches()
             if policy.enabled:
                 result["review_profiles_missing"] = review_profiles_missing(policy)
-                result["review_note"] = ("orch-review can plan reviewers, the prover and the refuter on every installed "
-                                         "CLI, so every installed provider needs reviewer, prover and refuter profiles "
-                                         "and a catalog here, committed at the review's base; otherwise the review "
-                                         "stops at preflight. No other model is chosen in its place.")
+                result["review_note"] = ("orch-review can plan reviewers, the prover, the refuter and the Claude "
+                                         "runner on every installed and signed-in CLI, so each such provider needs a "
+                                         "profile for every role it may get, and a catalog, committed at the review's "
+                                         "base; otherwise the review stops at preflight. No other model is chosen "
+                                         "in its place.")
         else:
             result["coordinator_obligations"] = policy.data.get("project_rules", {})
             result["hook_execution_observed"] = False

@@ -24,8 +24,15 @@ invent equivalent effort values. Preserve legacy behavior without policy.
 Apply resolved settings to actual `codex exec`, `codex review`, Claude review
 and helper command arguments. A review reads `.llm-orchestrator.json` and every
 listed policy document from the merge-base revision, never from the working
-tree under review, and records `policy_source` (`merge-base <sha>` or `none`).
-Without the file at the base the review runs without policy. Explicit
+tree under review, and records `policy_source`: `merge-base <sha>` whenever the
+file is at the base, even if it then fails validation, else `none`. Without the
+file at the base the review runs without policy. A project-relative catalog path
+is read from the base too; an absolute one, such as Codex's own cache, is outside
+the repository and read as it is. The injected text says the base copy is
+authoritative and a differing working-tree file is part of the change. Codex
+review launches pass `-c project_doc_max_bytes=0` so Codex does not load the
+copy's `AGENTS.md` itself; the user's global `~/.codex/AGENTS.md` still loads.
+A listed policy name ending in `/` is rejected. Explicit
 `orch-control.py` commands read the working tree; they are not reviews. Preserve authentication, sandbox, MCP isolation,
 dropout and served-model validation. Record intended settings separately from
 observed settings. Include role-configured general launch entry points so
@@ -60,18 +67,22 @@ identical declared environment/toolchain, and unchanged supported inputs.
 Capture dirty/untracked scoped inputs. Reusable checks run in task-owned,
 isolated snapshots with OS-enforced read-only source inputs through the
 existing Codex sandbox; verify a write probe is refused before execution.
-If this sandbox is unavailable, snapshots require unsupported dependencies,
+The snapshot is built from the scoped inputs only. If this sandbox is
+unavailable, snapshots require unsupported dependencies,
 or source immutability cannot be established, checks may still execute but
 their receipts are explicitly ineligible for reuse. Pre/post hashes alone
 are not proof against edit-and-restore (ABA) mutation. Reject symlink,
 submodule and external inputs inside the declared scope; ones outside it do not
 block a check. A declared directory covers every file under it. A
 project-relative executable resolves against the project and is an input.
-A reusable receipt needs output showing at least one test ran: recognised
-zero-test or collection-only output is rejected, and a known test runner whose
-output cannot be judged records `tests_ran: unknown` and is not reusable.
-Receipts are read only to reuse one; an unreadable receipt is skipped, named in
-the result, and disables reuse for that run. An interrupted check stops the
+A receipt is reusable only when a known test runner's output (unittest,
+pytest, `node --test`, `go test -v`, `cargo test`) shows at least one test
+actually executed, skipped tests subtracted. `tests_ran` records that count, 0
+for none or for list/collect-only modes, or `unknown` for a known runner without
+a readable summary and for every other command. 0 and `unknown` are recorded,
+never reused. Receipts are read only to reuse one; an unreadable receipt (any
+parse failure) is skipped, named in the result, and disables reuse for that run;
+only a signature mismatch on a receipt for this check is tampering. An interrupted check stops the
 run and is recorded as failed. After a sandbox fallback the receipt records the
 environment that actually ran. Changed revision alone is permitted if
 covered inputs are identical. Reject changed inputs, stale/missing environment,
@@ -118,7 +129,8 @@ Regression tests cover a generic non-Mia fixture and Mia-shaped policy; fresh
 session loading; argv for review/exec and helpers; invalid/unavailable models
 and efforts; shared capacity under concurrent processes and failure; changed
 revision with identical inputs, stale environment, dirty/untracked changes,
-mutations, failure shadowing and malformed receipts; Node/custom recognition;
+mutations, failure shadowing and malformed receipts; Node/custom recognition
+and per-runner test counts;
 disabled hooks; honest usage aggregation and install diagnostics. Fixtures use
 fake CLIs for deterministic failure coverage, and are labeled synthetic.
 Perform bounded live exec/review served-model/effort checks and Claude built-in

@@ -40,11 +40,13 @@ copy. It has `validate`, `session`, `doctor`, `launch`, `capacity`, `check` and 
 ```
 
 The model in this example is an identifier, not an availability promise. This
-example configures Codex only. `orch-review.py` can plan its reviewers, prover
-and refuter on every installed CLI, so if Claude is also installed, add Claude
-`reviewer`, `prover` and `refuter` profiles and a Claude catalog too; otherwise
-the review stops at preflight. It never picks another model instead. `validate`
-lists installed providers that lack these profiles in `review_profiles_missing`.
+example configures Codex only. `orch-review.py` can plan its reviewers, prover,
+refuter and, when Codex is not signed in, a Claude runner on every installed and
+signed-in CLI, so if Claude is also signed in, add Claude `reviewer`, `prover`,
+`refuter` and `runner` (or `clerical`) profiles and a Claude catalog too;
+otherwise the review stops at preflight. It never picks another model instead.
+`validate` asks the review's own plan which roles it may need and lists the
+signed-in providers that lack one in `review_profiles_missing`.
 Validate against the target account's current catalog before launch:
 
 ```sh
@@ -71,7 +73,14 @@ review/prover/refuter/runner pipeline consumes the same policy, but a review
 reads `.llm-orchestrator.json` and the listed policy documents from the
 merge-base commit, never from the change it reviews, so a change cannot coach
 its own reviewers or pick their models. A policy file that exists only in the
-change does not apply to its review; `preflight.json` records `policy_source`.
+change does not apply to its review. `preflight.json` records `policy_source`:
+`merge-base <sha>` whenever the file is at the base, even when it then fails
+validation (the error follows in `reasons`), or `none`. The reviewers are told
+that the base text is the authoritative copy and that a differing file in the
+working tree is part of the change, not policy. Codex reviewers, provers and
+refuters also run with `project_doc_max_bytes=0`, so Codex does not load the
+copy's own `AGENTS.md` by itself; your personal `~/.codex/AGENTS.md` still
+loads. A policy name must be a file: one ending in `/` is rejected.
 A configured full Claude ID such as `claude-opus-4-5` also accepts its dated
 release, such as `claude-opus-4-5-20251101`. Role defaults
 are medium for lead/writer, high for reviewer/debugger/prover/refuter and low
@@ -79,7 +88,9 @@ for clerical/runner. `xhigh`, `max` and `ultra` require explicit justification
 and must also be advertised by the selected model. No automatic escalation.
 
 `catalogs.codex.path` defaults to the CLI's model cache under `CODEX_HOME` or
-`~/.codex`. An observation needs a timezone-aware `fetched_at`, matching
+`~/.codex`. A review reads a catalog path inside the project from the merge-base,
+like the configuration; a catalog outside the project, such as that default
+cache, is read from disk as it is. An observation needs a timezone-aware `fetched_at`, matching
 `client_version`, and the model's advertised `supported_reasoning_levels`.
 Default maximum age is one day; configuration can shorten it. A catalog is
 local capability evidence, not a successful remote inference. Authentication,
@@ -166,7 +177,8 @@ reuse is asked for; a receipt that cannot be read is skipped, named under
 check and the run, and the receipt is marked failed.
 
 Reusable checks require a task-owned source snapshot through the existing
-resource manager and a demonstrated OS read-only sandbox. Pre/post hashes alone
+resource manager and a demonstrated OS read-only sandbox. The snapshot holds
+only the scoped inputs, so nothing outside the scope is visited. Pre/post hashes alone
 cannot establish immutability against edit-and-restore. The sandbox probe must
 actually refuse a source write and an external-input read. Only declared source
 inputs are materialized; user Git configuration and user Python site packages
@@ -174,13 +186,17 @@ are isolated. Tests receive their own writable home and temporary directory.
 Opaque inline interpreters, common command wrappers and absolute external data
 arguments run record-only. Version probes use an absolute owned temporary home;
 stable hash placeholders are never passed as real paths.
-Wholly skipped/todo or empty Node suites cannot supply reusable evidence, and
-neither can zero-test or collection-only runs (unittest `Ran 0 tests`, pytest
-`no tests ran`, `collected 0 items` or `--collect-only`, Node `# tests 0`, go
-`[no test files]`). The receipt's `tests_ran` says `true`, `false`, `unknown`
-(a known test runner whose output cannot be judged: not reusable) or `custom`
-(an exact configured command that is not a known test runner, judged by exit
-code and nonempty output).
+A receipt is reusable only when a known test runner's output shows at least one
+test actually ran, with skipped tests left out. The known runners are
+`python -m unittest`, pytest, `node --test`, `go test -v` and `cargo test`.
+The receipt's `tests_ran` is that count, or `unknown`. A count of 0 covers
+wholly skipped or todo suites (unittest `OK (skipped=3)` with `Ran 3`), empty
+suites and runs that only list or collect tests (pytest `--collect-only`,
+`go test -list`, go `[no tests to run]`). `unknown` covers a known runner whose
+output has no summary that can be read (such as a Node reporter that prints no
+counts, or `go test` without `-v`, whose `ok` line hides skipped tests) and any
+command that is not a known runner, such as `./check.sh`. Both are recorded and
+never reused.
 A state directory inside a writable temporary root is
 not eligible. Symlinks, submodules and external inputs inside the scope are
 rejected; ones outside it do not block a check. A sandbox fallback records the
