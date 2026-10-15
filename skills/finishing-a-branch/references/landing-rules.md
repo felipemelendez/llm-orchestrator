@@ -63,7 +63,8 @@ applied, four branches landed in nine hours.
      finding, or a blocking finding was fixed and its failing check now
      passes. Rounds continue while they make progress.
    - A round with no new reproduced finding and no new green check is a
-     stall. Stop there and adjudicate: one written disposition per open
+     stall. The review's `wait` output shows this, and the two-rounds
+     signal below, in its `rounds`, `trend` and `advice`. Stop there and adjudicate: one written disposition per open
      finding (`fixed`, `refuted`, `settled`, `follow-up`, or `ignored` by the
      person), then land or split. Never run the same review again hoping for
      a different answer.

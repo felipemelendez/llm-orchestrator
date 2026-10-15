@@ -7,6 +7,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [0.16.0] - 2026-10-15 — project settings choose the model
 
+- **The review shows its rounds.** The review's `wait` output now shows the
+  branch's review rounds so far, the trend, and advice when a landing rule
+  applies, so a part that is not converging is seen a round earlier.
 - **The review loop ends on evidence, not on a count.** Release 0.15.0 capped
   a branch at three review runs; the owner ruled that wrong after this
   release's own re-review found 13 new reproduced defects, three of them

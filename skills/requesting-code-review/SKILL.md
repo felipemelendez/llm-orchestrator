@@ -72,10 +72,10 @@ fixes run through a Claude runner instead of `codex sandbox`.
 
 ## The verdict
 
-`review.json` in the run directory holds everything. `wait` prints the verdict
-line, `same_provider`, the reasons for an incomplete review, the blocking ids,
-each mild finding with its reason, and warnings (such as a kept `/code-review`
-session it could not delete).
+The run's `review.json` holds everything. `wait` prints the verdict line,
+`same_provider`, incomplete reasons, the blocking ids, each mild finding with
+its reason, and warnings. It also prints the branch's review rounds so far,
+their trend, and advice when a landing rule applies; read it before acting.
 
 | Verdict | Meaning |
 |---|---|
@@ -84,10 +84,9 @@ session it could not delete).
 | `NOT-READY` | At least one blocking finding (verified, unverified, promoted, unresolved or unjudged). Lands like `READY-WITH-FIXES` once every blocking finding is recorded `refuted`, `settled` or `follow-up`. |
 | `INCOMPLETE` | Something is missing: a launch dropped out, a reply was not parsed, a serious finding had no repro, a finding went unjudged, or the checkout changed. Never report it as a pass. |
 
-A finding never disappears: only a refuter drop the script proved with its
-own run removes it from the verdict, and it stays listed. A failed reviewer is
-never replaced. Report `INCOMPLETE` with its reasons, fix the cause, and run a
-new review.
+A finding never disappears: only a refuter drop the script proved removes it
+from the verdict, and it stays listed. A failed reviewer is never replaced.
+Report `INCOMPLETE` with its reasons, fix the cause, run again.
 
 ## After the review
 

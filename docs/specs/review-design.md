@@ -378,6 +378,17 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   Decided on 2026-10-13 after a project whose reviews returned about twenty
   findings a round, many serious and unreproduced, blocked every landing for
   four days (`docs/specs/landing-discipline.md`).
+- **R24. Rounds.** The review row records the `branch`, `base` and
+  `merge_base`, and each finding row its `file`. When a run has finished,
+  `wait` also prints `rounds` (every review row of the same project and
+  branch, oldest first, up to this run, with its verdict, finding, blocking,
+  reproduced and mild counts, time, cost and three most-named files),
+  `trend` (`first round`, or this run's reproduced count `falling`, `rising`
+  or `flat` against the previous round) and `advice`: a stall when a later
+  round has nothing reproduced and nothing blocking, or rule 6's diagnosis
+  signal when two rounds in a row reproduced defects in a shared file. It
+  reads the outcome log once and changes no verdict; old rows without a
+  branch match none.
 
 ## What stays, what goes
 

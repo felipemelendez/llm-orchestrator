@@ -1935,6 +1935,70 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn("subtracts", text)
         self.assertNotIn("return a - b", text)
 
+    # Rounds
+    def wait_rounds(self):
+        return json.loads(self.invoke("wait", str(self.run_dir), "--seconds", "30", check_rc=0).stdout)
+
+    def test_rounds_rows_carry_the_branch_base_merge_base_and_file(self):
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof()})
+        self.review()
+        row = self.outcome_rows()[0]
+        self.assertEqual((row["branch"], row["base"], row["merge_base"]), ("main", self.base, self.base))
+        run = json.loads((self.run_dir / "run.json").read_text())
+        self.assertEqual((run["branch"], run["base"], run["merge_base"]), ("main", self.base, self.base))
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "fixed", "check": CHECK}}))
+        self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions), check_rc=0)
+        self.assertEqual([row["file"] for row in self.outcome_rows() if row["row"] == "finding"], ["calc.py"])
+
+    def test_rounds_wait_lists_the_branch_rounds_and_names_a_stall(self):
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof()})
+        self.review()
+        first = self.wait_rounds()
+        self.assertEqual(len(first["rounds"]), 1)
+        self.assertEqual(first["trend"], "first round")
+        self.assertIsNone(first["advice"])
+        first_id = json.loads((self.run_dir / "run.json").read_text())["run_id"]
+        self.scenario = {"claude": {}, "codex": {}}
+        self.review()
+        second = self.wait_rounds()
+        self.assertEqual(second["verdict"], "READY")
+        rounds = second["rounds"]
+        self.assertEqual([r["run_id"] for r in rounds][0], first_id)
+        self.assertEqual([(r["verdict"], r["findings"], r["blocking"], r["reproduced"]) for r in rounds],
+                         [("NOT-READY", 1, 1, 1), ("READY", 0, 0, 0)])
+        self.assertEqual(rounds[0]["files"], ["calc.py"])
+        self.assertEqual(rounds[1]["files"], [])
+        for key in ("date", "mild", "duration_s", "cost_usd"):
+            self.assertIn(key, rounds[0])
+        self.assertEqual(second["trend"], "falling")
+        self.assertEqual(second["advice"], "Nothing new reproduced: this is a stall. Record a disposition for "
+                                         "every open finding, then land or split.")
+
+    def test_rounds_two_reproduced_rounds_on_one_file_point_at_rule_6(self):
+        for _ in range(2):
+            self.reviewer("claude", code_finding())
+            self.prove({"code-review-1": proof()})
+            self.review()
+        waited = self.wait_rounds()
+        self.assertEqual([r["reproduced"] for r in waited["rounds"]], [1, 1])
+        self.assertEqual(waited["trend"], "flat")
+        self.assertEqual(waited["advice"], "Two rounds in a row found new reproduced defects in calc.py: diagnose "
+                                         "before the next fix (landing rule 6).")
+
+    def test_rounds_a_run_on_another_branch_is_not_listed(self):
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1": proof()})
+        self.review()
+        self.git("switch", "-q", "-c", "other")
+        self.review()
+        waited = self.wait_rounds()
+        self.assertEqual(len(waited["rounds"]), 1)
+        self.assertEqual(waited["trend"], "first round")
+        self.assertEqual(self.outcome_rows()[-1]["branch"], "other")
+
     # R21
     def test_r21_record_needs_a_disposition_for_every_finding(self):
         self.reviewer("claude", code_finding(), code_finding(line=1))

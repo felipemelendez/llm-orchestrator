@@ -8,6 +8,7 @@ has finished. `record` appends the agent's disposition of each finding to the ou
 The rules (R1 to R22) are in docs/specs/review-design.md.
 """
 import argparse
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import importlib.util
@@ -899,6 +900,8 @@ class Review:
         errors = []
         try:
             preflight = self.preflight()
+            self.options["merge_base"] = preflight["merge_base"]
+            write_json(self.run_dir / "run.json", self.options)
             if preflight["ok"]:
                 self.run_steps(preflight)
             self.finish_state()
@@ -2267,6 +2270,8 @@ def outcome_row(run_dir, review):
             "project": run.get("project"), "delivery_id": run.get("delivery_id"),
             "project_id": policy_module.project_id(Path(run["project"])) if run.get("project") else None,
             "repository": Path(run.get("project", "")).name, "path": review["path"],
+            "branch": run.get("branch"), "base": run.get("base"), "merge_base": run.get("merge_base"),
+            "run_dir": str(run_dir),
             "writer": review["writer"], "reviewers": review["reviewers"], "same_provider": review["same_provider"],
             "diff_lines": review["diff_lines"],
             "launches": [{key: launch.get(key) for key in (
@@ -2300,10 +2305,11 @@ def command_run(args):
                   "sandboxes let reviewers and fix experiments write there", file=sys.stderr)
             return 2
         run_dir.mkdir(parents=True, mode=0o700)
+        branch = git(project, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip() or "HEAD"
         options = {"run_id": uuid.uuid4().hex, "project": str(project), "path": args.path,
                    "writer": args.writer, "base": args.base, "spec": str(Path(args.spec).absolute()),
                    "allow_test_changes": args.allow_test_changes, "started": now(),
-                   "delivery_id": args.delivery_id}
+                   "delivery_id": args.delivery_id, "branch": branch}
         write_json(run_dir / "run.json", options)
         if args.detach:
             with open(run_dir / "run.log", "ab") as log:
@@ -2343,7 +2349,74 @@ def summary(run_dir, review):
             "blocking": [f["id"] for f in review["findings"] if f["status"] in BLOCKING],
             "mild": [{"id": f["id"], "mild_reason": f.get("mild_reason")} for f in review["findings"]
                      if f["status"] == "mild"],
-            "warnings": warnings}
+            "warnings": warnings, **rounds_view(run_dir, review)}
+
+
+def finding_digest(findings):
+    """How many findings block, and the three files they name most."""
+    named = Counter(f.get("file") for f in findings if isinstance(f.get("file"), str) and f.get("file"))
+    return (sum(f.get("status") in BLOCKING for f in findings), [name for name, _ in named.most_common(3)])
+
+
+def round_entry(row, findings):
+    counts = row.get("counts") or {}
+    blocking, files = finding_digest(findings) if findings is not None else (None, [])
+    return {"run_id": row.get("run_id"), "date": row.get("date"), "verdict": row.get("verdict"),
+            "findings": counts.get("raw_findings"), "blocking": blocking, "reproduced": counts.get("reproduced"),
+            "mild": counts.get("mild"), "duration_s": row.get("duration_s"), "cost_usd": row.get("cost_usd"),
+            "files": files}
+
+
+def rounds_view(run_dir, review):
+    """The branch's review rounds so far, read from the outcome log; observation only."""
+    run = read_json(run_dir / "run.json", {})
+    branch = run.get("branch")
+    project_id = policy_module.project_id(Path(run["project"])) if run.get("project") else None
+    rows, found = [], {}
+    if outcome_path().is_file():
+        for line in outcome_path().read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(row, dict):
+                continue
+            if row.get("row") == "review" and branch and row.get("branch") == branch \
+                    and row.get("project_id") == project_id:
+                rows.append(row)
+            elif row.get("row") == "finding":
+                found.setdefault(row.get("run_id"), []).append(row)
+    rows.sort(key=lambda row: row.get("date") or "")
+    ids = [row.get("run_id") for row in rows]
+    if review.get("run_id") in ids:
+        rows = rows[:ids.index(review["run_id"]) + 1]
+    else:
+        rows.append({"run_id": review.get("run_id"), "verdict": review["verdict"], "counts": review["counts"],
+                     "duration_s": review.get("duration_s"), "date": run.get("started")})
+    rounds = []
+    for row in rows:
+        if row.get("run_id") == review.get("run_id"):
+            findings = review["findings"]
+        else:
+            earlier = read_json(Path(row["run_dir"]) / "review.json") if row.get("run_dir") else None
+            findings = earlier["findings"] if isinstance(earlier, dict) and earlier.get("run_id") == row.get(
+                "run_id") and isinstance(earlier.get("findings"), list) else found.get(row.get("run_id"))
+        rounds.append(round_entry(row, findings))
+    this, before = rounds[-1], rounds[-2] if len(rounds) > 1 else None
+    trend, advice = "first round", None
+    if before:
+        now_count, then_count = this["reproduced"] or 0, before["reproduced"] or 0
+        trend = "falling" if now_count < then_count else "rising" if now_count > then_count else "flat"
+        shared = [name for name in this["files"] if name in before["files"]]
+        if review["verdict"] == "INCOMPLETE":
+            pass  # an incomplete run says nothing about convergence
+        elif not this["reproduced"] and not this["blocking"]:
+            advice = ("Nothing new reproduced: this is a stall. Record a disposition for every open finding, "
+                    "then land or split.")
+        elif this["reproduced"] and before["reproduced"] and shared:
+            advice = (f"Two rounds in a row found new reproduced defects in {', '.join(shared)}: "
+                    "diagnose before the next fix (landing rule 6).")
+    return {"rounds": rounds, "trend": trend, "advice": advice}
 
 
 def command_wait(args):
@@ -2430,7 +2503,7 @@ def command_record(args):
     write_json(run_dir / "dispositions.json", dispositions)
     append_outcome(*[{"row": "finding", "run_id": review["run_id"], "date": now(), "finding": f["id"],
                       "reviewer": f.get("reviewer"), "provider": f["provider"], "rank": f.get("rank"),
-                      "kind": f.get("kind"), "status": f["status"],
+                      "kind": f.get("kind"), "status": f["status"], "file": f.get("file"),
                       "disposition": dispositions[f["id"]]["disposition"]}
                      for f in review["findings"]])
     print(json.dumps({"status": "recorded", "findings": len(ids)}))
