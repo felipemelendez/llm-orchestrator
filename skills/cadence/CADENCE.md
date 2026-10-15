@@ -21,6 +21,14 @@ they cannot supply a required independent review or gate.
 1. Write or update the maintained specification when the change needs one.
    Independently review the contract, including whether a simpler design
    meets the requirements, and resolve material gaps before coding.
+   Full is forced by one signal alone: permissions, identity, privacy, or
+   data whose loss is hard to undo; effects that cannot be reversed, or
+   recovery that is hard; concurrency, shared state,
+   retries with side effects, ordering;
+   contracts between components or repositories whose failure breaks the
+   whole; invariants not obvious from the code. Any
+   one signal is enough, never averaged away, and
+   unknown risk counts as high.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
 3. Merge the base into the branch, run the checks, then run the Full review

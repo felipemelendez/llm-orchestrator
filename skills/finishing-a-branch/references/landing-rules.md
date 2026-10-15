@@ -101,7 +101,9 @@ applied, four branches landed in nine hours.
 7. **Reproduce to block.** A serious finding whose repro passed on the
    unpatched copy, or that had none, is recorded `follow-up` with the
    reference of the PR, issue or plan task that will carry it, and the branch
-   lands. A repro that failed showed the bug: it is fixed. Catastrophic and
+   lands. A security, privacy or data-integrity finding is deferred only when
+   the person says so (`"person_approved": true`); a failed reproduction does
+   not disprove it. A repro that failed showed the bug: it is fixed. Catastrophic and
    unranked findings reach the person. Mild findings are fixed in the next fix
    wave or recorded with a reason. A `BLOCKED` with one specific question is a
    good outcome at any step; a READY or PASS that is not true is the worst.
