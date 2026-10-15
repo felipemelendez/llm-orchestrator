@@ -5,6 +5,54 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-10-15 — project settings choose the model, and a check leaves a receipt
+
+- **One settings file per project, no cadence needed.** An optional
+  `.llm-orchestrator.json` at the Git root names the model and effort for each
+  role (lead, writer, reviewer, debugger, clerical) on Codex and on Claude.
+  Every launch the plugin makes passes those values as real command arguments
+  and records what the provider actually served. A model the provider's own
+  list does not know, or an effort it does not offer, stops the launch with a
+  clear message; nothing is swapped in quietly. Projects without the file keep
+  working exactly as before. How to set it up: `docs/project-policy.md`.
+- **Reviews read the landed settings, not the change under review.** The
+  review runner takes the settings file and the policy documents from the last
+  landed version, so a change cannot tell its own reviewers what to think or
+  hand them a weaker model. The explicit commands (`validate`, `session`,
+  `doctor`, `launch`, `check`) still read the working tree.
+- **A check leaves a receipt.** `orch-control.py check` runs a configured test
+  command and writes a signed receipt outside Git: what ran, where, when, with
+  which files, settings, tools and environment, and how it ended. A later run
+  with identical inputs can reuse a passing receipt instead of rerunning.
+  Anything changed, failed, interrupted, run on zero tests, or run outside a
+  verified read-only sandbox is never reused. One corrupt receipt no longer
+  blocks other checks. Ctrl-C stops the run instead of being recorded as a
+  timeout.
+- **The completion check knows more commands.** Node's built-in `node --test`
+  and the exact test commands in `.llm-orchestrator.json` count as checks on
+  both Claude Code and Codex. Help, list, syntax-only and other inspection
+  flags do not.
+- **A fresh session loads the settings.** On Claude Code the existing
+  session-start hook reads the project's policy documents freshly, with their
+  hashes, and says plainly when the text was too long to load. On Codex, run
+  `orch-control.py session` and read what it returns; no new hook is added.
+- **Shared launch budget.** Configured projects share one locked ledger of
+  the CLI processes the plugin starts, so reviews, provers and helpers cannot
+  pile up. It does not count the subagents a provider starts inside them, and
+  says so.
+- **A doctor.** `orch-control.py doctor` reports whether the installed copy
+  matches the source byte for byte, whether the settings validate, whether the
+  cadence is on, and which launch paths the plugin cannot control.
+- Design: `docs/specs/shared-project-policy.md`. Tests: `tests/test-policy.sh`,
+  `tests/test-evidence.sh`, `tests/test-policy-session.sh`, `tests/test-review.sh`.
+
+### Upgrading
+
+- Nothing changes for a project without `.llm-orchestrator.json`.
+- Claude Code: `claude plugin update llm-orchestrator@llm-orchestrator`.
+  Codex: `codex plugin add llm-orchestrator@llm-orchestrator`, then trust the
+  hooks again in `/hooks` if asked.
+
 ## [0.15.0] - 2026-10-13 — ticket work lands under landing rules, and a finding must reproduce to block
 
 - **Landing rules for long projects, in one place.** A project run with this
