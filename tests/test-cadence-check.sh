@@ -373,6 +373,42 @@ RC=$(cmsg_at "$ARM" 'chore: tidy')
 [[ "$RC" == "1" ]] && ok "deleting cadence.json from an armed commit needs a ruling too" || fail "config deletion" "rc=$RC out=$(cat "$OUT")"
 ( cd "$ARM" && git "${GIT_ID[@]}" add docs/llm-orchestrator/cadence.json ) >/dev/null 2>&1
 
+printf '\n%s== adding a manifest entry is a lock-set change ==%s\n' "$DIM" "$RESET"
+# SCENE: an armed project whose manifest gains a line for an unchanged tracked
+# file. Every listed entry still matches HEAD, so an entry-by-entry comparison
+# sees nothing; the manifest itself is what changed, and it is protected.
+ADD="$TMP/addentry"; mkproj "$ADD"
+( cd "$ADD" && git init -q . ) >/dev/null 2>&1
+printf 'notes\n' > "$ADD/notes.txt"
+run "$ADD" --lock >/dev/null
+( cd "$ADD" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: base' ) >/dev/null 2>&1
+addline() { # addline <root> <path> — append the path's own hash line to the manifest
+  printf '%s  %s\n' "$(shasum -a 256 "$1/$2" | cut -c1-64)" "$2" >> "$1/docs/llm-orchestrator/LOCK.sha256"
+}
+addline "$ADD" notes.txt
+( cd "$ADD" && git "${GIT_ID[@]}" add docs/llm-orchestrator/LOCK.sha256 ) >/dev/null 2>&1
+RC=$(cmsg_at "$ADD" 'chore: tidy the lock')
+if [[ "$RC" == "1" ]] && has "$OUT" 'LOCK.sha256 changed in this commit' && has "$OUT" 'no numbered ruling'; then ok "appending an entry for an unchanged file to the manifest needs a ruling, and says the manifest changed"; else fail "manifest addition" "rc=$RC out=$(cat "$OUT")"; fi
+printf 'Ruling 4 — notes.txt joins the lock.\n' >> "$ADD/docs/llm-orchestrator/LAWS.md"
+relock "$ADD" >/dev/null 2>&1
+addline "$ADD" notes.txt
+( cd "$ADD" && git "${GIT_ID[@]}" add -A ) >/dev/null 2>&1
+RC=$(cmsg_at "$ADD" 'chore: notes.txt joins the lock
+
+Ruling 4 — notes.txt joins the lock.')
+[[ "$RC" == "0" ]] && ok "the same addition passes under Ruling 4 recorded in the staged laws" || fail "manifest addition ruled" "rc=$RC out=$(cat "$OUT") err=$(cat "$ERR")"
+( cd "$ADD" && git "${GIT_ID[@]}" commit -qm 'chore: notes.txt joins the lock
+
+Ruling 4 — notes.txt joins the lock.' ) >/dev/null 2>&1
+printf 'more\n' > "$ADD/more.txt"
+( cd "$ADD" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: ordinary work' ) >/dev/null 2>&1
+addline "$ADD" more.txt
+( cd "$ADD" && git "${GIT_ID[@]}" add -A && git "${GIT_ID[@]}" commit -qm 'chore: tidy the lock' ) >/dev/null 2>&1
+RC=$( ( cd "$ADD" && bash "$CHECK" --audit HEAD > "$OUT" 2>"$ERR" ); echo $?)
+if [[ "$RC" == "1" ]] && has "$OUT" 'LOCK.sha256 changed in this commit'; then ok "--audit catches an unruled manifest addition in history"; else fail "audit manifest addition" "rc=$RC out=$(cat "$OUT")"; fi
+RC=$( ( cd "$ADD" && bash "$CHECK" --audit HEAD~1 > "$OUT" 2>"$ERR" ); echo $?)
+[[ "$RC" == "0" ]] && ok "--audit still passes the ordinary commit before it" || fail "audit ordinary" "rc=$RC out=$(cat "$OUT")"
+
 printf '\n%s== the remedy names only the missing piece ==%s\n' "$DIM" "$RESET"
 RC=$(cmsg_at "$ARM" 'chore: nothing to see')
 printf 'Ruling 6 — later still.\n' >> "$ARM/docs/llm-orchestrator/LAWS.md"

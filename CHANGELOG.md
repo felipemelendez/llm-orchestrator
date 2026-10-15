@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-10-15 — adding a lock entry needs a ruling too
+
+- **Fixed: the commit hook and the CI audit let an added manifest entry
+  through.** In an armed project, `orch-cadence-check.sh --commit-msg` and
+  `--audit` decided whether a ruling was needed by comparing each file the
+  manifest lists against the previous commit. They never compared the manifest
+  itself. So a commit that appended a line for an unchanged tracked file to
+  `docs/llm-orchestrator/LOCK.sha256` passed with no ruling in its message,
+  even though the manifest is a protected file. Removing an entry or editing a
+  hash was already caught. The hook now compares the two manifests as a whole,
+  so any change to the manifest needs a numbered ruling. The first arming
+  commit, which has no manifest before it, still needs none, and a
+  `cadence-ruling.sh` commit still passes. Found by the plugin's own review
+  (a codex finding the prover reproduced); `tests/test-cadence-check.sh` now
+  pins it for both the hook and the audit.
+- Already-armed projects carry the older hook in `.githooks/`. Running
+  `cadence-init` there prints an upgrade ruling patch; the owner applies it
+  with `cadence-ruling.sh`.
+
 ## [0.17.0] - 2026-10-15 — every task names its risk
 
 - **Every plan task carries a `Path:` line.** `templates/plan.md` gives each
