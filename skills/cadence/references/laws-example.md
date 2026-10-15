@@ -96,9 +96,11 @@ not require different models for the two reviewers.
   ticket waits for a landing. Every branch is cut from `main` after the hub
   change it depends on has landed, never from a sibling's branch. `main` is
   merged into every open branch at every landing. A branch gets one
-  whole-branch review at landing, one fix wave and one scoped re-review; a
-  serious finding the prover could not reproduce is recorded as a follow-up,
-  not another round. A branch not landed within a working day of its first
+  whole-branch review at landing, then rounds of one fix wave and one scoped
+  re-review while each finds new reproduced defects; a round with none is a
+  stall, adjudicated, and no branch lands over a reproduced defect. A serious
+  finding the prover could not reproduce is recorded as a follow-up, not
+  another round. A branch not landed within a working day of its first
   green test is split (the `finishing-a-branch` skill's
   `references/landing-rules.md`).
 - **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its

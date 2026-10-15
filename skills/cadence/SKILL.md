@@ -38,7 +38,7 @@ A design finding names its simpler alternative (`requesting-code-review`'s
 
 Land via `finishing-a-branch`; never merge locally unasked. Its
 `references/landing-rules.md` governs ticket branches: at most two unmerged,
-a READY verdict landed the same session, one review per landing.
+a READY verdict landed the same session, rounds bounded by evidence.
 
 Read the [Full path](CADENCE.md#proportional-full-path) only when
 required. Simple and Standard need only this page.

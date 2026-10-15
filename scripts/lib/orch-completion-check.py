@@ -99,6 +99,23 @@ def configured_test_cmd(project):
     return command.strip() if isinstance(command, str) else ""
 
 
+def configured_check_commands(project):
+    """Exact configured check argv, independently of Cadence activation.
+
+    Invalid policy cannot grant recognition. The explicit doctor command
+    reports its error; Stop preserves its existing warning-only contract.
+    """
+    import importlib.util
+    try:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'orch-policy.py')
+        spec = importlib.util.spec_from_file_location('orch_check_policy', path)
+        policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(policy)
+        return [item['argv'] for item in policy.Policy(project).data.get('checks', {}).values()]
+    except Exception:
+        return []
+
+
 # --- Which commands count as a check -------------------------------------
 #
 # The lists below are the whole definition; docs/specs/codex-completion-check.md
@@ -397,6 +414,27 @@ def is_runner(words, i):
     if i >= len(words):
         return False
     name, rest = base(words[i]), words[i + 1:]
+    if name == 'node':
+        # Interpreter option, not a script argument. Inspection never counts.
+        # The inspection, printing and other-mode options are from `node --help`.
+        if any(word.partition('=')[0] in ('--help', '-h', '--version', '-v', '--check', '-c',
+                                          '--eval', '-e', '--print', '-p', '--test-list-only',
+                                          '--v8-options', '--completion-bash', '--prof-process',
+                                          '--run', '--build-snapshot', '--build-snapshot-config')
+               for word in rest):
+            return False
+        valued = {'--test-reporter', '--test-reporter-destination', '--test-name-pattern',
+                  '--test-skip-pattern', '--test-concurrency', '--test-shard',
+                  '--test-timeout', '--test-coverage-include', '--test-coverage-exclude',
+                  '--test-coverage-lines', '--test-coverage-branches', '--test-coverage-functions',
+                  '--test-global-setup', '--env-file', '--env-file-if-exists',
+                  '--import', '--require', '-r', '--conditions', '--loader', '--experimental-loader'}
+        j = 0
+        while j < len(rest) and rest[j].startswith('-') and rest[j] != '--':
+            if rest[j] == '--test':
+                return True
+            j += 2 if rest[j] in valued else 1
+        return False
     if name in NON_RUN_SUBCOMMANDS:
         sub = next((w for w in rest if not w.startswith("-")), None)
         if sub in NON_RUN_SUBCOMMANDS[name] and not (sub == "format" and "--check" in rest):
@@ -478,7 +516,7 @@ def segment_is_check(words):
     return is_runner(words, i)
 
 
-def ran_a_check(command, test_cmd=""):
+def ran_a_check(command, test_cmd="", check_commands=None):
     """Some segment of the command runs a check, or the words and operators
     of test_cmd (its leading prefixes other than `cd` removed) appear in the
     command where a segment's command may start. A segment the match touches
@@ -491,6 +529,10 @@ def ran_a_check(command, test_cmd=""):
     for start, words in segments(toks):
         if segment_is_check(words):
             return True
+        if check_commands and not asks_not_to_run(words):
+            for at in starts(words) or ():
+                if any(words[at:] == argv for argv in check_commands):
+                    return True
         found.append((start, words))
     want = tokens(test_cmd) if test_cmd else None
     if not want:
@@ -568,6 +610,7 @@ def main():
     # launch acknowledgement is a start, not a finish.
     finished = {b.get("tool_use_id") for e in recent for b in blocks(e) if finished_ok(b)}
     test_cmd = configured_test_cmd(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    check_commands = configured_check_commands(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
     for entry in recent:
         for b in blocks(entry):
             if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
@@ -575,7 +618,7 @@ def main():
                     and isinstance(b["input"].get("command"), str)
                     and not b["input"].get("run_in_background")   # a launch is not a finish
                     and isinstance(b.get("id"), str) and b["id"] in finished
-                    and ran_a_check(b["input"]["command"], test_cmd)):
+                    and ran_a_check(b["input"]["command"], test_cmd, check_commands)):
                 return 0
 
     if os.environ.get("ORCH_HOOK_DRY_RUN") == "1":

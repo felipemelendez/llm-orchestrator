@@ -6,7 +6,7 @@
 
 LLM Orchestrator is a plugin for Claude Code, with a smaller part for Codex. It helps the assistant turn an idea into a saved plan, build it task by task, have the change reviewed by independent reviewers, and run the tests before it says the work is done.
 
-New in 0.15.0: landing rules for long projects. At most two unmerged ticket branches, a passing review lands the same session, one whole-branch review per landing, and a finding nobody could reproduce becomes a follow-up instead of a blocker. [All changes](./CHANGELOG.md).
+New in 0.16.0: one optional settings file per project chooses the model and effort for every role, on Codex and on Claude, and every launch records what was actually served. A configured test command counts as a check in the completion check. Reviews read the landed settings, never the change under review. A review loop now runs until it stops finding real defects, never landing over one, instead of stopping after three runs. [All changes](./CHANGELOG.md).
 
 ## Is it right for you?
 
@@ -56,7 +56,7 @@ Every command: [commands guide](./docs/commands-guide.md). A worked example: [wa
 Out of the box the plugin stays quiet and adds these things:
 
 - **Skills load when a task needs them.** Planning, debugging, test-first work and review each have a skill. Questions and small edits need none.
-- **Landing rules for long projects.** One page, `skills/finishing-a-branch/references/landing-rules.md`, says how many ticket branches may be open (two), that a passing review is landed in the same session, that every branch is cut from main after what it depends on has landed, and that a branch gets one whole-branch review, one fix pass and one check before it lands or is split. The session opens with a landing board: which branches are waiting and for how long. Learned on a project that ran 370 reviews in four days and merged nothing.
+- **Landing rules for long projects.** One page, `skills/finishing-a-branch/references/landing-rules.md`, says how many ticket branches may be open (two), that a passing review is landed in the same session, that every branch is cut from main after what it depends on has landed, and that a branch gets one whole-branch review, then fix-and-check rounds while each finds real defects, before it lands or is split. The session opens with a landing board: which branches are waiting and for how long. Learned on a project that ran 370 reviews in four days and merged nothing.
 - **A completion check.** When the assistant finishes work it ends with a `Verification:` line: `PASS` (checks ran and passed), `PENDING`, `BLOCKED` or `NOT APPLICABLE`. If a reply says `Verification: PASS` and no test ran and passed in that turn, a hook sends the assistant a note saying so. You see nothing, and it never blocks.
 - **Two guards.** In your main working folder (not a separate worktree the plugin created), git commands that would throw away uncommitted work, such as `git reset --hard` or `git stash`, are refused. So is skipping git's own hooks or commit signing (`--no-verify` and similar).
 - **Two short reminders, only when they apply.** Asking about a library, version or security topic while designing something reminds the assistant to check current docs first. On a very long conversation, the assistant is reminded once to write a handoff note ([when](./docs/install.md#other-settings)).
@@ -78,6 +78,7 @@ The rulebook and config are protected by a lock with two layers: Claude Code den
 
 ## Where to go next
 
+- [Project policy, role settings, shared capacity and test commands](./docs/project-policy.md) — opt-in capabilities that do not require Cadence.
 - [Install and settings](./docs/install.md) · [The cadence](./docs/cadence.md) · [Codex](./docs/codex.md) · [Running a review by hand](./docs/codex-provider.md)
 - [Commands](./docs/commands-guide.md) · [What Claude Code does and what this adds](./docs/anthropic-ecosystem.md)
 - [Measurements](./docs/MEASUREMENTS.md) — what has been measured, including what did not help.

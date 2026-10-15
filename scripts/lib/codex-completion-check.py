@@ -232,6 +232,7 @@ def main():
     cwd = payload.get("cwd")
     project = cwd if isinstance(cwd, str) and cwd else os.environ.get("CODEX_PROJECT_DIR") or os.getcwd()
     test_cmd = shared_check.configured_test_cmd(project)
+    check_commands = shared_check.configured_check_commands(project)
     turn_id = payload.get("turn_id")
     recorded = command_records(entries)
     if not recorded and this_turn(entries, code_mode_calls(entries), turn_id):
@@ -240,7 +241,7 @@ def main():
         return 0
     found = recorded + exec_call_records(entries)
     for _, _, command, code in this_turn(entries, found, turn_id):
-        if code == 0 and shared_check.ran_a_check(command, test_cmd):
+        if code == 0 and shared_check.ran_a_check(command, test_cmd, check_commands):
             return 0
 
     if os.environ.get("ORCH_HOOK_DRY_RUN") == "1":

@@ -1,7 +1,7 @@
 # Landing rules
 
 How ticket work is cut, reviewed and landed on a long project, so that a review
-loop always ends in a merge or a split. Every flow skill points here; the rules
+loop ends in a merge or a split once it stops finding real defects. Every flow skill points here; the rules
 are stated once. A project's laws may set other numbers; the defaults below
 apply where they say nothing.
 
@@ -52,24 +52,57 @@ applied, four branches landed in nine hours.
    branch and run its checks, so no branch is ever more than one landing
    behind. Conflicts are resolved then, while they are small.
 
-6. **One whole-branch review per landing.** The review runs against the merge
-   base with main (`--base <base>`), after main has been merged in, never on a
-   scoped diff of the last fix. Then at most one fix wave (one implementer with
-   the whole findings list) and one scoped re-review of the fix diff
-   (`--base` at the head the review saw). That is the whole landing loop:
-   three review runs per branch at most. Reviews of single tasks during the
-   build (`dispatching-subagents`) are for tasks the plan marks sensitive and
-   are bounded by that skill's own fix loop; a routine task relies on the
-   landing review. A finding the re-review raises on untouched code
-   is recorded, not fixed in another round. A run that adds no new reproduced
-   finding and no new green check is a stall, not progress: stop there and
-   adjudicate rather than run again.
+6. **The review loop ends on evidence, not on a count.** Each landing starts
+   with one whole-branch review against the merge base with main
+   (`--base <base>`), after main has been merged in, never on a scoped diff of
+   the last fix. Then rounds: in each, one implementer fixes every open finding
+   (one fix wave with the whole list, never one fixer per finding), and one
+   scoped re-review checks the fix diff (`--base` at the head the previous
+   review saw).
+   - A round made progress when its review found at least one new reproduced
+     finding, or a blocking finding was fixed and its failing check now
+     passes. Rounds continue while they make progress.
+   - A round with no new reproduced finding and no new green check is a
+     stall. Stop there and adjudicate: one written disposition per open
+     finding (`fixed`, `refuted`, `settled`, `follow-up`, or `ignored` by the
+     person), then land or split. Never run the same review again hoping for
+     a different answer.
+   - A small fix gets a Standard re-review, not a Full one. A fix is small
+     when all three hold: (1) every finding it answers has a regression test
+     that failed before the fix and passes after it; (2) it touches only the
+     lines the findings name and their tests: no new function, option, field
+     or file, and no behaviour beyond the finding; (3) the production diff
+     (shipped files, tests excluded) is under twenty lines. It gets one
+     scoped Standard review of its diff (`orch-review.py run --path standard
+     --base <the head the previous review saw>`: one independent built-in
+     reviewer, no refuter), and the controller also reads the
+     whole diff and runs each regression test without the fix to see it
+     fail. A finding that review raises is handled like any other finding.
+     A fix for a catastrophic finding, or any fix in a diff the security
+     lens applies to (authentication, secrets, tokens, payments), always gets
+     the Full re-review. The controller records each finding `fixed` with its
+     test and writes one line in the outcome record that the fix was
+     reviewed under the small-fix clause.
+   - A reproduced finding is always fixed, never deferred. A branch never
+     lands over a known reproduced defect, whatever the round.
+   - After two rounds in a row whose re-review found new reproduced defects
+     in the fix itself, stop patching: the fixes are the problem. One
+     read-only diagnosis owner (`orch-debugger`, which never edits) finds why
+     before any third fix wave, and the history goes to the person. Repairs
+     and tests stay with one assigned implementer. The debugger's limit of
+     three hypotheses is a separate rule.
+   - A finding the re-review raises on untouched code is recorded, not fixed
+     in another round, unless it is reproduced and blocking; then it is fixed
+     like any other.
+   - Reviews of single tasks during the build (`dispatching-subagents`) are
+     for tasks the plan marks sensitive; a routine task relies on the landing
+     review.
 
 7. **Reproduce to block.** A serious finding whose repro passed on the
    unpatched copy, or that had none, is recorded `follow-up` with the
    reference of the PR, issue or plan task that will carry it, and the branch
    lands. A repro that failed showed the bug: it is fixed. Catastrophic and
-   unranked findings reach the person. Mild findings are fixed in the one fix
+   unranked findings reach the person. Mild findings are fixed in the next fix
    wave or recorded with a reason. A `BLOCKED` with one specific question is a
    good outcome at any step; a READY or PASS that is not true is the worst.
 
@@ -90,22 +123,34 @@ applied, four branches landed in nine hours.
   straight to `/llm-orchestrator:finish`; never commit more work first.
 - After each landing: merge the base into every open branch (rule 5), then
   take the next item from the board.
-- At the review cap (rule 6): record a disposition for every open finding
+- At a stall (rule 6): record a disposition for every open finding
   (`fixed`, `refuted`, `settled`, `follow-up`, or `ignored` by the person),
-  then land or split. There is no fourth run.
+  then land or split. A reproduced finding is fixed, never given a disposition
+  that lets the branch land over it.
+- Before re-reviewing a fix (rule 6): check the small-fix clause. If its
+  three conditions hold and no finding is catastrophic or security-lens, run
+  one scoped Standard review of the fix diff instead of a Full round, read
+  the whole diff, run each regression test without the fix to see it fail,
+  record each finding `fixed` with its test, and write the small-fix line in
+  the outcome record.
+- After two rounds whose fixes each brought new reproduced defects (rule 6):
+  dispatch `orch-debugger` for a diagnosis before any third fix wave.
 
 ## Why these numbers
 
 Two branches: DORA's measured threshold is three or fewer active branches; the
 project that failed chose two for one orchestrator; agent-team guidance puts
 three to five workers on *tasks*, not branches; the orchestrators that publish
-a cap default to one to three concurrent units. Three review runs: one review,
-one fix wave, one check of the fix is the shape every documented system that
-terminates uses (superpowers caps at five per task and then adjudicates;
-Contrabass at three; no_human at one refute pass); the research says a round
-with no new external evidence does not correct anything and a reviewer asked
-again will find something again. One working day: trunk-based development's
-"a couple of days" halved for an agent that works around the clock, and the
+a cap default to one to three concurrent units. The review loop: the research
+says a round with no new outside evidence corrects nothing (that is the stall
+rule) and a reviewer asked again will find something again (that is why only
+reproduced findings extend the loop). Release 0.15.0 used a count, three review
+runs at most, as a stand-in for that evidence. The count was the wrong proxy:
+this project's own release 0.16.0 hit a re-review with 13 new reproduced
+findings, three of them catastrophic, that the count would have shipped. The
+first project's lesson still holds: its 319 NOT-READY verdicts came from
+reruns on worries nobody reproduced, which the stall rule and rule 7 end. One working day:
+trunk-based development's "a couple of days" halved for an agent that works around the clock, and the
 measured 80% reliability horizon of today's models is about an hour of expert
 work, so a ticket is sized to that and a day is generous.
 

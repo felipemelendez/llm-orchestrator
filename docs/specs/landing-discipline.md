@@ -1,6 +1,7 @@
 # Landing discipline: how ticket work lands without endless rounds
 
-Date: 2026-10-13. Status: implemented; owner's review pending.
+Date: 2026-10-13. Status: implemented; revised 2026-10-15 by the owner (the
+review loop ends on evidence, not on a count).
 Research: `docs/llm-orchestrator/research/2026-10-13-long-running-projects-brief.md`.
 
 ## Problem
@@ -10,8 +11,9 @@ unmerged sibling, reviewed each in scoped rounds for four days (370 runs, 319
 NOT-READY), spent every READY verdict on new commits or on a wait for a
 sibling, and merged nothing until the owner wrote a landing process by hand.
 The plugin had no limit on work in progress, no rule that READY means land, no
-cross-ticket dependency rule, no whole-branch review at landing, no
-branch-level round cap, and treated unreproduced serious findings as blocking.
+cross-ticket dependency rule, no whole-branch review at landing, no rule for
+when a review loop stops, and treated unreproduced serious findings as
+blocking.
 
 ## Goals
 
@@ -19,8 +21,13 @@ branch-level round cap, and treated unreproduced serious findings as blocking.
   else is committed on that head.
 - No more than two unmerged implementation branches at a time; dispatch
   refuses a third and refuses a ticket whose dependency has not landed.
-- One whole-branch review per landing, at most one fix wave and one scoped
-  re-review, then land or split. Nothing loops past that.
+- Each landing starts with one whole-branch review. Then rounds of one fix
+  wave and one scoped re-review continue while each finds new reproduced
+  defects or turns a failing check green. A round with neither is a stall:
+  every open finding gets a disposition and the branch lands or is split.
+  No branch lands over a reproduced defect. After two rounds whose fixes each
+  brought new reproduced defects, a read-only `orch-debugger` diagnosis comes
+  before any third fix.
 - A serious finding the prover could not reproduce lands as a recorded
   follow-up, never as a blocker; reproduced, catastrophic and unranked findings
   block as before.
@@ -89,6 +96,38 @@ session-start hook prints the same line in front of the body, with the
 cadence verdict, so truncation cannot drop it. Read-only git, no network,
 best effort; off with `ORCH_DISABLED_HOOKS=orch-landing-board`.
 
+**The review loop (revised 2026-10-15).** The first version capped the loop
+at three review runs: one review, one fix wave, one re-review, then land or
+split. The owner ruled the count wrong: on this project's own release 0.16.0
+the re-review found 13 new reproduced findings, three of them catastrophic,
+and the count would have shipped them. The loop now ends on evidence. A round
+that finds and fixes reproduced defects continues; a round with no new
+reproduced finding and no new green check stalls and is adjudicated; two
+rounds in a row whose fixes break something new send the branch to a
+read-only diagnosis before any third fix. What the count got right stays: a
+worry nobody reproduced never extends the loop, and the same review is never
+rerun hoping for a different answer.
+
+**Small fixes (revised 2026-10-15).** The owner ruled that the loop still had
+a gap: it sent every fix, however small, through a full re-review (two
+reviewers, prover, refuter), which made a landing loop feel endless. A small
+fix gets a Standard re-review, not a Full one. A fix is small when all three
+hold: every finding it answers has a regression test that failed before the
+fix and passes after it; it touches only the lines the findings name and
+their tests, with no new function, option, field or file and no behaviour
+beyond the finding; and its production diff (shipped files, tests excluded)
+is under twenty lines. It gets one scoped Standard review of its diff
+(`orch-review.py run --path standard --base <the head the previous review
+saw>`: one independent built-in reviewer, no refuter), and the
+controller also reads the whole diff and runs each regression test without
+the fix to see it fail. A finding that review raises is handled like any
+other. A fix for a catastrophic finding, or any fix in a diff the security
+lens applies to (authentication, secrets, tokens, payments), always gets the
+Full re-review. The controller records each finding `fixed` with its test and
+writes one line in the outcome record that the fix was reviewed under the
+small-fix clause. A small fix is never exempt from independent review; it gets
+the proportionate one.
+
 **Alternatives considered.** A new `landing` skill (rejected: the finish skill
 already does the landing; a second entry point is one more thing to route to).
 Enforcing the limit in the worktree materialize engine (rejected: that engine
@@ -123,6 +162,16 @@ findings (rejected: a disposition reuses the landing path R22 already built).
 - **Unreproduced serious findings do not block landing.** The prover's
   experiment is the test; a worry without a failing command is a follow-up.
   Catastrophic and unranked findings still reach the person.
+- **The review loop is bounded by progress, not by a count.** A round that
+  finds and fixes reproduced defects continues; a round with no new reproduced
+  finding stalls and is adjudicated; a landing never happens over a reproduced
+  defect.
+- **A small fix gets a Standard re-review, not a Full one.** Under twenty
+  production lines, only the findings' lines and their tests, no new
+  behaviour, each finding with a regression test: one scoped Standard review
+  of the fix diff (one independent built-in reviewer, no refuter),
+  and the controller reads the whole diff and sees the test fail without the
+  fix. Catastrophic and security-lens fixes always get the Full re-review.
 - **The rules live in one reference file, not in a new skill.** The finish
   skill is the landing step; the rules describe when it runs.
 

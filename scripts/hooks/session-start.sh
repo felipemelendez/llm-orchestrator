@@ -224,6 +224,36 @@ if [[ ",${DISABLED}," != *",orch-landing-board,"* ]]; then
 fi
 CADENCE_PREFIX="${CADENCE_PREFIX}${BOARD}"
 
+# Shared project capabilities are opt-in independently of Cadence. Find only
+# the current Git root's canonical config, including worktrees (.git is a file).
+# Unconfigured projects pay no extra subprocess and keep their existing output.
+POLICY_PROJECT=""
+_policy_scan="${CADENCE_PROJ}"
+while [[ -n "${_policy_scan}" ]]; do
+  if [[ -e "${_policy_scan}/.git" || -L "${_policy_scan}/.git" ]]; then
+    if [[ -e "${_policy_scan}/.llm-orchestrator.json" || -L "${_policy_scan}/.llm-orchestrator.json" ]]; then
+      POLICY_PROJECT="${_policy_scan}"
+    fi
+    break
+  fi
+  [[ "${_policy_scan}" == "/" ]] && break
+  _policy_scan="${_policy_scan%/*}"
+  [[ -n "${_policy_scan}" ]] || _policy_scan="/"
+done
+
+load_project_policy() {
+  local helper result
+  helper="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/../lib/orch-session-context.py"
+  [[ -f "${helper}" ]] || helper="${ROOT}/scripts/lib/orch-session-context.py"
+  if command -v python3 >/dev/null 2>&1 && [[ -f "${helper}" ]]; then
+    if result=$(printf '%s' "$1" | python3 "${helper}" --project "${POLICY_PROJECT}" \
+        --source "${SOURCE:-unknown}" --max-chars "${MAX_CHARS}"); then
+      if [[ -n "${result}" ]]; then printf '%s' "${result}"; return; fi
+    fi
+  fi
+  printf '%s' 'Shared project policy ERROR: startup loading is unavailable. Install python3 or repair the plugin; run orch-control.py session --project <Git-root> and read its policy before work. Policy loading is pending.'
+}
+
 META_BODY=""
 META_FILE="${ROOT}/skills/using-orchestrator/SKILL.md"
 if [[ -f "${META_FILE}" ]]; then
@@ -331,6 +361,7 @@ ${PREAMBLE}${META_BODY}${POSTAMBLE}"
     printf 'orch-dry-run[session-start]: would inject post-compaction recovery note (%s chars)\n' "${#NOTE}" >&2
     exit 0
   fi
+  [[ -z "${POLICY_PROJECT}" ]] || NOTE=$(load_project_policy "${NOTE}")
   ESCAPED=$(printf '%s' "${NOTE}" | json_escape)
   printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"
   exit 0
@@ -345,11 +376,12 @@ if [[ -z "${META_BODY}" ]]; then
   # A missing or unmarked meta-skill used to end the hook here, silently. In
   # cadence mode that is exactly the session that most needs the verdict — the
   # plugin is half-installed — so the report goes out on its own.
-  if [[ -n "${CADENCE_PREFIX}" ]]; then
+  if [[ -n "${CADENCE_PREFIX}" || -n "${POLICY_PROJECT}" ]]; then
     if [[ "${ORCH_HOOK_DRY_RUN:-0}" == "1" ]]; then
       printf 'orch-dry-run[session-start]: would inject the cadence verdict (%s chars)\n' "${#CADENCE_PREFIX}" >&2
       exit 0
     fi
+    [[ -z "${POLICY_PROJECT}" ]] || CADENCE_PREFIX=$(load_project_policy "${CADENCE_PREFIX}")
     ESCAPED=$(printf '%s' "${CADENCE_PREFIX}" | json_escape)
     printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"; exit 0
   fi
@@ -371,6 +403,7 @@ fi
 # session start once stdin has been consumed (a script-buffer artifact; the
 # same-line form makes bash read the command and exit together). Regression-
 # guarded by tests/test-hook-latency.sh.
+[[ -z "${POLICY_PROJECT}" ]] || BODY=$(load_project_policy "${BODY}")
 ESCAPED=$(printf '%s' "${BODY}" | json_escape)
 
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":%s}}\n' "${ESCAPED}"; exit 0
