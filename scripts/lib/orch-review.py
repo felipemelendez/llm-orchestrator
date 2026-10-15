@@ -11,6 +11,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import importlib.util
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -66,6 +67,9 @@ OUTPUT_LIMIT = 200_000
 _spec = importlib.util.spec_from_file_location("orch_task_resources", HERE / "orch-task-resources.py")
 resources = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(resources)
+_policy_spec = importlib.util.spec_from_file_location("orch_policy", HERE / "orch-policy.py")
+policy_module = importlib.util.module_from_spec(_policy_spec)
+_policy_spec.loader.exec_module(policy_module)
 
 
 class Failure(Exception):
@@ -349,6 +353,7 @@ class Review:
         self.tree = None
         self.head = None
         self.sessions = []
+        self.policy = None
 
     # Step 1
     def preflight(self):
@@ -359,6 +364,22 @@ class Review:
                 reasons.append(f"preflight: {name} is installed but not signed in; sign in, or take it off PATH")
         ready = [name for name in ("claude", "codex") if providers[name]["ready"]]
         plan = review_plan(options["path"], options["writer"], ready)
+        policy_context = None
+        try:
+            self.policy = policy_module.Policy(self.project)
+            if self.policy.enabled:
+                self.policy.validate_launches()
+                policy_context = self.policy.policy_context()
+                if plan:
+                    required = {(item["provider"], "reviewer") for item in plan["reviewers"]}
+                    required |= {(plan["helper"], "prover"), (plan["helper"], "refuter")}
+                    if plan["experiments"] == "claude-runner":
+                        required.add(("claude", "runner"))
+                    for provider, role in required:
+                        self.policy.resolve(provider, role)
+                        self.policy.capacity(provider, role)  # rejects unsupported hard inference cap
+        except policy_module.PolicyError as error:
+            reasons.append(f"preflight: project policy: {error}")
         if plan is None:
             reasons.append("preflight: neither claude nor codex is installed and signed in")
         sandbox = providers["codex"]["ready"] and self.sandbox_starts()
@@ -408,7 +429,8 @@ class Review:
                   "harm_ranking": ranking, "harm_ranking_source": source,
                   "spec": spec.read_text() if spec.is_file() else None, "spec_path": str(spec),
                   "base": base.stdout.strip() if base.returncode == 0 else None, "merge_base": merge_base,
-                  "copy_ignored": copy_ignored, "setup": setup, "test_cmd": test_cmd}
+                  "copy_ignored": copy_ignored, "setup": setup, "test_cmd": test_cmd,
+                  "policy_context": policy_context}
         write_json(self.run_dir / "preflight.json", result)
         return result
 
@@ -525,6 +547,15 @@ class Review:
                   "served_effort": [], "started": now(), **extra}
         return directory, record
 
+    def intended_launch(self, record):
+        if self.policy and self.policy.enabled:
+            settings = self.policy.intended(record["provider"], record["role"])
+            record.update(requested_model=settings["model"], requested_effort=settings["effort"],
+                          policy_settings=settings, delivery_id=self.options.get("delivery_id"))
+
+    def workers(self, requested):
+        return self.policy.parallelism(requested) if self.policy and self.policy.enabled else requested
+
     def close_launch(self, directory, record):
         record["finished"] = now()
         write_json(directory / "launch.json", record)
@@ -536,6 +567,7 @@ class Review:
                                             builtin=planned["builtin"],
                                             same_provider=preflight["plan"]["same_provider"])
         try:
+            self.intended_launch(record)
             copy, fingerprint, problem = self.make_copy(preflight, directory)
             record["copy_fingerprint"] = fingerprint
             changed = [item["file"] for item in state["files"]]
@@ -547,13 +579,13 @@ class Review:
             if problem or fingerprint != self.tree:
                 record["reason"] = problem or "the copy does not match the fingerprint"
             elif planned["provider"] == "claude":
-                record.update(run_code_review(copy, instruction, directory, self.run_dir, changed))
+                record.update(run_code_review(copy, instruction, directory, self.run_dir, changed, policy=self.policy))
                 self.sessions.append(dict(record.pop("session_cleanup"), launch=record["name"]))
             else:
                 codex = preflight["providers"]["codex"]
                 record.update(run_codex_review(copy, instruction, directory, codex.get("requested_model"),
-                                               codex.get("mcp_servers", []), changed))
-        except (resources.Unsafe, Failure, OSError) as error:
+                                               codex.get("mcp_servers", []), changed, policy=self.policy))
+        except (resources.Unsafe, Failure, OSError, policy_module.PolicyError) as error:
             record["reason"] = f"the launch could not start: {error}"
         return self.close_launch(directory, record)
 
@@ -598,17 +630,18 @@ class Review:
         directory, record = self.new_launch(name, role, provider, preflight)
         (directory / "prompt.txt").write_text(prompt)
         try:
+            self.intended_launch(record)
             copy, fingerprint, problem = self.make_copy(preflight, directory)
             record["copy_fingerprint"] = fingerprint
             if problem or fingerprint != self.tree:
                 record["reason"] = problem or "the copy does not match the fingerprint"
             elif provider == "claude":
-                record.update(run_claude(copy, prompt, schema, directory, self.run_dir, role))
+                record.update(run_claude(copy, prompt, schema, directory, self.run_dir, role, policy=self.policy))
             else:
                 codex = preflight["providers"]["codex"]
                 record.update(run_codex(copy, prompt, schema, directory, codex.get("requested_model"),
-                                        codex.get("mcp_servers", []), role))
-        except (resources.Unsafe, Failure, OSError) as error:
+                                        codex.get("mcp_servers", []), role, policy=self.policy))
+        except (resources.Unsafe, Failure, OSError, policy_module.PolicyError) as error:
             record["reason"] = f"the launch could not start: {error}"
         return self.close_launch(directory, record)
 
@@ -625,7 +658,7 @@ class Review:
                    [{"name": name, "ids": [f["id"] for f in batch]} for name, batch in zip(names, batches)])
         schema = (REFERENCES / "prover-schema.json").read_text()
         helper = preflight["plan"]["helper"]
-        with ThreadPoolExecutor(max_workers=PROVER_PARALLEL) as pool:
+        with ThreadPoolExecutor(max_workers=self.workers(PROVER_PARALLEL)) as pool:
             launches = list(pool.map(lambda job: self.launch_model(
                 job[0], "prover", helper, self.prover_prompt(preflight, state, diff, job[1]), schema, preflight),
                 zip(names, batches)))
@@ -713,7 +746,7 @@ class Review:
         chosen = [f for f in findings if f["prover_result"] is not None and f["repro"]
                   and (f["rank"] != "mild" or f["floor_rank"] != "mild")]
         runner = preflight["plan"]["experiments"] == "claude-runner"
-        with ThreadPoolExecutor(max_workers=PROVER_PARALLEL) as pool:
+        with ThreadPoolExecutor(max_workers=self.workers(PROVER_PARALLEL)) as pool:
             list(pool.map(lambda f: (self.run_runner_experiment if runner else self.experiment)(f, preflight),
                           chosen))
 
@@ -762,6 +795,7 @@ class Review:
         directory, record = self.new_launch(name, "runner", "claude", preflight)
         receipts = [{"ran": False, "command": line, "reason": "not run: the runner did not start"} for line in lines]
         try:
+            self.intended_launch(record)
             copy, fingerprint, problem = self.make_copy(preflight, directory)
             record["copy_fingerprint"] = fingerprint
             if problem or fingerprint != self.tree:
@@ -769,9 +803,9 @@ class Review:
             else:
                 if patch is not None:
                     (copy / PATCH_IN_COPY).write_text(patch)
-                fields, receipts = run_runner(copy, lines, directory, self.run_dir, fingerprint)
+                fields, receipts = run_runner(copy, lines, directory, self.run_dir, fingerprint, policy=self.policy)
                 record.update(fields)
-        except (resources.Unsafe, Failure, OSError) as error:
+        except (resources.Unsafe, Failure, OSError, policy_module.PolicyError) as error:
             record["reason"] = f"the launch could not start: {error}"
         for item in receipts:
             item["runner"] = name
@@ -875,7 +909,7 @@ class Review:
         self.task = self.manager.start(self.project, f"review {self.run_dir.name}")
         self.token = self.manager.acquire(self.task["id"], "orch-review")["token"]
         planned = preflight["plan"]["reviewers"]
-        with ThreadPoolExecutor(max_workers=len(planned)) as pool:
+        with ThreadPoolExecutor(max_workers=self.workers(len(planned))) as pool:
             launches = list(pool.map(lambda item: self.reviewer(item, preflight, state), planned))
         findings = []
         for launch in launches:
@@ -904,6 +938,13 @@ class Review:
     def cleanup(self):
         record = {"sessions": self.sessions, "task": None}
         if self.task:
+            pending = [path.parent.name for path in (self.run_dir / "launches").glob("*/launch.json")
+                       if (read_json(path, {}).get("capacity") or {}).get("cleanup_status") == "pending"]
+            if pending:
+                record["task"] = {"status": "blocked", "kept": [
+                    "managed process shutdown pending: " + ", ".join(pending)]}
+                write_json(self.run_dir / "cleanup.json", record)
+                return
             try:
                 self.manager.release(self.task["id"], self.token, stopped=True)
                 result = self.manager.finish(self.task["id"])
@@ -968,7 +1009,7 @@ def sandboxed(copy, argv):
 
 
 BASE_ENV = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TZ",
-            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME")
+            "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME")
 PROVIDER_ENV = {
     "claude": ("CLAUDE_CONFIG_DIR", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
                "CLAUDE_CODE_OAUTH_TOKEN"),
@@ -1025,18 +1066,57 @@ def receipt(copy, argv, command, fingerprint, stdin=None):
     return record
 
 
-def run_process(argv, cwd, prompt, stream_path, launch_dir, env):
+def run_process(argv, cwd, prompt, stream_path, launch_dir, env, lease=None):
     """Run one launch; the prompt goes on stdin, or stdin is closed when there is none."""
     with open(stream_path, "wb") as stream, open(launch_dir / "stderr.log", "wb") as errors:
-        process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL if prompt is None else subprocess.PIPE,
-                                   stdout=stream, stderr=errors, start_new_session=True, env=env)
+        if lease:
+            lease.before_spawn()  # durable authorization precedes every managed Popen
         try:
+            process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.DEVNULL if prompt is None else subprocess.PIPE,
+                                       stdout=stream, stderr=errors, start_new_session=True, env=env)
+        except OSError:
+            if lease:
+                lease.spawn_failed()
+            raise
+        try:
+            if lease:
+                lease.attach(process)
             process.communicate(None if prompt is None else prompt.encode(), timeout=LAUNCH_TIMEOUT)
         except subprocess.TimeoutExpired:
             kill_group(process)
             return None
-        kill_group(process)
+        finally:
+            kill_group(process)
     return process.returncode
+
+
+def launch_settings(policy, provider, role, model=None):
+    settings = policy.resolve(provider, role) if policy and policy.enabled else None
+    return settings or {"model": model, "effort": EFFORT}
+
+
+def managed_process(argv, cwd, prompt, stream_path, launch_dir, env, policy, provider, role, settings=None):
+    if not policy or not policy.enabled:
+        return run_process(argv, cwd, prompt, stream_path, launch_dir, env)
+    lease = policy.capacity(provider, role)
+    executed = False
+    metadata = {"argv": argv, "policy_settings": settings or policy.resolve(provider, role),
+                "policy_context": policy.policy_context()}
+    try:
+        with lease:
+            metadata["capacity"] = dict(lease.record)
+            write_json(launch_dir / "policy-launch.json", metadata)
+            code = run_process(argv, cwd, prompt, stream_path, launch_dir, env, lease=lease)
+            executed = True
+    except (policy_module.PolicyError, OSError) as error:
+        if not executed:
+            raise
+        # Keep actual inference output, model and usage available for parsing.
+        # An uncertain cleanup still makes the review incomplete.
+        lease.record.update(cleanup_status="pending", cleanup_reason=str(error))
+    metadata["capacity"] = dict(lease.record)
+    write_json(launch_dir / "policy-launch.json", metadata)
+    return code
 
 
 def stream_events(path):
@@ -1056,8 +1136,11 @@ def stream_events(path):
     return events
 
 
-def claude_family(served):
-    return bool(re.fullmatch(rf"claude-{CLAUDE_ALIAS}(?:-[a-zA-Z0-9.]+)+(?:\[[a-z0-9]+\])?", served))
+def claude_family(served, requested=CLAUDE_ALIAS):
+    if requested.startswith("claude-") and served == requested:
+        return True
+    return requested in {"opus", "sonnet", "haiku"} and bool(re.fullmatch(
+        rf"claude-{re.escape(requested)}(?:-[a-zA-Z0-9.]+)+(?:\[[a-z0-9]+\])?", served))
 
 
 CREDENTIAL_DIRS = ("~/.aws", "~/.ssh", "~/.gnupg", "~/.config/gh", "~/.config/gcloud", "~/.azure", "~/.kube",
@@ -1117,12 +1200,21 @@ def probe_passed(calls, probe, target):
 
 def finish_launch(fields, output, launch_dir):
     """Keep whatever answer the launch gave, even from a dropout (R19); complete only without a reason."""
+    managed = read_json(launch_dir / "policy-launch.json")
+    if isinstance(managed, dict):
+        fields.update(managed)
     if isinstance(output, dict):
         write_json(launch_dir / "output.json", output)
     if not fields.get("reason"):
         fields["reason"] = None
         fields["status"] = "complete"
     else:
+        fields["status"] = "dropout"
+    fields["inference_status"] = fields["status"]
+    capacity = fields.get("capacity") or {}
+    if capacity.get("cleanup_status") == "pending":
+        fields["reason"] = first_reason(fields.get("reason"), capacity.get("cleanup_reason"),
+                                       "managed process cleanup is pending")
         fields["status"] = "dropout"
     return fields
 
@@ -1140,7 +1232,41 @@ def claude_result(events):
     return init, result, sorted(usage)
 
 
-def claude_checks(code, init, result, served, calls):
+def claude_tokens(result):
+    if not isinstance(result, dict):
+        return None
+    usage = result.get("usage")
+    if isinstance(usage, dict):
+        tokens = {key: value for key, value in usage.items() if "token" in key.lower()
+                  and type(value) is int and value >= 0}
+        if tokens and any(tokens.values()):
+            return tokens
+    # Native /code-review may report zero top-level usage while modelUsage
+    # includes its internal reviewers. Preserve that observed usage instead.
+    top_tokens = tokens if isinstance(usage, dict) else {}
+    tokens = {}
+    for usage in (result.get("modelUsage") or {}).values():
+        if isinstance(usage, dict):
+            for key, value in usage.items():
+                if key in {"inputTokens", "outputTokens", "cacheReadInputTokens",
+                           "cacheCreationInputTokens", "thinkingTokens"} and type(value) is int and value >= 0:
+                    tokens[key] = tokens.get(key, 0) + value
+    return tokens or top_tokens or None
+
+
+def codex_review_tokens(events):
+    tokens = None
+    for event in events or []:
+        payload = event.get("payload")
+        if event.get("type") == "event_msg" and isinstance(payload, dict) and payload.get("type") == "token_count":
+            info = payload.get("info")
+            total = info.get("total_token_usage") if isinstance(info, dict) else None
+            if isinstance(total, dict):
+                tokens = {key: value for key, value in total.items() if type(value) is int and value >= 0}
+    return tokens
+
+
+def claude_checks(code, init, result, served, calls, requested=CLAUDE_ALIAS):
     """R5 and R7 checks shared by every Claude launch."""
     if code is None:
         return f"timed out after {LAUNCH_TIMEOUT} seconds"
@@ -1155,26 +1281,29 @@ def claude_checks(code, init, result, served, calls):
         return "no final result"
     if not served:
         return "no served model in the result's modelUsage"
-    others = [model for model in served if not claude_family(model)]
+    others = [model for model in served if not claude_family(model, requested)]
     if others:
-        return "a model outside the opus family served it: " + ", ".join(others)
+        return f"a model outside the {requested} family served it: " + ", ".join(others)
     if any(call["unsandboxed"] for call in calls):
         return "a Bash call asked to run outside the sandbox"
     return None
 
 
-def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
+def run_claude(copy, prompt, schema, launch_dir, run_dir, role, policy=None):
     """The prover or refuter on Claude (T5's launch). Returns the launch fields."""
     target, probe = sandbox_probe(launch_dir)
+    settings = launch_settings(policy, "claude", role, CLAUDE_ALIAS)
+    if policy and policy.enabled:
+        prompt = policy.prompt(prompt)
     prompt = f"Sandbox check: run exactly this command first: {probe}\n\n{prompt}"
     argv = ["claude", "-p", "--settings", claude_sandbox(copy, run_dir),
-            "--output-format", "stream-json", "--verbose", "--model", CLAUDE_ALIAS,
-            "--effort", EFFORT, "--json-schema", schema, "--safe-mode", "--restricted",
+            "--output-format", "stream-json", "--verbose", "--model", settings["model"],
+            "--effort", settings["effort"], "--json-schema", schema, "--safe-mode", "--restricted",
             "--tools", "Read,Grep,Glob,Bash", "--allowedTools", "Read,Grep,Glob,Bash",
             "--permission-mode", "dontAsk", "--permission-prompts", "none", "--strict-mcp-config",
             "--mcp-config", '{"mcpServers":{}}', "--no-session-persistence"]
     stream = launch_dir / "stream.jsonl"
-    code = run_process(argv, copy, prompt, stream, launch_dir, reduced_env("claude"))
+    code = managed_process(argv, copy, prompt, stream, launch_dir, reduced_env("claude"), policy, "claude", role, settings=settings)
     events = stream_events(stream)
     init, result, served = claude_result(events)
     calls = bash_calls(events)
@@ -1187,9 +1316,10 @@ def run_claude(copy, prompt, schema, launch_dir, run_dir, role):
             output = parse_json_text(result["result"])
     fields = {"served_model": served, "served_effort": [], "exit_code": code,
               "cost_usd": result.get("total_cost_usd") if result else None,
+              "tokens": claude_tokens(result),
               "sandbox_check": calls[0]["output"] if calls else None}
     fields["reason"] = first_reason(
-        claude_checks(code, init, result, served, calls),
+        claude_checks(code, init, result, served, calls, settings["model"]),
         None if answer_shape_valid(output, role) else "no final result",
         None if probe_passed(calls, probe, target) else "the sandbox check did not show a refused write outside the copy")
     return finish_launch(fields, output, launch_dir)
@@ -1239,21 +1369,25 @@ def runner_marker(text):
     return (int(marks[-1].group(1)), marks[-1].group(2) == "1") if marks else None
 
 
-def run_runner(copy, lines, launch_dir, run_dir, fingerprint):
+def run_runner(copy, lines, launch_dir, run_dir, fingerprint, policy=None):
     """R10's Claude runner: returns the launch fields and one receipt per line, in order."""
     target, probe = sandbox_probe(launch_dir)
+    settings = launch_settings(policy, "claude", "runner", CLAUDE_ALIAS)
     wrapped = [runner_line(line) for line in lines]
     prompt = ("Run these commands with your Bash tool, one call each, in this order, exactly as written, "
               "and nothing else. Give each call a timeout of 600000 milliseconds. Then reply DONE.\n"
               + "".join(f"{n}. {command}\n" for n, command in enumerate([probe, *wrapped], 1)))
+    if policy and policy.enabled:
+        prompt = policy.prompt(prompt)
     argv = ["claude", "-p", "--settings", claude_sandbox(copy, run_dir), "--output-format", "stream-json",
-            "--verbose", "--model", CLAUDE_ALIAS, "--effort", EFFORT, "--safe-mode", "--restricted",
+            "--verbose", "--model", settings["model"], "--effort", settings["effort"], "--safe-mode", "--restricted",
             "--tools", "Bash", "--allowedTools", "Bash", "--permission-mode", "dontAsk",
             "--permission-prompts", "none", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
             "--no-session-persistence"]
     (launch_dir / "prompt.txt").write_text(prompt)
     stream = launch_dir / "stream.jsonl"
-    code = run_process(argv, copy, prompt, stream, launch_dir, reduced_env("claude", PYTHONDONTWRITEBYTECODE="1"))
+    code = managed_process(argv, copy, prompt, stream, launch_dir, reduced_env("claude", PYTHONDONTWRITEBYTECODE="1"),
+                           policy, "claude", "runner", settings=settings)
     events = stream_events(stream)
     init, result, served = claude_result(events)
     calls = bash_calls(events)
@@ -1279,9 +1413,10 @@ def run_runner(copy, lines, launch_dir, run_dir, fingerprint):
         receipts.append(item)
     fields = {"served_model": served, "served_effort": [], "exit_code": code,
               "cost_usd": result.get("total_cost_usd") if result else None,
+              "tokens": claude_tokens(result),
               "sandbox_check": calls[0]["output"] if calls else None}
     fields["reason"] = first_reason(
-        claude_checks(code, init, result, served, calls),
+        claude_checks(code, init, result, served, calls, settings["model"]),
         None if probe_passed(calls, probe, target) else "the sandbox check did not show a refused write outside the copy",
         None if len(calls) <= len(lines) + 1 else "the runner ran a command it was not given",
         next((f"receipt {n}: {item['reason']}" for n, item in enumerate(receipts, 1) if not item["ran"]), None))
@@ -1618,18 +1753,21 @@ def codex_log_mcp(stderr):
     return None
 
 
-def run_code_review(copy, instruction, launch_dir, run_dir, changed):
+def run_code_review(copy, instruction, launch_dir, run_dir, changed, policy=None):
     """R5: Claude Code's /code-review, proved from its stream and its kept subagent transcript."""
     target, probe = sandbox_probe(launch_dir)
+    settings = launch_settings(policy, "claude", "reviewer", CLAUDE_ALIAS)
+    if policy and policy.enabled:
+        instruction = policy.prompt(instruction)
     session = str(uuid.uuid4())
-    text = (f"/code-review {EFFORT} Sandbox check: before anything else, run exactly this command with your "
+    text = (f"/code-review {settings['effort']} Sandbox check: before anything else, run exactly this command with your "
             f"Bash tool: {probe}\n\n{instruction}")
-    argv = ["claude", "-p", text, "--model", CLAUDE_ALIAS, "--effort", EFFORT, "--safe-mode", "--restricted",
+    argv = ["claude", "-p", text, "--model", settings["model"], "--effort", settings["effort"], "--safe-mode", "--restricted",
             "--tools", REVIEW_TOOLS, "--allowedTools", REVIEW_TOOLS, "--permission-mode", "dontAsk",
             "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--mcp-config",
             '{"mcpServers":{}}', "--session-id", session, "--settings", claude_sandbox(copy, run_dir)]
     stream = launch_dir / "stream.jsonl"
-    code = run_process(argv, copy, None, stream, launch_dir, reduced_env("claude"))
+    code = managed_process(argv, copy, None, stream, launch_dir, reduced_env("claude"), policy, "claude", "reviewer", settings=settings)
     events = stream_events(stream)
     init, result, served = claude_result(events)
     task = next((e.get("task_id") for e in events if e.get("type") == "system"
@@ -1672,28 +1810,38 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed):
         write_json(launch_dir / "findings.json", findings)
     fields = {"served_model": served, "served_effort": [], "exit_code": code, "session_id": session,
               "cost_usd": result.get("total_cost_usd") if result else None,
+              "tokens": claude_tokens(result),
               "sandbox_check": calls[0]["output"] if calls else None,
               "permission_denials": result.get("permission_denials") if result else None}
     fields["reason"] = first_reason(
-        claude_checks(code, init, result, served, all_calls),
+        claude_checks(code, init, result, served, all_calls, settings["model"]),
         missing,
         None if sandbox_attached(transcript, run_dir, copy) else
         "the transcript's sandbox_instructions do not deny reading the run directory and allow writing the copy",
         None if probe_passed(calls, probe, target) else "the sandbox check did not show a refused write outside the copy",
         f"the reply is not parsed: {parse_problem}" if parse_problem else None,
         NOT_READ if findings == [] and not read_the_change(tool_calls, changed) else None)
-    fields["session_cleanup"] = delete_session(session)
+    capacity = (read_json(launch_dir / "policy-launch.json", {}).get("capacity") or {})
+    fields["session_cleanup"] = ({"session_id": session, "deleted": False,
+                                  "reason": "managed process shutdown pending; session preserved"}
+                                 if capacity.get("cleanup_status") == "pending" else delete_session(session))
     return finish_launch(fields, None, launch_dir)
 
 
-def run_codex_review(copy, instruction, launch_dir, requested, servers, changed):
+def run_codex_review(copy, instruction, launch_dir, requested, servers, changed, policy=None):
     """R6: `codex review`, proved from its stderr log and the review's rollout."""
-    argv = ["codex", "review", "--uncommitted", "-c", f'model_reasoning_effort="{EFFORT}"',
+    settings = launch_settings(policy, "codex", "reviewer", requested)
+    requested, effort = settings["model"], settings["effort"]
+    if policy and policy.enabled:
+        instruction = policy.prompt(instruction)
+    model_args = (["-c", "model=" + json.dumps(requested), "-c", "review_model=" + json.dumps(requested)]
+                  if policy and policy.enabled else [])
+    argv = ["codex", "review", "--uncommitted", *model_args, "-c", f'model_reasoning_effort="{effort}"',
             "-c", 'sandbox_mode="read-only"', "-c", "developer_instructions=" + json.dumps(instruction),
             *codex_mcp_off(servers)]
     stdout_path = launch_dir / "stdout.txt"
-    code = run_process(argv, copy, None, stdout_path, launch_dir,
-                       reduced_env("codex", RUST_LOG="warn,codex_otel=info"))
+    code = managed_process(argv, copy, None, stdout_path, launch_dir,
+                           reduced_env("codex", RUST_LOG="warn,codex_otel=info"), policy, "codex", "reviewer", settings=settings)
     stdout = stdout_path.read_text(errors="replace")
     stderr = (launch_dir / "stderr.log").read_text(errors="replace")
     path, events, helpers, missing = review_rollout(stderr, codex_home())
@@ -1719,6 +1867,7 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed)
     if path:
         shutil.copyfile(path, launch_dir / "rollout.jsonl")
     fields = {"served_model": served, "served_effort": efforts, "served_sandbox": sandboxes, "exit_code": code,
+              "tokens": codex_review_tokens(events), "cost_usd": None,
               "helper_models": helpers, "rollout": str(path) if path else None,
               "model_compared": requested is not None}
     mismatched = [model for model in served if requested is not None and model != requested]
@@ -1730,7 +1879,7 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed)
         "the review rollout has no turn_context" if not contexts else None,
         "no served model" if contexts and not served else None,
         "the served model differs from config.toml's: " + ", ".join(mismatched) if mismatched else None,
-        f"the served effort is {', '.join(efforts) or 'missing'}, not {EFFORT}" if efforts != [EFFORT] else None,
+        f"the served effort is {', '.join(efforts) or 'missing'}, not {effort}" if efforts != [effort] else None,
         f"the served sandbox is {', '.join(sandboxes) or 'missing'}, not read-only" if sandboxes != ["read-only"] else None,
         None if developer else "no developer message carries the instruction",
         f"the reply is not parsed: {problem}" if problem else None,
@@ -1761,19 +1910,24 @@ def codex_mcp_servers(path):
     return None
 
 
-def run_codex(copy, prompt, schema, launch_dir, requested, servers, role):
+def run_codex(copy, prompt, schema, launch_dir, requested, servers, role, policy=None):
     """The prover or refuter on Codex (T5's `codex exec` launch). Served model and effort come from
     the session rollout named by the thread id."""
     schema_path = launch_dir / "schema.json"
+    settings = launch_settings(policy, "codex", role, requested)
+    requested, effort = settings["model"], settings["effort"]
+    if policy and policy.enabled:
+        prompt = policy.prompt(prompt)
     schema_path.write_text(schema)
     result_path = launch_dir / "last-message.json"
     argv = ["codex", "exec", "--json", "-s", "workspace-write", "-C", str(copy),
-            "-c", f'model_reasoning_effort="{EFFORT}"', *codex_mcp_off(servers),
+            *(["--model", requested] if policy and policy.enabled else []),
+            "-c", f'model_reasoning_effort="{effort}"', *codex_mcp_off(servers),
             "--output-schema", str(schema_path), "-o", str(result_path), "-"]
     stream = launch_dir / "stream.jsonl"
     # At codex_otel=info, codex logs the MCP servers it started.
-    code = run_process(argv, copy, prompt, stream, launch_dir,
-                       reduced_env("codex", RUST_LOG="warn,codex_otel=info"))
+    code = managed_process(argv, copy, prompt, stream, launch_dir,
+                           reduced_env("codex", RUST_LOG="warn,codex_otel=info"), policy, "codex", role, settings=settings)
     thread, commands, usage = None, [], {}
     for event in stream_events(stream):
         if event.get("type") == "thread.started":
@@ -1804,7 +1958,7 @@ def run_codex(copy, prompt, schema, launch_dir, requested, servers, role):
         None if answer_shape_valid(output, role) else "no final result",
         "no served model" if not served else None,
         "the served model differs from the requested one: " + ", ".join(mismatched) if mismatched else None,
-        f"the served effort is {', '.join(efforts) or 'missing'}, not {EFFORT}" if efforts != [EFFORT] else None,
+        f"the served effort is {', '.join(efforts) or 'missing'}, not {effort}" if efforts != [effort] else None,
         None if policies and all(isinstance(policy, dict) and policy.get("type") == "workspace-write"
                                  and policy.get("network_access") is not True for policy in policies)
         else f"the served sandbox is not workspace-write without network: {policies}",
@@ -2060,7 +2214,7 @@ def decide(run_dir):
             "launches": [{key: launch.get(key) for key in (
                 "name", "role", "provider", "builtin", "status", "reason", "requested_model", "served_model",
                 "requested_effort", "served_effort", "served_sandbox", "same_provider", "cost_usd", "tokens",
-                "sandbox_check", "session_id")} for launch in launches],
+                "sandbox_check", "session_id", "policy_settings", "capacity", "argv", "delivery_id", "inference_status")} for launch in launches],
             "findings": findings, "counts": counts, "cleanup": read_json(run_dir / "cleanup.json")}
 
 
@@ -2073,6 +2227,7 @@ def append_outcome(*rows):
     path = outcome_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
         for row in rows:
             stream.write(json.dumps(row, sort_keys=True) + "\n")
 
@@ -2086,15 +2241,19 @@ def outcome_row(run_dir, review):
         for key, value in (launch.get("tokens") or {}).items():
             tokens[key] = tokens.get(key, 0) + value
     return {"row": "review", "run_id": review["run_id"], "date": now(),
+            "project": run.get("project"), "delivery_id": run.get("delivery_id"),
+            "project_id": policy_module.project_id(Path(run["project"])) if run.get("project") else None,
             "repository": Path(run.get("project", "")).name, "path": review["path"],
             "writer": review["writer"], "reviewers": review["reviewers"], "same_provider": review["same_provider"],
             "diff_lines": review["diff_lines"],
             "launches": [{key: launch.get(key) for key in (
                 "name", "role", "provider", "builtin", "status", "requested_model", "served_model",
-                "requested_effort", "served_effort")} for launch in review["launches"]],
+                "requested_effort", "served_effort", "policy_settings", "capacity", "cost_usd", "tokens", "inference_status")}
+                         for launch in review["launches"]],
             "verdict": review["verdict"], "incomplete_reasons": review["incomplete_reasons"],
             "counts": review["counts"], "duration_s": review.get("duration_s"),
-            "cost_usd": round(sum(costs), 4) if costs else None, "tokens": tokens or None}
+            "cost_usd": round(sum(costs), 4) if costs else None,
+            "cost_complete": len(costs) == len(review["launches"]), "tokens": tokens or None}
 
 
 def command_run(args):
@@ -2120,7 +2279,8 @@ def command_run(args):
         run_dir.mkdir(parents=True, mode=0o700)
         options = {"run_id": uuid.uuid4().hex, "project": str(project), "path": args.path,
                    "writer": args.writer, "base": args.base, "spec": str(Path(args.spec).absolute()),
-                   "allow_test_changes": args.allow_test_changes, "started": now()}
+                   "allow_test_changes": args.allow_test_changes, "started": now(),
+                   "delivery_id": args.delivery_id}
         write_json(run_dir / "run.json", options)
         if args.detach:
             with open(run_dir / "run.log", "ab") as log:
@@ -2270,6 +2430,7 @@ def main(argv=None):
     run.add_argument("--writer", choices=["claude", "codex"], help="the harness that wrote the change")
     run.add_argument("--base", help="the ref the change is reviewed against")
     run.add_argument("--spec", help="the file the change must implement")
+    run.add_argument("--delivery-id", help="link observed attempts to a delivery; does not validate delivery")
     run.add_argument("--allow-test-changes", action="store_true",
                      help="the task may change tests; a test-tampering finding may then be mild")
     wait = commands.add_parser("wait", help="wait for a detached run to finish")

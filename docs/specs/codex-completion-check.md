@@ -1,6 +1,6 @@
 # Spec: the Codex completion check
 
-Status: implemented 2026-09-22; record kinds revised 2026-09-25. Maintained alongside `scripts/lib/codex-completion-check.py`.
+Status: implemented 2026-09-22; record kinds revised 2026-09-25; independent project-policy checks added 2026-10-15. Maintained alongside `scripts/lib/codex-completion-check.py`.
 
 ## Goal
 
@@ -215,7 +215,18 @@ Rules:
   has the field; a session started in a subdirectory would not find the
   file), and whether Codex sets `CODEX_PROJECT_DIR` at all. A missing,
   unreadable or malformed `cadence.json` (including one nested too deep to
-  read), or an empty `test_cmd`, leaves only the lists.
+  read), or an empty `test_cmd`, leaves the built-in list route and the
+  independent configured-custom route below.
+- Node's built-in `node --test` is recognized before a script argument, with
+  value-taking interpreter/test options skipped. Help/version, eval/print,
+  syntax checking, list-only and a script argument before `--test` do not count.
+- Opt-in `.llm-orchestrator.json` supplies exact `checks.<name>.argv` matches
+  independently of Cadence. Match the complete command after supported shell
+  prefixes; an extra help argument, a mere prefix or echoed text does not count.
+  Invalid policy supplies no custom matches; `orch-control.py doctor` reports the
+  configuration error. This recognition is distinct from the explicit check
+  receipt/reuse API in [project policy](../project-policy.md). No receipt is
+  produced or accepted by this transcript hook.
 - A shell argv (`bash`, `sh`, `zsh` or `dash` with `-c`,
   `-lc`, `-ic` or `-lic`) is judged on its script text; any other argv runs
   one program, so it is joined with `shlex.join`, which quotes each

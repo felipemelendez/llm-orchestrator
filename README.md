@@ -78,6 +78,7 @@ The rulebook and config are protected by a lock with two layers: Claude Code den
 
 ## Where to go next
 
+- [Project policy, role settings, shared capacity and check reuse](./docs/project-policy.md) — opt-in capabilities that do not require Cadence.
 - [Install and settings](./docs/install.md) · [The cadence](./docs/cadence.md) · [Codex](./docs/codex.md) · [Running a review by hand](./docs/codex-provider.md)
 - [Commands](./docs/commands-guide.md) · [What Claude Code does and what this adds](./docs/anthropic-ecosystem.md)
 - [Measurements](./docs/MEASUREMENTS.md) — what has been measured, including what did not help.
