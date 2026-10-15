@@ -310,7 +310,10 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
 - **R20.** Unchanged: one row per run in
   `${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/review-outcomes.jsonl`,
-  naming reviewers instead of briefs, with no claim text or code.
+  naming reviewers instead of briefs, with no claim text or code. The review
+  row also records `branch`, `head`, `base`, `base_commit` and `merge_base`,
+  and each finding row records `file` and `reproduced`, for later analysis;
+  nothing reads them yet.
 - **R21.** `record <run-dir> --dispositions <file>`, one per
   finding id: `fixed` with the check; `refuted`, with a `file-line` quote
   that `record` checks; `ignored` with a reason, for a blocking finding only
@@ -378,21 +381,6 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   Decided on 2026-10-13 after a project whose reviews returned about twenty
   findings a round, many serious and unreproduced, blocked every landing for
   four days (`docs/specs/landing-discipline.md`).
-- **R24. Rounds.** `wait` prints the landing's rounds and trend; the rules
-  in `landing-rules.md` say what they mean. The run and its review row record
-  `project_id`, `branch`, `base`, `base_commit` (the sha `--base` names),
-  `merge_base` and `head` (the sha reviewed); each finding row records its
-  `file` and whether it was `reproduced`. A landing is a chain: a run whose
-  base commit is an earlier run's head in the same project continues that
-  run's landing, and any other run starts one. `rounds` lists the chain,
-  oldest first, up to this run, with its verdict, finding, blocking,
-  reproduced and mild counts, time, cost and the three files its reproduced
-  findings name most. `trend` is `first round`, or this run's reproduced
-  count `falling`, `rising` or `flat` against the previous round. It reads
-  the outcome log once, skips lines it cannot read, needs no checkout, and
-  never costs the verdict: when it cannot work, `rounds` is empty, `trend`
-  is `unknown` and `rounds_note` says why. Old rows without a head or base
-  commit join no chain.
 
 ## What stays, what goes
 

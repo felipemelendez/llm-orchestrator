@@ -124,19 +124,6 @@ class Policy:
         if load:
             self.load()
 
-    @classmethod
-    def at(cls, project, revision):
-        """(present, policy or PolicyError) at revision. present is False when the tree could not be read."""
-        try:
-            policy = cls(project, revision, load=False)
-        except PolicyError as error:
-            return False, error
-        try:
-            policy.load()
-        except PolicyError as error:
-            return policy.enabled, error
-        return policy.enabled, policy
-
     def load(self):
         if not self.enabled:
             return
@@ -166,8 +153,12 @@ class Policy:
         mode, kind, blob = entry
         if kind != "blob":
             raise PolicyError(f"{name} is not a file at {self.revision}")
-        data = subprocess.run(["git", "-C", str(self.project), "cat-file", "blob", blob],
-                              stdin=subprocess.DEVNULL, capture_output=True, check=True).stdout
+        found = subprocess.run(["git", "-C", str(self.project), "cat-file", "blob", blob],
+                               stdin=subprocess.DEVNULL, capture_output=True)
+        if found.returncode:
+            message = found.stderr.decode("utf-8", "replace").strip()
+            raise PolicyError(f"cannot read {name} at {self.revision}: {message}")
+        data = found.stdout
         return mode == "120000", data
 
     def show(self, name, follow=True):

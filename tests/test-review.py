@@ -107,6 +107,11 @@ FAKE_CLAUDE = "#!/usr/bin/env python3\n" + FAKE_COMMON + r'''
 args = sys.argv[1:]
 if args[:2] == ["auth", "status"]:
     ok = scenario.get("claude", {}).get("auth", True)
+    moved = FAKE_ROOT / "auth-moved"
+    if scenario.get("claude", {}).get("auth_commands") and not moved.exists():
+        moved.touch()  # a ref or HEAD that moves after launch, once, while preflight runs
+        for command in scenario["claude"]["auth_commands"]:
+            subprocess.run(command, shell=True, cwd=FAKE_ROOT / "project", check=True, capture_output=True)
     print(json.dumps({"loggedIn": ok}))
     sys.exit(0 if ok else 1)
 def usage(spec):
@@ -1935,27 +1940,26 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn("subtracts", text)
         self.assertNotIn("return a - b", text)
 
-    # Rounds
-    def wait_rounds(self, cwd=None):
-        result = subprocess.run([sys.executable, str(SCRIPT), "wait", str(self.run_dir), "--seconds", "30"],
-                                cwd=cwd or self.project, capture_output=True, text=True, env=self.env(), timeout=300)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        return json.loads(result.stdout)
-
-    def commit(self, text, message):
-        (self.project / "calc.py").write_text(text)
-        self.git("commit", "-qam", message)
-        return self.git("rev-parse", "HEAD").strip()
-
-    def test_rounds_rows_carry_the_head_base_merge_base_and_reproduced_file(self):
+    def test_r20_rows_record_the_revisions_reviewed_and_the_reproduced_file(self):
+        # round-7 code-review-5, codex-review-1: HEAD and the base move after launch, before preflight.
+        (self.project / "notes.txt").write_text("notes\n")
+        self.git("add", "notes.txt")
+        self.git("commit", "-qm", "notes", "--", "notes.txt")
+        self.git("branch", "trunk", self.base)
+        identity = "git -c user.name=F -c user.email=f@x.invalid"
+        self.scenario["claude"]["auth_commands"] = [f"{identity} commit -qam moved", "git branch -f trunk HEAD~1"]
+        self.base = "trunk"
         self.reviewer("claude", code_finding())
         self.prove({"code-review-1": proof()})
         self.review()
+        head = self.git("rev-parse", "HEAD").strip()
+        base = self.git("rev-parse", "trunk").strip()
+        self.assertEqual(json.loads((self.run_dir / "fingerprint-start.json").read_text())["head"], head)
         row = self.outcome_rows()[0]
         run = json.loads((self.run_dir / "run.json").read_text())
         for record in (row, run):
             self.assertEqual((record["branch"], record["base"], record["base_commit"], record["merge_base"],
-                              record["head"]), ("main", self.base, self.base, self.base, self.base))
+                              record["head"]), ("main", "trunk", base, base, head))
             self.assertTrue(record["project_id"])
         dispositions = self.root / "dispositions.json"
         dispositions.write_text(json.dumps({"code-review-1": {"disposition": "fixed", "check": CHECK}}))
@@ -1963,100 +1967,14 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual([(row["file"], row["reproduced"]) for row in self.outcome_rows() if row["row"] == "finding"],
                          [("calc.py", True)])
 
-    def test_rounds_wait_lists_the_landing_rounds_without_advice(self):
-        self.reviewer("claude", code_finding())
-        self.prove({"code-review-1": proof()})
-        self.review()
-        first = self.wait_rounds()
-        self.assertEqual(len(first["rounds"]), 1)
-        self.assertEqual(first["trend"], "first round")
-        self.assertNotIn("advice", first)
-        first_id = json.loads((self.run_dir / "run.json").read_text())["run_id"]
-        self.scenario = {"claude": {}, "codex": {}}
-        self.review()
-        second = self.wait_rounds()
-        self.assertEqual(second["verdict"], "READY")
-        rounds = second["rounds"]
-        self.assertEqual([r["run_id"] for r in rounds][0], first_id)
-        self.assertEqual([(r["verdict"], r["findings"], r["blocking"], r["reproduced"]) for r in rounds],
-                         [("NOT-READY", 1, 1, 1), ("READY", 0, 0, 0)])
-        self.assertEqual(rounds[0]["files"], ["calc.py"])
-        self.assertEqual(rounds[1]["files"], [])
-        for key in ("date", "mild", "duration_s", "cost_usd"):
-            self.assertIn(key, rounds[0])
-        self.assertEqual(second["trend"], "falling")
-        self.assertNotIn("advice", second)
-
-    def test_rounds_two_reproduced_rounds_are_flat(self):
-        for _ in range(2):
-            self.reviewer("claude", code_finding())
-            self.prove({"code-review-1": proof()})
-            self.review()
-        waited = self.wait_rounds()
-        self.assertEqual([r["reproduced"] for r in waited["rounds"]], [1, 1])
-        self.assertEqual([r["files"] for r in waited["rounds"]], [["calc.py"], ["calc.py"]])
-        self.assertEqual(waited["trend"], "flat")
-        self.assertNotIn("advice", waited)
-
-    def test_rounds_two_unrelated_detached_head_runs_are_not_joined(self):
-        # round-6 code-review-1: both runs record branch "HEAD"; the sha chain keeps them apart.
-        self.commit("def add(a, b):\n    return a - b\n", "first change")
-        self.git("switch", "-q", "--detach")
-        self.review()
-        self.git("switch", "-q", "--detach", self.base)
-        self.commit("def add(a, b):\n    return a * b\n", "unrelated change")
-        self.review()
-        waited = self.wait_rounds()
-        self.assertEqual(self.outcome_rows()[-1]["branch"], "HEAD")
-        self.assertEqual(len(waited["rounds"]), 1)
-        self.assertEqual(waited["trend"], "first round")
-
-    def test_rounds_a_scoped_re_review_continues_and_a_whole_branch_review_starts_over(self):
-        change = self.commit("def add(a, b):\n    return a - b\n", "change")
-        self.reviewer("claude", code_finding())
-        self.prove({"code-review-1": proof()})
-        self.review()
-        first_id = json.loads((self.run_dir / "run.json").read_text())["run_id"]
-        self.commit("def add(a, b):\n    return a + b\n", "fix")
-        whole_branch, self.base = self.base, change
-        self.scenario = {"claude": {}, "codex": {}}
-        self.review()
-        waited = self.wait_rounds()
-        self.assertEqual([r["run_id"] for r in waited["rounds"]][0], first_id)
-        self.assertEqual(len(waited["rounds"]), 2)
-        self.assertEqual(waited["trend"], "falling")
-        self.base = whole_branch
-        self.review()
-        waited = self.wait_rounds()
-        self.assertEqual(len(waited["rounds"]), 1)
-        self.assertEqual(waited["trend"], "first round")
-
-    def test_rounds_files_name_only_reproduced_findings(self):
-        # round-6 code-review-4, codex-review-1: a mild note does not put its file in the round.
-        self.reviewer("claude", code_finding(), code_finding(file="check.py", line=1, summary="wording"))
-        self.prove({"code-review-1": proof(), "code-review-2": mild()})
-        review = self.review()
-        self.assertEqual(self.status(review, "code-review-2"), "mild")
-        self.assertEqual(self.wait_rounds()["rounds"][0]["files"], ["calc.py"])
-
-    def test_rounds_never_cost_the_verdict(self):
-        # round-6 code-review-5, codex-review-2: a gone checkout or a bad log line still prints the verdict.
-        self.reviewer("claude", code_finding())
-        self.prove({"code-review-1": proof()})
-        self.review()
-        with (self.home / "state/llm-orchestrator/review-outcomes.jsonl").open("ab") as log:
-            log.write(b"\xff\xfe not text\n[1, 2]\n{\"row\": \"review\", \"counts\": 5}\n")
-        shutil.rmtree(self.project)
-        waited = self.wait_rounds(cwd=self.root)
-        self.assertEqual(waited["verdict"], "NOT-READY")
-        self.assertEqual(len(waited["rounds"]), 1)
-        run = json.loads((self.run_dir / "run.json").read_text())
-        del run["project_id"]
-        (self.run_dir / "run.json").write_text(json.dumps(run))
-        waited = self.wait_rounds(cwd=self.root)
-        self.assertEqual(waited["verdict"], "NOT-READY")
-        self.assertEqual((waited["rounds"], waited["trend"]), ([], "unknown"))
-        self.assertIn("project", waited["rounds_note"])
+    def test_r20_a_run_without_a_stored_project_id_computes_it_from_the_project(self):
+        # round-7 code-review-6: a run.json from before project_id was stored still gets one.
+        (self.root / "old-run").mkdir()
+        (self.root / "old-run/run.json").write_text(json.dumps({"project": str(self.project)}))
+        review = {"run_id": "A", "path": "standard", "writer": "codex", "reviewers": [], "same_provider": False,
+                  "diff_lines": 1, "launches": [], "verdict": "READY", "incomplete_reasons": [], "counts": {}}
+        row = MOD.outcome_row(self.root / "old-run", review)
+        self.assertEqual(row["project_id"], MOD.policy_module.project_id(self.project))
 
     def test_policy_source_is_none_when_the_base_tree_cannot_be_read(self):
         # round-6 code-review-6: a failed lookup is not a policy at the merge-base.

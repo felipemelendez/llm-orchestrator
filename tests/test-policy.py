@@ -259,7 +259,7 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(POLICY.PolicyError):
             POLICY.Policy(self.project, revision=malformed)
 
-    def test_policy_at_says_whether_the_configuration_is_there_before_it_validates(self):
+    def test_a_policy_says_whether_the_configuration_is_there_before_it_validates(self):
         # round-6 code-review-6: presence comes from the one lookup; an unreadable tree is not presence.
         first = self.git("rev-parse", "HEAD").strip()
         (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "unknown_key": True}))
@@ -271,18 +271,29 @@ class PolicyTests(unittest.TestCase):
             lookups.extend(["ls-tree"] if "ls-tree" in argv else [])
             return real_run(argv, *args, **kwargs)
         with patch.object(POLICY.subprocess, "run", counting):
-            present, policy = POLICY.Policy.at(self.project, first)
+            policy = POLICY.Policy(self.project, revision=first, load=False)
         self.assertEqual(lookups, ["ls-tree"])
-        self.assertFalse(present)
         self.assertFalse(policy.enabled)
-        present, error = POLICY.Policy.at(self.project, malformed)
-        self.assertTrue(present)
-        self.assertIsInstance(error, POLICY.PolicyError)
+        policy = POLICY.Policy(self.project, revision=malformed, load=False)
+        self.assertTrue(policy.enabled)
+        with self.assertRaises(POLICY.PolicyError):
+            policy.load()
         tree = self.git("rev-parse", f"{first}^{{tree}}").strip()
         (self.project / ".git/objects" / tree[:2] / tree[2:]).unlink()
-        present, error = POLICY.Policy.at(self.project, first)
-        self.assertFalse(present)
-        self.assertRegex(str(error), "cannot read revision")
+        with self.assertRaisesRegex(POLICY.PolicyError, "cannot read revision"):
+            POLICY.Policy(self.project, revision=first, load=False)
+
+    def test_a_listed_configuration_whose_blob_is_missing_is_a_policy_error(self):
+        # round-7 code-review-3: git's failure is a PolicyError, so preflight records it and the source.
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "missing": "blob"}))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic policy")
+        blob = self.git("rev-parse", "HEAD:.llm-orchestrator.json").strip()
+        (self.project / ".git/objects" / blob[:2] / blob[2:]).unlink()
+        policy = POLICY.Policy(self.project, revision=self.git("rev-parse", "HEAD").strip(), load=False)
+        self.assertTrue(policy.enabled)
+        with self.assertRaisesRegex(POLICY.PolicyError, "cannot read .llm-orchestrator.json"):
+            policy.load()
 
     def test_configured_check_commands_read_the_exact_argv(self):
         self.data["checks"] = {"unit": {"argv": ["node", "scripts/catalog.mjs", "--verify"]}}

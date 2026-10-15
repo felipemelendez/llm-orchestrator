@@ -8,7 +8,6 @@ has finished. `record` appends the agent's disposition of each finding to the ou
 The rules (R1 to R22) are in docs/specs/review-design.md.
 """
 import argparse
-from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import importlib.util
@@ -407,12 +406,11 @@ class Review:
         try:
             if merge_base:
                 # A base policy that fails to load is still the base's policy; a tree that cannot be read is none.
-                present, loaded = policy_module.Policy.at(self.project, merge_base)
-                if present:
+                policy = policy_module.Policy(self.project, revision=merge_base, load=False)
+                if policy.enabled:
                     policy_source = f"merge-base {merge_base}"
-                if isinstance(loaded, policy_module.PolicyError):
-                    raise loaded
-                self.policy = loaded
+                policy.load()
+                self.policy = policy
             if self.policy and self.policy.enabled:
                 self.policy.validate_launches()
                 policy_context = self.policy.policy_context()
@@ -899,7 +897,9 @@ class Review:
         errors = []
         try:
             preflight = self.preflight()
-            self.options["merge_base"] = preflight["merge_base"]
+            self.options.update(merge_base=preflight["merge_base"], base_commit=preflight["base"],
+                                branch=git(self.project, "rev-parse", "--abbrev-ref", "HEAD",
+                                           check=False).stdout.strip() or "HEAD")
             write_json(self.run_dir / "run.json", self.options)
             if preflight["ok"]:
                 self.run_steps(preflight)
@@ -909,6 +909,9 @@ class Review:
             write_json(self.run_dir / "errors.json", errors)
         finally:
             self.cleanup()
+            # The head fingerprinted is the head reviewed; a run that stopped before that has none.
+            self.options["head"] = read_json(self.run_dir / "fingerprint-start.json", {}).get("head")
+            write_json(self.run_dir / "run.json", self.options)
             review = decide(self.run_dir)
             review["duration_s"] = round(time.time() - started, 1)
             write_json(self.run_dir / "review.json", review)
@@ -2267,11 +2270,11 @@ def outcome_row(run_dir, review):
             tokens[key] = tokens.get(key, 0) + value
     return {"row": "review", "run_id": review["run_id"], "date": now(),
             "project": run.get("project"), "delivery_id": run.get("delivery_id"),
-            "project_id": run.get("project_id"),
+            "project_id": run.get("project_id") or (
+                policy_module.project_id(Path(run["project"])) if run.get("project") else None),
             "repository": Path(run.get("project", "")).name, "path": review["path"],
             "branch": run.get("branch"), "base": run.get("base"), "base_commit": run.get("base_commit"),
             "merge_base": run.get("merge_base"), "head": run.get("head"),
-            "run_dir": str(run_dir),
             "writer": review["writer"], "reviewers": review["reviewers"], "same_provider": review["same_provider"],
             "diff_lines": review["diff_lines"],
             "launches": [{key: launch.get(key) for key in (
@@ -2305,16 +2308,10 @@ def command_run(args):
                   "sandboxes let reviewers and fix experiments write there", file=sys.stderr)
             return 2
         run_dir.mkdir(parents=True, mode=0o700)
-        branch = git(project, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip() or "HEAD"
-        head = git(project, "rev-parse", "--verify", "-q", "HEAD", check=False).stdout.strip() or None
-        base_commit = git(project, "rev-parse", "--verify", "-q", args.base + "^{commit}",
-                          check=False).stdout.strip() or None
-        # Stored now, so wait needs no live checkout to place this run among its rounds.
         options = {"run_id": uuid.uuid4().hex, "project": str(project), "path": args.path,
                    "writer": args.writer, "base": args.base, "spec": str(Path(args.spec).absolute()),
                    "allow_test_changes": args.allow_test_changes, "started": now(),
-                   "delivery_id": args.delivery_id, "branch": branch, "head": head, "base_commit": base_commit,
-                   "project_id": policy_module.project_id(project)}
+                   "delivery_id": args.delivery_id, "project_id": policy_module.project_id(project)}
         write_json(run_dir / "run.json", options)
         if args.detach:
             with open(run_dir / "run.log", "ab") as log:
@@ -2354,94 +2351,7 @@ def summary(run_dir, review):
             "blocking": [f["id"] for f in review["findings"] if f["status"] in BLOCKING],
             "mild": [{"id": f["id"], "mild_reason": f.get("mild_reason")} for f in review["findings"]
                      if f["status"] == "mild"],
-            "warnings": warnings, **rounds_view(run_dir, review)}
-
-
-def finding_digest(findings):
-    """How many findings block, and the three files the reproduced ones name most."""
-    named = Counter(f.get("file") for f in findings
-                    if f.get("reproduced") is True and isinstance(f.get("file"), str) and f.get("file"))
-    return (sum(f.get("status") in BLOCKING for f in findings), [name for name, _ in named.most_common(3)])
-
-
-def round_entry(row, findings):
-    counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
-    blocking, files = finding_digest(findings) if findings is not None else (None, [])
-    return {"run_id": row.get("run_id"), "date": row.get("date"), "verdict": row.get("verdict"),
-            "findings": counts.get("raw_findings"), "blocking": blocking, "reproduced": counts.get("reproduced"),
-            "mild": counts.get("mild"), "duration_s": row.get("duration_s"), "cost_usd": row.get("cost_usd"),
-            "files": files}
-
-
-def landing_chain(run, review, project_id):
-    """This run's landing, oldest first: each earlier run whose head is the next run's base, read from the log once.
-
-    A run whose base is no earlier run's head starts a landing; rows without a head or base never match.
-    """
-    this = {"run_id": review.get("run_id"), "verdict": review.get("verdict"), "counts": review.get("counts"),
-            "duration_s": review.get("duration_s"), "date": run.get("started"), "base_commit": run.get("base_commit")}
-    earlier, ids, found = [], set(), {}
-    if outcome_path().is_file():
-        with outcome_path().open("rb") as log:
-            for line in log:
-                try:
-                    row = json.loads(line)
-                except ValueError:  # undecodable bytes are a ValueError too
-                    continue
-                if not isinstance(row, dict) or not isinstance(row.get("run_id"), str):
-                    continue
-                if row.get("row") == "review" and row.get("project_id") == project_id:
-                    if row["run_id"] == this["run_id"]:
-                        this = row
-                        break  # rounds after this run are not this run's rounds
-                    if row.get("head") and row.get("base_commit"):
-                        earlier.append(row)
-                        ids.add(row["run_id"])
-                elif row.get("row") == "finding" and row["run_id"] in ids:
-                    found.setdefault(row["run_id"], []).append({"status": row.get("status"),
-                                                                "file": row.get("file"),
-                                                                "reproduced": row.get("reproduced")})
-    chain, base = [this], this.get("base_commit")
-    while base:
-        previous = next((row for row in reversed(earlier) if row.get("head") == base), None)
-        if previous is None:
-            break
-        earlier = earlier[:earlier.index(previous)]
-        chain.insert(0, previous)
-        base = previous.get("base_commit")
-    return chain, found
-
-
-def rounds_view(run_dir, review):
-    """This landing's review rounds so far, as facts; the landing rules say what they mean. Never raises."""
-    try:
-        run = read_json(run_dir / "run.json", {})
-        run = run if isinstance(run, dict) else {}
-        project_id = run.get("project_id")
-        if not project_id:  # a run from before project_id was stored needs its checkout
-            try:
-                project_id = policy_module.project_id(Path(run["project"]))
-            except (KeyError, TypeError, OSError, subprocess.CalledProcessError):
-                return {"rounds": [], "trend": "unknown",
-                        "rounds_note": "project directory unavailable; rounds not computed"}
-        chain, found = landing_chain(run, review, project_id)
-        rounds = []
-        for row in chain:
-            if row.get("run_id") == review.get("run_id"):
-                findings = review.get("findings")
-            else:
-                earlier = (read_json(Path(row["run_dir"]) / "review.json")
-                           if isinstance(row.get("run_dir"), str) else None)
-                findings = earlier["findings"] if isinstance(earlier, dict) and earlier.get("run_id") == row.get(
-                    "run_id") and isinstance(earlier.get("findings"), list) else found.get(row.get("run_id"))
-            rounds.append(round_entry(row, findings if isinstance(findings, list) else None))
-        trend = "first round"
-        if len(rounds) > 1:
-            now_count, then_count = rounds[-1]["reproduced"] or 0, rounds[-2]["reproduced"] or 0
-            trend = "falling" if now_count < then_count else "rising" if now_count > then_count else "flat"
-        return {"rounds": rounds, "trend": trend}
-    except Exception as error:  # a side view never costs the verdict
-        return {"rounds": [], "trend": "unknown", "rounds_note": f"rounds not computed: {type(error).__name__}: {error}"}
+            "warnings": warnings}
 
 
 def command_wait(args):
