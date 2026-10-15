@@ -259,6 +259,31 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(POLICY.PolicyError):
             POLICY.Policy(self.project, revision=malformed)
 
+    def test_policy_at_says_whether_the_configuration_is_there_before_it_validates(self):
+        # round-6 code-review-6: presence comes from the one lookup; an unreadable tree is not presence.
+        first = self.git("rev-parse", "HEAD").strip()
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "unknown_key": True}))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "synthetic malformed policy")
+        malformed = self.git("rev-parse", "HEAD").strip()
+        real_run, lookups = subprocess.run, []
+        def counting(argv, *args, **kwargs):
+            lookups.extend(["ls-tree"] if "ls-tree" in argv else [])
+            return real_run(argv, *args, **kwargs)
+        with patch.object(POLICY.subprocess, "run", counting):
+            present, policy = POLICY.Policy.at(self.project, first)
+        self.assertEqual(lookups, ["ls-tree"])
+        self.assertFalse(present)
+        self.assertFalse(policy.enabled)
+        present, error = POLICY.Policy.at(self.project, malformed)
+        self.assertTrue(present)
+        self.assertIsInstance(error, POLICY.PolicyError)
+        tree = self.git("rev-parse", f"{first}^{{tree}}").strip()
+        (self.project / ".git/objects" / tree[:2] / tree[2:]).unlink()
+        present, error = POLICY.Policy.at(self.project, first)
+        self.assertFalse(present)
+        self.assertRegex(str(error), "cannot read revision")
+
     def test_configured_check_commands_read_the_exact_argv(self):
         self.data["checks"] = {"unit": {"argv": ["node", "scripts/catalog.mjs", "--verify"]}}
         self.write_policy()

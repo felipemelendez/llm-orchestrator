@@ -378,17 +378,21 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
   Decided on 2026-10-13 after a project whose reviews returned about twenty
   findings a round, many serious and unreproduced, blocked every landing for
   four days (`docs/specs/landing-discipline.md`).
-- **R24. Rounds.** The review row records the `branch`, `base` and
-  `merge_base`, and each finding row its `file`. When a run has finished,
-  `wait` also prints `rounds` (every review row of the same project and
-  branch, oldest first, up to this run, with its verdict, finding, blocking,
-  reproduced and mild counts, time, cost and three most-named files),
-  `trend` (`first round`, or this run's reproduced count `falling`, `rising`
-  or `flat` against the previous round) and `advice`: a stall when a later
-  round has nothing reproduced and nothing blocking, or rule 6's diagnosis
-  signal when two rounds in a row reproduced defects in a shared file. It
-  reads the outcome log once and changes no verdict; old rows without a
-  branch match none.
+- **R24. Rounds.** `wait` prints the landing's rounds and trend; the rules
+  in `landing-rules.md` say what they mean. The run and its review row record
+  `project_id`, `branch`, `base`, `base_commit` (the sha `--base` names),
+  `merge_base` and `head` (the sha reviewed); each finding row records its
+  `file` and whether it was `reproduced`. A landing is a chain: a run whose
+  base commit is an earlier run's head in the same project continues that
+  run's landing, and any other run starts one. `rounds` lists the chain,
+  oldest first, up to this run, with its verdict, finding, blocking,
+  reproduced and mild counts, time, cost and the three files its reproduced
+  findings name most. `trend` is `first round`, or this run's reproduced
+  count `falling`, `rising` or `flat` against the previous round. It reads
+  the outcome log once, skips lines it cannot read, needs no checkout, and
+  never costs the verdict: when it cannot work, `rounds` is empty, `trend`
+  is `unknown` and `rounds_note` says why. Old rows without a head or base
+  commit join no chain.
 
 ## What stays, what goes
 

@@ -74,8 +74,8 @@ fixes run through a Claude runner instead of `codex sandbox`.
 
 The run's `review.json` holds everything. `wait` prints the verdict line,
 `same_provider`, incomplete reasons, the blocking ids, each mild finding with
-its reason, and warnings. It also prints the branch's review rounds so far,
-their trend, and advice when a landing rule applies; read it before acting.
+its reason, and warnings. It also prints this landing's review rounds so far
+and their trend; the landing rules say what they mean.
 
 | Verdict | Meaning |
 |---|---|

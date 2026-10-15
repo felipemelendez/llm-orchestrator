@@ -111,58 +111,80 @@ class Policy:
     A review passes the merge-base as revision, so the change under review never
     chooses its reviewers' instructions, models or capacity.
     """
-    def __init__(self, project, revision=None):
+    def __init__(self, project, revision=None, load=True):
         self.project = git_root(project)
         self.revision = revision
         self.path = self.project / ".llm-orchestrator.json"
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
-        if revision is not None:
-            # One lookup answers both whether the file is there and where its bytes are.
-            entry = self.listed(".llm-orchestrator.json")
-            self.enabled = entry is not None
-            raw = self.show(".llm-orchestrator.json", follow=False, entry=entry) if self.enabled else None
+        # One lookup answers whether the file is there; load() then reads and validates it.
+        self._entry = self.listed(".llm-orchestrator.json") if revision is not None else None
+        self.enabled = (self._entry is not None if revision is not None
+                        else self.path.exists() or self.path.is_symlink())
+        if load:
+            self.load()
+
+    @classmethod
+    def at(cls, project, revision):
+        """(present, policy or PolicyError) at revision. present is False when the tree could not be read."""
+        try:
+            policy = cls(project, revision, load=False)
+        except PolicyError as error:
+            return False, error
+        try:
+            policy.load()
+        except PolicyError as error:
+            return policy.enabled, error
+        return policy.enabled, policy
+
+    def load(self):
+        if not self.enabled:
+            return
+        if self.revision is not None:
+            link, raw = self.read_blob(".llm-orchestrator.json", self._entry)
+            if link:
+                raise PolicyError("project configuration must not be a symlink")
         else:
-            self.enabled = self.path.exists() or self.path.is_symlink()
-            if self.enabled and self.path.is_symlink():
+            if self.path.is_symlink():
                 raise PolicyError("project configuration must not be a symlink")
             try:
-                raw = self.path.read_bytes() if self.enabled else None
+                raw = self.path.read_bytes()
             except OSError as error:
                 raise PolicyError(f"project configuration: {error}") from error
-        if self.enabled:
-            try:
-                self.data = json.loads(raw)
-            except ValueError as error:
-                raise PolicyError(f"project configuration: {error}") from error
-            self._config_digest = digest(raw)
-            self.validate()
+        try:
+            self.data = json.loads(raw)
+        except ValueError as error:
+            raise PolicyError(f"project configuration: {error}") from error
+        self._config_digest = digest(raw)
+        self.validate()
 
     def listed(self, name):
         return listed(self.project, self.revision, name)
 
-    def show(self, name, follow=True, entry=None):
-        """Bytes of name at self.revision, or None when absent there; never the working tree.
+    def read_blob(self, name, entry):
+        """(is a symlink, bytes) of a listed entry; anything but a file or link is refused."""
+        mode, kind, blob = entry
+        if kind != "blob":
+            raise PolicyError(f"{name} is not a file at {self.revision}")
+        data = subprocess.run(["git", "-C", str(self.project), "cat-file", "blob", blob],
+                              stdin=subprocess.DEVNULL, capture_output=True, check=True).stdout
+        return mode == "120000", data
 
-        entry, when given, is the caller's lookup of name, so it is not listed twice.
-        """
+    def show(self, name, follow=True):
+        """Bytes of name at self.revision, or None when absent there; never the working tree."""
         for _ in range(8):
-            entry = entry or self.listed(name)
+            entry = self.listed(name)
             if entry is None:
                 return None
-            mode, kind, blob = entry
-            if kind != "blob":
-                raise PolicyError(f"{name} is not a file at {self.revision}")
-            data = subprocess.run(["git", "-C", str(self.project), "cat-file", "blob", blob],
-                                  stdin=subprocess.DEVNULL, capture_output=True, check=True).stdout
-            if mode != "120000":
+            link, data = self.read_blob(name, entry)
+            if not link:
                 return data
             if not follow:
                 raise PolicyError("project configuration must not be a symlink")
             target = posixpath.normpath(posixpath.join(posixpath.dirname(name), data.decode("utf-8", "replace")))
             if posixpath.isabs(target) or target == ".." or target.startswith("../"):
                 raise PolicyError(f"policy document is missing or outside the project: {name}")
-            name, entry = target, None
+            name = target
         raise PolicyError(f"policy document link chain is too long: {name}")
 
     def document(self, name):
