@@ -1935,6 +1935,45 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn("subtracts", text)
         self.assertNotIn("return a - b", text)
 
+    def test_r20_a_checkout_removed_during_a_detached_run_still_gets_its_row(self):
+        # round-9 code-review-1: the project identity is taken at launch, not at the end.
+        expected = MOD.policy_module.project_id(self.project)
+        self.reviewer("codex", sleep=4)
+        run_dir = self.root / "moved"
+        started = self.invoke("run", "--detach", "--path", "standard", "--writer", "claude", "--base", self.base,
+                              "--spec", str(self.spec), "--run-dir", str(run_dir), check_rc=0)
+        pid = json.loads(started.stdout)["pid"]
+        deadline = time.monotonic() + 30
+        while not self.calls("codex", "codex-review") and time.monotonic() < deadline:
+            time.sleep(0.2)
+        shutil.rmtree(self.project)
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.2)
+        self.assertTrue((run_dir / "review.json").exists())
+        self.assertNotIn("Traceback", (run_dir / "run.log").read_text())
+        rows = self.outcome_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["project_id"], expected)
+
+    def test_r20_an_older_run_without_a_stored_project_id_records_null_when_the_project_is_gone(self):
+        run_dir = self.root / "older"
+        run_dir.mkdir()
+        (run_dir / "run.json").write_text(json.dumps({
+            "run_id": "older", "project": str(self.root / "gone"), "path": "standard", "writer": "claude",
+            "base": self.base, "spec": str(self.spec), "allow_test_changes": False,
+            "started": "2026-10-15T00:00:00Z", "delivery_id": None}))
+        result = self.invoke("run", "--child", "--run-dir", str(run_dir))
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertTrue((run_dir / "review.json").exists())
+        rows = self.outcome_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["project_id"])
+
     def test_policy_source_is_none_when_the_base_tree_cannot_be_read(self):
         # round-6 code-review-6: a failed lookup is not a policy at the merge-base.
         tree = self.git("rev-parse", f"{self.base}^{{tree}}").strip()

@@ -2253,6 +2253,14 @@ def append_outcome(*rows):
             stream.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+def safe_project_id(project):
+    """The project's identity, or None when the checkout is gone; R20 never raises after review.json."""
+    try:
+        return policy_module.project_id(Path(project)) if project else None
+    except (subprocess.CalledProcessError, OSError):
+        return None
+
+
 def outcome_row(run_dir, review):
     """R20: one row per run, naming the reviewers, with no claim text or code."""
     run = read_json(run_dir / "run.json", {})
@@ -2263,7 +2271,7 @@ def outcome_row(run_dir, review):
             tokens[key] = tokens.get(key, 0) + value
     return {"row": "review", "run_id": review["run_id"], "date": now(),
             "project": run.get("project"), "delivery_id": run.get("delivery_id"),
-            "project_id": policy_module.project_id(Path(run["project"])) if run.get("project") else None,
+            "project_id": run["project_id"] if "project_id" in run else safe_project_id(run.get("project")),
             "repository": Path(run.get("project", "")).name, "path": review["path"],
             "writer": review["writer"], "reviewers": review["reviewers"], "same_provider": review["same_provider"],
             "diff_lines": review["diff_lines"],
@@ -2301,7 +2309,7 @@ def command_run(args):
         options = {"run_id": uuid.uuid4().hex, "project": str(project), "path": args.path,
                    "writer": args.writer, "base": args.base, "spec": str(Path(args.spec).absolute()),
                    "allow_test_changes": args.allow_test_changes, "started": now(),
-                   "delivery_id": args.delivery_id}
+                   "delivery_id": args.delivery_id, "project_id": safe_project_id(project)}
         write_json(run_dir / "run.json", options)
         if args.detach:
             with open(run_dir / "run.log", "ab") as log:

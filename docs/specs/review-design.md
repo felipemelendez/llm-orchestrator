@@ -310,7 +310,9 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
 - **R20.** Unchanged: one row per run in
   `${XDG_STATE_HOME:-$HOME/.local/state}/llm-orchestrator/review-outcomes.jsonl`,
-  naming reviewers instead of briefs, with no claim text or code.
+  naming reviewers instead of briefs, with no claim text or code. The row's
+  project identity is taken at launch, so a checkout removed during the run
+  still gets its row.
 - **R21.** `record <run-dir> --dispositions <file>`, one per
   finding id: `fixed` with the check; `refuted`, with a `file-line` quote
   that `record` checks; `ignored` with a reason, for a blocking finding only
