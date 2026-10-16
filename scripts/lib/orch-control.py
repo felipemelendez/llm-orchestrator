@@ -84,7 +84,7 @@ def doctor(policy, installed_root=None):
             "capacity": policy_module.Capacity(policy.data.get("capacity", {}), policy.project,
                                                 "codex", "lead").diagnostics(),
             "uncontrolled": ["native host subagents", "manual CLI launches", "provider/native nested fanout"],
-            "governance": "review counts, WIP, final verification and GitHub delivery remain coordinator obligations"}
+            "governance": "review counts, final verification and GitHub delivery remain coordinator obligations; WIP numbers are recorded only"}
 
 
 def review_profiles_missing(policy):
@@ -216,7 +216,8 @@ def main(argv=None):
                                          "review_profiles_missing_if_signed_in names installed CLIs that are signed "
                                          "out now and would need profiles once they sign in.")
         else:
-            result["coordinator_obligations"] = policy.data.get("project_rules", {})
+            result["coordinator_obligations"] = {key: value for key, value in policy.data.get("project_rules", {}).items()
+                                                 if key != "wip"}  # wip numbers are recorded, not an obligation
             result["hook_execution_observed"] = False
         print(json.dumps(result))
         return 0

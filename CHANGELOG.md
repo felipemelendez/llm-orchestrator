@@ -5,6 +5,42 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-16 — agents keep building without waiting
+
+- **No limit on open branches or pull requests.** The old rule allowed two
+  unmerged branches per repository and blocked the next one. It counted
+  every agent's branches together, and drafts waiting on someone else, so it
+  stopped work for no good reason. It is gone. The list of open branches at
+  session start is still shown, as information only.
+- **A branch can build on another open branch.** When a ticket needs code
+  that is still in review, its branch starts from that branch and its pull
+  request points there. Once the first one merges, GitHub points the second
+  at main by itself (turn on "Automatically delete head branches" in the
+  repository settings, or run `gh repo edit --delete-branch-on-merge`). A
+  pull request is never merged into the branch it builds on.
+- **Pull requests open early, as drafts.** After the first commit the agent
+  opens a draft so other agents can see the work and build on it. A draft
+  stays a draft as long as it needs to.
+- **Auto-merge.** When merging is allowed, the agent turns on GitHub's
+  auto-merge and moves on. GitHub merges once the checks pass, or through
+  the merge queue. Turn on "Allow auto-merge" in the repository settings to
+  use it.
+- **Agents never stop to wait for you.** When something needs your
+  decision, the agent comments on the pull request, adds the `needs-person`
+  label and keeps working on something else. `gh pr list --label
+  needs-person` shows everything waiting on you. Only merging without your
+  permission and putting off a security fix still wait for your yes.
+- **Agents never touch each other's work.** An agent updates only its own
+  branches and pull requests, never another agent's.
+- **Small pull requests.** About a hundred changed lines is a good size; a
+  thousand is too big.
+- Older settings for the removed limit (`--limit`, `--check`,
+  `ORCH_WIP_LIMIT`, `wip_limit`) are ignored, so nothing breaks.
+- Update: `claude plugin update llm-orchestrator@llm-orchestrator`, and
+  `codex plugin add llm-orchestrator@llm-orchestrator` for Codex. If your
+  project's own rules mention a two-branch limit or "cut every branch from
+  main", delete that sentence.
+
 ## [0.17.1] - 2026-10-15 — adding a lock entry needs a ruling too
 
 - **Fixed: the commit hook and the CI audit let an added manifest entry

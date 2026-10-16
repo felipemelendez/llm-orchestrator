@@ -158,7 +158,7 @@ release; any other key fails validation and says receipts are not part of it.
 
 ## Project differences and delivery measurements
 
-`project_rules` validates explicit review/WIP/delivery obligations while canonical
+`project_rules` validates explicit review and delivery obligations, and records WIP numbers, while canonical
 policy prose retains authority. The supported shape is:
 
 ```json
@@ -181,7 +181,8 @@ policy prose retains authority. The supported shape is:
 
 Types and invariant relationships are checked. These data do not inspect GitHub
 WIP, merge a PR, grant authority or authenticate a non-author final integration
-gate. The coordinator must still apply those obligations. A caller-supplied
+gate. Review and delivery obligations stay with the coordinator; the `wip` numbers are
+recorded only. A caller-supplied
 delivery ID links attempts in the outcomes log; it never certifies delivery.
 This release does not count deliveries or cost per delivery, so plans, passing
 local checks and opened PRs are never counted as deliveries.

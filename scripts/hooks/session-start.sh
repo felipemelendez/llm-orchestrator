@@ -203,15 +203,15 @@ fi
 # ---------------------------------------------------------------------------
 # The landing board: unmerged branches against the base, so the session opens
 # knowing what is waiting to land (skills/finishing-a-branch/references/
-# landing-rules.md, rules 1 and 9). A REPORT, never enforcement: read-only git,
-# no network, best effort, and nothing may depend on it. It rides in front of
-# the body with the cadence verdict so truncation cannot drop it. Disable with
-# ORCH_DISABLED_HOOKS containing "orch-landing-board".
+# landing-rules.md, rule 1). A REPORT, never enforcement: read-only git,
+# no network, best effort, and nothing may depend on it.
+# It rides in front of the body with the cadence verdict so truncation cannot
+# drop it. Disable with ORCH_DISABLED_HOOKS containing "orch-landing-board".
 # ---------------------------------------------------------------------------
 BOARD=""
 if [[ ",${DISABLED}," != *",orch-landing-board,"* ]]; then
-  # The same script /llm-orchestrator:dispatch runs with --check, so the two
-  # never disagree. Resolve it from this hook's own location first (a --copy
+  # The same script /llm-orchestrator:dispatch prints, so the two never
+  # disagree. Resolve it from this hook's own location first (a --copy
   # install has no plugin root variable), then from ROOT.
   BOARD_SH="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/../orch-landing-board.sh"
   [[ -f "${BOARD_SH}" ]] || BOARD_SH="${ROOT}/scripts/orch-landing-board.sh"

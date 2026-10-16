@@ -12,19 +12,21 @@ User input: $ARGUMENTS — task selector. Forms accepted:
 
 Steps:
 
-0. Check the landing rules (`finishing-a-branch`'s `references/landing-rules.md`)
-   before dispatching anything. Run the board with its check:
+0. Read the landing rules (`finishing-a-branch`'s `references/landing-rules.md`)
+   before dispatching anything. Print the board:
    ```bash
    orch_board() { local p; for p in "${CLAUDE_PLUGIN_ROOT:-}/scripts/orch-landing-board.sh" "$HOME/.claude/llm-orchestrator/scripts/orch-landing-board.sh" "$(pwd)/.claude/scripts/orch-landing-board.sh"; do [ -f "$p" ] && { printf '%s\n' "$p"; return; }; done; find "$HOME/.claude/plugins" -name orch-landing-board.sh -path '*llm-orchestrator*' 2>/dev/null | sort -V | tail -1; }
-   bash "$(orch_board)" --check    # exit 3: no room for one more ticket branch (limit two, or the project's cadence.json wip_limit)
+   B=$(orch_board); if [ -n "$B" ]; then bash "$B"; fi    # lists unmerged branches and the oldest one's age
    ```
-   Exit 3 → report `Blocked:` with the branches it names and land one first.
-   Any other non-zero exit means the check could not run: stop and say so;
-   never dispatch on an unchecked count.
-   The plan's `Requires landed:` naming a branch or PR not yet on main
-   (`git merge-base --is-ancestor <sha> <base>` false) → land that first and
-   cut this branch from main afterwards. A READY branch on the board is landed
-   before any new dispatch.
+   The board is a report: if it is missing or fails, say so and go on.
+   A READY branch of yours that can land now is landed first (rule 2).
+   The plan's `Requires landed:` names what this ticket builds on: landed by
+   rule 4's test → build on the default branch; still open → branch from it
+   and point the PR at it (rule 3); `CLOSED` unmerged or from a fork → build on
+   the default branch and say so in the PR (rule 4). Never stop to wait on a
+   person: label the PR `needs-person` and move on (rule 10).
+   After the ticket's first commit, open its draft PR as the worktree step
+   says (landing rule 1).
 
 1. Load the latest plan from `docs/llm-orchestrator/plans/` (or accept `--plan <path>` if passed).
 
@@ -32,7 +34,7 @@ Steps:
 
 3. Decide routing per task by reading its `Independent:` line:
    - **Three or more** selected tasks, all `Independent: yes`, no shared files → invoke `dispatching-parallel-agents` (one batch; review happens **after** the batch, not per task — that skill's step 6 does per-task review for high-risk surface and a combined-diff review otherwise). Below three, coordination cost beats the speedup and the skill itself declines the work, so route them sequentially.
-   - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with a review after each task).
+   - One task, or tasks with dependencies → invoke `dispatching-subagents` (sequential, with a review after each sensitive or Full task).
    - Mixed → run the independent set first in parallel, then sequential for the rest.
 
    Before any parallel batch, satisfy that skill's hard precondition: **every
@@ -55,7 +57,7 @@ Steps:
 
 4. Follow the invoked skill exactly. After each task completes, tick its heading checkbox in the plan file.
 
-5. Continuous execution: do not ask the user between tasks. Stop only on unresolvable `BLOCKED`, genuine ambiguity, or all-done.
+5. Continuous execution: do not ask the user between tasks. A task that is `BLOCKED` on the person is labelled `needs-person` and set aside (landing rule 10); stop only when every task is done or set aside.
 
 6. When the task set is empty, report:
 

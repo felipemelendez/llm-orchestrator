@@ -473,6 +473,19 @@ class PolicyTests(unittest.TestCase):
         self.assertIn("Revised canonical", session["policy_context"]["files"][0]["text"])
         self.assertFalse(session["hook_execution_observed"])
 
+
+    def test_session_reports_obligations_without_wip(self):
+        self.data["project_rules"] = {"review": {"minimum_independent_reviews": 1,
+            "high_risk_independent_reviews": 2, "non_author_final_verification": True, "confirmed_defects_block": True},
+            "wip": {"active": 2, "parked": 1, "total": 3}}
+        self.write_policy()
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/lib/orch-control.py"), "session",
+                                 "--project", str(self.project)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        obligations = json.loads(result.stdout)["coordinator_obligations"]
+        self.assertIn("review", obligations)
+        self.assertNotIn("wip", obligations, "wip numbers are recorded, never an obligation")
+
     def test_validate_names_installed_providers_without_review_profiles(self):
         del self.data["roles"]["claude"]
         del self.data["catalogs"]["claude"]

@@ -11,10 +11,10 @@ Use when a plan exists at `docs/llm-orchestrator/plans/`, more than one task rem
 
 ## Before the first dispatch: the landing rules
 
-A plan is one ticket branch. The rules for how many may be open and when each lands are `finishing-a-branch`'s `references/landing-rules.md`; read the landing board the session opened with. Two checks gate the first dispatch:
+A plan is one ticket branch. How branches are cut and landed is `finishing-a-branch`'s `references/landing-rules.md`; read the landing board the session opened with. Two checks come first:
 
-- **Work in progress.** `git branch --no-merged <base>` (less the base and non-ticket branches) already at the limit (two by default; the project's laws may set another) → land one first, do not dispatch. Research and planning may continue.
-- **Dependencies landed.** The plan's `Requires landed:` line names branches or PRs that must be on main before this ticket is cut (a shared hub file's change above all). `git merge-base --is-ancestor <sha> <base>` false → land that first; then cut this branch from main. Never cut from a sibling's branch, and never carry a copy of its code.
+- **What is waiting.** A READY branch of yours that can land now is landed first (rule 2).
+- **What this builds on.** The plan's `Requires landed:` line names the branch or PR this ticket depends on, or "none". Landed by rule 4's test → build on the default branch. Still open → branch from it and point the PR at it (rule 3). `CLOSED` unmerged or from a fork → build on the default branch and say so in the PR (rule 4). After the first commit, open the draft PR as the worktree step says (rule 1). Never copy another branch's commits in by hand.
 
 ## Steps
 
@@ -26,9 +26,9 @@ A plan is one ticket branch. The rules for how many may be open and when each la
 
 4. **At tier boundaries** — a tier completes with a green verify and material work remains — invoke `handing-off-to-fresh-context`: the clean seam is the right moment to write or refresh the handoff note. The handoff-nudge hook (fires once when context first crosses `ORCH_CONTEXT_HANDOFF_TOKENS`, default 950K, re-arming after each compaction) and `/llm-orchestrator:handoff` are fallbacks, not the primary trigger.
 
-5. **Run continuously**, group to group, without asking the user. Stops: unresolvable `BLOCKED`, all groups complete, or a verification failure that needs `systematic-debugging`.
+5. **Run continuously**, group to group, without asking the user. A group `BLOCKED` on the person is labelled `needs-person` and set aside while independent groups go on (landing rule 10); a verification failure goes to `systematic-debugging`. Stop when every group is complete or set aside.
 
-6. **When all groups complete:** merge the base into the branch, run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the whole branch (`--base <base>`); `READY`, or `READY-WITH-FIXES` with the mild findings handled, or `NOT-READY` with every blocking finding recorded `refuted`, `settled` or `follow-up` → `/llm-orchestrator:finish` now, in this session, which lands the ticket through a pull request (`finishing-a-branch` option 1); nothing new is committed on that head first. Review rounds (one fix wave, one scoped re-review) continue while each finds new reproduced defects (landing rule 6); at a stall, record a disposition for every open finding and land or split, never over a reproduced defect. Landing many tickets: one PR at a time, base checks green between them, then the base merged into every still-open branch. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
+6. **When all groups complete:** fetch and merge `origin/<base>` into the branch, run `/llm-orchestrator:verify`. Green → `/llm-orchestrator:review` on the whole branch (`--base origin/<base>`; no remote: the local `<base>`, no fetch); `READY`, or `READY-WITH-FIXES` with the mild findings handled, or `NOT-READY` with every blocking finding recorded `refuted`, `settled` or `follow-up` → `/llm-orchestrator:finish` now, in this session, which lands the ticket through a pull request (`finishing-a-branch` option 1); nothing new is committed on that head first. Review rounds (one fix wave, one scoped re-review) continue while each finds new reproduced defects (landing rule 6); at a stall, record a disposition for every open finding and land or split, never over a reproduced defect. Landing many tickets: one PR at a time, base checks green between them, then `origin/<main>` fetched and merged into each still-open branch you own, bottom up as rule 5 orders. Red → `systematic-debugging`, then re-enter dispatch for the affected task.
 
 ## Resuming from a handoff
 

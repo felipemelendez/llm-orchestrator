@@ -9,9 +9,9 @@ A plan lets another agent — or you after `/clear` — execute task-by-task wit
 
 - Each `### N. <task name>  - [ ]` heading carries the task-level checkbox — the durable state `dispatching-subagents` ticks and `executing-plans` greps across `/clear`. A heading without it makes progress untrackable.
 - Each task's `Files:`, `Done when:`, `Stop if:`, `Owner:`, and optional `Interfaces:` blocks are pasted into the dispatch envelope; `## Global constraints` goes into every dispatch; `## References` carries the verified sources.
-- The header's `Requires landed:` names the branches or PRs that must be on main before this ticket is cut (a shared hub file's change above all), or "none"; copy it from the spec's `## Constraints`. It is the one place dispatch reads, with `git merge-base --is-ancestor`, before refusing to cut from a sibling's branch.
+- The header's `Requires landed:` names the branch or PR this ticket builds on (a shared hub file's change above all), or "none"; copy it from the spec's `## Constraints`. Dispatch reads it to decide whether to build on main or stack on that open branch.
 
-Skip planning for trivial work (under ~15 minutes of editing) — just do it. Size the whole plan to land within a working day of its first green test; a plan that cannot is two plans, the second cut from main after the first lands (`finishing-a-branch`'s `references/landing-rules.md`, rules 4 and 8).
+Skip planning for trivial work (under ~15 minutes of editing) — just do it. Keep a plan small enough to review and merge as one pull request; a bigger one is two plans, the second building on the first (`finishing-a-branch`'s `references/landing-rules.md`, rules 3 and 8).
 
 ## Before writing (Trigger B)
 

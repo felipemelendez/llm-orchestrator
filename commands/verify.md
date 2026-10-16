@@ -24,7 +24,7 @@ Steps:
    Parse the `## Toolchain` section of the output for `test=`, `typecheck=`, and `lint=` lines.
    Extract each value as the command to run (e.g. `test=npm run test` → run `npm run test`).
    Do NOT run any `build=` command unless the user explicitly requests it.
-   If detection returns no `test=`/`typecheck=`/`lint=` lines, ask the user what command to run.
+   If detection returns no `test=`/`typecheck=`/`lint=` lines, say so and report `Verification: BLOCKED` for that check; do not wait for an answer.
 
 3. Run detected commands in order: typecheck → lint → test. Stop on first failure.
 

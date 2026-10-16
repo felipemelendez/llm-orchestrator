@@ -32,8 +32,8 @@ of Cadence. `scripts/lib/orch-control.py` loads fresh canonical policy, diagnose
 catalogs/installations, and launches configured CLI roles. `orch-policy.py`
 validates model/effort and coordinates the shared outer CLI-process budget.
 The existing `orch-review.py` uses these same mechanisms for its subprocesses.
-Native host dispatch remains outside this admission boundary. Review, ownership,
-WIP and delivery rules stay obligations of the coordinator.
+Native host dispatch remains outside this admission boundary. Review, ownership
+and delivery rules stay obligations of the coordinator; WIP numbers are recorded only.
 
 <!-- ORCH:LAWS:START -->
 ## The cadence

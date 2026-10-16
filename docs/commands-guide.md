@@ -19,7 +19,7 @@ Claude Code; on Codex, ask the assistant in plain words instead.
 | `/llm-orchestrator:research` | Checks an approach, API or version against current sources before you build on it. |
 | `/llm-orchestrator:plan` | Turns an approved spec into a checklist plan under `docs/llm-orchestrator/plans/`. |
 | `/llm-orchestrator:worktree` | Creates a separate working folder and branch (a git worktree) for the task. |
-| `/llm-orchestrator:dispatch` | Runs the tasks in the current plan, one at a time or in parallel. First checks the landing board: with two ticket branches already unmerged, or a dependency not yet on main, it says so and lands first instead of cutting another branch. |
+| `/llm-orchestrator:dispatch` | Runs the tasks in the current plan, one at a time or in parallel. First reads the landing board and lands a READY branch; then builds the new branch on main, or on the open branch the plan says it depends on. |
 | `/llm-orchestrator:debug` | Finds a bug's root cause before anything is fixed. |
 
 ## Checking and finishing
@@ -28,7 +28,7 @@ Claude Code; on Codex, ask the assistant in plain words instead.
 |---|---|
 | `/llm-orchestrator:review` | Reviews the current change and reports a verdict. `[base] [--full]`: Standard by default, Full with `--full`. Saves no file in the repository. What the verdicts mean: [Running a review by hand](codex-provider.md#what-the-verdict-means). |
 | `/llm-orchestrator:verify` | Runs the project's tests, lint and typecheck, and reports the output. |
-| `/llm-orchestrator:finish` | Lands the branch through a pull request (the default), or merges locally, keeps or discards it. A passing review is landed in the same session, never held for a sibling; after a merge, main is merged into every other open branch. Nothing destructive without confirmation. |
+| `/llm-orchestrator:finish` | Lands the branch through a pull request (the default), or merges locally, keeps or discards it. A passing review is landed in the same session, never held for a sibling; after a merge, main is merged into the agent's own open branches, bottom up. Nothing destructive without confirmation. |
 
 ## Memory and long tasks
 

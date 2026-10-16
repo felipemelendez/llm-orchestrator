@@ -131,22 +131,36 @@ while IFS= read -r dir; do
     dispatching-subagents)         limit=2202  ;;
     # 2026-10-13: +25 for the landing rules in the eager core and the routing table.
     using-orchestrator)            limit=1560  ;;
-    dispatching-parallel-agents)   limit=1389  ;;
+    # 2026-10-16: +6 (1389 to 1395): a question for the user is a needs-person PR comment, not a pause.
+    dispatching-parallel-agents)   limit=1395  ;;
     test-driven-development)       limit=1247  ;;
     research-classifier)           limit=1094  ;;
     brainstorming)                 limit=1087  ;;
     writing-plans)                 limit=1068  ;;
-    using-git-worktrees)           limit=1018  ;;
+    # 2026-10-16: +97 (1018 to 1115) for the worktree start point (origin/<main>, or the
+    # remote ref of the open branch a stacked ticket builds on, never tracked;
+    # the local <main> when there is no remote; the draft PR opened after the
+    # first commit so others can see and build on the branch).
+    using-git-worktrees)           limit=1115  ;;
     managing-memory)               limit=1012  ;;
     systematic-debugging)          limit=972   ;;
     verification-before-completion) limit=942   ;;
-    executing-plans)               limit=903   ;;
+    # 2026-10-16: +27 (903 to 930): a group blocked on the person is labelled needs-person and set aside; what a ticket builds on.
+    executing-plans)               limit=930   ;;
     writing-skills)                limit=847   ;;
     # 2026-10-10: +260 for the PR-first landing (push, PR body shape, merge, base checks).
     # 2026-10-12: +29 for the mild-only and all-settled landing preconditions (Felipe).
     # 2026-10-13: +102 for the landing-event rule (land now, nothing new on the
     # head, base merged into open branches) and the follow-up precondition.
-    finishing-a-branch)            limit=1160  ;;
+    # 2026-10-16: +410 (1160 to 1570) for stacked branches and auto-merge (reuse your own open draft PR
+    # and write its body, retarget your own PR to the worked-out base, fetch,
+    # merge the base in, check and push before every merge, merge only when
+    # the PR's own base is the default branch and wait for MERGED, rely on the
+    # repository's delete-branch-on-merge setting, never a stacked PR into
+    # its base, refuse a local merge of a PR, discard from the ticket's own
+    # worktree and hand the guarded delete to the person, stop on a fork or
+    # abandoned dependency).
+    finishing-a-branch)            limit=1570  ;;
     # 2026-10-11: +35, +35 and +40 for the design-simplicity check every review
     # asks (Felipe): the question, the finding kind and how a design finding is
     # handled are facts the three skills now carry, not narration.
@@ -154,7 +168,10 @@ while IFS= read -r dir; do
     # `settled` disposition (R22) and the mild-only landing (Felipe).
     # 2026-10-13: +92 for the one-review-per-landing shape and the `follow-up`
     # disposition (R23): a project ran 370 reviews in four days with no exit.
-    requesting-code-review)        limit=875   ;;
+    # 2026-10-16: +55 (875 to 930) for the landing review's base: the branch the PR points
+    # at, retargeted first when landed, else the plan's open dependency, so a
+    # stacked ticket is not reviewed for its parent's work.
+    requesting-code-review)        limit=930   ;;
     # 2026-10-12: +213 for the rank-by-consequence rule, the mild-only
     # landing and the `settled` disposition (R22) (Felipe).
     # 2026-10-13: +63 for the `follow-up` disposition (R23) and the three-run cap.

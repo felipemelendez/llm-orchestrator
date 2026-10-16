@@ -21,7 +21,7 @@ Every writer envelope declares its mode: a worktree path, or the shared-checkout
 
 3+ read-only agents, or 3+ writer tasks all `Independent: yes` in separate worktrees, with no two tasks touching the same file (so the merges stay trivial). Not for: tasks with dependencies (sequential), fewer than 3 tasks (coordination cost beats the speedup), writers you can't or won't isolate on a project that allows worktrees (sequential), or a problem you haven't understood — don't parallelize confusion.
 
-**Tasks of one ticket, not tickets.** This skill fans out the tasks of one plan into task worktrees that the integration engine (step 7) lands back on the ticket branch in the same session. It is not how several *tickets* run at once: unmerged ticket branches are limited to two, each is cut from main after what it depends on has landed, and each lands the session its review is READY (`finishing-a-branch`'s `references/landing-rules.md`, rules 1 to 4). Ten tickets dispatched "at once" with a hand-written merge order is the failure those rules come from.
+**Tasks of one ticket, not tickets.** This skill fans out the tasks of one plan into task worktrees that the integration engine (step 7) lands back on the ticket branch in the same session. It is not how several *tickets* run at once: each ticket branch builds on main or on the open branch it depends on, and each lands the session its review is READY (`finishing-a-branch`'s `references/landing-rules.md`, rules 1 to 4). Ten tickets dispatched "at once" with a hand-written merge order is the failure those rules come from.
 
 ## Read-only fan-out
 
@@ -63,7 +63,7 @@ Only when the project rules out worktrees. The partition replaces the mutex, and
 
 ## Sizing and cadence
 
-Sweet spot is 3–5 agents; past 8, re-think the decomposition — coordination cost dominates. Review is sequential to implementation, so don't mix parallel writers with parallel reviewers. Don't pause between fan-out and review/merge unless the user is genuinely needed, don't trust a `DONE` without a matching `Verify:`, and tick plan checkboxes as tasks finish or state drifts.
+Sweet spot is 3–5 agents; past 8, re-think the decomposition — coordination cost dominates. Review is sequential to implementation, so don't mix parallel writers with parallel reviewers. Don't pause between fan-out and review/merge (a question for the user is a `needs-person` PR comment, not a pause), don't trust a `DONE` without a matching `Verify:`, and tick plan checkboxes as tasks finish or state drifts.
 
 ## Output shape
 

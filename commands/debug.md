@@ -21,5 +21,5 @@ Output shape: as defined by `systematic-debugging`.
 
 Constraints:
 - No fix before root cause.
-- Stop after 3 failed hypotheses and ask the user.
+- After 3 failed hypotheses, write them up for the person (a PR comment labelled `needs-person` when there is a PR), stop this investigation and move to other work.
 - No refactoring during debugging.
