@@ -2,7 +2,7 @@
 
 Date: YYYY-MM-DD
 Spec: docs/llm-orchestrator/specs/YYYY-MM-DD-<slug>-spec.md (settled decisions live in its `## Settled` section; the review reads the file passed as `--spec`)
-Requires landed: <branch or PR that must be on main before this ticket is cut, or "none"; the hub-file change this depends on goes here>
+Requires landed: <branch or PR this ticket builds on, or "none"; if it is still open, this branch stacks on it and the PR targets it>
 
 ## Goal
 - one line

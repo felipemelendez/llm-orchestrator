@@ -1,53 +1,41 @@
 #!/usr/bin/env bash
 # LLM Orchestrator — the landing board.
 #
-# Prints the unmerged ticket branches of a repository against its base branch,
-# the oldest one's age in days, and a warning when their number fills the
-# work-in-progress limit (skills/finishing-a-branch/references/landing-rules.md,
-# rules 1 and 9). Read-only git, no network, bash 3.2.
+# Prints the unmerged ticket branches of a repository against its base branch
+# and the oldest one's age in days, so a session opens knowing what is waiting
+# to land (skills/finishing-a-branch/references/landing-rules.md, rule 1).
+# A report. Read-only git, no network, bash 3.2.
 #
 # Usage:
-#   orch-landing-board.sh [--root <dir>] [--limit <n>]          # print the board line (or nothing)
-#   orch-landing-board.sh [--root <dir>] [--limit <n>] --check  # same; exit 3 when there is no room for one more
+#   orch-landing-board.sh [--root <dir>]          # print the board line (or nothing)
 #
-# The limit is --limit, else ORCH_WIP_LIMIT, else "wip_limit" in the project's
-# docs/llm-orchestrator/cadence.json, else 2. The base is origin's HEAD when
-# the remote has one (the remote's view of it, so a branch merged on the forge
-# stops counting even before the local base is pulled), else a local main or
-# master. Branches named orch/<sid>/<slug> are the materialize engine's task
-# worktrees for one ticket and are not counted. A branch's age is the age of its
-# first commit off the base, not of its tip, so a merge of the base does not
-# make a stale branch look fresh. Outside a git repository, or with no base, it
-# prints nothing and exits 0. `--check` is what /llm-orchestrator:dispatch runs
-# before cutting a new ticket branch: exit 3 means the open branches already
-# fill the limit, land one first. The session-start hook prints the same line.
+# The base is origin's HEAD when the remote has one (the remote's view of it,
+# so a branch merged on the forge stops counting even before the local base is
+# pulled), else a local main or master. Branches named orch/<sid>/<slug> are
+# the materialize engine's task worktrees for one ticket and are not listed.
+# A branch merged by squash or rebase stays unmerged by commit, so it stays
+# listed until its local branch is deleted. A branch's age is the age of its
+# first commit off the base, not of its tip, so
+# a merge of the base does not make a stale branch look fresh, and a branch
+# stacked on an unlanded branch counts that branch's commits too, since that
+# work has waited as long. One git call per branch. Outside a git
+# repository, or with no base, it prints nothing and exits 0. `--limit <n>`
+# and `--check` are accepted and ignored (older callers).
 
 set -uo pipefail
 
 ROOT="${PWD}"
-LIMIT=""
-CHECK=0
 while (( $# )); do
   case "$1" in
-    --root) ROOT="$2"; shift 2 ;;
-    --limit) LIMIT="$2"; shift 2 ;;
-    --check) CHECK=1; shift ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --root) [[ $# -ge 2 && ( "$2" != -* || -d "$2" ) ]] || { printf 'orch-landing-board: --root needs a value\n' >&2; exit 2; }; ROOT="$2"; shift 2 ;;
+    --limit) shift; (( $# )) && [[ "$1" != -* ]] && shift ;;
+    --check) shift ;;
+    -h|--help) sed -n '2,/^$/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) printf 'orch-landing-board: unknown argument %s\n' "$1" >&2; exit 2 ;;
   esac
 done
 
 git -C "${ROOT}" rev-parse --git-dir >/dev/null 2>&1 || exit 0
-TOP=$(git -C "${ROOT}" rev-parse --show-toplevel 2>/dev/null)
-
-# The limit, in order of precedence. The cadence.json key is read with one
-# grep so a project without python3 still gets its number.
-[[ -n "${LIMIT}" ]] || LIMIT="${ORCH_WIP_LIMIT:-}"
-if [[ -z "${LIMIT}" && -n "${TOP}" && -f "${TOP}/docs/llm-orchestrator/cadence.json" ]]; then
-  LIMIT=$(grep -oE '"wip_limit"[[:space:]]*:[[:space:]]*[0-9]+' "${TOP}/docs/llm-orchestrator/cadence.json" 2>/dev/null \
-          | head -1 | grep -oE '[0-9]+$')
-fi
-case "${LIMIT}" in (''|*[!0-9]*) LIMIT=2 ;; esac
 
 # The base: the remote's view of origin's HEAD when it exists, else local main/master.
 BASE=""; SHOWN=""
@@ -68,9 +56,11 @@ while IFS= read -r name; do
   [[ -z "${name}" || "${name}" == "${SHOWN}" ]] && continue
   case "${name}" in orch/*) continue ;; esac
   COUNT=$((COUNT + 1))
-  # Age of the first commit off the base; the tip's date when none is found.
-  first=$(git -C "${ROOT}" log --reverse --format=%ct "${BASE}..${name}" 2>/dev/null | head -1)
-  [[ -n "${first}" ]] || first=$(git -C "${ROOT}" log -1 --format=%ct "${name}" 2>/dev/null)
+  # Age of the first commit off the base (a stacked branch counts its base's
+  # unlanded commits too: that work has waited that long). Every listed branch
+  # has one, since the list is --no-merged. The trailing -- keeps a branch
+  # named like a path a branch.
+  first=$(git -C "${ROOT}" log --reverse --format=%ct "${BASE}..${name}" -- 2>/dev/null | head -1)
   case "${first}" in (''|*[!0-9]*) first="${NOW}" ;; esac
   age=$(( (NOW - first) / 86400 ))
   (( age > OLDEST )) && OLDEST=${age}
@@ -79,12 +69,5 @@ done < <(git -C "${ROOT}" for-each-ref --format='%(refname:short)' --no-merged "
 
 (( COUNT > 0 )) || exit 0
 (( COUNT > 6 )) && NAMES="${NAMES}, …"
-LINE="landing board: ${COUNT} unmerged branch(es) against ${SHOWN}, oldest ${OLDEST}d: ${NAMES}"
-if (( COUNT > LIMIT )); then
-  LINE="${LINE} · over the limit of ${LIMIT} in progress: land before dispatching more (finishing-a-branch, landing-rules.md)"
-elif (( COUNT == LIMIT )); then
-  LINE="${LINE} · at the limit of ${LIMIT} in progress: land one before cutting another (finishing-a-branch, landing-rules.md)"
-fi
-printf '%s\n' "${LINE}"
-if (( CHECK == 1 && COUNT >= LIMIT )); then exit 3; fi
+printf 'landing board: %s unmerged branch(es) against %s, oldest %sd: %s\n' "${COUNT}" "${SHOWN}" "${OLDEST}" "${NAMES}"
 exit 0

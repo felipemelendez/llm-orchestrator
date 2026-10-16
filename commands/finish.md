@@ -25,7 +25,10 @@ Steps:
    - In a worktree (`git rev-parse --git-dir` vs `--git-common-dir`)?
    - Worktree marked (`.orch-worktree` present)?
    - Base branch (`git symbolic-ref --short refs/remotes/origin/HEAD` without its `origin/`
-     prefix, or ask).
+     prefix, or ask). A ticket stacked on an open branch (its `Requires landed:` dependency is
+     not landed by landing rule 4's test; a PR number: its `headRefName`; `CLOSED` unmerged or
+     `isCrossRepository`: build on the default branch, rule 4) uses that branch as `<base>`; the
+     skill's option 1 says the rest.
 
 3. If `$ARGUMENTS` is empty, present the options menu with a one-line recommendation:
 
@@ -37,19 +40,11 @@ Steps:
 ```
 
 4. On user choice (or `$ARGUMENTS` if provided):
-   - **1**: `git push -u origin <branch>`, then `gh pr create --base <base> --head <branch>`
-     with a short, plain-words body of Summary / Decisions / Review / Verification / Manual
-     checklist for the owner / Open items, written by `finishing-a-branch`'s
-     `references/pr-body.md` for a person who was not in the conversation. When merging is
-     authorized and the PR's checks are green: `gh pr merge <n> --merge`, then, in the checkout that
-     holds `<base>` (`git worktree list`), `git pull --ff-only` and run the full suite there;
-     if none holds it, `git fetch origin <base>:<base>` and run the suite in a new detached
-     worktree of `<base>`, removed afterwards. Then merge `<base>` into every still-open ticket
-     branch and run its checks (landing rule 5). Offer worktree cleanup only after the merge.
-   - **2**: `git checkout <base> && git pull --ff-only && git merge --no-ff <branch>`, then run
-     the suite on the merged tree. Offer worktree cleanup.
+   - **1**: follow `finishing-a-branch` option 1 exactly (push, PR reuse or create, retarget,
+     merge, post-merge steps). Offer worktree cleanup only after the merge.
+   - **2**: follow the skill's option 2 exactly. Offer worktree cleanup.
    - **3**: Print where branch + worktree live.
-   - **4**: Require the literal word `discard`. Then delete branch and worktree.
+   - **4**: require the literal word `discard`, then follow the skill's option 4 exactly.
 
 5. Worktree cleanup (only when user accepted):
    - Must have `.orch-worktree` marker.
@@ -60,7 +55,7 @@ Steps:
 
 ```
 Changed:
-- <pushed and opened PR #N | merged PR #N; suite on <base>: <line> | merged locally | kept | discarded>
+- <pushed and opened PR #N | merged PR #N; suite on <main>: <line> | merged locally | kept | discarded>
 - <worktree cleaned up | preserved>
 Next:
 - <next step>

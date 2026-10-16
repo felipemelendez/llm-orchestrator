@@ -92,16 +92,15 @@ not require different models for the two reviewers.
   written into the spec's `## Settled` section with the reason it stands; a
   later finding against it needs a new argument against that reason, or it is
   recorded as settled (never a reproduced, catastrophic or unranked one).
-- **Branches:** at most two unmerged ticket branches at a time; a third
-  ticket waits for a landing. Every branch is cut from `main` after the hub
-  change it depends on has landed, never from a sibling's branch. `main` is
-  merged into every open branch at every landing. A branch gets one
+- **Branches:** a READY branch is landed the same session. A branch builds
+  on `main` or on the open branch it depends on, with its PR pointed at that
+  branch. The fetched `origin/main` is merged into the assistant's own open branches, bottom up, at every landing. A branch gets one
   whole-branch review at landing, then rounds of one fix wave and one scoped
   re-review while each finds new reproduced defects; a round with none is a
   stall, adjudicated, and no branch lands over a reproduced defect. A serious
   finding the prover could not reproduce is recorded as a follow-up, not
-  another round. A branch not landed within a working day of its first
-  green test is split (the `finishing-a-branch` skill's
+  another round. Pull requests stay small; what is green lands and the
+  rest follows in its own PR (the `finishing-a-branch` skill's
   `references/landing-rules.md`).
 - **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
   mild findings handled and recorded, or NOT-READY with every blocking finding
@@ -110,9 +109,12 @@ not require different models for the two reviewers.
   and opens one pull request per ticket, with a short body in plain words that
   Ana can follow without the conversation, in this shape: Summary / Decisions /
   Review / Verification / Manual checklist for Ana / Open items.
-  It merges the pull request with a merge commit, keeping the project's branch
-  and commit naming, pulls `main`, runs the full checks on `main` one suite at
-  a time, and only then moves to the next pull request.
+  It turns on auto-merge with a merge commit (or merges once checks are
+  green), keeping the project's branch and commit naming, and moves on to
+  other work; once the pull request has merged, it pulls `main` and runs the
+  full checks on `main` one suite at a time.
+  A pull request stacked on an open branch is opened, never merged into it:
+  it waits for its base to land and is pointed at `main` first.
 - **Cleanup:** temporary reviews and copies live outside the repository and
   are removed when the task finishes; keep specs and design notes.
 - **Talking to Ana:** lead with the result, plain words, say clearly what is

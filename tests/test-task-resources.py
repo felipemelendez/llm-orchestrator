@@ -309,6 +309,15 @@ class LifecycleTests(unittest.TestCase):
         self.git("commit", "-qm", "unique", cwd=worktree)
         self.assert_retained(worktree)
 
+    def test_new_branch_from_a_remote_ref_does_not_track_it(self):
+        # A stacked ticket starts from another owner's origin/<branch>; a plain push must not go there.
+        self.git("remote", "add", "origin", str(self.project))
+        self.git("update-ref", "refs/remotes/origin/someone-else", "HEAD")
+        worktree = self.resource(ref="origin/someone-else", branch="my-ticket")
+        upstream = subprocess.run(["git", "rev-parse", "--abbrev-ref", "my-ticket@{upstream}"],
+                                  cwd=worktree, capture_output=True, text=True)
+        self.assertNotEqual(upstream.returncode, 0, upstream.stdout)
+
     def test_unmerged_branch_is_retained_when_worktree_removed(self):
         worktree = self.resource(branch="owned-unmerged")
         (worktree / "source.py").write_text("unique\n")

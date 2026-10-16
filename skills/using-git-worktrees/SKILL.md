@@ -46,12 +46,17 @@ into the dispatch envelope.
 3. **Add the worktree — on a unique path and a unique branch.** Never point two writers at the
    same directory or the same branch.
    ```
-   git worktree add .worktrees/<slug> -b <branch-name>
+   git fetch origin   # when a remote exists
+   git worktree add --no-track .worktrees/<slug> -b <branch-name> <start>
+   # <start>: origin/<main>, or origin/<dependency> for a stacked ticket (rule 3; a PR number: gh pr view <n> --json headRefName,isCrossRepository, a fork PR or a closed one: start from origin/<main> (rule 4); push your own dependency first); local <main> with no remote
    ```
    `git worktree add` itself refuses a path that already exists or a branch already checked out
    elsewhere — that refusal is your mechanical guard against two writers colliding on one tree.
    If it errors with "already exists" / "already checked out", stop: a sibling owns that
-   worktree; pick a different slug, do not reuse it.
+   worktree; pick a different slug, do not reuse it. After the first commit, when a remote
+   exists, open the draft PR (`git push -u origin <branch-name> && gh pr create --draft --base
+   <base> --fill --head <branch-name>`, `<base>` being `<start>` without `origin/`; no drafts
+   on the plan: a normal PR titled `WIP:`), so others can see the work and build on it (rule 1).
 
 4. **Mark provenance.** Drop `.orch-worktree` in the new dir (cleanup only removes worktrees with
    this marker). `.orch-worktree-lock` records the owning session id for the registry's

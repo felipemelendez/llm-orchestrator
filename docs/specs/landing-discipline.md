@@ -1,16 +1,17 @@
 # Landing discipline: how ticket work lands without endless rounds
 
 Date: 2026-10-13. Status: implemented; revised 2026-10-15 by the owner (the
-review loop ends on evidence, not on a count).
+review loop ends on evidence, not on a count) and 2026-10-16 (the board is a
+report; see CHANGELOG 0.18.0).
 Research: `docs/llm-orchestrator/research/2026-10-13-long-running-projects-brief.md`.
 
 ## Problem
 
-A project run with this plugin opened ten ticket branches at once, cut from an
-unmerged sibling, reviewed each in scoped rounds for four days (370 runs, 319
+A project run with this plugin opened ten ticket branches at once, each carrying a
+copy of an unmerged sibling's code and waiting on it, reviewed each in scoped rounds for four days (370 runs, 319
 NOT-READY), spent every READY verdict on new commits or on a wait for a
 sibling, and merged nothing until the owner wrote a landing process by hand.
-The plugin had no limit on work in progress, no rule that READY means land, no
+The plugin had no rule that READY means land, no
 cross-ticket dependency rule, no whole-branch review at landing, no rule for
 when a review loop stops, and treated unreproduced serious findings as
 blocking.
@@ -19,8 +20,8 @@ blocking.
 
 - A READY verdict (or its equivalents) is landed in the same session; nothing
   else is committed on that head.
-- No more than two unmerged implementation branches at a time; dispatch
-  refuses a third and refuses a ticket whose dependency has not landed.
+- Dispatch reads what a ticket builds on and stacks it on an open dependency
+  instead of refusing it.
 - Each landing starts with one whole-branch review. Then rounds of one fix
   wave and one scoped re-review continue while each finds new reproduced
   defects or turns a failing check green. A round with neither is a stall:
@@ -31,16 +32,16 @@ blocking.
 - A serious finding the prover could not reproduce lands as a recorded
   follow-up, never as a blocker; reproduced, catastrophic and unranked findings
   block as before.
-- Every branch is cut from main; main is merged into each open branch at every
-  landing.
-- The session opens with the landing board: unmerged branches, their age, and
-  a warning past the limit.
+- A branch builds on main or on the open branch it depends on (revised
+  2026-10-16); main is merged into the agent's own open branches, bottom up,
+  at every landing.
+- The session opens with the landing board: unmerged branches and their age.
 
 ## Non-goals
 
 - No change to the four verdicts, the reviewers, the prover or the refuter.
-- No new agent, no new command, no daemon. The limit is enforced where
-  dispatch already reads the plan, and reported by the session-start hook.
+- No new agent, no new command, no daemon. The board is printed where
+  dispatch already reads the plan, and by the session-start hook.
 - No change to locked project files; existing projects adopt the rulebook line
   by their own ruling.
 
@@ -54,7 +55,7 @@ blocking.
 `using-orchestrator`) and the commands `dispatch` and `finish` each state the
 rule they enforce in one or two lines and point at the file. The rulebook
 template (`skills/cadence/references/laws.md` and its example) carries a
-Branches line so new projects start with the limit. The marked global block
+Branches line so new projects start with the rule. The marked global block
 is unchanged: it already routes to the cadence skill, which carries the rule,
 and changing it would ask every locked project for a ruling about text it
 does not need.
@@ -74,24 +75,24 @@ unranked findings are never follow-ups). A NOT-READY review whose every
 blocking finding is recorded `refuted`, `settled` or `follow-up` lands like
 READY-WITH-FIXES. The outcome log records the disposition like the others.
 
-**Dispatch limits.** Before dispatching a ticket, the controller runs the
-board script with `--check`, which exits 3 when the unmerged branches already
-fill the limit (no room for one more). The script counts unmerged local
+**Dispatch.** Before dispatching a ticket, the controller runs the
+board script, which lists what is open. The script counts unmerged local
 branches against the base, prefers the remote's view of the base when one
 exists, skips the `orch/` task branches the materialize engine creates, and
-measures a branch's age from its first commit off the base, not its tip. The
-limit is `--limit`, else `ORCH_WIP_LIMIT`, else `wip_limit` in the project's
-`cadence.json` (set by ruling), else 2. A plan may carry
-`Requires landed:` naming branches or PRs that must be on main before the
-ticket is cut; `git merge-base --is-ancestor` decides. Dependents are cut from
-main after the dependency lands, never from the dependency's branch.
+measures a branch's age from its first commit off the base, not its tip.
+A plan may carry
+`Requires landed:` naming the branch or PR the ticket builds on; landing
+rule 4's test says whether it is landed (an ancestor of main, or its PR
+merged). If it is
+still open, the ticket's branch stacks on it and its PR targets it; the
+repository's delete-branch-on-merge setting removes the merged base so GitHub
+points the stacked PR at main (revised 2026-10-16). Main is merged into the agent's own open branches, bottom up,
+never into branches other agents own.
 
 **Landing board.** One script, `scripts/orch-landing-board.sh`, prints the
 count of unmerged branches against the base, the oldest branch's age, and the
-names, plus a warning when the count exceeds the limit (`--limit`, else
-`ORCH_WIP_LIMIT`, default 2). With `--check` it exits 3 over the limit; that
-is what `/llm-orchestrator:dispatch` runs before cutting a ticket branch, so
-the limit is read by the dispatcher, not remembered from a prompt. The
+names.
+`/llm-orchestrator:dispatch` prints it before cutting a ticket branch, and the
 session-start hook prints the same line in front of the body, with the
 cadence verdict, so truncation cannot drop it. Read-only git, no network,
 best effort; off with `ORCH_DISABLED_HOOKS=orch-landing-board`.
@@ -130,9 +131,9 @@ the proportionate one.
 
 **Alternatives considered.** A new `landing` skill (rejected: the finish skill
 already does the landing; a second entry point is one more thing to route to).
-Enforcing the limit in the worktree materialize engine (rejected: that engine
-makes task worktrees for one plan, which the integration engine lands minutes
-later; the limit is on ticket branches). A fifth verdict for unreproduced
+Reporting the board from the worktree materialize engine (rejected: that
+engine makes task worktrees for one plan, which the integration engine lands
+minutes later; the board is about ticket branches). A fifth verdict for unreproduced
 findings (rejected: a disposition reuses the landing path R22 already built).
 
 ## Constraints
@@ -149,16 +150,16 @@ findings (rejected: a disposition reuses the landing path R22 already built).
   2026-10-13 (the research brief above).
 - Notable: Symphony (OpenAI, 2026-04) caps concurrent agents and turns and has
   explicit `Merging` and `Human Review` states; Claude Code Projects has a
-  `Landing` state and warns that a prompt-stated limit is not a hard cap;
+  `Landing` state and notes that a number stated in a prompt is not enforced;
   superpowers caps fix rounds at five and then adjudicates; DORA measures
-  three or fewer active branches; Anthropic's best practices say a reviewer
+  few active branches; Anthropic's best practices say a reviewer
   asked for gaps will report some even when the work is sound.
 
 ## Settled
 
-- **Two unmerged branches is the default limit.** DORA's threshold is three or
-  fewer active branches; the project that failed chose two; a project raises
-  it by ruling.
+- **Landing keeps the branch count small.** DORA measures few, short-lived
+  active branches in teams that deliver well; a READY-lands-now rule and
+  small pull requests produce that without counting.
 - **Unreproduced serious findings do not block landing.** The prover's
   experiment is the test; a worry without a failing command is a follow-up.
   Catastrophic and unranked findings still reach the person.

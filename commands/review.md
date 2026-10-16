@@ -12,9 +12,10 @@ Steps:
 
 2. Read the arguments:
    - `--full` selects the Full review; otherwise run Standard.
-   - Any other argument is the base ref. Without one, use
-     `git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/@@'`,
-     and `origin/main` if that fails.
+   - Any other argument is the base ref. Without one, use the base
+     `requesting-code-review` defines (`origin/<base>`, or `<base>` with no
+     remote). The landing review merges that base in first; an ad hoc review
+     does not.
 
 3. Find the spec the change must implement: the plan or spec named in this
    conversation. If there is none, write what the person asked for, in a few

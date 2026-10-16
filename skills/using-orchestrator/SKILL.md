@@ -110,7 +110,7 @@ Invoke a row's skill when its trigger clearly matches. Questions and small edits
 | Diff is ready for review                                         | `requesting-code-review`           |
 | Reviewer returned issues                                         | `receiving-code-review`            |
 | Ticket branch reviewed and green: land it through a PR, now     | `finishing-a-branch`               |
-| Several tickets to run: how many open, which first, when landed | `finishing-a-branch` → `references/landing-rules.md` |
+| Several tickets to run: what each builds on, how each lands   | `finishing-a-branch` → `references/landing-rules.md` |
 | User says "remember", "I told you", "save this", "forget"        | `managing-memory`                  |
 | Context filling on a long task, or about to be compacted         | `handing-off-to-fresh-context`     |
 | Adding or editing a skill                                        | `writing-skills`                   |

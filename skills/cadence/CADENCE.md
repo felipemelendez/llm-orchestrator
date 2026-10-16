@@ -31,9 +31,8 @@ they cannot supply a required independent review or gate.
    unknown risk counts as high.
 2. Implement with meaningful regression checks. Use isolation only where it
    protects concurrent work or is needed for probes; keep scopes bounded.
-3. Merge the base into the branch, run the checks, then run the Full review
-   with `requesting-code-review` (`orch-review.py run --path full --base
-   <base>`) on the whole branch. It runs two blind reviews, Claude Code's
+3. Fetch and merge `origin/<base>` into the branch (no remote: the local `<base>`, no fetch), run the checks, then run the Full review
+   with `requesting-code-review` (`orch-review.py run --path full --base origin/<base>`) on the whole branch. It runs two blind reviews, Claude Code's
    `/code-review` and `codex review` (with one CLI, its reviewer twice, which
    the verdict says), proves each finding and, when a serious or catastrophic
    one exists, runs the refuter. A dropout gives `INCOMPLETE`, never a
@@ -63,8 +62,7 @@ they cannot supply a required independent review or gate.
    Unsupported checks remain explicit. Do not repeat valid checks for ceremony.
 6. Land through a pull request (`finishing-a-branch` option 1) unless the laws
    or the user say otherwise, in the same session as the landing verdict and
-   with nothing new committed on that head; then merge the base into every
-   still-open branch. Retain useful spec/research/design/runbook
+   with nothing new committed on that head; then fetch and merge `origin/<main>` into each still-open branch you own, bottom up as rule 5 orders (no remote: the local `<main>`). Retain useful spec/research/design/runbook
    updates. Finish task-owned temporary resources after consumers
    stop and deliverables are preserved; explain concrete preservation reasons.
 

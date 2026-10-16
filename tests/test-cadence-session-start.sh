@@ -44,7 +44,7 @@ command -v python3 >/dev/null 2>&1 || skip_suite test-cadence-session-start 'pyt
 CHECK="${ROOT}/skills/cadence/scripts/orch-cadence-check.sh"
 [[ -f "$CHECK" ]] || skip_suite test-cadence-session-start 'the cadence check script is not in this tree'
 
-TMP=$(mktemp -d)
+TMP=$(mktemp -d) || exit 1
 trap 'rm -rf "$TMP"' EXIT
 export ORCH_HOME="$TMP/orchhome"
 mkdir -p "$ORCH_HOME"
@@ -248,7 +248,7 @@ printf '%s== the landing board rides in front of the body ==%s\n' "$DIM" "$RESET
 # =============================================================================
 if command -v git >/dev/null 2>&1; then
   GITPROJ="$TMP/gitproj"; mkproj "$GITPROJ"
-  ( cd "$GITPROJ" && git init -q 2>/dev/null && git checkout -q -b main 2>/dev/null; \
+  ( cd "$GITPROJ" || exit 1; git init -q 2>/dev/null && git checkout -q -b main 2>/dev/null; \
     git -c user.name=t -c user.email=t@t commit -q --allow-empty -m base; \
     for b in w-a w-b w-c; do \
       git branch "$b" main; \
@@ -258,8 +258,11 @@ if command -v git >/dev/null 2>&1; then
     done ) >/dev/null 2>&1
   run_hook "$HOOK" "$GITPROJ" "$STARTUP" >/dev/null
   C=$(ctx)
-  case "$C" in "landing board: 3 unmerged branch(es) against main"*"over the limit of 2"*) ok "three unmerged branches open the session with the board and the warning" ;;
-    *) fail "three unmerged branches open the session with the board and the warning" "context: $(printf '%s' "$C" | head -c 200)" ;;
+  case "$C" in "landing board: 3 unmerged branch(es) against main"*) ok "three unmerged branches open the session with the board" ;;
+    *) fail "three unmerged branches open the session with the board" "context: $(printf '%s' "$C" | head -c 200)" ;;
+  esac
+  case "$(printf '%s' "$C" | head -1)" in *"limit"*) fail "the board line names no limit" "line: $(printf '%s' "$C" | head -1)" ;;
+    *) ok "the board line names no limit" ;;
   esac
   run_hook "$HOOK" "$GITPROJ" "$COMPACT" >/dev/null
   C=$(ctx)

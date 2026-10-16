@@ -103,27 +103,29 @@ two reviewers are optional unless stated here.>
   final code. <STRICTER RULE if any — for example "every code change needs a
   passing automated test"; otherwise NOT APPLICABLE is allowed for low-risk
   work with no meaningful automated check.>
-- **Branches:** at most two unmerged ticket branches at a time; a third
-  ticket waits for a landing. Every branch is cut from main after the hub
-  change it depends on has landed, never from a sibling's branch. Main is
-  merged into every open branch at every landing. A branch gets one
+- **Branches:** a READY branch is landed the same session. A branch builds
+  on main or on the open branch it depends on, with its PR pointed at that
+  branch. The fetched main (`origin/main`) is merged into the agent's own open branches, bottom up, at every landing. A branch gets one
   whole-branch review at landing, then rounds of one fix wave and one scoped
   re-review while each finds new reproduced defects; a round with none is a
   stall, adjudicated, and no branch lands over a reproduced defect. A serious
   finding the prover could not reproduce is recorded as a follow-up, not
-  another round. A branch not landed within a working day of its first
-  green test is split (the `finishing-a-branch` skill's
-  `references/landing-rules.md`). <OTHER NUMBERS if the project wants them;
-  otherwise delete this sentence.>
+  another round. Pull requests stay small; what is green lands and the
+  rest follows in its own PR (the `finishing-a-branch` skill's
+  `references/landing-rules.md`).
 - **Landing:** when a branch's review is READY (or READY-WITH-FIXES with its
   mild findings handled and recorded, or NOT-READY with every blocking finding
   recorded refuted, settled or follow-up; none of these needs another review unless a mild fix changed behaviour) and its checks
   are green, the coordinator lands it in that session, never holding it for a sibling: it pushes the branch (never force-pushed, history never rewritten)
   and opens one pull request per ticket, with a short body in plain words that
   a person who was not there can follow, in this shape: Summary / Decisions /
-  Review / Verification / Manual checklist for the owner / Open items. It merges the pull request with a merge commit, keeping the project's
-  branch and commit naming, pulls the base branch, runs the full checks on the
-  base one suite at a time, and only then moves to the next pull request.
+  Review / Verification / Manual checklist for the owner / Open items. It
+  turns on auto-merge with a merge commit (or merges once checks are green),
+  keeping the project's branch and commit naming, and moves on to other work;
+  once the pull request has merged, it pulls the base branch and runs the full
+  checks on it one suite at a time.
+  A pull request stacked on an open branch is opened, never merged into it:
+  it waits for its base to land and is pointed at the project's main branch first.
   <ANY CHANGE — for example a required approving reviewer before the merge;
   otherwise delete this line.>
 - **Cleanup:** temporary reviews, logs and copies live outside the repository

@@ -327,7 +327,8 @@ class Manager:
             elif kind == "worktree":
                 # Never claim an existing branch as owned; branches are always retained.
                 args = ["worktree", "add"]
-                args += ["-b", branch] if branch else ["--detach"]
+                # --no-track: a branch started from someone else's remote ref must not push there.
+                args += ["--no-track", "-b", branch] if branch else ["--detach"]
                 git(project, *args, str(path), ref)
             else:
                 path.mkdir(mode=0o700)

@@ -90,7 +90,7 @@ delivery; a review verdict or a caller-supplied flag is never a delivery.
 
 Configure shared capabilities through project data and links to the existing
 canonical policies. Preserve independent review counts, blocking-defect handling,
-ownership, two active tasks plus one externally blocked allowance, one integrator,
+ownership, one integrator,
 exact-revision merge/post-merge gates and GitHub handoff ownership. Model capacity
 is distinct from ticket WIP. Keep Cadence activation and protected GitHub changes
 pending separately. Do not edit unrelated projects or add a tracked live board.
