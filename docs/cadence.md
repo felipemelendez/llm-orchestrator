@@ -53,7 +53,9 @@ These files are locked: `docs/llm-orchestrator/LAWS.md`, `cadence.json`,
 `.githooks/orch-cadence-check.sh`, and the section of `CLAUDE.md` and
 `AGENTS.md` between the `<!-- ORCH:LAWS:START -->` and
 `<!-- ORCH:LAWS:END -->` markers. The rest of `CLAUDE.md` and `AGENTS.md` stays
-yours to edit.
+yours to edit. The manifest `LOCK.sha256` is compared as a whole at each
+commit, so adding an entry to it needs a ruling too, not only changing or
+removing one.
 
 When the assistant thinks a rule should change, it explains why and gives you
 the change as a patch file kept outside Git, with the command to apply it. If

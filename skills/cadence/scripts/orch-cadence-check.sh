@@ -580,6 +580,14 @@ git_gate() {
     fi
   done < "$entries"
 
+  # The manifest is protected too, but it is not hashed into its own set: a
+  # manifest that now records an extra, unchanged path still changes which
+  # paths the lock protects, so compare the two manifests themselves.
+  if [ "$armed_at_head" = "1" ] && [ "$armed_in_index" = "1" ] && ! cmp -s "$TMPD/headlock" "$lockblob"; then
+    changed=1
+    echo "$label: $LOCK_REL changed in this commit"
+  fi
+
   # A project with no manifest at HEAD is not yet under the lock, so the commit
   # that brings one needs no ruling — there is no law it could be amending. The
   # staged manifest is still checked against the staged content above, so an
