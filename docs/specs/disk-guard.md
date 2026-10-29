@@ -73,8 +73,9 @@ event (`sed`: the JSON string after the `"command"` key, to its closing
 unescaped quote; in valid JSON, `"command"` followed by `:` can only be a
 key), and `grep -E` refuses rule 1's words and any copier word (`cp`,
 `rsync`, `ditto`, `tar`) in it, because it cannot read rule 2. The event's
-folder and description are not read, unless the event holds no complete
-`"command"` string (cut off or malformed): then the whole event is checked.
+folder and description are not read, unless the `sed` does not match (no
+complete `"command"` string: cut off or malformed): then the whole event is
+checked. A match is marked, so an empty command is still a command.
 
 **The contract.** The hook reads the command as flat text. It has no model
 of the shell: no variable values, no `cd` tracking, no difference between
@@ -98,29 +99,42 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
 
 ### What it refuses
 
-0. **First, three normalizations.** A backslash-newline is removed, which
-   joins its two halves as the shell does. `//` and `/./` become `/`. Then
+0. **First, the readings and two normalizations.** Rule 3 reads the command
+   as given. Rules 0 to 2 then read it twice, with each backslash-newline
+   removed (the shell joins the two halves) and with it read as a newline (a
+   `#` comment ends at the newline, and the guard does not decide which
+   applies); the command is refused if either reading is. `//` and `/./`
+   become `/`. Then
    the session's own folder is set aside by a plain-run rule, read once left
    to right. An occurrence of
    `(/private)?/tmp/claude(-<digits>)?/<project>/<session id>`, matched in
    any case, is set aside together with the run of plain characters
    (`A-Z a-z 0-9 . _ / + -`) after it, when all of these hold:
-   - it starts a word: at the start of the text, or after whitespace, a
-     quote, `=` or one of ``;&|()<>` ``;
-   - its run ends plainly: at whitespace, the end, one of `;&|()<>`, or a
-     quote that is itself followed by whitespace, the end or one of those
-     (a closing quote);
-   - no `..` follows it anywhere in the text.
+   - it starts a word: right after a `'` or `"`, or at the start of the
+     text, or after whitespace, `=` or one of ``;&|()<>` ``;
+   - its run ends plainly: when the quote opened it, at that same quote
+     character followed by whitespace, the end or a separator; when it is
+     unquoted, at whitespace, the end or one of ``;&|()<>` ``. Any other
+     character after the run, another quote included, means nothing is set
+     aside;
+   - no `..` path component follows its start anywhere in the text: `..`
+     between `/`, whitespace, quotes or separators, its dots perhaps split by
+     quotes or a backslash (`."."`, `.\.`), which the shell joins. A `..`
+     inside a name (`repo..backup`) does not count.
 
    Rule 1 then does not see the folder or its run, so
-   `<session folder>/build/tmp`, `<session folder>/claude-501` and
-   `echo "<session folder>/out $(cat <session folder>/status)"` are allowed.
+   `<session folder>/build/tmp`, `<session folder>/claude-501`,
+   `'<session folder>/x'` and
+   `echo "<session folder>/out" "$(cat <session folder>/status)"` are
+   allowed.
    Rule 2 reads the folder as one fixed folder. An exemption the rule cannot
    read plainly is not granted: the occurrence stays visible and rule 1
    refuses it (it fails closed). That covers a quote, a backslash or a `$`
    that continues the run (`<session folder>/.'.'/pr`,
-   `<session folder>/.\./pr`, `"<session folder>/x-$$"`), and any `..`
-   after it (`mkdir "<session folder>/a b/../../pr"`). The session id is
+   `<session folder>/.\./pr`, `"<session folder>/x-$$"`), a quoted run that
+   does not end at its own quote (`"<session folder>/a b/c.txt"`,
+   `<session folder>" "x`), and any `..` component after it
+   (`mkdir "<session folder>/a b/../../pr"`). The session id is
    the event's `session_id`, when it matches `[A-Za-z0-9._-]+` and is not
    only dots; the project folder matches `[A-Za-z0-9._-]+` and is not `.` or
    `..`. `/var/tmp/claude-501/...` is not the session's folder.
@@ -180,7 +194,7 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
 3. **Too long.** A command longer than 100,000 characters is refused when
    it holds, as a plain substring in any case, `cp`, `rsync`, `ditto`, `tar`,
    `tmpdir`, `/tmp`, `mktemp` or `claude-`, and runs otherwise. This test
-   comes before anything else.
+   comes before anything else, on the command as given.
 
 The person's own override, as with `ORCH_ALLOW_DESTRUCTIVE_GIT`:
 `ORCH_ALLOW_TEMP_WRITES=1` in the hook's own environment. An inline prefix
@@ -208,8 +222,10 @@ relative path ending in a `tmp` folder (`rm -rf build/tmp`),
 apostrophe on a line that holds a copier word
 (`cat > notes.md <<'EOF'` … `don't cp -R . sub`; write such a file with
 the Write tool). Under the session's own folder: a `$`, quote or backslash
-inside a path (`"<session folder>/x-$$"`), and any `..` later in a command
-that names the folder (`cd <session folder>/x && cd ..`). And
+inside a path (`"<session folder>/x-$$"`), a quoted path with a space
+(`"<session folder>/a b/c.txt"`, `"<session folder>/out $(cat ...)"`), and
+any `..` component later in a command that names the folder
+(`cd <session folder>/x && cd ..`). And
 `rsync --version`. Each refusal says what to do instead.
 
 **Residual gaps, by design.** A variable or symlink made by an earlier

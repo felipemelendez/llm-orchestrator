@@ -11,8 +11,14 @@
 #
 # It reads the command as flat text, with no model of the shell, and refuses a
 # closed list (docs/specs/disk-guard.md, G1):
+#   3. First, on the command as given: over 100,000 characters and holding a
+#      copier or a rule-1 word. Then rules 0 to 2 run on two readings, each
+#      backslash-newline removed and read as a newline; either refusing refuses.
 #   0. `//` and `/./` become `/`; the session's own folder
-#      (/tmp/claude-<uid>/<project>/<session id>/...) is set aside.
+#      (/tmp/claude-<uid>/<project>/<session id>) is set aside with the plain
+#      run of [A-Za-z0-9._/+-] after it, when it starts a word, its run ends at
+#      whitespace, a separator, the end or the quote that opened it, and no
+#      `..` component follows it. Anything else is not set aside.
 #   1. Any mention of the shared temporary area, anywhere in the text, read or
 #      write: $TMPDIR or ${TMPDIR...}, /tmp as a path component (/private/tmp
 #      too), the word mktemp, and claude-<digits> as a path component or word.
@@ -21,10 +27,10 @@
 #      a path outside [A-Za-z0-9._/+-], a relative path in a command that also
 #      holds cd, pushd or popd, no source on the line, or a destination at or
 #      inside a source; and any `tar ... | ... tar` pipeline.
-#   3. A command over 100,000 characters holding a copier or a rule-1 word.
-# Everything else runs. That is the specified behaviour, not a gap: the disk
-# watchdog (free-space floor, run-directory cap) and each Codex launch's own
-# $TMPDIR bound what the list does not name. It is not a security boundary.
+# A real 1 s timer bounds the decision. Everything else runs. That is the
+# specified behaviour, not a gap: the disk watchdog (free-space floor,
+# run-directory cap) and each Codex launch's own $TMPDIR bound what the list
+# does not name. It is not a security boundary.
 #
 # Reads the event on stdin; exit 0 allows, exit 2 refuses with the reason on
 # stderr. The decision is scripts/lib/orch-disk-guard.py, run with `python3 -I`
@@ -63,11 +69,13 @@ if command -v python3 >/dev/null 2>&1 && [[ -f "${HELPER}" ]]; then
 fi
 
 # Only the command is checked: the JSON string after the "command" key, up to its closing unescaped quote
-# (in valid JSON, "command" followed by : can only be a key). An event with no such string, cut off or
-# malformed, is checked whole. A newline in the text is the two characters \n.
+# (in valid JSON, "command" followed by : can only be a key). The sed marks a match with a leading C, so an
+# empty command is still a command; an event with no such string, cut off or malformed, is checked whole.
+# A newline in the text is the two characters \n.
 FLAT=$(printf '%s' "${INPUT}" | LC_ALL=C tr -c '[:print:]' ' ')
-COMMAND=$(printf '%s' "${FLAT}" | LC_ALL=C sed -nE 's/.*"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p')
-FLAT=$(printf '%s' "${COMMAND:-${FLAT}}" | sed 's/\\[nrt]/ /g')
+COMMAND=$(printf '%s' "${FLAT}" | LC_ALL=C sed -nE 's/.*"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/C\1/p')
+[[ -n "${COMMAND}" ]] && FLAT="${COMMAND#C}"
+FLAT=$(printf '%s' "${FLAT}" | sed 's/\\[nrt]/ /g')
 if LC_ALL=C grep -qiE '[$][{]?[#!]?TMPDIR([^A-Za-z0-9_]|$)|/tmp([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_])mktemp([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.-])claude-[0-9]+([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_])(cp|rsync|ditto|tar)([^A-Za-z0-9_]|$)' <<< "${FLAT}"; then
   echo "disk guard: refused: the guard's helper could not run, and the command copies or names the shared temporary area. Work in the clone or folder you were given, and keep copies and temporary files inside it." >&2
   exit 2

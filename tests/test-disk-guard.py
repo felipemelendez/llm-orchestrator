@@ -120,6 +120,13 @@ REFUSED = [
     ("escape", f"mkdir -p {OWN}/.\\./.\\./pr", None), ("escape", f'echo "{OWN}/x" "$X"/..', None),
     ("nested", "cp -R src sr\\\nc/x", None), ("nested", "cp -R /Private/Var/folders/q/repo sub", "/var/folders/q/repo"),
     ("nested", "cp -R /PRIVATE/var/repo /var/repo/sub", None),
+    # the third re-review (20261029-plugin55-closed3): both readings of a backslash-newline, the quote that
+    # opened the occurrence closes its run, and a `..` component (its dots perhaps split by quotes) blocks it
+    ("nested", "# copy step\\\ncp -R . ./sub", None), ("shared", "# x\\\nmktemp -d", None),
+    ("tar", "# x\\\ntar cf - . | tar xf - -C sub", None),
+    ("escape", f'mkdir -p {OWN}" "x && echo data > {OWN}" "x/f', None),
+    ("escape", f'echo "{OWN}/out $(cat {OWN}/status)"', None), ("escape", f'cp notes.txt "{OWN}/a b/c.txt"', None),
+    ("escape", f"mkdir '{OWN}/x\"", None), ("escape", f'mkdir "$(true){OWN}/a b/."."/."."/pr"', None),
 ]
 
 # Ordinary work, and the session's own folder. (kind, command): "own" rows test rule 0.
@@ -136,9 +143,10 @@ ALLOWED = [
     ("work", "python3 tests/test-disk-guard.py"),
     ("own", f"ls {OWN}/scratchpad"), ("own", f"echo hi > {OWN}/scratchpad/a.txt"),
     ("own", f"mkdir -p {OWN}/x && cp -R src {OWN}/copy"), ("own", f"cp -R . /private{OWN}/copy"),
-    ("own", f"TMPDIR={OWN}/t codex exec 'review the diff'"), ("own", f'echo "{OWN}/out $(cat {OWN}/status)"'),
+    ("own", f"TMPDIR={OWN}/t codex exec 'review the diff'"), ("own", f'echo "{OWN}/out" "$(cat {OWN}/status)"'),
+    ("own", f"cat '{OWN}/notes.md'"), ("own", f"mkdir -p {T}/repo..backup/{SESSION}/out"), ("own", f"ls {OWN}/a..b"),
     ("own", f"mkdir -p {OWN}/build/tmp"), ("own", f"ls {OWN}/claude-{UID}"),
-    ("own", f"mkdir /TMP/CLAUDE-{UID}/{PROJECT}/{SESSION}/x"), ("own", f'cp notes.txt "{OWN}/a b/c.txt"'),
+    ("own", f"mkdir /TMP/CLAUDE-{UID}/{PROJECT}/{SESSION}/x"),
     ("work", "tar -czf a.tgz src\nls | grep tar"), ("work", "tar cf a.tar src\nprintf done | cat\ntar xf a.tar -C dest"),
     ("work", "cp -R src dist 2>&1 | tail -1"),
 ]
@@ -213,6 +221,7 @@ class DiskGuardTests(unittest.TestCase):
 
     def test_rule_3_a_long_command_is_decided_fast(self):
         for command, code in (("printf %s " + "a" * 1_500_000 + f"; mkdir {T}/pr", 2),
+                              ("cp -R src dist" + "\\\n" * 50_000, 2),  # measured as given, before any join
                               ("printf %s " + "a" * 1_500_000 + "; cp -R . ./sub", 2),
                               ("printf %s " + "a" * 1_500_000, 0)):
             with self.subTest(length=len(command), code=code):
@@ -243,6 +252,20 @@ class DiskGuardTests(unittest.TestCase):
                 reason = helper.decide_in_time(command, "/w", SESSION, None)
                 self.assertLess(time.monotonic() - started, helper.DEADLINE_SECONDS + 0.5)
                 self.assertEqual(bool(reason and "could not finish checking" in reason), refused, reason)
+
+    def test_the_deadline_never_crashes_on_a_late_alarm(self):
+        helper = load_helper()
+        real = helper.signal.setitimer
+        def late(which, seconds):  # the alarm arrives just as the timer is disarmed
+            if seconds == 0:
+                helper.signal.raise_signal(helper.signal.SIGALRM)
+            return real(which, seconds)
+        helper.signal.setitimer = late
+        try:
+            self.assertIsNone(helper.decide_in_time("tar -czf out.tgz src", "/w", SESSION, None))
+        finally:
+            helper.signal.setitimer = real
+            helper.signal.signal(helper.signal.SIGALRM, helper.signal.SIG_DFL)
 
     def test_allowed_forms_run(self):
         self.check_allowed({"work", "own"})
@@ -293,6 +316,8 @@ class DiskGuardTests(unittest.TestCase):
         self.assertEqual(self.hook("", hook=hook, event=around).returncode, 0)
         inside = {"tool_input": {"command": 'echo "\\"command\\": \\"ls\\"" && cp -R a b', "description": "d"}}
         self.assertEqual(self.hook("", hook=hook, event=inside).returncode, 2)
+        empty = {"cwd": "/Users/someone/src/tar", "tool_input": {"command": "", "description": "List tar files"}}
+        self.assertEqual(self.hook("", hook=hook, event=empty).returncode, 0, "an empty command is a command")
 
     def test_the_plain_fallback_runs_when_the_helper_fails_or_python_is_missing(self):
         broken = self.installed_copy("raise RuntimeError(\"broken\")\n")

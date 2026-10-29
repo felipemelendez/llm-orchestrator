@@ -6,11 +6,14 @@ what to do instead on stderr. Any other exit (an event it cannot read, a bug) ma
 its plain text check. Spec: docs/specs/disk-guard.md, G1.
 
 It reads the command as flat text and has no model of the shell. What it refuses is a closed list:
-  0. `//` and `/./` become `/`, and the session's own folder is set aside;
+  3. first, on the command as given: one over 100,000 characters that holds a copier or a rule-1 word;
+  then rules 0 to 2 on two readings, a backslash-newline removed and read as a newline, refusing if either does:
+  0. `//` and `/./` become `/`, and the session's own folder is set aside with the plain run after it, when it
+     starts a word, its run ends at whitespace, a separator, the end or the quote that opened it, and no `..`
+     component follows it;
   1. any mention of the shared temporary area: $TMPDIR, /tmp, mktemp, claude-<digits>;
   2. a recursive copy whose paths are not spelled out, or whose destination is at or inside a source,
-     and a `tar ... | ... tar` pipeline;
-  3. a command over 100,000 characters that holds a copier or a rule-1 word.
+     and a `tar ... | ... tar` pipeline.
 A real timer bounds the whole decision. Everything else runs; the watchdog (G3) bounds what this list does
 not name.
 """
@@ -39,8 +42,12 @@ SPELLED_OUT = re.compile(r"[A-Za-z0-9._/+-]+")
 TARGET = re.compile(r"--target-directory(?:=(.*))?|-[A-Za-z]*?t(.*)")  # cp's -t value
 SEPARATORS = ";&|()<>`"
 FD_DIGITS = re.compile(r"(?<![^\s;&|()<>`])[0-9]+(?=[<>])")  # the 2 of 2>, never a separate 9 before >
-# A run of plain path characters ends plainly: at whitespace, the end, a separator, or a closing quote.
-PLAIN_RUN = r"([A-Za-z0-9._/+-]*)(?=$|[\s;&|()<>]|['\"`](?:$|[\s;&|()<>]))"
+# Rule 0's occurrence starts a word: after the quote that opens it (group 1), or after the start, whitespace, `=`
+# or a separator. Its plain run ends at that same quote, or, unquoted, at whitespace, a separator or the end.
+WORD_START = r"(?:(?<=(['\"]))|(?<![^\s=;&|()<>`]))"
+PLAIN_RUN = r"([A-Za-z0-9._/+-]*)(?(1)\1)(?=$|[\s;&|()<>`])"
+# A `..` path component, its dots perhaps split by quotes or a backslash (`."."`, `.\.`), which the shell joins.
+DOTS = re.compile(r"(?<![^/\s'\"=;&|()<>`])['\"\\]*\.['\"\\]*\.['\"\\]*(?![^/\s'\"`;&|()<>])")
 
 
 class TimeUp(Exception):
@@ -49,17 +56,18 @@ class TimeUp(Exception):
 
 def set_aside(text, session):
     """Rule 0, by plain run: (the text rule 1 reads, the text rule 2 reads). The session's own folder, at the start
-    of a word, is set aside with the plain run after it when that run ends plainly and no `..` follows it anywhere
-    in the text: rule 1 does not see it, and rule 2 reads the folder as OWN. Anything else stays as it is."""
+    of a word, is set aside with the plain run after it when that run ends plainly and no `..` component follows
+    it anywhere in the text: rule 1 does not see it, and rule 2 reads the folder as OWN. Anything else stays."""
     if not session:
         return text, text
-    folder = re.compile(r"(?i)(?<![^\s'\"`=;&|()<>])(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
+    folder = re.compile(r"(?i)" + WORD_START + r"(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
                         + re.escape(session) + r"(?![A-Za-z0-9._-])" + PLAIN_RUN)
-    dots, hidden, kept, last = text.rfind(".."), [], [], 0
+    dots = max((match.start() for match in DOTS.finditer(text)), default=-1)
+    hidden, kept, last = [], [], 0
     for match in folder.finditer(text):  # one pass, left to right; each occurrence on its own
         if match.start() > dots:
             hidden += [text[last:match.start()], " "]
-            kept += [text[last:match.start()], OWN, match.group(1)]
+            kept += [text[last:match.start()], OWN, match.group(2)]
             last = match.end()
     return "".join(hidden) + text[last:], "".join(kept) + text[last:]
 
@@ -130,11 +138,18 @@ def copy_reason(name, args, cwd, changes_folder):
 
 
 def decide(command, cwd, session, hint):
-    """The refusal for `command`, run from folder `cwd` by `session`, or None to let it run."""
-    command = command.replace("\\\n", "")  # a backslash-newline joins the two halves, as the shell does
+    """The refusal for `command`, run from folder `cwd` by `session`, or None to let it run. Rule 3 reads the
+    command as given; rules 0 to 2 read it twice, since a backslash-newline joins two halves unless a comment
+    ends at it, and the guard does not decide which: either reading refusing refuses."""
     if len(command) > MAX_LENGTH:
         return ("a command over 100,000 characters that copies or names the shared temporary area. "
                 "Split it into shorter commands") if holds_words(command) else None
+    readings = dict.fromkeys((command.replace("\\\n", ""), command.replace("\\\n", "\n")))
+    return next(filter(None, (check(reading, cwd, session, hint) for reading in readings)), None)
+
+
+def check(command, cwd, session, hint):
+    """Rules 0 to 2 on one reading of the command."""
     seen, text = set_aside(SLASHES.sub("/", command), session)
     shared = SHARED.search(seen)
     if shared:
@@ -168,12 +183,14 @@ def decide_in_time(command, cwd, session, hint):
     signal.signal(signal.SIGALRM, expire)
     signal.setitimer(signal.ITIMER_REAL, DEADLINE_SECONDS)
     try:
-        return decide(command, cwd, session, hint)
+        try:
+            return decide(command, cwd, session, hint)
+        finally:  # ignored before it is disarmed, so a late alarm can never escape
+            signal.signal(signal.SIGALRM, signal.SIG_IGN)
+            signal.setitimer(signal.ITIMER_REAL, 0)
     except TimeUp:
         return (f"a command the guard could not finish checking in {DEADLINE_SECONDS:g} s, and it copies or names "
                 "the shared temporary area. Split it into shorter commands") if holds_words(command) else None
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
 
 
 def main():
