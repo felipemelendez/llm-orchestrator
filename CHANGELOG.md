@@ -19,6 +19,16 @@ full (79 GB in 12 minutes), and every agent on the machine stopped.
   affected.
 - **Old review copies are cleaned up.** Each review removes its copies when
   it finishes, and leftovers from crashed reviews are removed after a day.
+## [0.18.1] - 2026-10-29 — one at a time, on Ubuntu 26.04 too
+
+- **Fixed: on Ubuntu 26.04, two agents could do the same thing at once.**
+  Saving a note, claiming, editing or merging a worktree are meant to happen
+  one at a time. On Ubuntu 26.04 two could go ahead together, and a saved note
+  could be lost. The plugin now makes these safe on every system.
+- **If an agent says it needs permission to claim a worktree**, add this line
+  to the `allow` list in `~/.claude/settings.json`:
+  `"Bash(perl -e 'mkdir shift or exit 1' --:*)"`. It allows only that one
+  command.
 
 ## [0.18.0] - 2026-10-16 — agents keep building without waiting
 

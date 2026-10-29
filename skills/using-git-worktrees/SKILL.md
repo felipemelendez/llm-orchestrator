@@ -63,11 +63,11 @@ into the dispatch envelope.
    `--list`/`--release` — it is *informational provenance*, not the anti-clobber mechanism.
 
    The two **real mechanical guards** are: (a) at create time, `git worktree add`'s refusal of a
-   duplicate path/branch plus the registry's atomic `mkdir` claim (see
+   duplicate path/branch plus the registry's atomic folder claim (see
    `orch-worktree-materialize.sh`); (b) at write time, the implementer's atomic
-   `mkdir <worktree>/.orch-active` mutex — two writers handed the same path can never both
-   proceed, because `mkdir` has exactly one winner. Both fail loudly; neither relies on a writer
-   reading and obeying a text file.
+   `<worktree>/.orch-active` folder mutex — two writers handed the same path can never both
+   proceed: the mkdir system call has one winner. Both fail loudly; neither relies
+   on a writer reading and obeying a text file.
 
    The mutex guard only means something when the thing at the path is what the protocol defines:
    a *directory* created by `mkdir`. A **regular file** at an `.orch-active` path is

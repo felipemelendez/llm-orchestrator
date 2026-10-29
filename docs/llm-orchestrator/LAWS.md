@@ -47,8 +47,9 @@ cleaned safely, and a completion claim is backed by observed execution.
 
 ## 2. The laws and rulings — never re-ask
 
-- **Standing orders:** never commit, push, merge or tag unless Felipe asks in
-  that turn; stage by explicit pathspec, never `git add -A`. Never run paid
+- **Standing orders:** commit, push, open pull requests and land through the
+  landing process as the work needs, without asking first; stage by explicit
+  pathspec, never `git add -A`. Never run paid
   evaluations (`tests/evals/`) unattended. Never run `cadence-ruling.sh`, and
   never set or persist the hook profile, the disabled-hooks list or any allow
   hatch; those belong to the person's own shell.
@@ -58,6 +59,7 @@ cleaned safely, and a completion claim is backed by observed execution.
   `Ruling 3 (2026-09-23, Felipe): Codex is a supported harness, with the file guard and the completion check installed by install.sh --codex. On Codex the completion check's single decision:block continuation to the agent is the warning, suppressed on stop_hook_active; systemMessage and any output for the person stay forbidden. docs/llm-orchestrator/CODEX.md is reinstated. "One harness, one policy: Claude Code" is amended to "Claude Code and Codex, one policy". Supersedes Rulings 1 and 2 where they differ.`
   `Ruling 4 (2026-09-25, Felipe): Felipe applies an agreed rule change with skills/cadence/scripts/cadence-ruling.sh in his own terminal, which re-records the lock and commits the ruling, replacing the removed unlock variable; the shipped cadence files (git hooks, marked block, deny rules) are upgraded to match, workflows/ leaves the production list and cadence.json's src_roots and prod_globs, and cadence.json drops the legacy notes_dir and ticket_re. On Codex the file guard and the completion check come from the Codex plugin (codex plugin add), and install.sh --codex writes only the instructions block and, once the plugin is installed, removes the hook entries older releases added. Supersedes Ruling 3 where they differ.`
   `Ruling 5 (2026-09-26, Felipe): the two independent reviews in section 3 are the built-in /code-review and codex review, run by scripts/lib/orch-review.py with its prover, fix experiments and evidence-bound refuter; with only one of the two CLIs installed, that reviewer runs twice and the review records same_provider. Supersedes the "different briefs: one adversarial, one against the contract" wording.`
+  `Ruling 6 (2026-10-29, Felipe): agents commit, push, open pull requests and land as the work needs, without asking first. The standing order "never commit, push, merge or tag unless Felipe asks in that turn" is removed; it was never his instruction. Destructive git still needs his OK. Supersedes earlier wording where they differ.`
 - **Standing constraints:** shipped files under `scripts/`, `skills/`, `hooks/`,
   `agents/`, `commands/`, `templates/` and `output-styles/` are production;
   `tests/` are tests; ordinary Markdown is documentation. After a

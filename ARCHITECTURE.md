@@ -14,7 +14,7 @@ Each solves one of the failure modes that single-agent AI tooling exhibits on re
 
 ### Layer 1 — Memory (defers to native, classifies on write)
 
-User-curated project facts live in **your project's `CLAUDE.md`** — Claude Code's native memory. The plugin adds the write side: `/llm-orchestrator:remember Dana owns the billing service` classifies the fact (Conventions / Decisions / People / Notes) and appends it under the right `## Section`, and `/llm-orchestrator:forget` soft-deletes matching lines so accidents are recoverable. Writes take a portable file lock (`flock` where available, atomic `mkdir` otherwise).
+User-curated project facts live in **your project's `CLAUDE.md`** — Claude Code's native memory. The plugin adds the write side: `/llm-orchestrator:remember Dana owns the billing service` classifies the fact (Conventions / Decisions / People / Notes) and appends it under the right `## Section`, and `/llm-orchestrator:forget` soft-deletes matching lines so accidents are recoverable. Writes take a portable file lock: a lock folder made with the mkdir system call (through perl when it is installed, not the `mkdir` program, which on Ubuntu 26.04 can tell two writers "done").
 
 Plugin-internal state is described under [Memory](#memory) in the component contract. For cross-session continuity, use Claude Code's native `claude --continue` or `/resume`.
 

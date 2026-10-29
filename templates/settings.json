@@ -20,6 +20,7 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(mkdir:*)",
+      "Bash(perl -e 'mkdir shift or exit 1' --:*)",
       "Bash(touch:*)",
       "Read(*)"
     ],

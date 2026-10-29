@@ -7,7 +7,8 @@
 # any step fails or the process is killed mid-batch. Borrows ECC's ownership-store
 # concept in pure shell — no daemon, no DB.
 #
-# The registry is inlined (single consumer). A claim is an atomic `mkdir`; the
+# The registry is inlined (single consumer). A claim is an atomic folder
+# create (orch_mkdir_once: the mkdir system call, not the mkdir program); the
 # meta file is written via tempfile+`mv` so a concurrent reader never sees a
 # half-written claim. The irreducible mkdir→meta window (a kill in between leaves
 # a meta-less dir) is reclaimed by AGE-GATED prune: a meta-less claim older than
@@ -15,8 +16,8 @@
 # a live in-progress claim and is left alone. The same age gate stops prune from
 # racing a just-created claim whose worktree add has not finished yet.
 #
-# The writer's runtime anti-clobber guard is a separate atomic `mkdir
-# <wt>/.orch-active` mutex in orch-implementer — this script governs CREATE-time
+# The writer's runtime anti-clobber guard is a separate atomic
+# <wt>/.orch-active folder mutex in orch-implementer — this script governs CREATE-time
 # ownership; that mutex governs WRITE-time exclusion.
 #
 # Usage:
@@ -37,6 +38,8 @@ set -uo pipefail
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=scripts/lib/orch-project.sh
 . "${_SCRIPT_DIR}/lib/orch-project.sh"
+# shellcheck source=scripts/lib/orch-lock.sh
+. "${_SCRIPT_DIR}/lib/orch-lock.sh"                  # orch_mkdir_once
 
 HOME_DIR="${ORCH_HOME:-${HOME}/.llm-orchestrator}"
 # Claims younger than this (seconds) are treated as live/in-progress and never
@@ -91,7 +94,7 @@ registry_owner() {
 # claim <slug> <branch> <wt_abspath> <session_id>. atomic; 1 if already owned.
 registry_claim() {
   local slug="$1" branch="$2" wt="$3" sid="$4"
-  if ! mkdir "${OWNERS}/${slug}" 2>/dev/null; then
+  if ! orch_mkdir_once "${OWNERS}/${slug}"; then
     printf 'orch-materialize: slug "%s" already claimed by %s\n' "${slug}" "$(registry_owner "${slug}")" >&2
     return 1
   fi
