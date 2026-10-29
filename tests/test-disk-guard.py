@@ -248,6 +248,64 @@ class DiskGuardTests(unittest.TestCase):
         self.allows(f"cat {TEMP}/x.log")
         self.allows(f"ls {TEMP} 2>/dev/null | sort")
 
+    # The rules the re-review of the second fix wave reproduced.
+    def test_a_target_directory_option_is_read_only_for_cp(self):
+        for command in ("rsync -a -t ./ ./backup/", "rsync -a -t . ./backup/", "rsync -at . ./sub",
+                        "cp -Rt sub .", "cp -R -tsub ."):
+            with self.subTest(command=command):
+                self.refuses(command, ["inside it"])
+        for command in ("rsync -t src/ build/", "cp -Rt /out src", "cp -R -tbuild src"):
+            with self.subTest(command=command):
+                self.allows(command)
+
+    def test_tmpdir_is_shared_in_every_parameter_expansion_spelling(self):
+        for spelling in ("${TMPDIR-/tmp}", "${TMPDIR:-/tmp}", "${TMPDIR=/x}", "${TMPDIR:=/x}", "${TMPDIR?}",
+                         "${TMPDIR:?unset}", "${TMPDIR+/x}", "${TMPDIR:+/x}", "${TMPDIR%/}", "${TMPDIR#/}"):
+            with self.subTest(spelling=spelling):
+                self.refuses(f'cp -R . "{spelling}/pr"', ["shared temporary folder"])
+
+    def test_a_variable_the_hook_knows_is_resolved(self):
+        for command in (f'cd /tmp && mkdir -p "$PWD/claude-{UID}/pr"', f'R=/tmp; mkdir "$R/claude-{UID}/x"',
+                        'mkdir "${OUT:-$TMPDIR/x}"', 'cd "$TMPDIR" && mkdir "$PWD/x"'):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        for command in ('cd /tmp && mkdir -p "$OLDPWD/x"', 'mkdir -p "$HOME/x"', 'cp -R . "$HOME/backup"'):
+            with self.subTest(command=command):
+                self.allows(command)
+
+    def test_a_word_with_an_unknown_part_keeps_the_folder_spelled_before_it(self):
+        for command in ('mkdir -p "$TMPDIR/review-$$"', 'cp -R . "$TMPDIR/review-$RANDOM"',
+                        'mkdir "$TMPDIR/$(date +%s)"', f"mkdir -p {TEMP}/run-$1"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        self.refuses('cp -R . "./snapshot-$(date +%s)"', ["inside it"])
+        for command in ('mkdir -p "build/$NAME"', 'T=$(mktemp -d) && cp -R src "$T/x"', 'cp -R "$SRC" build',
+                        'cp -R "src-$V" "$PWD/build"'):
+            with self.subTest(command=command):
+                self.allows(command)
+
+    def test_a_symlink_into_the_shared_folder_is_followed(self):
+        os.symlink(TEMP, self.clone / "link")  # only read by the guard; nothing is written through it
+        self.refuses("mkdir link/pr", ["shared temporary folder"])
+        self.refuses(f"mkdir {self.clone}/link/sub/pr", ["shared temporary folder"])
+        self.allows("mkdir link/../build")
+
+    def test_a_comment_is_never_read_as_code(self):
+        self.allows("cat > notes.md <<'EOF'  # notes for the bash step\ndon't cp -R . sub\nEOF")
+        for command in (f"cat <<'EOF' | bash  # run it\nmkdir {TEMP}/x\nEOF",
+                        f"echo \"a # b\" <<EOF | bash\nmkdir {TEMP}/x\nEOF"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+
+    def test_arithmetic_comparisons_and_shifts_are_not_redirections(self):
+        for command in (f"size=$(du -sk {TEMP} | cut -f1); echo $((size >> 10))", f"(( n > 3 )) && ls {TEMP}",
+                        f"echo $(( 1 < 2 )); ls {TEMP}", f"echo $(( $(du -sk {TEMP} | cut -f1) >> 10 ))"):
+            with self.subTest(command=command):
+                self.allows(command)
+        for command in (f"echo $(( $(echo 1 > {TEMP}/f) + 1 ))", f"((echo hi > {TEMP}/f) )"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+
 
 if __name__ == "__main__":
     unittest.main()

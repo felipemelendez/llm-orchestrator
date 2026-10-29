@@ -141,6 +141,15 @@ check_latency "guard-disk-writes.sh"        "$BASH_EVENT"
 DISK_EVENT="$TMP/disk.json"
 python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":"cd $TMPDIR && rm -rf pr && mkdir pr && cp -R \"$OLDPWD\"/. . && tar -cf - . | tar -xf - -C sub && bash -c \"git clone . x\""}}))' "$TMP" > "$DISK_EVENT"
 check_latency "guard-disk-writes.sh"        "$DISK_EVENT"
+# A line of 150 `cd dN && echo a b c` steps, then a shared write: each word is resolved from every folder the
+# line may be in. Uncached it took ~10-14 s, past the 10 s hook timeout, at which Claude Code runs the command.
+MANY_CD_EVENT="$TMP/disk-many-cd.json"
+python3 -c 'import json,os,sys; c=" && ".join("cd d%d && echo a b c" % i for i in range(150)); print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":c+" && mkdir /tmp/claude-%d/pr" % os.getuid()}}))' "$TMP" > "$MANY_CD_EVENT"
+if bash "${HOOKS}/guard-disk-writes.sh" < "$MANY_CD_EVENT" >/dev/null 2>&1; then
+  fail "guard-disk-writes.sh on a line of 150 cds" "the line was allowed, so the refusing path was not timed"
+else
+  check_latency "guard-disk-writes.sh"      "$MANY_CD_EVENT"
+fi
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
 check_latency "subagent-stop.sh"            "$TRANSCRIPT_EVENT"
 check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"

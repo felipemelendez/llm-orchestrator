@@ -26,7 +26,9 @@
 #      word is a path candidate, and so are `=` values and option-attached
 #      paths (`-o/tmp/...`, `--output=/tmp/...`, `D=/tmp/...`); each is
 #      normalized (`//`, `/./`, `..`, symlinks) and, when relative, resolved
-#      from every folder the line may be in.
+#      from every folder the line may be in. Known variables ($PWD, $OLDPWD,
+#      $HOME, $TMPDIR in any spelling, the line's own) are replaced, and a word
+#      with an unknown part (`$TMPDIR/review-$$`) keeps the folder before it.
 #   B. A recursive copy (`cp -R`/`-r`/`-a`, rsync, ditto, or a
 #      `tar -c ... | tar -x ...` pipeline) whose destination is at or inside a
 #      source is refused (`cp -R . ./sub`, `cp -f -R . ./sub`,

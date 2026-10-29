@@ -66,7 +66,11 @@ bash entry that hands the event to `scripts/lib/orch-disk-guard.py`, run as
 allows; exit 2 refuses with the reason on stderr. Like
 `guard-destructive-git.sh` it never uses `set -e`, and every path ends in
 exit 0 or exit 2. It is timed in `tests/test-hook-latency.sh` on a plain
-command and on a long command it reads and refuses (budget 500 ms). Without
+command, on a long command it reads and refuses, and on a line of 150
+`cd dN && echo a b c` steps before a shared write (budget 500 ms each). Every
+path is resolved with one lookup per folder not seen before, so a long line
+stays far under the 10 s hook timeout, at which Claude Code would run the
+command unchecked. Without
 `python3`, or when the helper exits with anything but 0 or 2, a plain text
 check refuses any command naming `/tmp/claude-` or `$TMPDIR`/`${TMPDIR`
 together with a write word.
@@ -95,7 +99,8 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
    folder outside the session's own folder and holds a write word anywhere is
    refused. The shared folders are `/tmp/claude`, `/tmp/claude-*` and their
    `/private` forms (any user), `$TMPDIR` in any spelling (`$TMPDIR`,
-   `${TMPDIR}`, `${TMPDIR:-x}`), and the hook's own `$TMPDIR` unless it is
+   `${TMPDIR}`, and `${TMPDIR` with any operator: `:-` `-` `:=` `=` `:?` `?`
+   `:+` `+` `#` `%` `/`), and the hook's own `$TMPDIR` unless it is
    `/` or the home folder. Every word, the value after `=` (`D=`, `of=`,
    `--output=`), an absolute path attached to an option (`-o/tmp/...`), and
    an absolute path inside a longer word is a path candidate. Each is
@@ -103,16 +108,26 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
    and a relative one is resolved from every folder the line may be in (where
    it starts and each `cd`/`pushd` target), so `cd /tmp && mkdir
    claude-501/pr` and `mkdir pr` started in `/tmp/claude-501` are caught.
+   The variables the hook knows are replaced first: the line's own as they
+   stand at that word, `$PWD` as each of those folders, `$OLDPWD`, `$HOME`
+   and `$TMPDIR` (`cd /tmp && mkdir "$PWD/claude-501/pr"` is caught). A word
+   with a part whose value is unknown (`$$`, `$RANDOM`, `$1`, `$(...)`) keeps
+   the folder spelled before that part, so `mkdir "$TMPDIR/review-$$"` names
+   `$TMPDIR`.
    The write words are `cp mv rsync ditto tar mkdir touch tee dd rm rmdir ln
    install unzip curl wget truncate mktemp clone worktree -delete` as whole
    words, and a `>` redirection to anything but `/dev/null`, `/dev/stdout`,
    `/dev/stderr` or `/dev/tty`. Both are gathered from the whole line and
    every part that runs: `$(...)`, `<(...)`, `>(...)` and backticks (not in
    single quotes), the inside of `$((...))` and `((...))` arithmetic,
-   `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc whose line feeds
-   `bash`, `sh`, `zsh`, `xargs`, `eval` or `source` anywhere on it
-   (`cat <<EOF | bash` included). A `<<` inside arithmetic is a shift, never a
-   heredoc. Because
+   `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc whose line,
+   read without its `#` comment, feeds `bash`, `sh`, `zsh`, `xargs`, `eval` or
+   `source` anywhere on it (`cat <<EOF | bash` included; `cat > notes.md
+   <<'EOF'  # for the bash step` is data). Inside arithmetic, `<`, `>`, `<<`
+   and `>>` compare and shift, never redirect or open a heredoc
+   (`echo $((size >> 10))` writes nothing); a `$(...)` in it keeps its own.
+   A `((` whose parentheses do not close as `))` (`((cd x) )`) is two
+   subshells, as bash reads it. Because
    the two are gathered, not matched to each other, a `cd` into the shared
    folder, a wrapper (`timeout`, `xargs`, `find -exec`, `nice`, `stdbuf`), an
    option value, or a subshell cannot separate them.
@@ -124,9 +139,14 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
    `ditto . sub`, `tar -cf - . | tar -xf - -C sub`, `cp -R * sub/`,
    `find . -exec cp -R {} ./sub \;` (`{}` reads as `find`'s first folder).
    Every non-option word after the copier is a path; the destination is the
-   last one, or the `-t`/`--target-directory` value, which is then never also
-   a source. Variables are read as they stand at that copy in the line
-   (`D=sub; cp -R . "$D"; D=/x` is refused). Paths are resolved from
+   last one, or cp's `-t`/`--target-directory` value (`-t dir`, `-Rt dir`,
+   `-tdir`, `--target-directory=dir`), which is then never also a source;
+   rsync's `-t` keeps times, so `rsync -a -t ./ ./backup/` is refused.
+   Variables are read as they stand at that copy in the line
+   (`D=sub; cp -R . "$D"; D=/x` is refused). A destination with an unknown
+   part is inside the folder spelled before it (`cp -R .
+   "./snapshot-$(date +%s)"` is refused); a source with one is not read.
+   Paths are resolved from
    every folder the line may be in: where it starts, and each `cd`/`pushd`
    target, in every combination with `$OLDPWD`. A `tar` pipeline is read from
    the folder the shell runs each side in, so `tar cf - . | (cd /dest && tar
