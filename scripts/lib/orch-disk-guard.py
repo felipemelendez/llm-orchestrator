@@ -10,7 +10,10 @@ on ordinary forms: option values, subshells, wrappers, attached option values):
   A. a command that names a shared temporary folder (outside the session's own folder) and holds
      a write word anywhere, in any nested part, is refused;
   B. a recursive copy whose destination is at or inside a source is refused, reading every
-     non-option word as a path and trying every folder the command may be in.
+     non-option word as a path and trying every folder the command may be in; a copy with a path it
+     cannot read for certain is refused too.
+A part whose value depends on running the shell (a variable the line sets, $OLDPWD, $$, a substitution)
+is never computed: it fails closed. Only $HOME, $TMPDIR and $PWD/$(pwd) are known.
 """
 import functools
 import json
@@ -19,6 +22,7 @@ import re
 import shlex
 import stat
 import sys
+import time
 
 UID = os.getuid()
 PUNCTUATION = ";&|()<>"
@@ -31,8 +35,11 @@ TMPVAR = re.compile(r"\$\{TMPDIR(?:[^A-Za-z0-9_}][^}]*)?\}|\$TMPDIR(?![A-Za-z0-9
 SLASHES = re.compile(r"/(?:\.?/)+")  # `//` and `/./` mean `/`
 # An absolute path inside a longer word: at its start, or after a separator or a quote.
 ABSOLUTE = re.compile(r"(?:^|(?<=[\s=:@,'\"]))/[^\s'\"`;|&()<>,]*")
-VAR = re.compile(r"\$(?:\{([A-Za-z_]\w*)(?::?[-=]([^}]*))?\}|([A-Za-z_]\w*))")
-ASSIGN = re.compile(r"([A-Za-z_]\w*)=(.*)", re.S)
+# The variables whose value the hook knows for certain, besides $TMPDIR: every other one is unknown.
+KNOWN = re.compile(r"\$(?:\{(HOME|PWD)\}|(HOME|PWD)(?![A-Za-z0-9_]))")
+PWD_COMMAND = re.compile(r"\$\(\s*pwd(?:\s+-[LP])?\s*\)|`\s*pwd(?:\s+-[LP])?\s*`")  # $(pwd) is $PWD
+ASSIGN = re.compile(r"[A-Za-z_]\w*=.*", re.S)
+CLAUDE_NAME = re.compile(r"claude(?:[-*?\[][^/]*)?")  # a shared root's own folder name
 HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|\\?([A-Za-z0-9_.-]+))")
 SESSION_ID = re.compile(r"[A-Za-z0-9._-]+")
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
@@ -42,6 +49,7 @@ WRITE_WORDS = {"cp", "mv", "rsync", "ditto", "tar", "mkdir", "touch", "tee", "dd
 COPIERS = {"cp", "rsync", "ditto"}
 NOT_WRITTEN = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 MAX_DEPTH = 4
+DEADLINE_SECONDS = 2.0
 
 
 class Refused(Exception):
@@ -102,6 +110,7 @@ def scan(text):
     redirection or heredoc; `#` comments are dropped; a heredoc's body (only for a real `<<` outside
     quotes and arithmetic) is code when its line, as read without its comment, feeds a shell or xargs
     anywhere, else data."""
+    text = PWD_COMMAND.sub("$PWD", text)
     out, code, data, pending, quote, i, n, line_start = [], [], [], [], None, 0, len(text), 0
 
     while i < n:
@@ -132,8 +141,7 @@ def scan(text):
                 i = match.end()
                 continue
             if c == "\n" and pending:
-                # The line as read (comments dropped): `cat <<EOF | bash` feeds a shell, `# for bash` does not.
-                feeds = bool(set(re.findall(r"[A-Za-z0-9_.-]+", "".join(out[line_start:]))) & CODE_FEEDERS)
+                feeds = feeds_code("".join(out[line_start:]))  # the line as read, its comment dropped
                 i += 1
                 for delimiter, dash in pending:
                     body = []
@@ -185,6 +193,19 @@ def scan(text):
     return "".join(out), code, data
 
 
+def feeds_code(line):
+    """Whether a heredoc's line, as scanned, runs its body as code: it names a shell or xargs anywhere, or
+    runs a command whose name is not literal text (`| $(command -v bash)`, `| "$SHELL"`)."""
+    if set(re.findall(r"[A-Za-z0-9_.-]+", line)) & CODE_FEEDERS:
+        return True
+    try:
+        commands = simple_commands(line)
+    except ValueError:
+        return True
+    names = [next((word for word in words if not ASSIGN.fullmatch(word)), "") for _, words, _ in commands]
+    return any("$" in name or PLACEHOLDER in name for name in names)
+
+
 def simple_commands(text):
     """(pipeline number, words, redirection targets) for each simple command, in order."""
     text = text.replace("\\\n", " ").replace("\n", " ; ")
@@ -217,25 +238,37 @@ def simple_commands(text):
     return [command for command in commands if command[1] or command[2]]
 
 
+class TimeUp(Exception):
+    pass
+
+
+UNKNOWN = object()  # an operand with a part whose value the hook cannot know
+
+
 class Check:
     def __init__(self, guard):
         self.guard = guard
         self.noted, self.writes, self.copies = {}, [], []
-        self.bases, self.cwd, self.vars, self.scopes = [guard.cwd], guard.cwd, {}, 0
+        # The folders the line may be in, and whether every `cd` so far has had a literal target ($PWD known).
+        self.bases, self.cwd, self.cd_known, self.scopes = [guard.cwd], guard.cwd, True, 0
+
+    def tick(self):
+        if time.monotonic() > self.guard.deadline:
+            raise TimeUp()
 
     def note(self, word):
-        """Remember a word, with the line's variables as they stand here when it holds one; the paths it may
-        name are checked once every folder of the line is known. A word seen twice is checked once."""
-        word = TMPVAR.sub(f"/tmp/claude-{UID}", word)
-        self.noted[word, tuple(self.vars.items()) if "$" in word else ()] = None
+        """Remember a word; the paths it may name are checked once every folder of the line is known."""
+        self.noted[word] = None
 
     def shared_paths(self):
-        """Every shared-folder path outside the session's own folder that a noted word may name. Each
-        spelling is normalized first (`//`, `/./`, `..`, symlinks), a relative word is resolved from every
-        folder the line may be in, and a word with a variable keeps the folder it spells before any part
-        whose value is unknown (`$TMPDIR/review-$$` is in $TMPDIR)."""
+        """Every shared-folder name outside the session's own folder that a noted word may hold. Each spelling
+        is normalized first (`//`, `/./`, `..`, symlinks), and a relative one is read from every folder the line
+        may be in. A word with a part the hook cannot know names one when the literal text before that part
+        lies in, or could begin, a shared root (`$TMPDIR/review-$$`, `/tmp/claude-$UID`, `/tmp/$X`), or when a
+        later part is a shared root's own name (`$R/claude-501`)."""
         found = []
-        for text, values in self.noted:
+        for text in self.noted:
+            self.tick()
             parts = [text, *ABSOLUTE.findall(SLASHES.sub("/", text))]
             if "=" in text:
                 parts.append(text.split("=", 1)[1])  # D=/tmp/..., --output=/tmp/..., of=/tmp/...
@@ -244,14 +277,26 @@ class Check:
             for part in parts:
                 if not part or (part.startswith("-") and part is text):
                     continue
-                known = "$" not in part and PLACEHOLDER not in part
-                for base in [self.cwd] if known and part.startswith("/") else self.bases:
-                    for oldpwd in self.bases if "OLDPWD" in part else [None]:
-                        spelled = self.expand(part, base, oldpwd, dict(values), keep_prefix=True)
-                        real = spelled and resolve(os.path.join(base, spelled))
-                        if real and self.guard.root_of(real) and not self.guard.own(real):
+                literal = part.startswith("/") and "$" not in part and PLACEHOLDER not in part
+                for base in [self.cwd] if literal else self.bases:
+                    spelled, cut = self.expand(part, base)
+                    if cut is None:
+                        real = resolve(os.path.join(base, spelled))
+                        if self.guard.root_of(real) and not self.guard.own(real):
                             found.append(real)
+                    elif self.could_be_shared(os.path.join(base, spelled[:cut]), spelled[cut:]):
+                        found.append(part)
         return found
+
+    def could_be_shared(self, head, rest):
+        """Whether a word whose literal text, read from a folder, is `head`, followed by an unknown part and
+        `rest`, may name a shared folder outside the session's own."""
+        folder, _, partial = head.rpartition("/")
+        folder = resolve(folder or "/")
+        prefix = folder.rstrip("/") + "/" + partial
+        return bool((self.guard.root_of(prefix) and not self.guard.own(folder))
+                    or any(form.startswith(prefix) for form in self.guard.root_forms)
+                    or any(CLAUDE_NAME.fullmatch(name) for name in rest.split("/")))
 
     def run(self, text, depth=0):
         if depth > MAX_DEPTH:
@@ -262,6 +307,7 @@ class Check:
         self.scopes += 1
         scope = self.scopes
         for pipeline, words, targets in simple_commands(outer):
+            self.tick()
             for target in targets:
                 self.note(target)
                 if target not in NOT_WRITTEN:
@@ -271,11 +317,10 @@ class Check:
                 name = os.path.basename(word)
                 if name in WRITE_WORDS:
                     self.writes.append(name)
-                match = ASSIGN.fullmatch(word)
-                if match:
-                    self.vars[match.group(1)] = match.group(2)
                 if name in ("cd", "pushd"):
                     self.change_directory([arg for arg in words[n + 1:n + 3] if arg not in ("-L", "-P")][:1])
+                if name == "popd":
+                    self.cd_known = False  # back to a folder the guard does not track
                 if name in SHELLS:
                     flag = next((k for k in range(n + 1, len(words))
                                  if re.fullmatch(r"-[A-Za-z]*c[A-Za-z]*", words[k])), None)
@@ -283,57 +328,51 @@ class Check:
                         self.run(words[flag + 1], depth + 1)
                 if name == "eval":
                     self.run(" ".join(words[n + 1:]), depth + 1)
-            self.copies.append((scope, pipeline, words, self.cwd, dict(self.vars)))  # as they stand here
+            self.copies.append((scope, pipeline, words, self.cwd, self.cd_known))  # as they stand here
         for part in codes:
             self.run(part, depth + 1)
 
     def change_directory(self, args):
-        target = self.guard.home if not args else (None if args[0] == "-" else self.path(args[0], self.cwd))
-        if target:
-            self.cwd = target
-            if target not in self.bases:
-                self.bases.append(target)
+        target = self.guard.home if not args else (
+            UNKNOWN if args[0] == "-" else self.certain(args[0], self.cwd if self.cd_known else None))
+        if target is UNKNOWN or target is None:
+            self.cd_known = False  # `cd "$D"`, `cd -`: from here on $PWD and relative paths are unknown
+            return
+        self.cwd = target
+        if target not in self.bases:
+            self.bases.append(target)
 
-    def expand(self, word, base, oldpwd, values, keep_prefix=False):
-        """A word with the variables the hook knows replaced: the line's own as they stand, $PWD (`base`),
-        $OLDPWD, $HOME and $TMPDIR. None when a part is unknown ($$, $RANDOM, $(...)), unless `keep_prefix`:
-        then the folder spelled before that part, or None when it spells none."""
+    def expand(self, word, base):
+        """(text, cut): the word with ~, $HOME, $TMPDIR in any spelling and $PWD (as `base`; unknown when None)
+        filled in, and where its first part the hook cannot know begins, or None. Every other variable is
+        unknown, the line's own included: their values depend on running the shell."""
+        word = TMPVAR.sub(f"/tmp/claude-{UID}", word)
         if word == "~" or word.startswith("~/"):
             word = self.guard.home + word[1:]
+        text = KNOWN.sub(lambda match: self.guard.home if "HOME" in match.group(0)
+                         else match.group(0) if base is None else base, word)
+        return text, min((k for k in (text.find("$"), text.find(PLACEHOLDER)) if k >= 0), default=None)
 
-        def replace(match):
-            name = match.group(1) or match.group(3)
-            value = values[name] if name in values else {
-                "PWD": base, "OLDPWD": oldpwd, "HOME": self.guard.home, "TMPDIR": f"/tmp/claude-{UID}"}.get(name)
-            if value is None and match.group(2) is not None:
-                value = match.group(2)
-            return "$" if value is None or "$" in value or PLACEHOLDER in value else value
-        text = VAR.sub(replace, word)
-        cut = min((k for k in (text.find("$"), text.find(PLACEHOLDER)) if k >= 0), default=None)
-        if cut is None:
-            return text or None
-        if not keep_prefix:
+    def certain(self, word, base):
+        """The path a copy operand or `cd` target names from folder `base` (None when that folder is not
+        known): UNKNOWN when any part of it is, None when it is remote (`host:path`)."""
+        text, cut = self.expand(word, base)
+        host = re.match(r"([^/]*):", text)
+        if host and "$" not in host.group(1) and PLACEHOLDER not in host.group(1):
             return None
-        return text[:text.rfind("/", 0, cut) + 1] or None
-
-    def path(self, word, base, oldpwd=None, values=None, keep_prefix=False):
-        """The absolute path a word names from `base`, or None when it cannot be known. With `keep_prefix`,
-        a word with an unknown part names the folder spelled before it: right for a destination, which is
-        inside that folder, never for a source."""
-        values = self.vars if values is None else values
-        text = None if word is None else self.expand(word, base, oldpwd, values, keep_prefix)
-        if not text or re.match(r"^[^/]*:", text):
-            return None
+        if cut is not None or not text or (base is None and not text.startswith("/")):
+            return UNKNOWN
         glob = re.search(r"[*?\[]", text)
         if glob:
             head = text[:glob.start()]
             text = (head.rsplit("/", 1)[0] or "/") if "/" in head else "."
-        return resolve(os.path.join(base, text))
+        return resolve(os.path.join(base or "/", text))
 
     def copy_into_itself(self):
         """Rule B, once every folder the command may be in is known."""
         streams = {}
-        for scope, pipeline, words, cwd, values in self.copies:
+        for scope, pipeline, words, cwd, cd_known in self.copies:
+            self.tick()
             roots = []
             if "find" in words:
                 after = words[words.index("find") + 1:]
@@ -344,9 +383,9 @@ class Check:
                 if name in COPIERS and (name != "cp" or any(
                         arg in ("--recursive", "--archive")
                         or (re.fullmatch(r"-[A-Za-z]+", arg) and set(arg[1:]) & set("Rra")) for arg in args)):
-                    self.check_copy(name, cwd, values, *self.operands(name, args, roots))
+                    self.check_copy(name, cwd if cd_known else None, *self.operands(name, args, roots))
                 elif name == "tar":
-                    self.tar(streams.setdefault((scope, pipeline), []), args, cwd, values)
+                    self.tar(streams.setdefault((scope, pipeline), []), args, cwd if cd_known else None)
 
     @staticmethod
     def operands(name, args, roots):
@@ -371,19 +410,28 @@ class Check:
             targets, positional = [positional[-1]], positional[:-1]
         return positional, targets
 
-    def check_copy(self, name, cwd, values, sources, targets):
-        bases = [cwd] + [base for base in self.bases if base != cwd]
-        for base in bases:
-            for oldpwd in bases if any("OLDPWD" in word for word in sources + targets) else [None]:
-                for target in targets:
-                    into = self.path(target, base, oldpwd, values, keep_prefix=True)  # ./copy-$$ is in .
-                    for source in sources:
-                        origin = self.path(source, base, oldpwd, values)
-                        if into and origin and nested(into, origin):
-                            raise Refused(f"{name} copies {origin} into {into}, a folder inside it, "
-                                          "which never ends")
+    @staticmethod
+    def unreadable(name, word):
+        word = word.replace(PLACEHOLDER, "$(...)")  # as the person wrote it, not the scanner's marker
+        return (f"{name} with a path the guard cannot read ({word}). Spell each source and destination out: "
+                "a literal path, $HOME, $TMPDIR, or $PWD and relative paths after cd targets that are spelled "
+                "out; a variable the line sets, $OLDPWD, $$ or a substitution cannot be checked")
 
-    def tar(self, stream, args, cwd, values):
+    def check_copy(self, name, cwd, sources, targets):
+        """Rule B for one copy run in `cwd` (None when a `cd` before it had a target that is not literal)."""
+        for base in [cwd] + [base for base in self.bases if base != cwd] if cwd else [None]:
+            self.tick()
+            into = [self.certain(word, base) for word in targets]
+            origins = [self.certain(word, base) for word in sources]
+            unknown = next((word for word, path in zip(targets + sources, into + origins) if path is UNKNOWN), None)
+            if unknown is not None:
+                raise Refused(self.unreadable(name, unknown))
+            for target in (path for path in into if path):
+                for origin in (path for path in origins if path):
+                    if nested(target, origin):
+                        raise Refused(f"{name} copies {origin} into {target}, a folder inside it, which never ends")
+
+    def tar(self, stream, args, cwd):
         """A `tar -c ... | tar -x ...` pipeline, each side read from the folder the shell runs it in."""
         modes, archive, directory, positional, i = set(), None, None, [], 0
         while i < len(args):
@@ -409,13 +457,16 @@ class Check:
             else:
                 positional.append(arg)
             i += 1
-        here = self.path(directory, cwd, values=values) if directory else cwd
-        if "x" in modes and here:
-            for origin in (origin for origins in stream for origin in origins):
+        here = self.certain(directory, cwd) if directory else (cwd or UNKNOWN)
+        if "x" in modes and stream:
+            origins = [origin for origins in stream for origin in origins]
+            if here is UNKNOWN or UNKNOWN in origins:
+                raise Refused(self.unreadable("tar", directory or "the folder it runs in"))
+            for origin in (origin for origin in origins if origin and here):
                 if nested(here, origin):
                     raise Refused(f"tar copies {origin} into {here}, a folder inside it, which never ends")
-        if "c" in modes and archive in (None, "-") and here:
-            stream.append([path for path in (self.path(item, here, values=values) for item in positional) if path])
+        if "c" in modes and archive in (None, "-"):
+            stream.append([UNKNOWN] if here in (UNKNOWN, None) else [self.certain(item, here) for item in positional])
 
 
 class Guard:
@@ -427,6 +478,14 @@ class Guard:
         # The hook's own $TMPDIR is a shared root too, unless it is too wide to mean one ("/" or home).
         self.tmp_root = root if root and root not in ("/", os.path.realpath(self.home)) else None
         self.tmp_forms = sorted({form.rstrip("/") for form in (own_tmp, root) if form}) if self.tmp_root else []
+        self.root_forms = ["/tmp/claude", "/private/tmp/claude", *self.tmp_forms]
+        # The helper's own deadline, under the harness's 10 s hook timeout (at which the command would run
+        # unchecked). The hook's own environment may lower it, never raise it.
+        try:
+            self.seconds = min(DEADLINE_SECONDS, float(env.get("ORCH_DISK_GUARD_SECONDS", DEADLINE_SECONDS)))
+        except ValueError:
+            self.seconds = DEADLINE_SECONDS
+        self.deadline = time.monotonic() + self.seconds
         session = event.get("session_id")
         self.session = session if isinstance(session, str) and SESSION_ID.fullmatch(session) else None
         transcript = event.get("transcript_path")
@@ -456,23 +515,28 @@ class Guard:
 
     def decide(self, command):
         check = Check(self)
+        words = [word for word in re.split(r"[\s;&|()<>'\"`]+", command) if word]
         try:
-            check.run(command)
-        except ValueError:  # unbalanced quotes: fall back to the words, refusing what could be either rule
-            words = [word for word in re.split(r"[\s;&|()<>'\"`]+", command) if word]
-            for word in words:
-                check.note(word)
+            try:
+                check.run(command)
+            except ValueError:  # unbalanced quotes: fall back to the words, refusing what could be either rule
+                for word in words:
+                    check.note(word)
+                shared = check.shared_paths()
+                copying = sorted(set(words) & (COPIERS | {"tar"}))
+                writing = sorted(set(words) & WRITE_WORDS) or ([">"] if ">" in command else [])
+                if (shared and writing) or copying:
+                    raise Refused("a command that could not be read and that copies, or writes while naming the "
+                                  f"shared temporary folder ({', '.join(copying or writing)})")
+                return
+            check.copy_into_itself()
             shared = check.shared_paths()
-            copying = sorted(set(words) & (COPIERS | {"tar"}))
-            writing = sorted(set(words) & WRITE_WORDS) or ([">"] if ">" in command else [])
-            if (shared and writing) or copying:
-                raise Refused("a command that could not be read and that copies, or writes while naming the "
-                              f"shared temporary folder ({', '.join(copying or writing)})")
-            return
-        check.copy_into_itself()
-        shared = check.shared_paths()
-        if shared and check.writes:
-            raise Refused(f"{check.writes[0]} in a command that names the shared temporary folder ({shared[0]})")
+            if shared and check.writes:
+                raise Refused(f"{check.writes[0]} in a command that names the shared temporary folder ({shared[0]})")
+        except TimeUp:  # past the deadline: refuse anything that copies or writes, allow the rest
+            if {os.path.basename(word) for word in words} & (WRITE_WORDS | COPIERS) or ">" in command:
+                raise Refused(f"a command too long to check within {self.seconds:g} s, and it copies or writes; "
+                              "split it into shorter commands") from None
 
     def message(self, reason):
         hint = self.scratch_hint()

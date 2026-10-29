@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,12 +70,12 @@ class DiskGuardTests(unittest.TestCase):
                         "rsync -a ./ ./backup/", "ditto . sub", "tar -cf - . | tar -xf - -C sub",
                         "tar cf - src | (cd src/x && tar xf -)", "cp -R * sub/", "cd src && cp -R .. here"):
             with self.subTest(command=command):
-                self.refuses(command, ["inside it"])
+                self.refuses(command, ["a folder inside it"])
 
     def test_writes_into_the_shared_temporary_folder_are_refused(self):
         for command in (f"mkdir {TEMP}/pr", 'mkdir -p "$TMPDIR/x"', "mkdir -p ${TMPDIR}/x",
                         "cat > \"$TMPDIR/c1.sh\" <<'X'\nset -e\necho hi\nX", f"echo x > /private/tmp/claude-{UID}/f",
-                        f"git clone . {TEMP}/pr", f"bash -c 'cp -R . {TEMP}/pr'", f"D={TEMP}/pr; cp -R . \"$D\"",
+                        f"git clone . {TEMP}/pr", f"bash -c 'cp -R . {TEMP}/pr'", f"D={TEMP}/pr; cp notes.txt \"$D\"",
                         f"cd {TEMP} && tar -xzf ~/a.tgz", f"touch {TEMP}/a", 'rm -rf "$TMPDIR/pr"',
                         f"cp notes.txt {TEMP}/", f"echo $(mkdir {TEMP}/sub)", f"git worktree add {TEMP}/wt",
                         'mktemp -d "$TMPDIR/x.XXXXXX"', f"curl -o {TEMP}/f https://example.invalid",
@@ -143,7 +144,7 @@ class DiskGuardTests(unittest.TestCase):
         for command in ("cp -f -R . ./sub", "cp -R -f . ./sub", "cp -r -T . sub", "rsync -e ssh -a . ./sub",
                         "cp -R -t sub ."):
             with self.subTest(command=command):
-                self.refuses(command, ["inside it"])
+                self.refuses(command, ["a folder inside it"])
 
     def test_option_values_never_hide_a_delete_in_the_shared_folder(self):  # code-review-3, codex-review-1
         for command in (f"rm -r {TEMP}/pr", f"rm -d {TEMP}/pr", f"touch -r x {TEMP}/a", f"truncate -s 0 {TEMP}/f"):
@@ -164,9 +165,9 @@ class DiskGuardTests(unittest.TestCase):
                 self.refuses(command, ["shared temporary folder"])
 
     def test_a_wrapped_command_is_checked(self):  # code-review-6
-        for command, words in (("timeout 600 cp -R . ./sub", "inside it"), ("find . -exec cp -R {} ./sub \\;", "inside it"),
+        for command, words in (("timeout 600 cp -R . ./sub", "a folder inside it"), ("find . -exec cp -R {} ./sub \\;", "a folder inside it"),
                                (f"xargs mkdir {TEMP}/pr", "shared temporary folder"),
-                               ("stdbuf -oL nice -n 5 rsync -a . ./backup", "inside it"),
+                               ("stdbuf -oL nice -n 5 rsync -a . ./backup", "a folder inside it"),
                                (f"find {TEMP} -delete", "shared temporary folder")):
             with self.subTest(command=command):
                 self.refuses(command, [words])
@@ -181,7 +182,7 @@ class DiskGuardTests(unittest.TestCase):
 
     def test_a_subshell_cd_does_not_hide_a_shared_write(self):  # codex-review-3
         self.refuses(f"cd {TEMP}; (cd /); mkdir pr", ["shared temporary folder"])
-        self.refuses(f"(cd /tmp) ; cd {self.clone} && cp -R . {self.clone}/sub", ["inside it"])
+        self.refuses(f"(cd /tmp) ; cd {self.clone} && cp -R . {self.clone}/sub", ["a folder inside it"])
 
     def test_single_quoted_text_is_not_run(self):  # codex-review-8
         for command in (f"printf %s '$(mkdir {TEMP}/pr)'", f"grep -rn 'mkdir {TEMP}/' docs",
@@ -231,15 +232,11 @@ class DiskGuardTests(unittest.TestCase):
             with self.subTest(command=command, cwd=cwd):
                 self.refuses(command, ["shared temporary folder"], cwd=cwd)
 
-    def test_a_copy_reads_its_variables_as_they_stand_at_the_copy(self):  # codex-review-3
-        self.refuses('D=sub; cp -R . "$D"; D=/outside', ["inside it"])
-        self.allows('D=/outside; cp -R . "$D"; D=sub')
-
     def test_a_target_directory_is_never_also_a_source(self):  # code-review-7
         for command in ("cp -R -t /out src", "cp -r -t build/ assets", "cp -R --target-directory=build assets"):
             with self.subTest(command=command):
                 self.allows(command)
-        self.refuses("cp -R -t sub .", ["inside it"])
+        self.refuses("cp -R -t sub .", ["a folder inside it"])
 
     def test_arithmetic_keeps_its_commands_and_its_shifts_are_no_heredoc(self):  # code-review-8, codex-review-1
         for command in (f"(( y = x << 2 ))\nmkdir {TEMP}/pr", f"echo $(( $(mkdir {TEMP}/pr) + 1 ))",
@@ -261,7 +258,7 @@ class DiskGuardTests(unittest.TestCase):
         for command in ("rsync -a -t ./ ./backup/", "rsync -a -t . ./backup/", "rsync -at . ./sub",
                         "cp -Rt sub .", "cp -R -tsub ."):
             with self.subTest(command=command):
-                self.refuses(command, ["inside it"])
+                self.refuses(command, ["a folder inside it"])
         for command in ("rsync -t src/ build/", "cp -Rt /out src", "cp -R -tbuild src"):
             with self.subTest(command=command):
                 self.allows(command)
@@ -272,25 +269,65 @@ class DiskGuardTests(unittest.TestCase):
             with self.subTest(spelling=spelling):
                 self.refuses(f'cp -R . "{spelling}/pr"', ["shared temporary folder"])
 
-    def test_a_variable_the_hook_knows_is_resolved(self):
-        for command in (f'cd /tmp && mkdir -p "$PWD/claude-{UID}/pr"', f'R=/tmp; mkdir "$R/claude-{UID}/x"',
-                        'mkdir "${OUT:-$TMPDIR/x}"', 'cd "$TMPDIR" && mkdir "$PWD/x"'):
+    def test_only_home_tmpdir_and_pwd_are_read_as_known(self):
+        for command in (f'cd /tmp && mkdir -p "$PWD/claude-{UID}/pr"', f'cd /tmp && mkdir -p "$(pwd)/claude-{UID}/pr"',
+                        'cd "$TMPDIR" && mkdir "$PWD/x"'):
             with self.subTest(command=command):
                 self.refuses(command, ["shared temporary folder"])
-        for command in ('cd /tmp && mkdir -p "$OLDPWD/x"', 'mkdir -p "$HOME/x"', 'cp -R . "$HOME/backup"'):
+        for command in ('cp -R . "$PWD/sub"', 'cp -R . "$(pwd)/sub"', 'cp -R . "`pwd`/sub"'):
+            with self.subTest(command=command):
+                self.refuses(command, ["a folder inside it"])
+        for command in ('mkdir -p "$HOME/x"', 'cp -R . "$HOME/backup"', 'cp -R "$PWD/src" "$HOME/out"'):
             with self.subTest(command=command):
                 self.allows(command)
 
-    def test_a_word_with_an_unknown_part_keeps_the_folder_spelled_before_it(self):
-        for command in ('mkdir -p "$TMPDIR/review-$$"', 'cp -R . "$TMPDIR/review-$RANDOM"',
-                        'mkdir "$TMPDIR/$(date +%s)"', f"mkdir -p {TEMP}/run-$1"):
+    # Round 4 of PR #55: computing what the shell would compute failed open nine ways, so unknown parts fail closed.
+    def test_a_copy_with_an_operand_the_guard_cannot_read_is_refused(self):
+        for command in ("cp -R . backup-$$", 'cp -R . "./snapshot-$(date +%s)"', 'D=$PWD/sub; cp -R . "$D"',
+                        'D=sub; echo $(cp -R . "$D"); D=/x', 'D=./snapshot-$(date +%s); cp -R . "$D"',
+                        'D=/outside; cp -R . "$D"', 'tar cf - . | tar xf - -C "./copy-$$"', 'cp -R "$OLDPWD"/x y',
+                        'rsync -a "$SRC/" build/', 'cd "$D" && cp -R ~/repo .', "cd - && cp -R ~/repo .",
+                        'T=$(mktemp -d) && cp -R src "$T/x"', 'find "$D" -exec cp -R {} ./sub \\;'):
             with self.subTest(command=command):
-                self.refuses(command, ["shared temporary folder"])
-        self.refuses('cp -R . "./snapshot-$(date +%s)"', ["inside it"])
-        for command in ('mkdir -p "build/$NAME"', 'T=$(mktemp -d) && cp -R src "$T/x"', 'cp -R "$SRC" build',
-                        'cp -R "src-$V" "$PWD/build"'):
+                self.refuses(command, ["a path the guard cannot read", "Spell each source and destination out"])
+        # The refusal names the path as written, never the scanner's own marker for a substitution.
+        result = self.refuses('cp -R ./src "./build-$(date +%s)"', ["(./build-$(...))"])
+        self.assertNotIn("ORCH_SUBSTITUTION", result.stderr)
+        for command in ('cp -R src "$HOME/out"', 'cp notes.txt "$D"', 'tar -czf "$OUT.tgz" .',
+                        'rsync -a src/ "host:$DEST/"', 'cd "$D" && cp -R /abs/src /abs/out', "cd /tmp/x && cp -R a b"):
             with self.subTest(command=command):
                 self.allows(command)
+
+    def test_a_word_whose_literal_text_could_name_a_shared_root_is_refused(self):
+        for command in ('mkdir -p "$TMPDIR/review-$$"', 'mkdir "$TMPDIR/$(date +%s)"', f"mkdir -p {TEMP}/run-$1",
+                        "mkdir -p /tmp/claude-$UID/pr", 'mkdir -p "/tmp/claude-$(id -u)/x"', "mkdir /tmp/$X/pr",
+                        "touch /private/tmp/$X/f", f'R=/tmp; mkdir "$R/claude-{UID}/x"', 'mkdir "${OUT:-$TMPDIR/x}"',
+                        'cd /tmp && mkdir "$X/pr"', 'cp notes.txt "$TMPDIR/review-$RANDOM"'):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        for command in ('mkdir -p "build/$NAME"', 'T=$(mktemp -d) && echo "$T"', 'echo "$HOME/$X" > out.txt',
+                        f'mkdir -p "{TEMP}/{PROJECT_FOLDER}/{SESSION}/x-$$"', 'mkdir -p "$X/claudette"'):
+            with self.subTest(command=command):
+                self.allows(command)
+
+    def test_a_heredoc_into_a_command_that_is_not_literal_text_is_code(self):
+        for command in ("cat <<EOF | $(command -v bash)\ncp -R . sub\nEOF", f'cat <<EOF | "$SHELL"\nmkdir {TEMP}/x\nEOF',
+                        "cat <<'EOF' | `which sh`\ncp -R . sub\nEOF"):
+            with self.subTest(command=command):
+                self.refuses(command)
+        self.allows("cat > \"$OUT/notes.md\" <<'EOF'\ndon't cp -R . sub\nEOF")
+
+    def test_the_deadline_refuses_a_line_it_could_not_finish_checking(self):
+        for command in ("mkdir build", "echo hi > out.txt", "cp -R src dst"):
+            with self.subTest(command=command):
+                self.refuses(command, ["too long to check"], env={"ORCH_DISK_GUARD_SECONDS": "0"})
+        self.allows("ls -la && git status", env={"ORCH_DISK_GUARD_SECONDS": "0"})
+        # A line far too long to check in 2 s is refused at the deadline, well before the harness's 10 s timeout
+        # would run it unchecked; the hook's environment can lower the deadline, never raise it.
+        long_line = " && ".join(f"cd d{i} && echo a b c" for i in range(1500)) + " && mkdir build"
+        started = time.monotonic()
+        self.refuses(long_line, ["too long to check within 2 s"], env={"ORCH_DISK_GUARD_SECONDS": "60"})
+        self.assertLess(time.monotonic() - started, 5)
 
     def test_a_symlink_into_the_shared_folder_is_followed(self):
         os.symlink(TEMP, self.clone / "link")  # only read by the guard; nothing is written through it

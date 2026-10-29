@@ -67,10 +67,15 @@ allows; exit 2 refuses with the reason on stderr. Like
 `guard-destructive-git.sh` it never uses `set -e`, and every path ends in
 exit 0 or exit 2. It is timed in `tests/test-hook-latency.sh` on a plain
 command, on a long command it reads and refuses, and on a line of 150
-`cd dN && echo a b c` steps before a shared write (budget 500 ms each). Every
-path is resolved with one lookup per folder not seen before, so a long line
-stays far under the 10 s hook timeout, at which Claude Code would run the
-command unchecked. Without
+`cd dN && echo a b c` steps before a shared write and on a line of 150
+`cd dN && cp -R "$OLDPWD"/xN yN` steps (budget 500 ms each). Every path is
+resolved with one lookup per folder not seen before. The helper also keeps its
+own deadline of 2 s, which the hook's own environment may lower
+(`ORCH_DISK_GUARD_SECONDS`) but never raise: past it, a line holding any copy
+or write word is refused ("a command too long to check within 2 s, and it
+copies or writes; split it into shorter commands"), and a line holding none is
+allowed. So the harness's 10 s hook timeout, at which Claude Code would run the
+command unchecked, is never reached, whatever the form. Without
 `python3`, or when the helper exits with anything but 0 or 2, a plain text
 check refuses any command naming `/tmp/claude-` or `$TMPDIR`/`${TMPDIR`
 together with a write word.
@@ -109,12 +114,17 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
    and a relative one is resolved from every folder the line may be in (where
    it starts and each `cd`/`pushd` target), so `cd /tmp && mkdir
    claude-501/pr` and `mkdir pr` started in `/tmp/claude-501` are caught.
-   The variables the hook knows are replaced first: the line's own as they
-   stand at that word, `$PWD` as each of those folders, `$OLDPWD`, `$HOME`
-   and `$TMPDIR` (`cd /tmp && mkdir "$PWD/claude-501/pr"` is caught). A word
-   with a part whose value is unknown (`$$`, `$RANDOM`, `$1`, `$(...)`) keeps
-   the folder spelled before that part, so `mkdir "$TMPDIR/review-$$"` names
-   `$TMPDIR`.
+   The hook knows only `$HOME`, `$TMPDIR` (shared, in any spelling), and
+   `$PWD` and `$(pwd)`, which it reads as each of those folders
+   (`cd /tmp && mkdir "$PWD/claude-501/pr"` is caught). Every other part is
+   unknown: a variable the line sets, `$OLDPWD`, `$$`, `$RANDOM`, `$1`, any
+   other substitution. A word with an unknown part names a shared folder when
+   its literal text before that part, read from any of those folders, lies in
+   a shared folder or could begin one (`mkdir "$TMPDIR/review-$$"`,
+   `/tmp/claude-$UID/pr`, `/tmp/$X/pr`, `/private/tmp/$X`, and `"$X/pr"` after
+   `cd /tmp`), or when a part after it is a shared root's own name
+   (`$R/claude-501/x`). The session's own folder stays allowed
+   (`<session folder>/x-$$`).
    The write words are `cp mv rsync ditto tar mkdir touch tee dd rm rmdir ln
    install unzip curl wget truncate mktemp clone worktree -delete` as whole
    words, and a `>` redirection to anything but `/dev/null`, `/dev/stdout`,
@@ -123,8 +133,12 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
    single quotes), the inside of `$((...))` and `((...))` arithmetic,
    `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc whose line,
    read without its `#` comment, feeds `bash`, `sh`, `zsh`, `xargs`, `eval` or
-   `source` anywhere on it (`cat <<EOF | bash` included; `cat > notes.md
-   <<'EOF'  # for the bash step` is data). Inside arithmetic, `<`, `>`, `<<`
+   `source` anywhere on it, or runs a command whose name is not literal text
+   (`cat <<EOF | bash`, `| $(command -v bash)` and `| "$SHELL"` included;
+   `cat > notes.md <<'EOF'  # for the bash step` is data). Code inside
+   `$(...)`, backticks and arithmetic is checked by the same rules; since every
+   variable the line sets is unknown, where it runs in the line does not
+   matter. Inside arithmetic, `<`, `>`, `<<`
    and `>>` compare and shift, never redirect or open a heredoc
    (`echo $((size >> 10))` writes nothing); a `$(...)` in it keeps its own.
    A `((` whose parentheses do not close as `))` (`((cd x) )`) is two
@@ -143,15 +157,18 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
    last one, or cp's `-t`/`--target-directory` value (`-t dir`, `-Rt dir`,
    `-tdir`, `--target-directory=dir`), which is then never also a source;
    rsync's `-t` keeps times, so `rsync -a -t ./ ./backup/` is refused.
-   Variables are read as they stand at that copy in the line
-   (`D=sub; cp -R . "$D"; D=/x` is refused). A destination with an unknown
-   part is inside the folder spelled before it (`cp -R .
-   "./snapshot-$(date +%s)"` is refused); a source with one is not read.
-   Paths are resolved from
-   every folder the line may be in: where it starts, and each `cd`/`pushd`
-   target, in every combination with `$OLDPWD`. A `tar` pipeline is read from
-   the folder the shell runs each side in, so `tar cf - . | (cd /dest && tar
-   xf -)` is allowed.
+   **Each source and destination must be one the hook can read for certain**:
+   literal text, `~`, `$HOME`, `$TMPDIR`, and `$PWD`, `$(pwd)` or a relative
+   path only while every `cd`/`pushd` before it had a literal target (after
+   `cd "$D"`, `cd -` or `popd` the folder is unknown). Otherwise the copy is
+   refused: `cp -R . backup-$$`, `D=$PWD/sub; cp -R . "$D"`,
+   `cp -R "$OLDPWD"/x y`, `tar cf - . | tar xf - -C "./copy-$$"`,
+   `T=$(mktemp -d) && cp -R src "$T/x"`, `cd "$D" && cp -R ~/repo .`. A remote
+   operand (`host:path`) is not a local path and is not read. Paths are
+   resolved from every folder the line may be in: where it starts, and each
+   literal `cd`/`pushd` target. A `tar` pipeline is read from the folder the
+   shell runs each side in, so `tar cf - . | (cd /dest && tar xf -)` is
+   allowed.
 3. A command nested more than four levels deep (`$(...)`, `bash -c` and
    `eval` each count) is refused as not checkable.
 4. A command it cannot tokenize (unbalanced quotes outside a heredoc) is
@@ -177,10 +194,12 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
   its body is read only for names of a shared folder, so text with
   apostrophes or the words cp and mkdir in it is fine.
 
-A path the line does not spell (a variable set by an earlier command,
-`D=$(mktemp -d)`, a symlink made earlier) is not known, and programs that
-write files themselves (python, node, tests) are not seen. These limits are
-stated in the hook's header.
+A path held in a variable is not read as a value (a variable set by an
+earlier command or by the line, `D=$(mktemp -d)`): a copy using one is
+refused, and a write using one counts only when its literal text could name a
+shared folder. A symlink made earlier is followed only when it is on disk as
+the hook runs, and programs that write files themselves (python, node, tests)
+are not seen. These limits are stated in the hook's header.
 
 ### The message
 
@@ -392,7 +411,25 @@ three version fields, as in 0.18.0), so an installed copy updates with
   makes `ssh` a source). Reason: telling them apart needs every program's
   option table, and a missing entry hid `-R` (`cp -f -R`); a wrong extra path
   can only refuse more.
-- A heredoc fed to anything but a shell or `xargs` is data: only its names of
+- Unknown parts fail closed (round 4 of PR #55, 2026-10-29: computing
+  variables failed open nine ways). The hook no longer computes what the shell
+  would compute: the line's own variables as they stand at each word, values
+  that hold other variables, substitutions run after the line, every `$PWD`
+  and `$OLDPWD` pairing. Each computation had another gap (`/tmp/claude-$UID`,
+  `backup-$$`, `D=$PWD/sub`, `$(pwd)`, `D=./snapshot-$(date +%s)`,
+  `-C "./copy-$$"`, a heredoc into `$(command -v bash)`, an 18.8 s `$OLDPWD`
+  line). It reads only `$HOME`, `$TMPDIR` and `$PWD`/`$(pwd)` after literal
+  `cd` targets. A recursive copy with any other unknown operand is refused,
+  and a write is refused when the literal text before an unknown part could
+  name a shared folder. Reason: the contract already says that what cannot be
+  read with confidence fails closed, and each computed value was one more
+  model of the shell to get wrong. A person refused this way sees "cp with a
+  path the guard cannot read ($D). Spell each source and destination out: a
+  literal path, $HOME, $TMPDIR, or $PWD and relative paths after cd targets
+  that are spelled out; a variable the line sets, $OLDPWD, $$ or a
+  substitution cannot be checked", then where to work instead.
+- A heredoc fed to anything but a shell, `xargs` or a command whose name is
+  not literal text is data: only its names of
   a shared folder count. Reason: notes and commit messages hold apostrophes
   and the words cp or mkdir; a heredoc into a file that names the shared
   folder is still refused. Write such a file with the editor tool.

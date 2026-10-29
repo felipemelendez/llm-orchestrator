@@ -26,15 +26,20 @@
 #      word is a path candidate, and so are `=` values and option-attached
 #      paths (`-o/tmp/...`, `--output=/tmp/...`, `D=/tmp/...`); each is
 #      normalized (`//`, `/./`, `..`, symlinks) and, when relative, resolved
-#      from every folder the line may be in. Known variables ($PWD, $OLDPWD,
-#      $HOME, $TMPDIR in any spelling, the line's own) are replaced, and a word
-#      with an unknown part (`$TMPDIR/review-$$`) keeps the folder before it.
+#      from every folder the line may be in. Only $HOME, $TMPDIR (any
+#      spelling) and $PWD/$(pwd) are known; a word with any other part (a
+#      variable the line sets, $OLDPWD, $$, a substitution) counts when its
+#      literal text could name the shared folder (`/tmp/claude-$UID`, `/tmp/$X`).
 #   B. A recursive copy (`cp -R`/`-r`/`-a`, rsync, ditto, or a
 #      `tar -c ... | tar -x ...` pipeline) whose destination is at or inside a
 #      source is refused (`cp -R . ./sub`, `cp -f -R . ./sub`,
 #      `timeout 600 cp -R . ./sub`, `find . -exec cp -R {} ./sub \;`). Every
 #      non-option word counts as a path, and every folder the line may be in
-#      (where it starts, and each cd target) is tried.
+#      (where it starts, and each cd target) is tried. A copy with a path it
+#      cannot read for certain (`cp -R . "$D"`, `cp -R . backup-$$`, a relative
+#      path after `cd "$D"`) is refused: spell the paths out.
+#   Past its own 2 s deadline, a line that copies or writes is refused, so the
+#   harness's 10 s hook timeout never lets one through unchecked.
 #
 # It allows ordinary work: copies and writes inside the clone or project and
 # anywhere outside the temporary folders (a review's run directory is always
@@ -59,9 +64,9 @@
 # disk watchdog (free-space floor, run-directory cap) and each Codex launch's
 # own $TMPDIR are the backstop.
 #
-# Limits, stated so nobody counts on more: a path the line does not spell
-# (a variable set by an earlier command, `D=$(mktemp -d)`, a symlink made
-# earlier) is not known; programs that write files themselves (python, node,
+# Limits, stated so nobody counts on more: the value of a variable is never
+# computed (a write through `D=$(mktemp -d)` is seen only as `$D`); a symlink
+# is followed only if it exists as the hook runs; programs that write files themselves (python, node,
 # make, tests) are not seen; a path fed on stdin to anything but a shell or
 # xargs is checked only as a name of the shared folder.
 #

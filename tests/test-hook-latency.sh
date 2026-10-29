@@ -150,6 +150,15 @@ if bash "${HOOKS}/guard-disk-writes.sh" < "$MANY_CD_EVENT" >/dev/null 2>&1; then
 else
   check_latency "guard-disk-writes.sh"      "$MANY_CD_EVENT"
 fi
+# A line of 150 `cd dN && cp -R "$OLDPWD"/xN yN` steps: pairing every folder as $PWD with every folder as
+# $OLDPWD took ~20 s. $OLDPWD is now unknown, so the first copy is refused at once.
+OLDPWD_EVENT="$TMP/disk-oldpwd.json"
+python3 -c 'import json,sys; c=" && ".join("cd d%d && cp -R \"$OLDPWD\"/x%d y%d" % (i, i, i) for i in range(150)); print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":c}}))' "$TMP" > "$OLDPWD_EVENT"
+if bash "${HOOKS}/guard-disk-writes.sh" < "$OLDPWD_EVENT" >/dev/null 2>&1; then
+  fail "guard-disk-writes.sh on a line of 150 \$OLDPWD copies" "the line was allowed, so the refusing path was not timed"
+else
+  check_latency "guard-disk-writes.sh"      "$OLDPWD_EVENT"
+fi
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
 check_latency "subagent-stop.sh"            "$TRANSCRIPT_EVENT"
 check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"
