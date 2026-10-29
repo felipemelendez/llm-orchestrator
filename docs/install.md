@@ -103,7 +103,6 @@ block of `.claude/settings.json`.
 | `orch-handoff-nudge.sh` | Reminds the assistant once to write a handoff note when the conversation gets long (see `ORCH_CONTEXT_HANDOFF_TOKENS` below) | yes | yes | `orch-handoff-nudge` |
 | `guard-no-verify.sh` | Refuses git commands that skip git's hooks or commit signing (`--no-verify` and similar) | yes | yes | `orch-guard` |
 | `guard-destructive-git.sh` | Refuses git commands that throw away uncommitted work (`git reset --hard`, `git stash`, `git clean -f`, …) in your main working folder; allowed inside a worktree the plugin created | yes | no | cannot be turned off this way |
-| `guard-disk-writes.sh` | Refuses any command that mentions the shared temporary area (`$TMPDIR`, `/tmp`, `mktemp`, `claude-501`) outside the session's own folder, even to read it (use the Read tool); a recursive copy into itself (`cp -R . ./sub`) or with a path that is not spelled out (`cp -R "$D" x`); and any `tar … \| … tar` pipeline. Everything else runs. Every review launch gets it too | yes | no | cannot be turned off this way |
 | `orch-verify-gate.sh` | The completion check ([what it does](../README.md#what-happens-by-default)) | yes | yes | `orch-verify-gate` |
 | `subagent-stop.sh`, `orch-researcher-validator.sh` | Check that a helper agent's report has the expected shape | yes | yes | `orch-subagent-stop`, `orch-researcher-validator` |
 | `orch-retry-cap.sh` | Warns when the same action repeats three times in a row | yes | yes | `orch-retry-cap` |
@@ -121,6 +120,10 @@ block of `.claude/settings.json`.
   it a warning). The completion check never blocks.
 - **Turning off single hooks.** List their names, comma-separated:
   `ORCH_DISABLED_HOOKS=orch-research-gate,orch-handoff-nudge`.
+- **In reviews only.** The reviewers the plugin starts also run
+  `guard-disk-writes.sh` on every command. It refuses commands that could fill
+  the disk, such as a copy of a folder into itself or any command that names
+  `/tmp`. It does not run in your own sessions, and has no off switch.
 
 ### Escape hatches for the hard guards
 
@@ -132,11 +135,7 @@ own, set by a person in the environment Claude Code starts with:
 export ORCH_ALLOW_DESTRUCTIVE_GIT=1
 ```
 
-The disk guard works the same way, with its own switch,
-`ORCH_ALLOW_TEMP_WRITES=1`; the review launchers never pass it to the
-reviewers they start.
-
-Putting either in front of the command itself does not work. The
+Putting it in front of the git command itself does not work. The
 `--no-verify` guard's switch is `ORCH_ALLOW_NO_VERIFY=1`. The Codex file guard
 has no switch; a locked file changes only by
 [a ruling](cadence.md#changing-the-rules).

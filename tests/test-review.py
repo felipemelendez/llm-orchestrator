@@ -75,11 +75,15 @@ def grow(spec):
         return
     (FAKE_ROOT / "grow.pid").write_text(str(os.getpid()))
     path, deadline = Path(os.environ["TMPDIR"], "runaway"), time.time() + 30
+    pending = FAKE_ROOT / f"grow.size.{os.getpid()}.tmp"
     with open(path, "ab") as out:
         while path.stat().st_size < 40 * 1024 * 1024 and time.time() < deadline:
             out.write(b"x" * 65536)
             out.flush()
-            (FAKE_ROOT / "grow.size").write_text(str(path.stat().st_size))
+            # Written whole, then renamed: the watchdog's kill can land between any two steps, and a reader
+            # must still find the last size in full, never a truncated file.
+            pending.write_text(str(path.stat().st_size))
+            os.replace(pending, FAKE_ROOT / "grow.size")
             time.sleep(0.005)
 def run_commands(spec, cwd):
     runs = []

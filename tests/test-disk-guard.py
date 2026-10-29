@@ -89,7 +89,7 @@ REFUSED = [
     ("shared", f"cd /tmp && mkdir claude-{UID}/pr", None), ("shared", f"cd /; cd tmp; mkdir claude-{UID}/pr", None),
     ("shared", 'T=$(mktemp -d) && cp -R src "$T/x"', None), ("shared", f"mkdir //tmp/claude-{UID}/pr", None),
     ("shared", f"touch /private/tmp/claude-{UID}/x", None), ("shared", "echo ${#TMPDIR}", None),
-    ("shared", f"ORCH_ALLOW_TEMP_WRITES=1 mkdir {T}/x", None), ("shared", f"TMPDIR=/Users/x/t mkdir -p {T}/x", None),
+    ("shared", f"TMPDIR=/Users/x/t mkdir -p {T}/x", None),
     ("nested", "cp -R . ./sub", None), ("nested", "cp -a src src/inner", None), ("nested", "cp -r .. sub", None),
     ("nested", "rsync -a ./ ./backup/", None), ("nested", "ditto . sub", None), ("spelled", "cp -R * sub/", None),
     ("nested", "cp -R -t sub .", None), ("nested", "cp -Rt sub .", None), ("nested", "cp -R -tsub .", None),
@@ -160,11 +160,15 @@ ALLOWED = [
 ]
 
 
-def load_helper():
-    spec = importlib.util.spec_from_file_location("orch_disk_guard", HELPER)
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def load_helper():
+    return load_module("orch_disk_guard", HELPER)
 
 
 class DiskGuardTests(unittest.TestCase):
@@ -292,10 +296,6 @@ class DiskGuardTests(unittest.TestCase):
         self.assertIn("as two commands", self.hook("tar cf - . | tar xf - -C sub").stderr)
         self.assertIn(f"{OWN}/a into {OWN}/a/b", self.hook(f"cp -R {OWN}/a {OWN}/a/b").stderr)
 
-    def test_only_the_persons_own_override_disarms_it(self):
-        self.assertEqual(self.hook(INCIDENT, env={"ORCH_ALLOW_TEMP_WRITES": "1"}).returncode, 0)
-        self.assertEqual(self.hook(f"ORCH_ALLOW_TEMP_WRITES=1 mkdir {T}/x").returncode, 2)
-
     def installed_copy(self, helper=None):
         copy = self.root / "installed/scripts"
         (copy / "hooks").mkdir(parents=True)
@@ -343,40 +343,6 @@ class DiskGuardTests(unittest.TestCase):
         self.assertEqual(self.hook(INCIDENT, env={"PATH": str(tools)}).returncode, 2)
         self.assertEqual(self.hook("git status", env={"PATH": str(tools)}).returncode, 0)
 
-    def test_every_command_the_plugin_tells_a_model_to_run_passes_the_guard(self):
-        decide = load_helper().decide
-        pages = [*ROOT.glob("commands/*.md"), *ROOT.glob("agents/*.md"), *ROOT.glob("skills/**/*.md"),
-                 *ROOT.glob("templates/**/*.md"), *ROOT.glob("output-styles/*.md")]
-        blocks = [(page, block) for page in pages
-                  for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)```", page.read_text(), re.S)]
-        self.assertGreater(len(blocks), 20)
-        for page, block in blocks:
-            with self.subTest(page=str(page.relative_to(ROOT)), block=block[:80]):
-                self.assertIsNone(decide(block, "/w", SESSION, None))
-
-    def run_block(self, page, heading, env, replace=()):
-        text = (ROOT / page).read_text()
-        block = re.search(re.escape(heading) + r".*?```bash\n(.*?)```", text, re.S).group(1)
-        for old, new in replace:
-            block = block.replace(old, new)
-        return subprocess.run([BASH, "-c", block], capture_output=True, text=True, timeout=30,
-                              env={"PATH": os.environ["PATH"], **env}, cwd=str(self.root))
-
-    def test_cadence_init_keeps_its_own_config_until_a_real_init_succeeds(self):
-        repo, cad = self.root / "repo", self.root / "cad"
-        repo.mkdir(), cad.mkdir()
-        subprocess.run(["git", "init", "-q", str(repo)], check=True)
-        env = {"ROOT": str(repo), "CAD": str(cad), "HOME": str(self.root)}
-        paths = [self.run_block("commands/cadence-init.md", "### 3.", env).stdout.strip() for _ in range(2)]
-        self.assertNotEqual(paths[0], paths[1], "each init has its own file")
-        self.assertTrue(all(Path(path).is_file() and ".git" in path for path in paths), paths)
-        self.assertIsNone(load_helper().decide(f'CFG="{paths[0]}"', "/w", SESSION, None))
-        for code, kept in ((1, True), (0, False)):  # a failed init keeps the file; a successful one removes it
-            (cad / "cadence-init.sh").write_text(f"exit {code}\n")
-            self.run_block("commands/cadence-init.md", "### 4.", env, [("<the path step 3 printed>", paths[0])])
-            self.assertEqual(Path(paths[0]).exists(), kept, code)
-        self.assertTrue(Path(paths[1]).exists(), "another init's file is never touched")
-
     def test_the_manual_test_setup_stops_on_an_existing_folder(self):
         home, work = self.root / "h", self.root / "w"
         (home / "orch-test-feature").mkdir(parents=True), work.mkdir()
@@ -394,10 +360,26 @@ class DiskGuardTests(unittest.TestCase):
         result = self.hook("mktemp -d", event={"transcript_path": f"/Users/x/.claude/projects/{PROJECT}/{SESSION}/subagents/a.jsonl"})
         self.assertIn("put temporary files inside that folder", result.stderr)
 
-    def test_hooks_json_wires_the_guard_for_every_bash_call(self):
-        hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]["PreToolUse"]
-        commands = [hook["command"] for entry in hooks if entry.get("matcher") == "Bash" for hook in entry["hooks"]]
-        self.assertIn("bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-disk-writes.sh", commands)
+    def test_the_guard_runs_only_in_the_launches_the_plugin_starts(self):
+        # Ordinary sessions do not run it (spec G1, "Where it is wired"): no plugin manifest names it.
+        for manifest, path in (("hooks/hooks.json", ["hooks"]), (".codex-plugin/plugin.json", ["hooks", "hooks"])):
+            hooks = json.loads((ROOT / manifest).read_text())
+            for key in path:
+                hooks = hooks[key]
+            commands = [hook.get("command", "") for entries in hooks.values() for entry in entries
+                        for hook in entry["hooks"]]
+            with self.subTest(manifest=manifest):
+                self.assertTrue(commands)
+                self.assertEqual([command for command in commands if "guard-disk-writes" in command], [])
+        # Every claude -p launch gets it, as the only Bash hook in its --settings, from the run directory's copy.
+        review = load_module("orch_review", ROOT / "scripts/lib/orch-review.py")
+        run_dir = self.root / "run"
+        run_dir.mkdir()
+        hooks = json.loads(review.claude_sandbox(self.clone, run_dir))["hooks"]["PreToolUse"]
+        guard = run_dir.resolve() / "guard/scripts/hooks/guard-disk-writes.sh"
+        self.assertEqual([(entry["matcher"], hook["command"]) for entry in hooks for hook in entry["hooks"]],
+                         [("Bash", "bash " + shlex.quote(str(guard)))])
+        self.assertEqual(self.hook(INCIDENT, hook=guard).returncode, 2)
 
 
 if __name__ == "__main__":

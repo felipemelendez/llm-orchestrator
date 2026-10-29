@@ -1,7 +1,8 @@
 # Spec: review agents cannot fill the disk
 
 Status: built 2026-10-28 (release 0.19.0); G1 rebuilt as a closed list on
-2026-10-29; for review. Maintained alongside
+2026-10-29, and taken out of ordinary sessions the same day (Settled); for
+review. Maintained alongside
 `scripts/hooks/guard-disk-writes.sh`, its decision helper
 `scripts/lib/orch-disk-guard.py`, `scripts/lib/orch-review.py`,
 `scripts/lib/orch-control.py` and `scripts/lib/orch-task-resources.py`.
@@ -199,9 +200,9 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
    `tmpdir`, `/tmp`, `mktemp` or `claude-`, and runs otherwise. This test
    comes before anything else, on the command as given.
 
-The person's own override, as with `ORCH_ALLOW_DESTRUCTIVE_GIT`:
-`ORCH_ALLOW_TEMP_WRITES=1` in the hook's own environment. An inline prefix
-does not disarm it, and the launchers' reduced environment never passes it.
+There is no off switch. The hook runs only in the launches below, whose
+reduced environment and `--restricted` keep the person's variables and
+settings files out, so a switch could never reach it.
 
 ### What it allows
 
@@ -263,8 +264,8 @@ temporary area. Split it into shorter commands`.
 
 ### Where it is wired
 
-- `hooks/hooks.json`, `PreToolUse` `Bash`, after the two existing guards:
-  every Claude Code session that has the plugin, and its subagents.
+- Not in `hooks/hooks.json`: ordinary Claude Code sessions with the plugin,
+  and their subagents, do not run it (Settled).
 - Every `claude -p` the plugin launches (`run_claude`, `run_runner`,
   `run_code_review` in `orch-review.py`; `orch-control.py launch` uses
   `run_claude`): the hook goes into the `--settings` JSON next to the sandbox.
@@ -424,8 +425,8 @@ temporary area. Split it into shorter commands`.
 
 ## G5. Documentation and release
 
-README, `ARCHITECTURE.md`, `docs/install.md` (the hook table and its
-override), a `CHANGELOG.md` entry, `docs/specs/review-design.md` (R1, R5, R6),
+README, `ARCHITECTURE.md`, `docs/install.md` (where the guard runs), a
+`CHANGELOG.md` entry, `docs/specs/review-design.md` (R1, R5, R6),
 and the prover and refuter briefs (`skills/requesting-code-review/references/`),
 which describe where commands run. The change ships as release 0.19.0 (the
 three version fields, as in 0.18.0), so an installed copy updates with
@@ -457,6 +458,14 @@ three version fields, as in 0.18.0), so an installed copy updates with
   outside the list in G1 runs is recorded `settled` against this entry,
   unless it shows a form inside the list behaving otherwise; G3 and G2 bound
   what runs.
+
+- The guard runs only in the `claude -p` launches the plugin starts, not in
+  ordinary sessions (decided by Felipe, 2026-10-29). Reason: the incident
+  came from such a launch, and in ordinary sessions the closed list refused
+  much harmless work (`git diff > /tmp/x`, `cat /tmp/log`,
+  `grep -rn mktemp scripts/`, `rg "/tmp"`, a URL holding `/tmp`,
+  `cd app && cp -r a b`). A finding that ordinary sessions should run it is
+  recorded `settled` against this entry.
 
 - The thresholds: refuse to launch under 5 GiB free; fire under 2 GiB free or
   when the run directory passes 10 GiB; sweep sandboxes over 24 hours idle.

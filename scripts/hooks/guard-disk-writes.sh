@@ -39,19 +39,15 @@
 # command alone refuses any rule-1 word and any copier word (cp, rsync, ditto,
 # tar), since it cannot read rule 2.
 #
-# The only opt-out is ORCH_ALLOW_TEMP_WRITES=1 in the hook's OWN environment,
-# set by a person when launching the session. An inline
-# `ORCH_ALLOW_TEMP_WRITES=1 cp ...` prefix lands in the child shell, not here,
-# so it does not disarm the guard; the review launchers never pass it on.
+# Where it runs: only in the `claude -p` launches the plugin starts, through
+# the --settings that scripts/lib/orch-review.py's claude_sandbox() gives them.
+# It is not in hooks/hooks.json, so ordinary sessions do not run it. It has no
+# off switch: those launches get a reduced environment and --restricted.
 
 # NO `set -e`, as in guard-destructive-git.sh: a guard that aborts mid-script
 # exits non-zero-but-not-2, which Claude Code treats as a non-blocking error,
 # and the command runs. Every path below ends in exit 0 or exit 2.
 set -uo pipefail
-
-if [[ "${ORCH_ALLOW_TEMP_WRITES:-0}" == "1" ]]; then
-  exit 0
-fi
 
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 HELPER="${HOOK_DIR}/../lib/orch-disk-guard.py"
