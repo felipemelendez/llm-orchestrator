@@ -336,6 +336,50 @@ if should_run lock; then
   if [[ "$COUNT" == "5" ]]; then ok "5 concurrent append_under_section → 5 entries"
   else fail "append_under_section concurrent" "expected 5, got $COUNT"; fi
 
+  # Ubuntu 26.04's mkdir (rust-coreutils 0.8-0.10) tells a caller "done" when
+  # the folder appeared after its own check, so two racers can both win one
+  # lock (docs/specs/folder-locks.md). The concurrent checks above catch that
+  # only by chance; this fake, first on PATH, makes the lie certain: it runs
+  # the real mkdir and reports success whenever the path is then a folder.
+  LYING_BIN="$SMOKE_TMP/lying-mkdir"; mkdir -p "$LYING_BIN"
+  printf '#!/usr/bin/env bash\n%q "$@" && exit 0\nrc=$?\n[[ -d "${@: -1}" ]] && exit 0\nexit $rc\n' \
+    "$(command -v mkdir)" > "$LYING_BIN/mkdir"
+  chmod +x "$LYING_BIN/mkdir"
+  TF3="$SMOKE_TMP/lying.txt"
+  mkdir "$TF3.lockdir"; printf '%s\n' "$$" > "$TF3.lockdir/pid"   # held by this live shell
+  if ! declare -F orch_mkdir_once >/dev/null; then
+    fail "orch_mkdir_once" "orch-lock.sh defines no orch_mkdir_once"
+  elif ( PATH="$LYING_BIN:$PATH" orch_mkdir_once "$TF3.lockdir" ); then
+    fail "orch_mkdir_once under a lying mkdir" "reported creating a folder that already exists"
+  else ok "orch_mkdir_once refuses an existing folder even when mkdir says done"; fi
+  if ( PATH="$LYING_BIN:$PATH" ORCH_LOCK_TIMEOUT=1 with_lock "$TF3" true ) 2>/dev/null; then
+    fail "with_lock under a lying mkdir" "took a lock a live process holds"
+  else ok "with_lock waits for a live holder even when mkdir says done"; fi
+  [[ "$(cat "$TF3.lockdir/pid" 2>/dev/null)" == "$$" ]] && ok "the live holder's lock is untouched" \
+    || fail "with_lock under a lying mkdir" "the live holder's lock was changed or removed"
+  # Without perl, the helper falls back to the mkdir program: still one winner
+  # where that program is correct. A PATH holding only a real mkdir hides perl.
+  NOPERL_BIN="$SMOKE_TMP/no-perl"; mkdir -p "$NOPERL_BIN"
+  ln -s "$(command -v mkdir)" "$NOPERL_BIN/mkdir"
+  if ( PATH="$NOPERL_BIN"; orch_mkdir_once "$TF3.fallback" ) && [[ -d "$TF3.fallback" ]] \
+     && ! ( PATH="$NOPERL_BIN"; orch_mkdir_once "$TF3.fallback" ); then
+    ok "without perl, orch_mkdir_once creates a new folder and refuses an existing one"
+  else fail "orch_mkdir_once without perl" "the mkdir fallback did not create once and refuse after"; fi
+  # A perl that is found but cannot run (an unset version-manager shim exits
+  # 126) makes the create fail. It never hands the create to the mkdir program,
+  # which on 26.04 says "done" for a folder that exists (docs/specs/folder-locks.md,
+  # Settled). Checked with the lying mkdir behind it: an existing folder is
+  # refused, and nothing is created in its place.
+  BADPERL_BIN="$SMOKE_TMP/bad-perl"; mkdir -p "$BADPERL_BIN"
+  printf '#!/bin/sh\nexit 126\n' > "$BADPERL_BIN/perl"; chmod +x "$BADPERL_BIN/perl"
+  mkdir -p "$TF3.badperl"
+  if ( PATH="$BADPERL_BIN:$LYING_BIN:$PATH"; orch_mkdir_once "$TF3.badperl" ) \
+     || ( PATH="$BADPERL_BIN:$LYING_BIN:$PATH"; orch_mkdir_once "$TF3.badperl-new" ) \
+     || [[ -e "$TF3.badperl-new" ]]; then
+    fail "orch_mkdir_once with a broken perl" "a perl that cannot run handed the create to the mkdir program"
+  else ok "a perl that cannot run fails the create, never the mkdir program"; fi
+
+  rm -rf "$TF3.lockdir" "$TF3.fallback" "$TF3.badperl" "$TF3.badperl-new" "$LYING_BIN" "$NOPERL_BIN" "$BADPERL_BIN"
   rm -f "$TF" "$TF.lock" "$TF.lockdir" "$TF2" "$TF2.lock" "$TF2.lockdir"
   unset ORCH_LOCK_TIMEOUT
 fi

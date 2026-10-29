@@ -43,6 +43,8 @@ set -uo pipefail
 
 _SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 MAT="${_SCRIPT_DIR}/orch-worktree-materialize.sh"   # for --release
+# shellcheck source=scripts/lib/orch-lock.sh
+. "${_SCRIPT_DIR}/lib/orch-lock.sh"                  # orch_mkdir_once
 
 # tr flattens newlines BEFORE line-based sed sees them — an embedded newline
 # used to survive sanitization and corrupt every branch/claim name built from
@@ -75,21 +77,22 @@ OWN_LANDED=""    # newline-separated shas of merge commits THIS run created
 # A's recorded pre-sha. B reported success for a commit that is not on the
 # base. The engines mutate one shared checkout; they get one exclusive lock.
 #
-# `mkdir` is the atomic primitive; the pid inside lets a later run distinguish
-# a SIGKILLed integrate (reclaim, or every future integrate deadlocks) from a
-# LIVE one (refuse — never steal). Released by report_and_exit, which every
+# orch_mkdir_once is the atomic primitive (the mkdir system call: Ubuntu
+# 26.04's mkdir program can tell two callers "done"); the pid inside lets a
+# later run distinguish a SIGKILLed integrate (reclaim, or every future
+# integrate deadlocks) from a LIVE one (refuse — never steal). Released by report_and_exit, which every
 # engine path funnels through, plus an EXIT trap for the pre-flight exits.
 acquire_int_lock() {
   local gd pid
   gd="$(git rev-parse --git-dir 2>/dev/null)" || return 1
   local lock="${gd}/orch-integrate.lockdir"
-  if ! mkdir "${lock}" 2>/dev/null; then
+  if ! orch_mkdir_once "${lock}"; then
     pid="$(cat "${lock}/pid" 2>/dev/null || true)"
     if [[ -n "${pid}" && "${pid}" != *[!0-9]* ]] \
-       && ! kill -0 "${pid}" 2>/dev/null && ! ps -p "${pid}" >/dev/null 2>&1; then
+       && ! _orch_pid_alive "${pid}"; then
       # Recorded holder is provably dead (ps sees any uid, so EPERM ≠ death).
       rm -rf "${lock}" 2>/dev/null
-      if ! mkdir "${lock}" 2>/dev/null; then
+      if ! orch_mkdir_once "${lock}"; then
         echo "orch-integrate: another integration grabbed the lock while a dead one was being reclaimed — refusing to run two integrations against one base (lock: ${lock})" >&2
         return 1
       fi

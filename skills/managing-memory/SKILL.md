@@ -42,8 +42,8 @@ Three branches in priority order:
    else → `## Notes`.
 
 Writes go through `append_under_section` from `scripts/lib/orch-lock.sh`, which creates the
-section if missing and serializes concurrent sessions under `with_lock` (`flock` where available,
-`mkdir`-based fallback on macOS/POSIX).
+section if missing and serializes concurrent sessions under `with_lock` (a lock folder made
+with the mkdir system call, through perl when it is installed).
 
 ## Verify on load
 

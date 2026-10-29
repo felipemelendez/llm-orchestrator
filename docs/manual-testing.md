@@ -62,7 +62,7 @@ In a Claude Code session:
 
 **Pass criteria:**
 - `llm-orchestrator` appears in the list
-- Version `0.18.0`
+- Version `0.18.1`
 - Status: enabled
 
 **Troubleshooting:**
