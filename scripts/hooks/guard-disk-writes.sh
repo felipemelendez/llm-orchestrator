@@ -15,7 +15,7 @@
 #      copier or a rule-1 word. Then rules 0 to 2 run on two readings, each
 #      backslash-newline removed and read as a newline; either refusing refuses.
 #   0. `//` and `/./` become `/`; the session's own folder
-#      (/tmp/claude-<uid>/<project>/<session id>) is set aside with the plain
+#      ((/private)/tmp/claude(-<uid>)/<project>/<session id>) is set aside with the plain
 #      run of [A-Za-z0-9._/+-] after it, bare or in a pair of the same quote,
 #      with a boundary on each side, when no `..` component follows it.
 #      Anything else is not set aside.

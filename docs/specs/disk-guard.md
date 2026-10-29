@@ -100,10 +100,12 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
 ### What it refuses
 
 0. **First, the readings and two normalizations.** Rule 3 reads the command
-   as given. Rules 0 to 2 then read it twice, with each backslash-newline
-   removed (the shell joins the two halves) and with it read as a newline (a
-   `#` comment ends at the newline, and the guard does not decide which
-   applies); the command is refused if either reading is. `//` and `/./`
+   as given. Rules 0 to 2 then read it twice: with each backslash-newline
+   removed (the shell joins the two halves), and with it read as a newline
+   on every line that holds a `#`, quoted or not (a `#` comment ends at the
+   newline, and the guard does not decide whether that `#` is one). The
+   command is refused if either reading is, so `cp -R src \⏎ dist` runs and
+   `# copy step\⏎cp -R . ./sub` is refused. `//` and `/./`
    become `/`. Then
    the session's own folder is set aside in exactly two shapes, matched in
    one pass, left to right. Its occurrence is
@@ -227,7 +229,9 @@ inside a path (`"<session folder>/x-$$"`), a quoted path with a space
 (`"<session folder>/a b/c.txt"`, `"<session folder>/out $(cat ...)"`), and
 any `..` component later in a command that names the folder
 (`cd <session folder>/x && cd ..`). And
-`rsync --version`. Each refusal says what to do instead.
+`rsync --version`. A continued copy whose first line holds a `#`
+(`rsync -a --exclude='#x' \⏎ src/ dst/`). Each refusal says what to do
+instead.
 
 **Residual gaps, by design.** A variable or symlink made by an earlier
 command (`D=/tmp/claude-501` in one call, `mkdir "$D/pr"` in the next); a

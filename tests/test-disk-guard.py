@@ -131,6 +131,8 @@ REFUSED = [
     ("nested", f"echo '{OWN}/a' ; cp -R . ./sub ; echo '{OWN}/b'", None),
     ("escape", f'mkdir -p /var"{OWN}/pr"', None), ("escape", f"mkdir -p /var'{OWN}/pr'", None),
     ("escape", f'ls "{OWN}/x"y', None), ("escape", f"ls {OWN}/x'y'", None),
+    # the fifth re-review (20261029-plugin55-closed5): a sibling `<session id>+x` is not the session's folder
+    ("escape", f"cp -R . {OWN}+x", None),
 ]
 
 # Ordinary work, and the session's own folder. (kind, command): "own" rows test rule 0.
@@ -153,6 +155,8 @@ ALLOWED = [
     ("own", f"mkdir /TMP/CLAUDE-{UID}/{PROJECT}/{SESSION}/x"),
     ("work", "tar -czf a.tgz src\nls | grep tar"), ("work", "tar cf a.tar src\nprintf done | cat\ntar xf a.tar -C dest"),
     ("work", "cp -R src dist 2>&1 | tail -1"),
+    # only a line holding a # is split by the second reading, so an ordinary continued copy runs (closed5)
+    ("work", "cp -R src \\\n dist"), ("work", "rsync -a \\\n  --exclude=node_modules \\\n  src/ build/"),
 ]
 
 

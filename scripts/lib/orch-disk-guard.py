@@ -54,14 +54,11 @@ class TimeUp(Exception):
 
 
 def set_aside(text, session):
-    """Rule 0, in two shapes: (the text rule 1 reads, the text rule 2 reads). The session's own folder and the plain
-    run after it, bare or inside a pair of the same quote, with a boundary on each side, is set aside when no `..`
-    component follows its start once quotes and backslashes are removed. The whole span, its quotes included,
-    leaves rule 1's text and is OWN plus the run in rule 2's, so quotes stay balanced. Every other shape stays."""
-    if not session:
+    """Rule 0 (spec G1): (the text rule 1 reads, the text rule 2 reads), the session's own folder set aside."""
+    if not session or "tmp/claude" not in text.lower():
         return text, text
     folder = re.compile(r"(?i)" + BOUND_BEFORE + r"(['\"]?)(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
-                        + re.escape(session) + r"(?![A-Za-z0-9._-])([A-Za-z0-9._/+-]*)\1" + BOUND_AFTER)
+                        + re.escape(session) + r"(?![A-Za-z0-9._+-])([A-Za-z0-9._/+-]*)\1" + BOUND_AFTER)
     kept_at = [i for i, c in enumerate(text) if c not in "'\"\\"]  # where each unquoted character came from
     dots = max((kept_at[match.start()] for match in DOTS.finditer(text.translate(UNQUOTE))), default=-1)
     hidden, kept, last = [], [], 0
@@ -145,7 +142,8 @@ def decide(command, cwd, session, hint):
     if len(command) > MAX_LENGTH:
         return ("a command over 100,000 characters that copies or names the shared temporary area. "
                 "Split it into shorter commands") if holds_words(command) else None
-    readings = dict.fromkeys((command.replace("\\\n", ""), command.replace("\\\n", "\n")))
+    split = re.sub(r"(?m)^([^#\n]*)\\\n", r"\1", command).replace("\\\n", "\n")  # only a line with a # splits
+    readings = dict.fromkeys((command.replace("\\\n", ""), split))
     return next(filter(None, (check(reading, cwd, session, hint) for reading in readings)), None)
 
 
