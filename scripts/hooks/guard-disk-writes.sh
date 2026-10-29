@@ -14,17 +14,19 @@
 # timeout or xargs, `-o/path`), so each rule refuses more rather than less.
 #
 #   A. A command that names Claude Code's shared temporary folder
-#      (/tmp/claude-*, /private/tmp/claude-*, $TMPDIR, or the hook's own
-#      $TMPDIR) outside the session's own folder
+#      (/tmp/claude, /tmp/claude-*, their /private forms, $TMPDIR, or the
+#      hook's own $TMPDIR) outside the session's own folder
 #      (/tmp/claude-<uid>/<project>/<session id>/), and holds a write word
 #      anywhere, is refused. Write words: cp mv rsync ditto tar mkdir touch tee
 #      dd rm rmdir ln install unzip curl wget truncate mktemp clone worktree
 #      -delete, and a `>` redirection to anything but /dev/null. "Anywhere"
 #      means in every part of the line: after a cd, inside $(...), backticks,
-#      `bash -c '...'`, eval, a heredoc fed to a shell or xargs, behind
-#      timeout, xargs or find -exec. A path counts when it starts a word or
-#      follows a separator or an option (`-o/tmp/...`, `-sSLo /tmp/...`,
-#      `--output=/tmp/...`, `D=/tmp/...`).
+#      arithmetic, `bash -c '...'`, eval, a heredoc fed to a shell or xargs
+#      (`cat <<EOF | bash` too), behind timeout, xargs or find -exec. Every
+#      word is a path candidate, and so are `=` values and option-attached
+#      paths (`-o/tmp/...`, `--output=/tmp/...`, `D=/tmp/...`); each is
+#      normalized (`//`, `/./`, `..`, symlinks) and, when relative, resolved
+#      from every folder the line may be in.
 #   B. A recursive copy (`cp -R`/`-r`/`-a`, rsync, ditto, or a
 #      `tar -c ... | tar -x ...` pipeline) whose destination is at or inside a
 #      source is refused (`cp -R . ./sub`, `cp -f -R . ./sub`,
@@ -48,6 +50,12 @@
 # x`), a line nested more than four levels (`$(...)`, `bash -c`, eval), and a
 # line it cannot read (unbalanced quotes) that copies or writes near the shared
 # folder.
+#
+# Contract: it catches the forms agents write, by accident or in evidence
+# scripts, and refuses what it cannot read with confidence. It is not a
+# security boundary against a command built on purpose to hide a write; the
+# disk watchdog (free-space floor, run-directory cap) and each Codex launch's
+# own $TMPDIR are the backstop.
 #
 # Limits, stated so nobody counts on more: a path the line does not spell
 # (a variable set by an earlier command, `D=$(mktemp -d)`, a symlink made

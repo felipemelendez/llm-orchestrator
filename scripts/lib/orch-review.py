@@ -1213,14 +1213,16 @@ def du_sizes(paths, seconds=None):
                                                    stdin=subprocess.DEVNULL, text=True, start_new_session=True)))
         except OSError:
             pass
+    while time.monotonic() < deadline and any(process.poll() is None for _, process in running):
+        time.sleep(0.05)
     for path, process in running:
-        try:
-            out, _ = process.communicate(timeout=max(0.0, deadline - time.monotonic()))
-            size = out.split("\t", 1)[0].strip() if out else ""
-            if size.isdigit():
-                sizes[path] = int(size) * 1024
-        except subprocess.TimeoutExpired:
+        if process.poll() is None:  # still measuring at the deadline: not measured in time
             kill_group(process)
+            continue
+        out, _ = process.communicate()  # finished: its result counts, whatever the others did
+        size = out.split("\t", 1)[0].strip() if out else ""
+        if size.isdigit():
+            sizes[path] = int(size) * 1024
     return sizes
 
 
@@ -1383,13 +1385,23 @@ def prepare_launch(run_dir, base=None):
     manager's cleanup is safe to interrupt and resume)."""
     base = Path(base) if base else resources.Manager.default_base()
     if base.is_dir():
+        # The sweep writes to its own log, never to this process's stdout or stderr: a caller reading
+        # those must not wait for a sweep that goes on in the background.
+        log_path = base / "sweep.log"
         try:
-            process = subprocess.Popen(sweep_argv(base), stdin=subprocess.DEVNULL, start_new_session=True)
+            with open(log_path, "a+b") as log:
+                start = log.tell()
+                process = subprocess.Popen(sweep_argv(base), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                           stderr=log, start_new_session=True)
             try:
                 process.wait(timeout=SWEEP_SECONDS)
+                with open(log_path, "rb") as log:
+                    log.seek(start)
+                    sys.stderr.write(log.read().decode(errors="replace"))
             except subprocess.TimeoutExpired:
                 print(f"orch-review: the sweep of old review sandboxes ran past {SWEEP_SECONDS} s; it goes on in "
-                      f"the background (pid {process.pid}) and this launch continues", file=sys.stderr)
+                      f"the background (pid {process.pid}, log {log_path}) and this launch continues",
+                      file=sys.stderr)
         except OSError as error:
             print(f"orch-review: the sweep could not start: {error}", file=sys.stderr)
     return launch_refusal(run_dir)

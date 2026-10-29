@@ -80,22 +80,39 @@ of PR #55 reproduced it failing open thirteen ways on ordinary syntax
 gap in the model, and a model of the shell always has another. The rules
 below are conservative instead: when unsure, they refuse.
 
+**The contract.** The hook catches the forms agents actually write, by
+accident or in evidence scripts. Anything it cannot read with confidence
+that copies, or that writes near a shared root, is refused: it fails closed.
+It is not a security boundary against a command built on purpose to hide a
+write (Settled). The backstop for whatever it misses is the watchdog (G3:
+the 2 GiB free-space floor and the 10 GiB run-directory cap, which kill the
+run) and the per-launch temporary folder (G2), which keeps a Codex child's
+`$TMPDIR` inside the run directory the watchdog measures.
+
 ### What it refuses
 
 1. **Rule A, the shared temporary folder.** A command that names a shared
    folder outside the session's own folder and holds a write word anywhere is
-   refused. The shared folders are `/tmp/claude-*` and `/private/tmp/claude-*`
-   (any user), `$TMPDIR` in any spelling (`$TMPDIR`, `${TMPDIR}`,
-   `${TMPDIR:-x}`), and the hook's own `$TMPDIR` unless it is `/` or the home
-   folder. A path counts when it starts a word or follows whitespace, a quote,
-   `=`, `:`, `@`, `,` or an option (`-o/tmp/...`, `-sSLo`, `--output=`).
+   refused. The shared folders are `/tmp/claude`, `/tmp/claude-*` and their
+   `/private` forms (any user), `$TMPDIR` in any spelling (`$TMPDIR`,
+   `${TMPDIR}`, `${TMPDIR:-x}`), and the hook's own `$TMPDIR` unless it is
+   `/` or the home folder. Every word, the value after `=` (`D=`, `of=`,
+   `--output=`), an absolute path attached to an option (`-o/tmp/...`), and
+   an absolute path inside a longer word is a path candidate. Each is
+   normalized before it is matched (`//`, `/./`, `..` and symlinks resolved),
+   and a relative one is resolved from every folder the line may be in (where
+   it starts and each `cd`/`pushd` target), so `cd /tmp && mkdir
+   claude-501/pr` and `mkdir pr` started in `/tmp/claude-501` are caught.
    The write words are `cp mv rsync ditto tar mkdir touch tee dd rm rmdir ln
    install unzip curl wget truncate mktemp clone worktree -delete` as whole
    words, and a `>` redirection to anything but `/dev/null`, `/dev/stdout`,
    `/dev/stderr` or `/dev/tty`. Both are gathered from the whole line and
    every part that runs: `$(...)`, `<(...)`, `>(...)` and backticks (not in
-   single quotes), `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc
-   whose line feeds `bash`, `sh`, `zsh`, `xargs`, `eval` or `source`. Because
+   single quotes), the inside of `$((...))` and `((...))` arithmetic,
+   `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc whose line feeds
+   `bash`, `sh`, `zsh`, `xargs`, `eval` or `source` anywhere on it
+   (`cat <<EOF | bash` included). A `<<` inside arithmetic is a shift, never a
+   heredoc. Because
    the two are gathered, not matched to each other, a `cd` into the shared
    folder, a wrapper (`timeout`, `xargs`, `find -exec`, `nice`, `stdbuf`), an
    option value, or a subshell cannot separate them.
@@ -107,7 +124,9 @@ below are conservative instead: when unsure, they refuse.
    `ditto . sub`, `tar -cf - . | tar -xf - -C sub`, `cp -R * sub/`,
    `find . -exec cp -R {} ./sub \;` (`{}` reads as `find`'s first folder).
    Every non-option word after the copier is a path; the destination is the
-   last one, or the `-t`/`--target-directory` value. Paths are resolved from
+   last one, or the `-t`/`--target-directory` value, which is then never also
+   a source. Variables are read as they stand at that copy in the line
+   (`D=sub; cp -R . "$D"; D=/x` is refused). Paths are resolved from
    every folder the line may be in: where it starts, and each `cd`/`pushd`
    target, in every combination with `$OLDPWD`. A `tar` pipeline is read from
    the folder the shell runs each side in, so `tar cf - . | (cd /dest && tar
@@ -126,8 +145,9 @@ below are conservative instead: when unsure, they refuse.
 - Inside the shared folders, the session's own folder,
   `/tmp/claude-<uid>/<any folder>/<session_id>/` (and its `/private` form),
   where `<session_id>` is the event's and matches `[A-Za-z0-9._-]+`; and the
-  folder the command starts in (the event's `cwd`), unless that folder is a
-  shared root itself.
+  folder the command starts in (the event's `cwd`), only when that folder lies
+  inside a shared root, below it: never the root itself, and never a folder
+  above one (`/`, `/tmp`, `/private/tmp`).
 - A command that only reads a shared folder (`ls`, `du`, `cat`, `grep`,
   `find` without `-delete`), and `mktemp` with no folder named.
 - Text in single quotes, which the shell never runs
@@ -212,8 +232,9 @@ does not disarm it, and the launchers' reduced environment never passes it.
   that volume and the size of the likely culprits (the task-resource
   `scratch/`, `/tmp/claude-<uid>`, and the run directory's parent, where runs
   accumulate, both at launch and when the watchdog fires), each with its own
-  `du -sk`, all started together under one 30-second deadline, so a slow one
-  leaves the others measured ("not measured in time" otherwise).
+  `du -sk`, all started together under one 30-second deadline; every one
+  that finished by then counts, so a slow one leaves the others measured
+  ("not measured in time" otherwise).
 - **While a run is live.** A watchdog thread, in the process that runs the
   review (the foreground run or the `--child` of `--detach`) and in
   `orch-control.py launch`, reads free space and the run directory's size
@@ -284,7 +305,10 @@ does not disarm it, and the launchers' reduced environment never passes it.
     (`orch-review.py sweep --state-dir <base>`); the launch waits for it at
     most 120 seconds, and a sweep still running finishes in the background
     (the manager's cleanup is safe to interrupt and resume), so one large or
-    locked task never holds a launch. A task whose lifecycle lock another
+    locked task never holds a launch. The sweep writes to
+    `<state dir>/sweep.log`, never to the launcher's stdout or stderr, so a
+    caller reading those does not wait for it; a sweep done in time has its
+    lines copied to the launcher's stderr. A task whose lifecycle lock another
     process holds is skipped as busy. It sweeps the tasks the two launchers
     make (task `review <run>` whose only lease, if any, is `orch-review`, and
     `configured-<role>` whose only lease is `configured-cli`), when the task's
@@ -323,6 +347,17 @@ three version fields, as in 0.18.0), so an installed copy updates with
 `claude plugin update` and `codex plugin add`.
 
 ## Settled
+
+- The guard is not a security boundary against deliberately obfuscated
+  commands (decided by the lead, the Claude opus coordinator, 2026-10-28). A
+  bypass that needs a command built on purpose to hide a write (a path
+  assembled from the output of another command, a variable set by an earlier
+  call, a program that writes files itself) is a follow-up, not a blocker.
+  Reason: the incident was an accident in an evidence command, and the forms
+  agents write are caught; a full shell model would never be complete. What
+  bounds such a bypass: the watchdog kills the run under 2 GiB free or past a
+  10 GiB run directory (G3), and each Codex child's `$TMPDIR` is inside the
+  run directory it measures (G2).
 
 - The guard is conservative, not an exact model of the shell (Full review of
   PR #55, 2026-10-29: the exact model failed open thirteen ways). A command

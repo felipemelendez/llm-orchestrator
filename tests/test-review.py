@@ -2633,6 +2633,25 @@ class ReviewTests(unittest.TestCase):
         scratch = self.home / ".cache/llm-orchestrator/task-resources/scratch"
         self.assertIn(f"{scratch}: 0.0 GiB", lines)
 
+    def test_disk_a_slow_du_never_drops_the_size_of_one_that_finished(self):  # codex-review-4
+        fake = [sys.executable, "-c", "import sys, time\np = sys.argv[-1]\nif p == 'slow':\n    time.sleep(5)\n"
+                "print('4\\t' + p)"]
+        with mock.patch.object(MOD, "DU", fake):
+            sizes = MOD.du_sizes(["slow", "fast"], seconds=1)
+        self.assertEqual(sizes, {"fast": 4096})
+
+    def test_disk_a_background_sweep_never_holds_the_launchers_output(self):  # codex-review-5
+        base = self.root / "sweep-base"
+        base.mkdir()
+        inner = ("import importlib.util, sys\n"
+                 f"s = importlib.util.spec_from_file_location('r', {str(SCRIPT)!r}); m = importlib.util.module_from_spec(s)\n"
+                 "s.loader.exec_module(m)\nm.SWEEP_SECONDS = 0.2\nm.sweep_argv = lambda base: ['sleep', '4']\n"
+                 f"m.prepare_launch({str(self.root / 'no-run')!r}, {str(base)!r})\n")
+        started = time.monotonic()
+        done = subprocess.run([sys.executable, "-c", inner], capture_output=True, text=True, timeout=30)
+        self.assertLess(time.monotonic() - started, 3, done.stderr)
+        self.assertIn("goes on in the background", done.stderr)
+
     def sandbox_task(self, manager, name, consumer="orch-review", hours=25, kind="copy"):
         """A task with one copy, last touched `hours` ago."""
         task = manager.start(self.project, name)

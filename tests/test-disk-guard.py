@@ -197,6 +197,49 @@ class DiskGuardTests(unittest.TestCase):
     def test_successive_git_directories_cannot_move_a_clone_out_of_sight(self):  # codex-review-10
         self.refuses(f"git -C {TEMP} -C pr clone https://example.invalid/y.git", ["shared temporary folder"])
 
+    # The rules the re-review of the first fix wave reproduced as failing open.
+    def test_a_heredoc_piped_to_a_shell_is_code(self):  # code-review-1
+        for command in (f"cat <<'EOF' | bash\nmkdir {TEMP}/pr\nEOF", "cat <<'EOF' | sh\ncp -R . ./sub\nEOF",
+                        f"cat <<EOF | xargs mkdir\n{TEMP}/pr\nEOF"):
+            with self.subTest(command=command):
+                self.refuses(command)
+
+    def test_the_dashless_shared_roots_are_guarded(self):  # code-review-2
+        for command in ("mkdir -p /tmp/claude/pr && cp -R . /tmp/claude/pr", "touch /private/tmp/claude/x"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        self.allows("mkdir -p /tmp/claudette/x")
+
+    def test_a_start_folder_above_a_shared_root_exempts_nothing(self):  # code-review-3
+        for cwd in ("/tmp", "/private/tmp", "/"):
+            with self.subTest(cwd=cwd):
+                self.refuses(f"cp -R ~/repo {TEMP}/x", ["shared temporary folder"], cwd=cwd)
+
+    def test_every_spelling_of_a_shared_path_is_normalized_and_resolved(self):  # code-review-4, codex-review-2
+        for command, cwd in ((f"mkdir /tmp/./claude-{UID}/pr", None), (f"mkdir //tmp/claude-{UID}/pr", None),
+                             (f"mkdir /tmp/claude-{UID}/x/../pr", None), (f"cd /tmp && mkdir claude-{UID}/pr", None),
+                             ("mkdir pr && cp -R ~/x pr", TEMP),
+                             (f"mkdir {'../' * 30}tmp/claude-{UID}/x", None)):
+            with self.subTest(command=command, cwd=cwd):
+                self.refuses(command, ["shared temporary folder"], cwd=cwd)
+
+    def test_a_copy_reads_its_variables_as_they_stand_at_the_copy(self):  # codex-review-3
+        self.refuses('D=sub; cp -R . "$D"; D=/outside', ["inside it"])
+        self.allows('D=/outside; cp -R . "$D"; D=sub')
+
+    def test_a_target_directory_is_never_also_a_source(self):  # code-review-7
+        for command in ("cp -R -t /out src", "cp -r -t build/ assets", "cp -R --target-directory=build assets"):
+            with self.subTest(command=command):
+                self.allows(command)
+        self.refuses("cp -R -t sub .", ["inside it"])
+
+    def test_arithmetic_keeps_its_commands_and_its_shifts_are_no_heredoc(self):  # code-review-8, codex-review-1
+        for command in (f"(( y = x << 2 ))\nmkdir {TEMP}/pr", f"echo $(( $(mkdir {TEMP}/pr) + 1 ))",
+                        f"echo $((1<<2))\nmkdir {TEMP}/pr"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        self.allows("echo $((1 << 4)) && echo done")
+
     def test_a_write_anywhere_in_a_command_naming_the_shared_folder_is_refused(self):  # Settled: conservative rule
         for command in (f"(cd {TEMP}); mkdir pr", f"cat {TEMP}/x.log > out.txt", f"ls {TEMP} && mkdir build"):
             with self.subTest(command=command):
