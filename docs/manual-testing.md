@@ -251,9 +251,9 @@ The heart of the system. Use a sandbox project (or a tiny throwaway feature in a
 ### 5.1 Setup
 
 ```bash
-mkdir -p ~/orch-test-feature && cd ~/orch-test-feature
-git init -q && git commit --allow-empty -q -m initial
-echo '{}' > package.json
+mkdir ~/orch-test-feature && cd ~/orch-test-feature \
+  && git init -q && git commit --allow-empty -q -m initial \
+  && echo '{}' > package.json
 ```
 
 Open a Claude Code session in this directory.

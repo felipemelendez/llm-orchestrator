@@ -56,26 +56,30 @@ ask them to confirm or correct. Before writing the configuration, confirm:
 ### 3. Write the confirmed JSON to a file in the repository's git folder
 
 Only after the user confirms. Write exactly what they agreed to. The file goes
-in the git folder, never in a temporary folder, which the disk guard refuses:
+in the git folder, never in a temporary folder, which the disk guard refuses,
+and has a name of its own for this init. Note the path it prints:
 
 ```bash
-CFG="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "$ROOT")/orch-cadence-config.json"
+CFG="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "$ROOT")/orch-cadence-config-$$.json"
 cat > "$CFG" <<'JSON'
 <the confirmed cadence.json, verbatim>
 JSON
+printf '%s\n' "$CFG"
 ```
 
 ### 4. Run the init
 
 ```bash
-CFG="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "$ROOT")/orch-cadence-config.json"
-bash "$CAD/cadence-init.sh" --root "$ROOT" --config "$CFG"; rm -f "$CFG"
+CFG="<the path step 3 printed>"
+bash "$CAD/cadence-init.sh" --root "$ROOT" --config "$CFG" && rm -f "$CFG"
 ```
 
-Add `--adopt` when the user says this project already has its own laws (it
-changes the report's wording and drops the placeholder reminder; nothing is
-overwritten either way). Add `--dry-run` when they asked to see the plan first —
-then stop and show them the plan.
+The file is removed only when the init succeeds; after a failure it stays, so
+the init can run again with it. Add `--adopt` when the user says this project
+already has its own laws (it changes the report's wording and drops the
+placeholder reminder; nothing is overwritten either way). Add `--dry-run` when
+they asked to see the plan first, and then leave out `&& rm -f "$CFG"` so the
+real run can use the same file — then stop and show them the plan.
 
 The script writes, in this order: `LAWS.md` and its two companions →
 `AGENTS.md` → `CLAUDE.md` → `.claude/settings.json` → `.githooks/` →

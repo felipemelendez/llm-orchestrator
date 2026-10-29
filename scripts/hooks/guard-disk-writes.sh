@@ -63,9 +63,11 @@ if command -v python3 >/dev/null 2>&1 && [[ -f "${HELPER}" ]]; then
 fi
 
 # Only the command is checked: the JSON string after the "command" key, up to its closing unescaped quote
-# (in valid JSON, "command" followed by : can only be a key). A newline in it is the two characters \n.
-FLAT=$(printf '%s' "${INPUT}" | LC_ALL=C tr -c '[:print:]' ' ' \
-  | LC_ALL=C sed -nE 's/.*"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' | sed 's/\\[nrt]/ /g')
+# (in valid JSON, "command" followed by : can only be a key). An event with no such string, cut off or
+# malformed, is checked whole. A newline in the text is the two characters \n.
+FLAT=$(printf '%s' "${INPUT}" | LC_ALL=C tr -c '[:print:]' ' ')
+COMMAND=$(printf '%s' "${FLAT}" | LC_ALL=C sed -nE 's/.*"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p')
+FLAT=$(printf '%s' "${COMMAND:-${FLAT}}" | sed 's/\\[nrt]/ /g')
 if LC_ALL=C grep -qiE '[$][{]?[#!]?TMPDIR([^A-Za-z0-9_]|$)|/tmp([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_])mktemp([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.-])claude-[0-9]+([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_])(cp|rsync|ditto|tar)([^A-Za-z0-9_]|$)' <<< "${FLAT}"; then
   echo "disk guard: refused: the guard's helper could not run, and the command copies or names the shared temporary area. Work in the clone or folder you were given, and keep copies and temporary files inside it." >&2
   exit 2

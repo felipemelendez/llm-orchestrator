@@ -114,6 +114,12 @@ REFUSED = [
     ("nested", "cp -R 2>/dev/null . ./sub", None), ("nested", "cp -R src . 9 >log", None),
     ("nested", "cp -R . sub >&2", None), ("nested", "cp -R src SRC/x", None),
     ("nested", "cp -R /var/folders/q/repo sub", "/private/var/folders/q/repo"),
+    # the second re-review (20261029-plugin55-closed2): rule 0 by plain run, a backslash-newline joins its halves,
+    # and case is ignored before /private is removed
+    ("escape", f"mkdir -p {OWN}/.'.'/.'.'/pr", None), ("escape", f'mkdir -p "{OWN}/x-$$"', None),
+    ("escape", f"mkdir -p {OWN}/.\\./.\\./pr", None), ("escape", f'echo "{OWN}/x" "$X"/..', None),
+    ("nested", "cp -R src sr\\\nc/x", None), ("nested", "cp -R /Private/Var/folders/q/repo sub", "/var/folders/q/repo"),
+    ("nested", "cp -R /PRIVATE/var/repo /var/repo/sub", None),
 ]
 
 # Ordinary work, and the session's own folder. (kind, command): "own" rows test rule 0.
@@ -130,7 +136,7 @@ ALLOWED = [
     ("work", "python3 tests/test-disk-guard.py"),
     ("own", f"ls {OWN}/scratchpad"), ("own", f"echo hi > {OWN}/scratchpad/a.txt"),
     ("own", f"mkdir -p {OWN}/x && cp -R src {OWN}/copy"), ("own", f"cp -R . /private{OWN}/copy"),
-    ("own", f"TMPDIR={OWN}/t codex exec 'review the diff'"), ("own", f'mkdir -p "{OWN}/x-$$"'),
+    ("own", f"TMPDIR={OWN}/t codex exec 'review the diff'"), ("own", f'echo "{OWN}/out $(cat {OWN}/status)"'),
     ("own", f"mkdir -p {OWN}/build/tmp"), ("own", f"ls {OWN}/claude-{UID}"),
     ("own", f"mkdir /TMP/CLAUDE-{UID}/{PROJECT}/{SESSION}/x"), ("own", f'cp notes.txt "{OWN}/a b/c.txt"'),
     ("work", "tar -czf a.tgz src\nls | grep tar"), ("work", "tar cf a.tar src\nprintf done | cat\ntar xf a.tar -C dest"),
@@ -153,12 +159,13 @@ class DiskGuardTests(unittest.TestCase):
         self.clone = self.root / "clone"
         self.clone.mkdir()
 
-    def hook(self, command, env=None, cwd=None, hook=HOOK, event=None):
+    def hook(self, command, env=None, cwd=None, hook=HOOK, event=None, raw=None):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd or self.clone),
                    "session_id": SESSION, "transcript_path": f"/Users/someone/.claude/projects/{PROJECT}/{SESSION}.jsonl",
                    **(event or {})}
         environment = {"PATH": os.environ["PATH"], "HOME": str(self.root / "home"), **(env or {})}
-        return subprocess.run([BASH, str(hook)], input=json.dumps(payload), capture_output=True, text=True,
+        return subprocess.run([BASH, str(hook)], input=json.dumps(payload) if raw is None else raw,
+                              capture_output=True, text=True,
                               env=environment, cwd=str(self.clone), timeout=20)
 
     def check_refused(self, rule):
@@ -216,6 +223,27 @@ class DiskGuardTests(unittest.TestCase):
                 if code:
                     self.assertIn("over 100,000 characters", result.stderr)
 
+    def test_rule_0_and_rule_3_every_command_is_decided_well_under_the_harness_timeout(self):
+        # Many session-folder occurrences in one long word, which a rescan made quadratic (closed2 code-review-1,
+        # codex-review-1): each is decided in one linear pass, under the latency budget.
+        for command in ("x" + f"={OWN}" * 1250 + "/..", "echo " + f"=/tmp/claude/p/{SESSION}" * 1700 + "; mkdir /tmp/blocked"):
+            with self.subTest(length=len(command)):
+                started = time.monotonic()
+                result = self.hook(command)
+                self.assertLess(time.monotonic() - started, 0.5)
+                self.assertEqual(result.returncode, 2, result.stderr)
+
+    def test_the_deadline_refuses_on_time_whatever_step_is_slow(self):
+        helper = load_helper()
+        real = helper.set_aside
+        helper.set_aside = lambda *args: (time.sleep(5), real(*args))[1]  # a step slowed past the deadline
+        for command, refused in (("cp -R src dist", True), (f"ls {T}", True), ("git status", False)):
+            with self.subTest(command=command):
+                started = time.monotonic()
+                reason = helper.decide_in_time(command, "/w", SESSION, None)
+                self.assertLess(time.monotonic() - started, helper.DEADLINE_SECONDS + 0.5)
+                self.assertEqual(bool(reason and "could not finish checking" in reason), refused, reason)
+
     def test_allowed_forms_run(self):
         self.check_allowed({"work", "own"})
 
@@ -252,6 +280,12 @@ class DiskGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command, hook=hook).returncode, 0)
 
+    def test_the_plain_fallback_checks_a_cut_off_event_whole(self):
+        hook = self.installed_copy()
+        result = self.hook("", hook=hook, raw='{"tool_input":{"command":"cd $TMPDIR && cp -R \\"$OLDPWD\\"/. .')
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(self.hook("", raw='{"tool_input":{"command":"cd $TMPDIR && cp -R . pr').returncode, 2)
+
     def test_the_plain_fallback_reads_only_the_command(self):
         hook = self.installed_copy()
         around = {"cwd": "/Users/someone/src/tar", "tool_input": {"command": "ls", "description": "List the tar files"},
@@ -281,6 +315,39 @@ class DiskGuardTests(unittest.TestCase):
         for page, block in blocks:
             with self.subTest(page=str(page.relative_to(ROOT)), block=block[:80]):
                 self.assertIsNone(decide(block, "/w", SESSION, None))
+
+    def run_block(self, page, heading, env, replace=()):
+        text = (ROOT / page).read_text()
+        block = re.search(re.escape(heading) + r".*?```bash\n(.*?)```", text, re.S).group(1)
+        for old, new in replace:
+            block = block.replace(old, new)
+        return subprocess.run([BASH, "-c", block], capture_output=True, text=True, timeout=30,
+                              env={"PATH": os.environ["PATH"], **env}, cwd=str(self.root))
+
+    def test_cadence_init_keeps_its_own_config_until_a_real_init_succeeds(self):
+        repo, cad = self.root / "repo", self.root / "cad"
+        repo.mkdir(), cad.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        env = {"ROOT": str(repo), "CAD": str(cad), "HOME": str(self.root)}
+        paths = [self.run_block("commands/cadence-init.md", "### 3.", env).stdout.strip() for _ in range(2)]
+        self.assertNotEqual(paths[0], paths[1], "each init has its own file")
+        self.assertTrue(all(Path(path).is_file() and ".git" in path for path in paths), paths)
+        self.assertIsNone(load_helper().decide(f'CFG="{paths[0]}"', "/w", SESSION, None))
+        for code, kept in ((1, True), (0, False)):  # a failed init keeps the file; a successful one removes it
+            (cad / "cadence-init.sh").write_text(f"exit {code}\n")
+            self.run_block("commands/cadence-init.md", "### 4.", env, [("<the path step 3 printed>", paths[0])])
+            self.assertEqual(Path(paths[0]).exists(), kept, code)
+        self.assertTrue(Path(paths[1]).exists(), "another init's file is never touched")
+
+    def test_the_manual_test_setup_stops_on_an_existing_folder(self):
+        home, work = self.root / "h", self.root / "w"
+        (home / "orch-test-feature").mkdir(parents=True), work.mkdir()
+        (home / "orch-test-feature/package.json").write_text("keep\n")
+        block = re.search(r"### 5.1 Setup.*?```bash\n(.*?)```", (ROOT / "docs/manual-testing.md").read_text(), re.S).group(1)
+        subprocess.run([BASH, "-c", block], capture_output=True, text=True, cwd=str(work), timeout=30,
+                       env={"PATH": os.environ["PATH"], "HOME": str(home)})
+        self.assertEqual((home / "orch-test-feature/package.json").read_text(), "keep\n")
+        self.assertEqual(sorted(os.listdir(work)), [], "nothing is set up in the folder the person was in")
 
     def test_the_message_names_the_session_folder_from_the_transcripts_own_folder(self):
         transcript = f"/Users/projects/.claude/projects/{PROJECT}/{SESSION}.jsonl"  # a home folder called projects

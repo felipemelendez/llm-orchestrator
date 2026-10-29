@@ -11,15 +11,18 @@ It reads the command as flat text and has no model of the shell. What it refuses
   2. a recursive copy whose paths are not spelled out, or whose destination is at or inside a source,
      and a `tar ... | ... tar` pipeline;
   3. a command over 100,000 characters that holds a copier or a rule-1 word.
-Everything else runs; the watchdog (G3) bounds what this list does not name.
+A real timer bounds the whole decision. Everything else runs; the watchdog (G3) bounds what this list does
+not name.
 """
 import json
 import os
 import re
 import shlex
+import signal
 import sys
 
 MAX_LENGTH = 100_000
+DEADLINE_SECONDS = 1.0  # far under the harness's 10 s hook timeout, at which the command would run unchecked
 LONG_WORDS = ("cp", "rsync", "ditto", "tar", "tmpdir", "/tmp", "mktemp", "claude-")  # rule 3, lower case
 SLASHES = re.compile(r"/(?:\.?/)+")
 OWN = "/session-folder"  # what the session's own folder becomes: absolute, and no rule-1 word
@@ -36,49 +39,40 @@ SPELLED_OUT = re.compile(r"[A-Za-z0-9._/+-]+")
 TARGET = re.compile(r"--target-directory(?:=(.*))?|-[A-Za-z]*?t(.*)")  # cp's -t value
 SEPARATORS = ";&|()<>`"
 FD_DIGITS = re.compile(r"(?<![^\s;&|()<>`])[0-9]+(?=[<>])")  # the 2 of 2>, never a separate 9 before >
-PATH_RUN = re.compile(r"[A-Za-z0-9._/+-]*")
+# A run of plain path characters ends plainly: at whitespace, the end, a separator, or a closing quote.
+PLAIN_RUN = r"([A-Za-z0-9._/+-]*)(?=$|[\s;&|()<>]|['\"`](?:$|[\s;&|()<>]))"
 
 
-def word_end(text, i, quote):
-    """Where the shell word that continues at `i` ends, reading quotes and backslashes; `quote` is open at `i`."""
-    while i < len(text):
-        c = text[i]
-        if c == "\\" and quote != "'":
-            i += 1
-        elif quote:
-            quote = None if c == quote else quote
-        elif c in "'\"`":
-            quote = c
-        elif c.isspace() or c in ";&|<>":
-            break
-        i += 1
-    return i
+class TimeUp(Exception):
+    pass
 
 
 def set_aside(text, session):
-    """Rule 0: (the text rule 1 reads, the text rule 2 reads). Each spelling of the session's own folder, at the
-    start of a word, leaves rule 1's text with the plain path characters after it, and is OWN in rule 2's text.
-    One whose word holds `..` anywhere stays as it is, so rule 1 refuses it."""
+    """Rule 0, by plain run: (the text rule 1 reads, the text rule 2 reads). The session's own folder, at the start
+    of a word, is set aside with the plain run after it when that run ends plainly and no `..` follows it anywhere
+    in the text: rule 1 does not see it, and rule 2 reads the folder as OWN. Anything else stays as it is."""
     if not session:
         return text, text
     folder = re.compile(r"(?i)(?<![^\s'\"`=;&|()<>])(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
-                        + re.escape(session) + r"(?![A-Za-z0-9._-])")
-    hidden, kept, last = [], [], 0
-    for match in folder.finditer(text):
-        before = text[match.start() - 1:match.start()]
-        end = word_end(text, match.end(), before if before and before in "'\"`" else None)
-        if match.start() < last or ".." in text[match.end():end]:
-            continue
-        run = PATH_RUN.match(text, match.end()).end()
-        hidden.append(text[last:match.start()] + " " + text[run:end])
-        kept.append(text[last:match.start()] + OWN + text[match.end():end])
-        last = end
+                        + re.escape(session) + r"(?![A-Za-z0-9._-])" + PLAIN_RUN)
+    dots, hidden, kept, last = text.rfind(".."), [], [], 0
+    for match in folder.finditer(text):  # one pass, left to right; each occurrence on its own
+        if match.start() > dots:
+            hidden += [text[last:match.start()], " "]
+            kept += [text[last:match.start()], OWN, match.group(1)]
+            last = match.end()
     return "".join(hidden) + text[last:], "".join(kept) + text[last:]
 
 
 def canonical(path):
     """A path as macOS's disk reads it: case ignored, and /private/var, /private/tmp, /private/etc as /var, /tmp, /etc."""
-    return re.sub(r"^/private(?=/(?:var|tmp|etc)(?:/|$))", "", path).lower()
+    return re.sub(r"^/private(?=/(?:var|tmp|etc)(?:/|$))", "", path.lower())
+
+
+def holds_words(command):
+    """Rule 3's plain substring test: a copier or a rule-1 word, in any case."""
+    lowered = command.lower()
+    return any(word in lowered for word in LONG_WORDS)
 
 
 def copies(words):
@@ -137,19 +131,16 @@ def copy_reason(name, args, cwd, changes_folder):
 
 def decide(command, cwd, session, hint):
     """The refusal for `command`, run from folder `cwd` by `session`, or None to let it run."""
+    command = command.replace("\\\n", "")  # a backslash-newline joins the two halves, as the shell does
     if len(command) > MAX_LENGTH:
-        lowered = command.lower()
-        if any(word in lowered for word in LONG_WORDS):
-            return ("a command over 100,000 characters that copies or names the shared temporary area. "
-                    "Split it into shorter commands")
-        return None
+        return ("a command over 100,000 characters that copies or names the shared temporary area. "
+                "Split it into shorter commands") if holds_words(command) else None
     seen, text = set_aside(SLASHES.sub("/", command), session)
     shared = SHARED.search(seen)
     if shared:
         return (f"the command names the shared temporary area ({shared.group(0)}). Read a file there with "
                 f"the Read tool; work in the clone or folder you were given, {cwd}; and put temporary files "
                 + (f"in your session's own folder, {hint}" if hint else "inside that folder"))
-    text = text.replace("\\\n", " ")
     for line in text.split("\n"):
         first = TAR.search(line)
         bar = line.find("|", first.end()) if first else -1
@@ -169,6 +160,22 @@ def decide(command, cwd, session, hint):
     return next(filter(None, (copy_reason(name, args, start, changes_folder) for name, args in copies(words))), None)
 
 
+def decide_in_time(command, cwd, session, hint):
+    """decide() under a real timer: past DEADLINE_SECONDS, a command holding a copier or a rule-1 word is refused
+    and any other runs, whatever step was slow."""
+    def expire(signum, frame):
+        raise TimeUp()
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, DEADLINE_SECONDS)
+    try:
+        return decide(command, cwd, session, hint)
+    except TimeUp:
+        return (f"a command the guard could not finish checking in {DEADLINE_SECONDS:g} s, and it copies or names "
+                "the shared temporary area. Split it into shorter commands") if holds_words(command) else None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+
+
 def main():
     event = json.loads(sys.stdin.read())
     command = (event.get("tool_input") or {}).get("command")
@@ -181,7 +188,7 @@ def main():
     folder, name = os.path.split(transcript) if isinstance(transcript, str) else ("", "")
     project = os.path.basename(folder) if session and name == f"{session}.jsonl" else None  # <project>/<session>.jsonl
     hint = f"/tmp/claude-{os.getuid()}/{project}/{session}/" if session and project else None
-    reason = decide(command, cwd, session, hint)
+    reason = decide_in_time(command, cwd, session, hint)
     if reason:
         print(f"disk guard: refused: {reason.replace(OWN, (hint or '<session folder>/').rstrip('/'))}.", file=sys.stderr)
         return 2

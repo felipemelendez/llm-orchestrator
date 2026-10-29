@@ -73,14 +73,20 @@ event (`sed`: the JSON string after the `"command"` key, to its closing
 unescaped quote; in valid JSON, `"command"` followed by `:` can only be a
 key), and `grep -E` refuses rule 1's words and any copier word (`cp`,
 `rsync`, `ditto`, `tar`) in it, because it cannot read rule 2. The event's
-folder and description are never read.
+folder and description are not read, unless the event holds no complete
+`"command"` string (cut off or malformed): then the whole event is checked.
 
 **The contract.** The hook reads the command as flat text. It has no model
 of the shell: no variable values, no `cd` tracking, no difference between
 code and data, no list of write words. What it refuses is the closed list
-below, and every step of it is linear in the command's length, so the
-harness's 10 s hook timeout, at which Claude Code would run the command
-unchecked, cannot be reached. `tests/test-hook-latency.sh` times it on a
+below, and every step of it is linear in the command's length. A real timer
+(`signal.setitimer`, 1 s) also bounds the whole decision, whatever step is
+slow: when it fires, the command is refused if it holds a copier or a rule-1
+word (rule 3's substring test) and runs otherwise. So the harness's 10 s hook
+timeout, at which Claude Code would run the command unchecked, cannot be
+reached. Rule 3's 100,000-character cutoff stays: the slowest command under
+it is decided in well under the 500 ms budget. `tests/test-hook-latency.sh`
+times it on a
 plain command, the incident, a 96,000-character line of copies and a 1.5 MB
 line (budget 500 ms each).
 
@@ -92,23 +98,32 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
 
 ### What it refuses
 
-0. **First, two normalizations.** `//` and `/./` become `/`. Then each
-   occurrence of the session's own folder,
+0. **First, three normalizations.** A backslash-newline is removed, which
+   joins its two halves as the shell does. `//` and `/./` become `/`. Then
+   the session's own folder is set aside by a plain-run rule, read once left
+   to right. An occurrence of
    `(/private)?/tmp/claude(-<digits>)?/<project>/<session id>`, matched in
-   any case and only at the start of a word (at the start of the text, or
-   after a space, a quote, `=` or one of ``;&|()<>` ``), is set aside: rule 1
-   sees neither the folder nor the plain path characters
-   (`A-Z a-z 0-9 . _ / + -`) right after it, so `<session folder>/build/tmp`
-   and `<session folder>/claude-501` are allowed. Anything later in the word
-   stays visible (`"<session folder>/x $(mkdir /tmp/claude-501/pr)"` is
-   refused). Rule 2 reads the folder as one fixed folder. The session id is
+   any case, is set aside together with the run of plain characters
+   (`A-Z a-z 0-9 . _ / + -`) after it, when all of these hold:
+   - it starts a word: at the start of the text, or after whitespace, a
+     quote, `=` or one of ``;&|()<>` ``;
+   - its run ends plainly: at whitespace, the end, one of `;&|()<>`, or a
+     quote that is itself followed by whitespace, the end or one of those
+     (a closing quote);
+   - no `..` follows it anywhere in the text.
+
+   Rule 1 then does not see the folder or its run, so
+   `<session folder>/build/tmp`, `<session folder>/claude-501` and
+   `echo "<session folder>/out $(cat <session folder>/status)"` are allowed.
+   Rule 2 reads the folder as one fixed folder. An exemption the rule cannot
+   read plainly is not granted: the occurrence stays visible and rule 1
+   refuses it (it fails closed). That covers a quote, a backslash or a `$`
+   that continues the run (`<session folder>/.'.'/pr`,
+   `<session folder>/.\./pr`, `"<session folder>/x-$$"`), and any `..`
+   after it (`mkdir "<session folder>/a b/../../pr"`). The session id is
    the event's `session_id`, when it matches `[A-Za-z0-9._-]+` and is not
    only dots; the project folder matches `[A-Za-z0-9._-]+` and is not `.` or
-   `..`. An occurrence is not set aside when its whole shell word, read with
-   its quotes and backslashes (`"<session folder>/a b/../../pr"` is one
-   word), holds `..`: rule 1 then refuses it
-   (`mkdir <session folder>/../../pr`). `/var/tmp/claude-501/...` is not the
-   session's folder.
+   `..`. `/var/tmp/claude-501/...` is not the session's folder.
 1. **The shared temporary area.** A command whose remaining text, anywhere
    (quotes, heredoc bodies and arithmetic included), holds any of these is
    refused, whether it reads or writes:
@@ -128,12 +143,12 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
    launch a child with its own temporary folder; its value is checked like
    any other text (`TMPDIR=/tmp/x codex exec` is refused for `/tmp`).
 2. **A recursive copy into itself.** A `tar … | … tar` pipeline on one line
-   (a `tar` word, then a `|`, then another `tar` word, read one line at a time
-   after backslash-newlines are joined) is refused: extract
+   (a `tar` word, then a `|`, then another `tar` word, read one line at a
+   time) is refused: extract
    with `-C` into a spelled-out folder, as two commands. When the text holds
    `cp`, `rsync` or `ditto` as a word, it is tokenized once with `shlex`
-   (POSIX rules; `;&|()<>` and the backtick are separators; a
-   backslash-newline joins lines and a newline separates commands; a file
+   (POSIX rules; `;&|()<>` and the backtick are separators; a newline
+   separates commands; a file
    descriptor's digits written against `<` or `>`, the `2` of `2>`, are
    dropped first, but a separate `9 >` keeps its `9`). A
    tokenizer error (quotes that do not close) refuses. A copy is a token
@@ -192,7 +207,10 @@ relative path ending in a `tmp` folder (`rm -rf build/tmp`),
 `tar cf - src | (cd /dest && tar xf -)`, and a heredoc with an unclosed
 apostrophe on a line that holds a copier word
 (`cat > notes.md <<'EOF'` … `don't cp -R . sub`; write such a file with
-the Write tool). Each refusal says what to do instead.
+the Write tool). Under the session's own folder: a `$`, quote or backslash
+inside a path (`"<session folder>/x-$$"`), and any `..` later in a command
+that names the folder (`cd <session folder>/x && cd ..`). And
+`rsync --version`. Each refusal says what to do instead.
 
 **Residual gaps, by design.** A variable or symlink made by an earlier
 command (`D=/tmp/claude-501` in one call, `mkdir "$D/pr"` in the next); a
