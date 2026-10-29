@@ -127,6 +127,10 @@ REFUSED = [
     ("escape", f'mkdir -p {OWN}" "x && echo data > {OWN}" "x/f', None),
     ("escape", f'echo "{OWN}/out $(cat {OWN}/status)"', None), ("escape", f'cp notes.txt "{OWN}/a b/c.txt"', None),
     ("escape", f"mkdir '{OWN}/x\"", None), ("escape", f'mkdir "$(true){OWN}/a b/."."/."."/pr"', None),
+    # the fourth re-review (20261029-plugin55-closed4): rule 0 sets aside two shapes only, quotes and all
+    ("nested", f"echo '{OWN}/a' ; cp -R . ./sub ; echo '{OWN}/b'", None),
+    ("escape", f'mkdir -p /var"{OWN}/pr"', None), ("escape", f"mkdir -p /var'{OWN}/pr'", None),
+    ("escape", f'ls "{OWN}/x"y', None), ("escape", f"ls {OWN}/x'y'", None),
 ]
 
 # Ordinary work, and the session's own folder. (kind, command): "own" rows test rule 0.
@@ -144,7 +148,7 @@ ALLOWED = [
     ("own", f"ls {OWN}/scratchpad"), ("own", f"echo hi > {OWN}/scratchpad/a.txt"),
     ("own", f"mkdir -p {OWN}/x && cp -R src {OWN}/copy"), ("own", f"cp -R . /private{OWN}/copy"),
     ("own", f"TMPDIR={OWN}/t codex exec 'review the diff'"), ("own", f'echo "{OWN}/out" "$(cat {OWN}/status)"'),
-    ("own", f"cat '{OWN}/notes.md'"), ("own", f"mkdir -p {T}/repo..backup/{SESSION}/out"), ("own", f"ls {OWN}/a..b"),
+    ("own", f"cat '{OWN}/notes.md'"), ("own", f"cp -R src '{OWN}/copy'"), ("own", f'cp -R src "{OWN}/copy"'), ("own", f"mkdir -p {T}/repo..backup/{SESSION}/out"), ("own", f"ls {OWN}/a..b"),
     ("own", f"mkdir -p {OWN}/build/tmp"), ("own", f"ls {OWN}/claude-{UID}"),
     ("own", f"mkdir /TMP/CLAUDE-{UID}/{PROJECT}/{SESSION}/x"),
     ("work", "tar -czf a.tgz src\nls | grep tar"), ("work", "tar cf a.tar src\nprintf done | cat\ntar xf a.tar -C dest"),
@@ -241,6 +245,11 @@ class DiskGuardTests(unittest.TestCase):
                 result = self.hook(command)
                 self.assertLess(time.monotonic() - started, 0.5)
                 self.assertEqual(result.returncode, 2, result.stderr)
+        # A long run of quotes and backslashes, which a `..` pattern reading them made quadratic (closed4 code-review-2).
+        started = time.monotonic()
+        result = self.hook('printf %s "' + '\\"' * 40000 + '" > notes.json; cp -R src dist')
+        self.assertLess(time.monotonic() - started, 0.5)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_the_deadline_refuses_on_time_whatever_step_is_slow(self):
         helper = load_helper()

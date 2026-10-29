@@ -105,36 +105,37 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
    `#` comment ends at the newline, and the guard does not decide which
    applies); the command is refused if either reading is. `//` and `/./`
    become `/`. Then
-   the session's own folder is set aside by a plain-run rule, read once left
-   to right. An occurrence of
+   the session's own folder is set aside in exactly two shapes, matched in
+   one pass, left to right. Its occurrence is
    `(/private)?/tmp/claude(-<digits>)?/<project>/<session id>`, matched in
-   any case, is set aside together with the run of plain characters
-   (`A-Z a-z 0-9 . _ / + -`) after it, when all of these hold:
-   - it starts a word: right after a `'` or `"`, or at the start of the
-     text, or after whitespace, `=` or one of ``;&|()<>` ``;
-   - its run ends plainly: when the quote opened it, at that same quote
-     character followed by whitespace, the end or a separator; when it is
-     unquoted, at whitespace, the end or one of ``;&|()<>` ``. Any other
-     character after the run, another quote included, means nothing is set
-     aside;
-   - no `..` path component follows its start anywhere in the text: `..`
-     between `/`, whitespace, quotes or separators, its dots perhaps split by
-     quotes or a backslash (`."."`, `.\.`), which the shell joins. A `..`
-     inside a name (`repo..backup`) does not count.
+   any case, followed by its plain run (`A-Z a-z 0-9 . _ / + -`):
+   - **bare:** the occurrence and its run, with a boundary before (the
+     start, whitespace, `=` or one of ``;&|()<>` ``) and after (the end,
+     whitespace or one of those separators);
+   - **quoted:** a `'` or `"` with a boundary before it, the occurrence and
+     its run, the same quote again, and a boundary after it.
+
+   The span is set aside only when no `..` path component follows its start,
+   read after every `'`, `"` and `\` is removed (one pass), so dots split by
+   quotes or a backslash (`."."`, `.\.`) count; a `..` inside a name
+   (`repo..backup`) does not. The whole span, its quotes included, leaves
+   the text rule 1 reads, and becomes one fixed folder plus the run in the
+   text rule 2 reads, so quotes always stay balanced. Every other shape is
+   not set aside.
 
    Rule 1 then does not see the folder or its run, so
    `<session folder>/build/tmp`, `<session folder>/claude-501`,
    `'<session folder>/x'` and
    `echo "<session folder>/out" "$(cat <session folder>/status)"` are
    allowed.
-   Rule 2 reads the folder as one fixed folder. An exemption the rule cannot
-   read plainly is not granted: the occurrence stays visible and rule 1
-   refuses it (it fails closed). That covers a quote, a backslash or a `$`
-   that continues the run (`<session folder>/.'.'/pr`,
-   `<session folder>/.\./pr`, `"<session folder>/x-$$"`), a quoted run that
-   does not end at its own quote (`"<session folder>/a b/c.txt"`,
-   `<session folder>" "x`), and any `..` component after it
-   (`mkdir "<session folder>/a b/../../pr"`). The session id is
+   An exemption in any other shape is not granted: the occurrence stays
+   visible and rule 1 refuses it (it fails closed). That covers a quote, a
+   backslash or a `$` that continues the run (`<session folder>/.'.'/pr`,
+   `<session folder>/.\./pr`, `"<session folder>/x-$$"`, `"<session folder>/x"y`),
+   a quoted run that does not end at its own quote
+   (`"<session folder>/a b/c.txt"`, `<session folder>" "x`), a quote that
+   continues an earlier part of the word (`/var"<session folder>/pr"`), and
+   any `..` component after it (`mkdir "<session folder>/a b/../../pr"`). The session id is
    the event's `session_id`, when it matches `[A-Za-z0-9._-]+` and is not
    only dots; the project folder matches `[A-Za-z0-9._-]+` and is not `.` or
    `..`. `/var/tmp/claude-501/...` is not the session's folder.

@@ -8,9 +8,8 @@ its plain text check. Spec: docs/specs/disk-guard.md, G1.
 It reads the command as flat text and has no model of the shell. What it refuses is a closed list:
   3. first, on the command as given: one over 100,000 characters that holds a copier or a rule-1 word;
   then rules 0 to 2 on two readings, a backslash-newline removed and read as a newline, refusing if either does:
-  0. `//` and `/./` become `/`, and the session's own folder is set aside with the plain run after it, when it
-     starts a word, its run ends at whitespace, a separator, the end or the quote that opened it, and no `..`
-     component follows it;
+  0. `//` and `/./` become `/`, and the session's own folder is set aside with the plain run after it, bare or
+     in a pair of the same quote, with a boundary on each side, when no `..` component follows it;
   1. any mention of the shared temporary area: $TMPDIR, /tmp, mktemp, claude-<digits>;
   2. a recursive copy whose paths are not spelled out, or whose destination is at or inside a source,
      and a `tar ... | ... tar` pipeline.
@@ -42,12 +41,12 @@ SPELLED_OUT = re.compile(r"[A-Za-z0-9._/+-]+")
 TARGET = re.compile(r"--target-directory(?:=(.*))?|-[A-Za-z]*?t(.*)")  # cp's -t value
 SEPARATORS = ";&|()<>`"
 FD_DIGITS = re.compile(r"(?<![^\s;&|()<>`])[0-9]+(?=[<>])")  # the 2 of 2>, never a separate 9 before >
-# Rule 0's occurrence starts a word: after the quote that opens it (group 1), or after the start, whitespace, `=`
-# or a separator. Its plain run ends at that same quote, or, unquoted, at whitespace, a separator or the end.
-WORD_START = r"(?:(?<=(['\"]))|(?<![^\s=;&|()<>`]))"
-PLAIN_RUN = r"([A-Za-z0-9._/+-]*)(?(1)\1)(?=$|[\s;&|()<>`])"
-# A `..` path component, its dots perhaps split by quotes or a backslash (`."."`, `.\.`), which the shell joins.
-DOTS = re.compile(r"(?<![^/\s'\"=;&|()<>`])['\"\\]*\.['\"\\]*\.['\"\\]*(?![^/\s'\"`;&|()<>])")
+# Rule 0's two shapes: a bare occurrence, or one inside a pair of the same quote, each with a boundary (the start,
+# whitespace, `=` or a separator) before it and one (the end, whitespace or a separator) after it.
+BOUND_BEFORE = r"(?<![^\s=;&|()<>`])"
+BOUND_AFTER = r"(?=$|[\s;&|()<>`])"
+DOTS = re.compile(r"(?<![^/\s=;&|()<>`])\.\.(?![^/\s;&|()<>`])")  # a `..` path component
+UNQUOTE = str.maketrans("", "", "'\"\\")
 
 
 class TimeUp(Exception):
@@ -55,14 +54,16 @@ class TimeUp(Exception):
 
 
 def set_aside(text, session):
-    """Rule 0, by plain run: (the text rule 1 reads, the text rule 2 reads). The session's own folder, at the start
-    of a word, is set aside with the plain run after it when that run ends plainly and no `..` component follows
-    it anywhere in the text: rule 1 does not see it, and rule 2 reads the folder as OWN. Anything else stays."""
+    """Rule 0, in two shapes: (the text rule 1 reads, the text rule 2 reads). The session's own folder and the plain
+    run after it, bare or inside a pair of the same quote, with a boundary on each side, is set aside when no `..`
+    component follows its start once quotes and backslashes are removed. The whole span, its quotes included,
+    leaves rule 1's text and is OWN plus the run in rule 2's, so quotes stay balanced. Every other shape stays."""
     if not session:
         return text, text
-    folder = re.compile(r"(?i)" + WORD_START + r"(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
-                        + re.escape(session) + r"(?![A-Za-z0-9._-])" + PLAIN_RUN)
-    dots = max((match.start() for match in DOTS.finditer(text)), default=-1)
+    folder = re.compile(r"(?i)" + BOUND_BEFORE + r"(['\"]?)(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
+                        + re.escape(session) + r"(?![A-Za-z0-9._-])([A-Za-z0-9._/+-]*)\1" + BOUND_AFTER)
+    kept_at = [i for i, c in enumerate(text) if c not in "'\"\\"]  # where each unquoted character came from
+    dots = max((kept_at[match.start()] for match in DOTS.finditer(text.translate(UNQUOTE))), default=-1)
     hidden, kept, last = [], [], 0
     for match in folder.finditer(text):  # one pass, left to right; each occurrence on its own
         if match.start() > dots:

@@ -79,10 +79,7 @@ the init can run again with it. Add `--adopt` when the user says this project
 already has its own laws (it changes the report's wording and drops the
 placeholder reminder; nothing is overwritten either way). Add `--dry-run` when
 they asked to see the plan first, and then leave out `&& rm -f "$CFG"` so the
-real run can use the same file — then stop and show them the plan. A retry,
-or a dry run never followed by a real run, leaves its
-`orch-cadence-config-<n>.json` in the git folder; remove it by hand (a
-follow-up will clean these up in `cadence-init.sh`).
+real run can use the same file — then stop and show them the plan.
 
 The script writes, in this order: `LAWS.md` and its two companions →
 `AGENTS.md` → `CLAUDE.md` → `.claude/settings.json` → `.githooks/` →
