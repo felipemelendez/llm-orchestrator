@@ -1,13 +1,14 @@
 # Spec: review agents cannot fill the disk
 
-Status: built 2026-10-28 (release 0.19.0), for review. Maintained alongside
+Status: built 2026-10-28 (release 0.19.0); G1 rebuilt as a closed list on
+2026-10-29; for review. Maintained alongside
 `scripts/hooks/guard-disk-writes.sh`, its decision helper
 `scripts/lib/orch-disk-guard.py`, `scripts/lib/orch-review.py`,
 `scripts/lib/orch-control.py` and `scripts/lib/orch-task-resources.py`.
 Tests: `tests/test-disk-guard.py`, the `test_disk_*` cases in
 `tests/test-review.py`, the disk cases in `tests/test-policy.py` and
-`tests/test-task-resources.py`, and the guard's two rows in
-`tests/test-hook-latency.sh`.
+`tests/test-task-resources.py`, the guard's four rows in
+`tests/test-hook-latency.sh`, and its install probe in `tests/test-install.sh`.
 
 ## What happened
 
@@ -63,158 +64,141 @@ building). They decide the shape of G1 and G2.
 A `PreToolUse` hook on `Bash`: `scripts/hooks/guard-disk-writes.sh`, a thin
 bash entry that hands the event to `scripts/lib/orch-disk-guard.py`, run as
 `python3 -I` so nothing beside it or in the environment is imported. Exit 0
-allows; exit 2 refuses with the reason on stderr. Like
+lets the command run; exit 2 refuses it, with the reason on stderr. Like
 `guard-destructive-git.sh` it never uses `set -e`, and every path ends in
-exit 0 or exit 2. It is timed in `tests/test-hook-latency.sh` on a plain
-command, on a long command it reads and refuses, and on a line of 150
-`cd dN && echo a b c` steps before a shared write and on a line of 150
-`cd dN && cp -R "$OLDPWD"/xN yN` steps (budget 500 ms each). Every path is
-resolved with one lookup per folder not seen before. The helper also keeps its
-own deadline of 2 s, which the hook's own environment may lower
-(`ORCH_DISK_GUARD_SECONDS`) but never raise: past it, a line holding any copy
-or write word is refused ("a command too long to check within 2 s, and it
-copies or writes; split it into shorter commands"), and a line holding none is
-allowed. So the harness's 10 s hook timeout, at which Claude Code would run the
-command unchecked, is never reached, whatever the form. Without
-`python3`, or when the helper exits with anything but 0 or 2, a plain text
-check refuses any command naming `/tmp/claude-` or `$TMPDIR`/`${TMPDIR`
-together with a write word.
+exit 0 or exit 2. When `python3` is missing, or the helper exits with anything
+but 0 or 2 (an event it cannot read, a bug; its own output is then dropped),
+a plain text check runs instead: `grep -E` refuses rule 1's words and any
+copier word (`cp`, `rsync`, `ditto`, `tar`), because it cannot read rule 2.
 
-The first version modelled the shell exactly (option arities per command, the
-current folder after each `cd`, the order of substitutions). The Full review
-of PR #55 reproduced it failing open thirteen ways on ordinary syntax
-(`cp -f -R . ./sub`, `rm -r /tmp/claude-501/pr`, `curl -sSLo /tmp/...`,
-`cd $TMPDIR && true $(mkdir pr)`, `timeout 600 cp -R . ./sub`,
-`(cd /); mkdir pr`, `echo $((1<<2))` before a line it then skipped). Each was a
-gap in the model, and a model of the shell always has another. The rules
-below are conservative instead: when unsure, they refuse.
+**The contract.** The hook reads the command as flat text. It has no model
+of the shell: no variable values, no `cd` tracking, no difference between
+code and data, no list of write words. What it refuses is the closed list
+below, and every step of it is linear in the command's length, so the
+harness's 10 s hook timeout, at which Claude Code would run the command
+unchecked, cannot be reached. `tests/test-hook-latency.sh` times it on a
+plain command, the incident, a 96,000-character line of copies and a 1.5 MB
+line (budget 500 ms each).
 
-**The contract.** The hook catches the forms agents actually write, by
-accident or in evidence scripts. Anything it cannot read with confidence
-that copies, or that writes near a shared root, is refused: it fails closed.
-It is not a security boundary against a command built on purpose to hide a
-write (Settled). The backstop for whatever it misses is the watchdog (G3:
-the 2 GiB free-space floor and the 10 GiB run-directory cap, which kill the
-run) and the per-launch temporary folder (G2), which keeps a Codex child's
-`$TMPDIR` inside the run directory the watchdog measures.
+A form outside the list runs. That is the specified behaviour, not a
+defect. Its bound is G3 (the 2 GiB free-space floor, which kills the run, and
+the 10 GiB run-directory cap for Codex children, whose `$TMPDIR` is inside
+the run directory) and G2's prompt rule. The hook is not a security boundary
+(Settled).
 
 ### What it refuses
 
-1. **Rule A, the shared temporary folder.** A command that names a shared
-   folder outside the session's own folder and holds a write word anywhere is
-   refused. The shared folders are `/tmp/claude`, `/tmp/claude-*`, a glob
-   right after `claude` (`/tmp/claude*/pr`, `claude?`, `claude[...]`), and their
-   `/private` forms (any user), `$TMPDIR` in any spelling (`$TMPDIR`,
-   `${TMPDIR}`, and `${TMPDIR` with any operator: `:-` `-` `:=` `=` `:?` `?`
-   `:+` `+` `#` `%` `/`), and the hook's own `$TMPDIR` unless it is
-   `/` or the home folder. Every word, the value after `=` (`D=`, `of=`,
-   `--output=`), an absolute path attached to an option (`-o/tmp/...`), and
-   an absolute path inside a longer word is a path candidate. Each is
-   normalized before it is matched (`//`, `/./`, `..` and symlinks resolved),
-   and a relative one is resolved from every folder the line may be in (where
-   it starts and each `cd`/`pushd` target), so `cd /tmp && mkdir
-   claude-501/pr` and `mkdir pr` started in `/tmp/claude-501` are caught.
-   The hook knows only `$HOME`, `$TMPDIR` (shared, in any spelling), and
-   `$PWD` and `$(pwd)`, which it reads as each of those folders
-   (`cd /tmp && mkdir "$PWD/claude-501/pr"` is caught). Every other part is
-   unknown: a variable the line sets, `$OLDPWD`, `$$`, `$RANDOM`, `$1`, any
-   other substitution. A word with an unknown part names a shared folder when
-   its literal text before that part, read from any of those folders, lies in
-   a shared folder or could begin one (`mkdir "$TMPDIR/review-$$"`,
-   `/tmp/claude-$UID/pr`, `/tmp/$X/pr`, `/private/tmp/$X`, and `"$X/pr"` after
-   `cd /tmp`), or when a part after it is a shared root's own name
-   (`$R/claude-501/x`). The session's own folder stays allowed
-   (`<session folder>/x-$$`).
-   The write words are `cp mv rsync ditto tar mkdir touch tee dd rm rmdir ln
-   install unzip curl wget truncate mktemp clone worktree -delete` as whole
-   words, and a `>` redirection to anything but `/dev/null`, `/dev/stdout`,
-   `/dev/stderr` or `/dev/tty`. Both are gathered from the whole line and
-   every part that runs: `$(...)`, `<(...)`, `>(...)` and backticks (not in
-   single quotes), the inside of `$((...))` and `((...))` arithmetic,
-   `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc whose line,
-   read without its `#` comment, feeds `bash`, `sh`, `zsh`, `xargs`, `eval` or
-   `source` anywhere on it, or runs a command whose name is not literal text
-   (`cat <<EOF | bash`, `| $(command -v bash)` and `| "$SHELL"` included;
-   `cat > notes.md <<'EOF'  # for the bash step` is data). Code inside
-   `$(...)`, backticks and arithmetic is checked by the same rules; since every
-   variable the line sets is unknown, where it runs in the line does not
-   matter. Inside arithmetic, `<`, `>`, `<<`
-   and `>>` compare and shift, never redirect or open a heredoc
-   (`echo $((size >> 10))` writes nothing); a `$(...)` in it keeps its own.
-   A `((` whose parentheses do not close as `))` (`((cd x) )`) is two
-   subshells, as bash reads it. Because
-   the two are gathered, not matched to each other, a `cd` into the shared
-   folder, a wrapper (`timeout`, `xargs`, `find -exec`, `nice`, `stdbuf`), an
-   option value, or a subshell cannot separate them.
-2. **Rule B, a copy into itself.** `cp` with `-R`, `-r` or `-a` (in any
-   cluster, anywhere after `cp`), `rsync`, `ditto` (anywhere in the line, so
-   behind any wrapper), and a `tar -c ... | tar -x ...` pipeline, when a
-   destination resolves at or inside a source: `cp -R . ./sub`,
-   `cp -f -R . ./sub`, `cp -r -T . sub`, `rsync -a ./ ./backup/`,
-   `ditto . sub`, `tar -cf - . | tar -xf - -C sub`, `cp -R * sub/`,
-   `find . -exec cp -R {} ./sub \;` (`{}` reads as `find`'s first folder).
-   Every non-option word after the copier is a path; the destination is the
-   last one, or cp's `-t`/`--target-directory` value (`-t dir`, `-Rt dir`,
-   `-tdir`, `--target-directory=dir`), which is then never also a source;
-   rsync's `-t` keeps times, so `rsync -a -t ./ ./backup/` is refused.
-   **Each source and destination must be one the hook can read for certain**:
-   literal text, `~`, `$HOME`, `$TMPDIR`, and `$PWD`, `$(pwd)` or a relative
-   path only while every `cd`/`pushd` before it had a literal target (after
-   `cd "$D"`, `cd -` or `popd` the folder is unknown). Otherwise the copy is
-   refused: `cp -R . backup-$$`, `D=$PWD/sub; cp -R . "$D"`,
-   `cp -R "$OLDPWD"/x y`, `tar cf - . | tar xf - -C "./copy-$$"`,
-   `T=$(mktemp -d) && cp -R src "$T/x"`, `cd "$D" && cp -R ~/repo .`. A remote
-   operand (`host:path`) is not a local path and is not read. Paths are
-   resolved from every folder the line may be in: where it starts, and each
-   literal `cd`/`pushd` target. A `tar` pipeline is read from the folder the
-   shell runs each side in, so `tar cf - . | (cd /dest && tar xf -)` is
-   allowed.
-3. A command nested more than four levels deep (`$(...)`, `bash -c` and
-   `eval` each count) is refused as not checkable.
-4. A command it cannot tokenize (unbalanced quotes outside a heredoc) is
-   refused when it holds a copier or `tar`, or names a shared folder together
-   with a write word.
+0. **First, two normalizations.** `//` and `/./` become `/`. Then each
+   occurrence of the session's own folder,
+   `(/private)?/tmp/claude(-<digits>)?/<project>/<session id>` followed by
+   the rest of its path (up to a space or one of ``;&|()<>` ``), is set aside:
+   rule 1 does not see it, and rule 2 reads it as one fixed folder. The
+   session id is the event's `session_id`, when it matches
+   `[A-Za-z0-9._-]+`; the project folder matches `[A-Za-z0-9._-]+`. An
+   occurrence whose rest holds `..` is not set aside
+   (`mkdir <session folder>/../../pr` is refused by rule 1).
+1. **The shared temporary area.** A command whose remaining text, anywhere
+   (quotes, heredoc bodies and arithmetic included), holds any of these is
+   refused, whether it reads or writes:
+   - a reference to `$TMPDIR`: `$TMPDIR`, and `${TMPDIR` with any operator
+     or none (`${TMPDIR}`, `${TMPDIR-/tmp}`, `${TMPDIR:?}`, `${#TMPDIR}`,
+     `${!TMPDIR}`);
+   - `/tmp` as a path component (not followed by a letter, digit, `_`, `.`
+     or `-`), which covers `/private/tmp`, `//tmp`, `/tmp/claude*`,
+     `/tmp/claude` and `/tmp/{claude-501,x}`;
+   - the word `mktemp`;
+   - `claude-<digits>` as a path component or a bare word
+     (`cd /tmp && mkdir claude-501/pr`, `cd /; cd tmp; mkdir claude-501/pr`).
 
-### What it allows
-
-- Everything that does not name a shared folder and copies nothing into
-  itself: copies and writes in the clone or project, and in a review's run
-  directory, which `run` already keeps outside every temporary folder (R1).
-- Inside the shared folders, the session's own folder,
-  `/tmp/claude-<uid>/<any folder>/<session_id>/` (and its `/private` form),
-  where `<session_id>` is the event's and matches `[A-Za-z0-9._-]+`; and the
-  folder the command starts in (the event's `cwd`), only when that folder lies
-  inside a shared root, below it: never the root itself, and never a folder
-  above one (`/`, `/tmp`, `/private/tmp`).
-- A command that only reads a shared folder (`ls`, `du`, `cat`, `grep`,
-  `find` without `-delete`), and `mktemp` with no folder named.
-- Text in single quotes, which the shell never runs
-  (`printf %s '$(mkdir /tmp/claude-501/pr)'`, `grep -rn 'mkdir /tmp/...' .`).
-- A heredoc that is data (`cat > notes.md <<'EOF'`, `git commit -F - <<EOF`):
-  its body is read only for names of a shared folder, so text with
-  apostrophes or the words cp and mkdir in it is fine.
-
-A path held in a variable is not read as a value (a variable set by an
-earlier command or by the line, `D=$(mktemp -d)`): a copy using one is
-refused, and a write using one counts only when its literal text could name a
-shared folder. A symlink made earlier is followed only when it is on disk as
-the hook runs, and programs that write files themselves (python, node, tests)
-are not seen. These limits are stated in the hook's header.
-
-### The message
-
-`disk guard: refused: <what>, e.g. "cp copies <src> into <dst>, a folder
-inside it, which never ends" / "mkdir in a command that names the shared
-temporary folder (/tmp/claude-501/pr)".` then `Work in the clone or folder
-you were given at <cwd>: run every command, evidence script and experiment
-there, and keep copies and temporary files inside it or in your session
-folder <folder>. Never copy, clone or extract it into itself, into $TMPDIR or
-/tmp/claude-*, or into a parent folder. A command that only reads the shared
-folder runs if it has no write in the same line.`
+   Paths and names are matched without regard to case, as macOS's disk
+   ignores it; the variable name `TMPDIR` is matched as written. A plain
+   assignment `TMPDIR=<path>` is not a reference, so an orchestrator can
+   launch a child with its own temporary folder; its value is checked like
+   any other text (`TMPDIR=/tmp/x codex exec` is refused for `/tmp`).
+2. **A recursive copy into itself.** A `tar … | … tar` pipeline on one line
+   (a `tar` word, then a `|`, then another `tar` word) is refused: extract
+   with `-C` into a spelled-out folder, as two commands. When the text holds
+   `cp`, `rsync` or `ditto` as a word, it is tokenized once with `shlex`
+   (POSIX rules; `;&|()<>` and the backtick are separators; a
+   backslash-newline joins lines and a newline separates commands). A
+   tokenizer error (quotes that do not close) refuses. A copy is a token
+   whose name after the last `/`, in any case, is `cp`, `rsync` or `ditto`;
+   its arguments are the tokens after it, up to the next separator or copier
+   (a digit just before a redirection, the `2` of `2>`, is dropped). It is
+   recursive when it is a `cp` with `r`, `R` or `a` in any short-option
+   cluster, or with `--recursive` or `--archive`, and every `rsync` or
+   `ditto`. Its operands are the arguments that do not start with `-`; the
+   destination is cp's `-t` value (`-t dir`, `-tdir`, `-Rt dir`,
+   `--target-directory[=]dir`) or else the last operand, and the others are
+   the sources. A separate option value counts as an operand
+   (`rsync -e ssh` makes `ssh` a source): it can only refuse more. A
+   recursive copy is refused when:
+   - an operand is not made only of `A-Z a-z 0-9 . _ / + -`: a `$`, `~`, `{`,
+     backtick, `:`, `*`, `?`, `[`, `=`, `\`, space or any other character
+     refuses;
+   - an operand is relative and the text also holds `cd`, `pushd` or `popd`
+     as a word;
+   - it has a destination and no source on the line (`ls | xargs cp -R -t
+     sub`);
+   - the destination, resolved with `normpath(join(cwd, op))` from the
+     event's `cwd`, equals or lies inside a source (`cp -R . ./sub`,
+     `cp -r .. sub`, `rsync -a ./ ./backup/`, `ditto . sub`).
+3. **Too long.** A command longer than 100,000 characters is refused when
+   it holds, as a plain substring in any case, `cp`, `rsync`, `ditto`, `tar`,
+   `tmpdir`, `/tmp`, `mktemp` or `claude-`, and runs otherwise. This test
+   comes before anything else.
 
 The person's own override, as with `ORCH_ALLOW_DESTRUCTIVE_GIT`:
 `ORCH_ALLOW_TEMP_WRITES=1` in the hook's own environment. An inline prefix
 does not disarm it, and the launchers' reduced environment never passes it.
+
+### What it allows
+
+Everything else: copies and writes in the clone or project and in a review's
+run directory, which `run` keeps outside every temporary folder (R1)
+(`cp -R src dist`, absolute-path copies, `mkdir -p build && cp -r scripts
+build/`, `tar -czf out.tgz src`, `cat README.md > notes.md`, `rm -rf build`);
+reads and writes under the session's own folder; `claude --model
+claude-opus-4-1 -p hi`; `TMPDIR=<session folder>/t codex exec …`; a notes
+heredoc that mentions cp or mkdir without a recursive copy in it.
+
+**Over-refusals, on purpose.** The list refuses some commands that write
+nothing to the shared area or into themselves: `cat /tmp/x.log`,
+`ls $TMPDIR`, `du -sk /tmp/claude-501`, `ls -d /tmp/claude*`, a bare
+`mktemp -d`, single-quoted text such as `printf %s '$(mkdir /tmp/x)'`, a
+relative path ending in a `tmp` folder (`rm -rf build/tmp`),
+`cp -R "$SRC" dest`, `cp -R src/* dist/`, `cp -R ~/repo .`,
+`cd sub && cp -R ../x y`, `rsync -a src/ host:dst/`,
+`rsync -a --exclude '*.log' src/ build/` (write `--exclude='*.log'`),
+`tar cf - src | (cd /dest && tar xf -)`, and a heredoc with an unclosed
+apostrophe on a line that holds a copier word
+(`cat > notes.md <<'EOF'` … `don't cp -R . sub`; write such a file with
+the Write tool). Each refusal says what to do instead.
+
+**Residual gaps, by design.** A variable or symlink made by an earlier
+command (`D=/tmp/claude-501` in one call, `mkdir "$D/pr"` in the next); a
+path built by another program (`cd "$(printenv TMPDIR)"`); programs that
+write files themselves (python, node, make, tests); a copy inside a quoted
+string that another program runs (`bash -c 'cp -R . ./sub'`,
+`echo "$(cp -R . ./sub)"`); a relative path in a command that starts in the
+shared area, or after a `cd` into the session's own folder followed by
+`cd ..`; and option spellings outside the list (`cp --rec`). These run, and
+G3 bounds them.
+
+### The message
+
+`disk guard: refused: <what>. <what to do instead>.` For rule 1: `the
+command names the shared temporary area (<the word>). Read a file there
+with the Read tool; work in the clone or folder you were given, <cwd>; and
+put temporary files in your session's own folder, <folder>` (or `inside
+that folder` when the session's folder is not known). For rule 2, for
+example: `cp copies <src> into <dst>, a folder inside it, which never ends`;
+`cp copies with a path that is not spelled out ($D). In a recursive copy,
+write each path with letters, digits and . _ / + - only: no variable, ~,
+glob, brace, quote, space or colon`; `a tar pipeline (tar ... | ... tar).
+Extract with -C into a folder you spell out, as two commands`. For rule 3:
+`a command over 100,000 characters that copies or names the shared
+temporary area. Split it into shorter commands`.
 
 ### Where it is wired
 
@@ -399,43 +383,19 @@ three version fields, as in 0.18.0), so an installed copy updates with
   10 GiB run directory (G3), and each Codex child's `$TMPDIR` is inside the
   run directory it measures (G2).
 
-- The guard is conservative, not an exact model of the shell (Full review of
-  PR #55, 2026-10-29: the exact model failed open thirteen ways). A command
-  that names a shared temporary folder and holds a write word anywhere is
-  refused even when the write goes elsewhere: `cat /tmp/claude-501/x.log >
-  out.txt`, `ls /tmp/claude-501 | grep tar`, `(cd /tmp/claude-501); mkdir pr`.
-  Reason: a line that both reads the shared folder and writes elsewhere is
-  rare for an agent, the message says to run the read on its own, and every
-  narrower rule tried had a form that slipped through.
-- Option values are never told apart from paths in rule B (`rsync -e ssh`
-  makes `ssh` a source). Reason: telling them apart needs every program's
-  option table, and a missing entry hid `-R` (`cp -f -R`); a wrong extra path
-  can only refuse more.
-- Unknown parts fail closed (round 4 of PR #55, 2026-10-29: computing
-  variables failed open nine ways). The hook no longer computes what the shell
-  would compute: the line's own variables as they stand at each word, values
-  that hold other variables, substitutions run after the line, every `$PWD`
-  and `$OLDPWD` pairing. Each computation had another gap (`/tmp/claude-$UID`,
-  `backup-$$`, `D=$PWD/sub`, `$(pwd)`, `D=./snapshot-$(date +%s)`,
-  `-C "./copy-$$"`, a heredoc into `$(command -v bash)`, an 18.8 s `$OLDPWD`
-  line). It reads only `$HOME`, `$TMPDIR` and `$PWD`/`$(pwd)` after literal
-  `cd` targets. A recursive copy with any other unknown operand is refused,
-  and a write is refused when the literal text before an unknown part could
-  name a shared folder. Reason: the contract already says that what cannot be
-  read with confidence fails closed, and each computed value was one more
-  model of the shell to get wrong. A person refused this way sees "cp with a
-  path the guard cannot read ($D). Spell each source and destination out: a
-  literal path, $HOME, $TMPDIR, or $PWD and relative paths after cd targets
-  that are spelled out; a variable the line sets, $OLDPWD, $$ or a
-  substitution cannot be checked", then where to work instead.
-- A heredoc fed to anything but a shell, `xargs` or a command whose name is
-  not literal text is data: only its names of
-  a shared folder count. Reason: notes and commit messages hold apostrophes
-  and the words cp or mkdir; a heredoc into a file that names the shared
-  folder is still refused. Write such a file with the editor tool.
-- A line nested more than four levels (`$(...)`, `bash -c`, `eval`), or one
-  it cannot tokenize that copies or writes near the shared folder, is refused.
-  Reason: no agent writes either in ordinary work, and both fail closed.
+- The hook is a closed list (round 5 of PR #55, 2026-10-29). Decided by
+  the coordinator from a read-only root-cause investigation (Claude Fable).
+  Reason: five review rounds (21, 13, 11, 9 and 10 findings, nearly all
+  reproduced) did not converge. The earlier contract promised that anything
+  the hook could not read with confidence was refused, over all of bash, and
+  the code decided "can read" with a negative list of unknown markers and a
+  code-versus-data split over an open grammar. That is fail-open by
+  construction: each round found the next missing marker, several fixes
+  regressed forms that were refused before, and the guard grew from 471 to
+  589 lines. A negative list over bash cannot converge. A finding that a form
+  outside the list in G1 runs is recorded `settled` against this entry,
+  unless it shows a form inside the list behaving otherwise; G3 and G2 bound
+  what runs.
 
 - The thresholds: refuse to launch under 5 GiB free; fire under 2 GiB free or
   when the run directory passes 10 GiB; sweep sandboxes over 24 hours idle.

@@ -12,17 +12,17 @@ On 2026-10-28 a reviewer ran `cd $TMPDIR && rm -rf pr && mkdir pr && cp -R
 (79 GB in 12 minutes); every agent on the machine stopped. Finished review
 copies had also piled up to about 20 GB. Spec: `docs/specs/disk-guard.md`.
 
-- **A disk guard on every Bash command.** `guard-disk-writes.sh` refuses a
-  copy of a folder into itself (`cp -R . ./sub`, `rsync -a ./ ./backup/`,
-  `ditto . sub`, `tar -cf - . | tar -xf - -C sub`) and any write, new folder
-  or deletion under Claude Code's shared temporary folder (`/tmp/claude-*`)
-  or `$TMPDIR`, outside the session's own folder and the folder the command
-  starts in. It is conservative: a command that names that folder and holds
-  a write word anywhere (behind `timeout`, in `$(...)`, after a `cd`) is
-  refused, even when the write goes elsewhere; run a read of the folder on
-  its own. The refusal says where to work instead. Ordinary work, reads of
-  the temporary folder, single-quoted text and `mktemp -d` are allowed. It runs in every session
-  and subagent, and every review launch gets it too. Its own off switch is
+- **A disk guard on every Bash command.** `guard-disk-writes.sh` reads the
+  command as plain text and refuses a short, fixed list: any mention of the
+  shared temporary area (`$TMPDIR`, `/tmp`, `mktemp`, `claude-501`) outside
+  the session's own folder, even a read, so read such a file with the Read
+  tool; a recursive copy into itself (`cp -R . ./sub`, `rsync -a ./
+  ./backup/`, `ditto . sub`) or with a path that is not spelled out
+  (`cp -R "$D" x`); any `tar ... | ... tar` pipeline; and a command over
+  100,000 characters that holds any of these words. Everything else runs;
+  the watchdog below catches what the list does not name. The refusal says
+  what to do instead. It runs in every session and subagent, and every
+  review launch gets it too. Its own off switch is
   `ORCH_ALLOW_TEMP_WRITES=1`, set by you when you start the session.
 - **Review launches run without `--safe-mode`**, because under it the guard
   would not run. `--restricted` and `--strict-mcp-config` still keep your

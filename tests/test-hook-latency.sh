@@ -137,28 +137,21 @@ fi
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"
 check_latency "guard-disk-writes.sh"        "$BASH_EVENT"
-# The disk guard's slow path: a multi-command line it parses, resolves and refuses.
-DISK_EVENT="$TMP/disk.json"
-python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":"cd $TMPDIR && rm -rf pr && mkdir pr && cp -R \"$OLDPWD\"/. . && tar -cf - . | tar -xf - -C sub && bash -c \"git clone . x\""}}))' "$TMP" > "$DISK_EVENT"
-check_latency "guard-disk-writes.sh"        "$DISK_EVENT"
-# A line of 150 `cd dN && echo a b c` steps, then a shared write: each word is resolved from every folder the
-# line may be in. Uncached it took ~10-14 s, past the 10 s hook timeout, at which Claude Code runs the command.
-MANY_CD_EVENT="$TMP/disk-many-cd.json"
-python3 -c 'import json,os,sys; c=" && ".join("cd d%d && echo a b c" % i for i in range(150)); print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":c+" && mkdir /tmp/claude-%d/pr" % os.getuid()}}))' "$TMP" > "$MANY_CD_EVENT"
-if bash "${HOOKS}/guard-disk-writes.sh" < "$MANY_CD_EVENT" >/dev/null 2>&1; then
-  fail "guard-disk-writes.sh on a line of 150 cds" "the line was allowed, so the refusing path was not timed"
-else
-  check_latency "guard-disk-writes.sh"      "$MANY_CD_EVENT"
-fi
-# A line of 150 `cd dN && cp -R "$OLDPWD"/xN yN` steps: pairing every folder as $PWD with every folder as
-# $OLDPWD took ~20 s. $OLDPWD is now unknown, so the first copy is refused at once.
-OLDPWD_EVENT="$TMP/disk-oldpwd.json"
-python3 -c 'import json,sys; c=" && ".join("cd d%d && cp -R \"$OLDPWD\"/x%d y%d" % (i, i, i) for i in range(150)); print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":c}}))' "$TMP" > "$OLDPWD_EVENT"
-if bash "${HOOKS}/guard-disk-writes.sh" < "$OLDPWD_EVENT" >/dev/null 2>&1; then
-  fail "guard-disk-writes.sh on a line of 150 \$OLDPWD copies" "the line was allowed, so the refusing path was not timed"
-else
-  check_latency "guard-disk-writes.sh"      "$OLDPWD_EVENT"
-fi
+# The disk guard reads a command as flat text (docs/specs/disk-guard.md, G1). Each line below must be refused,
+# or its refusing path was not timed: the incident; a long line it tokenizes (about 96,000
+# characters of copies, the last one into itself); and a 1.5 MB line, which rule 3 refuses by a substring test.
+disk_refused() {  # <label> <python expression for the command>
+  local event="$TMP/disk-$RANDOM.json"
+  python3 -c 'import json,os,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":eval(sys.argv[2])}}))' "$TMP" "$2" > "$event"
+  if bash "${HOOKS}/guard-disk-writes.sh" < "$event" >/dev/null 2>&1; then
+    fail "guard-disk-writes.sh on $1" "the line was allowed, so the refusing path was not timed"
+  else
+    check_latency "guard-disk-writes.sh"    "$event"
+  fi
+}
+disk_refused "the incident" "'cd \$TMPDIR && rm -rf pr && mkdir pr && cp -R \"\$OLDPWD\"/. .'"
+disk_refused "96,000 characters of copies" "' && '.join('cp -R a%d b%d' % (i, i) for i in range(4700)) + ' && cp -R . ./sub'"
+disk_refused "a 1.5 MB line" "'printf %s ' + 'a' * 1500000 + '; mkdir /tmp/claude-%d/pr' % os.getuid()"
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
 check_latency "subagent-stop.sh"            "$TRANSCRIPT_EVENT"
 check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"
