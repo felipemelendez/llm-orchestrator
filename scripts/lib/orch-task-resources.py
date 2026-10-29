@@ -322,16 +322,26 @@ class Manager:
                 resource["baseline"] = None
             state["resources"].append(resource)
             self.save(state)
-            if kind == "clone":
-                self.clone(project, path, tree, head)
-            elif kind == "worktree":
-                # Never claim an existing branch as owned; branches are always retained.
-                args = ["worktree", "add"]
-                # --no-track: a branch started from someone else's remote ref must not push there.
-                args += ["--no-track", "-b", branch] if branch else ["--detach"]
-                git(project, *args, str(path), ref)
-            else:
-                path.mkdir(mode=0o700)
+            try:
+                if kind == "clone":
+                    self.clone(project, path, tree, head)
+                elif kind == "worktree":
+                    # Never claim an existing branch as owned; branches are always retained.
+                    args = ["worktree", "add"]
+                    # --no-track: a branch started from someone else's remote ref must not push there.
+                    args += ["--no-track", "-b", branch] if branch else ["--detach"]
+                    git(project, *args, str(path), ref)
+                else:
+                    path.mkdir(mode=0o700)
+            except BaseException:
+                # A creation that failed and left nothing at its new, unique path (git clone removes
+                # its own partial clone, as on a full disk) owns nothing: record it removed, or
+                # cleanup calls it uncertain and keeps the whole task forever. Anything left at the
+                # path stays uncertain and is kept.
+                if not os.path.lexists(path):
+                    resource["removed"] = True
+                    self.save(state)
+                raise
             resource["identity"] = ident(path)
             if kind == "clone":
                 resource["baseline"] = clone_baseline(path)

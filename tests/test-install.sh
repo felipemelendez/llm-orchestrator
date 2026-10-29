@@ -535,17 +535,21 @@ probe_guard() {  # $1 = guard path, $2 = command; echoes the exit code
   printf '%s' "$rc"
 }
 if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-  for probe in "guard-destructive-git.sh:git reset --har HEAD~1" \
-               "guard-no-verify.sh:git commit -m x --no-verif"; do
-    guard="${probe%%:*}"; cmd="${probe#*:}"
+  # <guard>:<expected exit>:<command>. The disk guard's text fallback refuses every
+  # copy, so only its Python helper lets an ordinary copy run: an install that lost
+  # the helper fails here.
+  for probe in "guard-destructive-git.sh:2:git reset --har HEAD~1" \
+               "guard-no-verify.sh:2:git commit -m x --no-verif" \
+               "guard-disk-writes.sh:0:cp -R src dist"; do
+    guard="${probe%%:*}"; want="${probe#*:}"; cmd="${want#*:}"; want="${want%%:*}"
     src_rc="$(probe_guard "$ROOT/scripts/hooks/$guard" "$cmd")"
     ins_rc="$(probe_guard "$TMP/proj/.claude/scripts/hooks/$guard" "$cmd")"
-    if [[ "$src_rc" == "2" && "$ins_rc" == "2" ]]; then
-      ok "$guard blocks '$cmd' from the install, same as from source"
-    elif [[ "$src_rc" != "2" ]]; then
-      fail "$guard blocks '$cmd' from source" "source exit=$src_rc (expected 2)"
+    if [[ "$src_rc" == "$want" && "$ins_rc" == "$want" ]]; then
+      ok "$guard exits $want on '$cmd' from the install, same as from source"
+    elif [[ "$src_rc" != "$want" ]]; then
+      fail "$guard exits $want on '$cmd' from source" "source exit=$src_rc (expected $want)"
     else
-      fail "$guard blocks '$cmd' from the install" \
+      fail "$guard exits $want on '$cmd' from the install" \
            "source exit=$src_rc but install exit=$ins_rc — the install degraded silently"
     fi
   done

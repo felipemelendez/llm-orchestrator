@@ -136,6 +136,22 @@ else
 fi
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"
+check_latency "guard-disk-writes.sh"        "$BASH_EVENT"
+# The disk guard reads a command as flat text (docs/specs/disk-guard.md, G1). Each line below must be refused,
+# or its refusing path was not timed: the incident; a long line it tokenizes (about 96,000
+# characters of copies, the last one into itself); and a 1.5 MB line, which rule 3 refuses by a substring test.
+disk_refused() {  # <label> <python expression for the command>
+  local event="$TMP/disk-$RANDOM.json"
+  python3 -c 'import json,os,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":eval(sys.argv[2])}}))' "$TMP" "$2" > "$event"
+  if bash "${HOOKS}/guard-disk-writes.sh" < "$event" >/dev/null 2>&1; then
+    fail "guard-disk-writes.sh on $1" "the line was allowed, so the refusing path was not timed"
+  else
+    check_latency "guard-disk-writes.sh"    "$event"
+  fi
+}
+disk_refused "the incident" "'cd \$TMPDIR && rm -rf pr && mkdir pr && cp -R \"\$OLDPWD\"/. .'"
+disk_refused "96,000 characters of copies" "' && '.join('cp -R a%d b%d' % (i, i) for i in range(4700)) + ' && cp -R . ./sub'"
+disk_refused "a 1.5 MB line" "'printf %s ' + 'a' * 1500000 + '; mkdir /tmp/claude-%d/pr' % os.getuid()"
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
 check_latency "subagent-stop.sh"            "$TRANSCRIPT_EVENT"
 check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"

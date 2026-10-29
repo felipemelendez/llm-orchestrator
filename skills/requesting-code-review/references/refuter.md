@@ -4,7 +4,8 @@ Built-in reviewers checked this change without seeing each other's replies. A
 prover ranked each finding and proposed a command and a fix, and the script
 ran them. You get every finding with the reviewer's words, the prover's result
 and the receipts. You work in a fresh disposable copy of the repository with
-the change, so you can read files and run commands.
+the change, so you can read files and run commands, inside it; never copy it
+into `$TMPDIR`, `/tmp` or a parent folder.
 
 Return one verdict for each id you are asked to judge (the serious and
 catastrophic findings):

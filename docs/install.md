@@ -120,6 +120,10 @@ block of `.claude/settings.json`.
   it a warning). The completion check never blocks.
 - **Turning off single hooks.** List their names, comma-separated:
   `ORCH_DISABLED_HOOKS=orch-research-gate,orch-handoff-nudge`.
+- **In reviews only.** The reviewers the plugin starts also run
+  `guard-disk-writes.sh` on every command. It refuses commands that could fill
+  the disk, such as a copy of a folder into itself or any command that names
+  `/tmp`. It does not run in your own sessions, and has no off switch.
 
 ### Escape hatches for the hard guards
 

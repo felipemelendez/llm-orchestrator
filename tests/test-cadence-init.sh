@@ -646,6 +646,22 @@ has "$CMDF" 'the native deny rules refuse edits to the config paths' && ok "and 
 has "$CMDF" 'orch-cadence-check.sh --audit' \
   && ok "and the command file names the CI audit step the script prints" || fail "cmd ci" "$(sed -n '95,120p' "$CMDF")"
 
+printf '\n%s== the command file'"'"'s steps 3 and 4 work as separate commands ==%s\n' "$DIM" "$RESET"
+# SCENE: given an agent that runs step 3 and step 4 of the command file as two
+# Bash calls, which share no shell variables; when step 4 runs with the path
+# step 3 printed; expect the init to get the file step 3 wrote. Step 4 used to
+# read $CFG, which a separate call never had, so --config was empty.
+block() { awk -v h="$1" 'index($0, h) == 1 {f = 1; next} f && /^```bash$/ {b = 1; next} b && /^```$/ {exit} b {print}' "$CMDF"; }
+S34="$TMP/steps34"; mkdir -p "$S34/cad"
+printf 'printf "%%s\\n" "$@" > "%s/args"\n' "$S34" > "$S34/cad/cadence-init.sh"
+CFGPATH="$(cd "$S34" && ROOT="$S34" CAD="$S34/cad" bash -c "$(block '### 3.')" 2>/dev/null | tail -1)"
+STEP4="$(block '### 4.')"; STEP4="${STEP4//<the path step 3 printed>/$CFGPATH}"
+(cd "$S34" && ROOT="$S34" CAD="$S34/cad" bash -c "$STEP4" >/dev/null 2>&1)
+GOT="$(awk 'p {print; exit} $0 == "--config" {p = 1}' "$S34/args" 2>/dev/null)"
+[[ -n "$GOT" && -f "$GOT" && "$GOT" == "$CFGPATH" ]] && ok "step 4 hands the init the file step 3 wrote" \
+  || fail "steps 3-4" "step 3 printed '${CFGPATH}', step 4 passed --config '${GOT}'"
+[[ -n "$CFGPATH" ]] && rm -f "$CFGPATH"
+
 printf '\n%s== the report carries exactly one sandbox tip ==%s\n' "$DIM" "$RESET"
 # SCENE: given any run of init; when the report ends; expect one line telling
 # the reader the deny rules bind subprocesses when the sandbox is on — printed,

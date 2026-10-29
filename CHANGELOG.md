@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-29 — reviews cannot fill your disk
+
+On 2026-10-28 a review agent copied a folder into itself until the disk was
+full (79 GB in 12 minutes), and every agent on the machine stopped.
+
+- **Reviews stop before the disk fills.** A review won't start with less than
+  5 GB free. While it runs, it stops itself if free space drops below 2 GB or
+  its own folder passes 10 GB, and tells you which folder grew.
+- **Review agents can't make runaway copies.** Their commands are checked
+  first, and a copy into itself or into the shared temporary folder is
+  refused with a note on what to do instead. Your own sessions are not
+  affected.
+- **Old review copies are cleaned up.** Each review removes its copies when
+  it finishes, and leftovers from crashed reviews are removed after a day.
 ## [0.18.1] - 2026-10-29 — one at a time, on Ubuntu 26.04 too
 
 - **Fixed: on Ubuntu 26.04, two agents could do the same thing at once.**

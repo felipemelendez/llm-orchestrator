@@ -55,18 +55,21 @@ ask them to confirm or correct. Before writing the configuration, confirm:
 
 ### 3. Write the confirmed JSON to a temp file
 
-Only after the user confirms. Write exactly what they agreed to:
+Only after the user confirms. Write exactly what they agreed to, and note the
+path it prints: step 4 is a separate command and does not have `$CFG`.
 
 ```bash
 CFG=$(mktemp)
 cat > "$CFG" <<'JSON'
 <the confirmed cadence.json, verbatim>
 JSON
+printf '%s\n' "$CFG"
 ```
 
 ### 4. Run the init
 
 ```bash
+CFG="<the path step 3 printed>"
 bash "$CAD/cadence-init.sh" --root "$ROOT" --config "$CFG"
 ```
 

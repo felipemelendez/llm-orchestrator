@@ -3,6 +3,7 @@
 import argparse
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -123,11 +124,17 @@ def launch(args, policy):
     if not provider["ready"]:
         raise policy_module.PolicyError(f"{args.provider}: {provider['state']}")
     manager = review.resources.Manager(args.state_dir)
+    refusal = review.prepare_launch(manager.base, manager.base)
+    if refusal:
+        raise policy_module.PolicyError(refusal)
     task = manager.start(policy.project, f"configured-{args.role}")
+    live = review.hold_live(task["scratch"])  # the sweep never takes a live launch's scratch
     lease = manager.acquire(task["id"], "configured-cli")
     run_dir = Path(lease["scratch"])
     launch_dir = run_dir / "launch"
     launch_dir.mkdir()
+    watchdog = review.Watchdog(run_dir)
+    watchdog.start()
     attempt = {"row": "launch", "run_id": uuid.uuid4().hex, "delivery_id": args.delivery_id,
                "project": str(policy.project), "project_id": policy.project_id(), "date": review.now(),
                "provider": args.provider, "role": args.role, "requested_model": settings["model"],
@@ -144,9 +151,12 @@ def launch(args, policy):
         else:
             attempt.update(review.run_claude(policy.project, prompt, schema, launch_dir, run_dir,
                                              args.role, policy=policy))
+        if review.STOPPED:
+            attempt.update(status="dropout", reason=review.STOPPED[0])
         if (attempt.get("capacity") or {}).get("cleanup_status") == "pending":
             attempt["preserved_task"] = {"id": task["id"], "scratch": str(run_dir),
                                          "reason": "process shutdown unconfirmed; consumer lease retained"}
+            manager.acquire(task["id"], "configured-cli-pending")  # held on purpose: no sweep releases it
         output = review.read_json(launch_dir / "output.json")
         review.append_outcome(attempt)
         print(json.dumps({"attempt": attempt, "output": output}))
@@ -156,9 +166,11 @@ def launch(args, policy):
         review.append_outcome(attempt)
         raise
     finally:
+        watchdog.stop()
         if (attempt.get("capacity") or {}).get("cleanup_status") != "pending":
             manager.release(task["id"], lease["token"], stopped=True)
             manager.finish(task["id"])
+        os.close(live)
 
 
 def main(argv=None):
@@ -194,6 +206,8 @@ def main(argv=None):
                 result = ledger.reconcile(args.expect_max_processes, args.expect_external_slots)
             else:
                 result = ledger.diagnostics()
+                # What the task-resource scratch holds, and how much of it is review sandboxes.
+                result["scratch"] = module("orch-review").scratch_usage()
             print(json.dumps(result))
             return 0
         if args.command == "doctor":

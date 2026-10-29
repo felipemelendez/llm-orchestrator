@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Synthetic policy/capacity/argv tests. Fake CLIs never reach a paid model."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -621,6 +623,60 @@ with m.Policy(sys.argv[2]).capacity("codex","writer"):
         self.assertEqual(outcome["served_effort"], ["medium"])
         self.assertIsNone(outcome["cost_usd"])
         self.assertEqual(outcome["project_id"], POLICY.Policy(self.project).project_id())
+
+    def control(self, *args, review_patch=None):
+        """orch-control in this process, its review module changed first; returns (code, stdout, stderr)."""
+        loaded = CONTROL.module
+        def module(name):
+            if name != "orch-review":
+                return loaded(name)
+            review = loaded(name)
+            for key, value in (review_patch or {}).items():
+                setattr(review, key, value)
+            return review
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(CONTROL, "module", module), redirect_stdout(out), redirect_stderr(err):
+            code = CONTROL.main(list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_control_launch_refuses_to_start_with_less_than_5_gib_free(self):
+        code, out, err = self.control("launch", "--project", str(self.project), "--provider", "codex",
+                                      "--role", "writer", "--prompt", "Brief: writer",
+                                      review_patch={"free_bytes": lambda path: 1 << 30})
+        self.assertEqual(code, 2, out + err)
+        self.assertIn("only 1.0 GiB free", err)
+        self.assertRegex(err, r"\d+%")  # the df line
+        self.assertEqual(self.calls(), [])
+
+    def test_control_launch_is_stopped_by_the_disk_watchdog(self):
+        self.scenario["codex"]["writer"] = {"grow": True, "output": {"results": []}}
+        self.write_scenario()
+        code, out, err = self.control("launch", "--project", str(self.project), "--provider", "codex",
+                                      "--role", "writer", "--prompt", "Brief: writer",
+                                      review_patch={"RUN_DIR_CAP": 1 << 20, "WATCH_INTERVAL": 0.2})
+        self.assertEqual(code, 2, out + err)
+        attempt = json.loads(out)["attempt"]
+        self.assertEqual(attempt["status"], "dropout")
+        self.assertIn("disk watchdog: the run directory", attempt["reason"])
+        self.assertIn("the path that grew", err)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / "grow.pid").read_text()), 0)
+        self.assertLess(int((self.root / "grow.size").read_text()), 40 * 1024 * 1024)  # killed, not finished
+        scratch = self.home / ".cache/llm-orchestrator/task-resources/scratch"
+        self.assertEqual(list(scratch.iterdir()), [])  # the launch's scratch, with what grew, is removed
+
+    def test_capacity_status_reports_the_task_scratch(self):
+        manager = REVIEW.resources.Manager()
+        task = manager.start(self.project, "review some-run")
+        token = manager.acquire(task["id"], "orch-review")["token"]
+        manager.create(task["id"], token, "copy")
+        manager.start(self.project, "PHOEBE-1")
+        code, out, err = self.control("capacity", "status", "--project", str(self.project))
+        self.assertEqual(code, 0, err)
+        scratch = json.loads(out)["scratch"]
+        self.assertEqual((scratch["tasks"], scratch["review_tasks"], scratch["measured"]), (2, 1, True))
+        self.assertGreater(scratch["review_bytes"], 0)
+        self.assertGreaterEqual(scratch["bytes"], scratch["review_bytes"])
 
     def test_actual_exec_and_review_argv_apply_models_efforts_and_context(self):
         policy = POLICY.Policy(self.project)
