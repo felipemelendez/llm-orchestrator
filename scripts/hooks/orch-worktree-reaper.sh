@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # LLM Orchestrator SubagentStop hook (matcher: orch-implementer) — mutex reaper.
 #
-# The implementer's writer mutex (`mkdir <worktree>/.orch-active`) is released
+# The implementer's writer mutex (the folder <worktree>/.orch-active, made with
+# the mkdir system call through perl) is released
 # by a VOLUNTARY final-turn rmdir. An implementer that dies or terminates
 # prematurely strands the mutex — and every later dispatch into that worktree
 # returns BLOCKED forever. This reaper releases a mutex ONLY when the evidence

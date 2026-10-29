@@ -213,6 +213,17 @@ mkdir -p "${GD}/orch-integrate.lockdir"; printf '%s\n' "$$" > "${GD}/orch-integr
 bash "$INTEG" --serial --test true "$SID" sl2 >/dev/null 2>&1; rc=$?
 [[ $rc -ne 0 && ! -f fsl2.txt ]] && ok "a LIVE holder's lock is refused, never stolen" \
   || fail "live integration lock stolen" "rc=$rc"
+# The same, under a fake mkdir that behaves like Ubuntu 26.04's (rust-coreutils
+# 0.8-0.10): success whenever the path is a folder afterwards, so a lock that
+# trusts the mkdir program runs two integrations at once (docs/specs/folder-locks.md).
+LYING_BIN="${TMP}/lying-mkdir"; mkdir -p "$LYING_BIN"
+printf '#!/usr/bin/env bash\n%q "$@" && exit 0\nrc=$?\n[[ -d "${@: -1}" ]] && exit 0\nexit $rc\n' \
+  "$(command -v mkdir)" > "$LYING_BIN/mkdir"
+chmod +x "$LYING_BIN/mkdir"
+PATH="${LYING_BIN}:${PATH}" bash "$INTEG" --serial --test true "$SID" sl2 >/dev/null 2>&1; rc=$?
+[[ $rc -ne 0 && ! -f fsl2.txt && "$(cat "${GD}/orch-integrate.lockdir/pid" 2>/dev/null)" == "$$" ]] \
+  && ok "a LIVE holder's lock is refused even when mkdir says done" \
+  || fail "live integration lock taken under a lying mkdir" "rc=$rc"
 rm -rf "${GD}/orch-integrate.lockdir"
 bash "$INTEG" --serial --test true "$SID" sl2 >/dev/null 2>&1 || true
 

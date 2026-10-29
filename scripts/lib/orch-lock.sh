@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Portable file lock for LLM Orchestrator memory writes.
-# Works on macOS, Linux, and any POSIX system with mkdir (which is atomic).
+# Works on macOS, Linux, and any POSIX system: the mkdir system call is atomic
+# (orch_mkdir_once below; not the mkdir program, which on Ubuntu 26.04 is not).
 #
 # ONE mechanism on purpose. There used to be a flock fast path with the mkdir
 # loop as fallback, and the two locked DIFFERENT objects (<t>.lock file vs
@@ -8,8 +9,9 @@
 # excluded each other not at all: both entered. The flock branch also ran the
 # command in a subshell while the fallback ran it in the caller's shell, a
 # side-effect divergence between Linux and macOS. A mutex whose behaviour
-# depends on the caller's PATH is not a mutex; mkdir is atomic everywhere, so
-# it is the only mechanism.
+# depends on the caller's PATH is not a mutex; the mkdir system call is atomic
+# everywhere, so it is the only mechanism. orch_mkdir_once may reach that call
+# through perl or the mkdir program, but every caller locks the same folder.
 #
 # Usage:
 #   source scripts/lib/orch-lock.sh
@@ -38,6 +40,25 @@ _orch_self_pid() { exec sh -c 'echo "$PPID"'; }
 _orch_pid_alive() {
   kill -0 "$1" 2>/dev/null && return 0
   ps -p "$1" >/dev/null 2>&1
+}
+
+# orch_mkdir_once <dir>: create <dir>; fail if anything is already at that
+# path. The one-winner step every folder lock in the plugin rests on, so it
+# never trusts the `mkdir` PROGRAM: Ubuntu 26.04's (rust-coreutils 0.8-0.10)
+# checks, creates, and on a failed create reports success if the path is a
+# folder by then — so two callers racing for one lock were both told "done"
+# (docs/specs/folder-locks.md). perl's mkdir is the system call itself, which
+# has exactly one winner; perl ships with macOS, every Ubuntu and Git for
+# Windows. Only perl's own answer counts: 0 created, 1 not created (already
+# there, or no parent). Never `perl ... || mkdir`, which would hand perl's
+# "already exists" to the faulty program. Any other status means perl did not
+# run (an unset version-manager shim exits 126), so the mkdir program decides.
+orch_mkdir_once() {
+  if command -v perl >/dev/null 2>&1; then
+    perl -e 'mkdir shift or exit 1' -- "$1" 2>/dev/null
+    case $? in 0) return 0 ;; 1) return 1 ;; esac
+  fi
+  command mkdir -- "$1" 2>/dev/null
 }
 
 # _restore_steal <moved-dir> <original-path>
@@ -83,7 +104,8 @@ with_lock() {
   local _mypid; _mypid="$(_orch_self_pid 2>/dev/null)"
   case "${_mypid}" in (''|*[!0-9]*) _mypid="$$" ;; esac
 
-  # mkdir is atomic on POSIX.
+  # The mkdir system call is atomic on POSIX (orch_mkdir_once, never the
+  # mkdir program).
   #
   # STALE-LOCK RECLAIM. A SIGKILLed holder used to strand the lockdir
   # PERMANENTLY: no trap can run on SIGKILL, nothing recorded who held it, and
@@ -118,7 +140,7 @@ with_lock() {
   local waited=0 stale_secs="${ORCH_LOCK_STALE_SECS:-600}" holder_pid="" lock_age=""
   case "${stale_secs}" in ''|*[!0-9]*) stale_secs=600 ;; esac
   local _steal _moved_pid
-  while ! mkdir "${lockdir}" 2>/dev/null; do
+  while ! orch_mkdir_once "${lockdir}"; do
     holder_pid="$(cat "${lockdir}/pid" 2>/dev/null || true)"
     if [[ -n "${holder_pid}" && "${holder_pid}" != *[!0-9]* ]] && ! _orch_pid_alive "${holder_pid}"; then
       _steal="${lockdir}.stale.$$.${RANDOM}"

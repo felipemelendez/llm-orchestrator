@@ -100,14 +100,48 @@ run --base does-not-exist-ref "$SID" rb >/dev/null 2>&1; [[ $? -ne 0 ]] && ok "b
 # (real branch-rollback is asserted non-vacuously in the white-box test below,
 #  where a valid base actually creates the branch before rollback removes it.)
 
-printf '\n%s== writer mutex: mkdir .orch-active is exclusive (sequential + concurrent) ==%s\n' "$DIM" "$RESET"
+printf '\n%s== writer mutex: the implementer'"'"'s claim command is exclusive (sequential + concurrent) ==%s\n' "$DIM" "$RESET"
+# The command under test is read from agents/orch-implementer.md, so the test and
+# the instructions cannot drift, and the template must carry the same one. It
+# runs with a fake mkdir first on PATH that behaves like Ubuntu 26.04's (rust-
+# coreutils 0.8-0.10): success whenever the path is a folder afterwards, so a
+# claim that trusts the mkdir program lets every writer in
+# (docs/specs/folder-locks.md).
+CLAIM="$(sed -n 's/.*Take the writer mutex before editing:\*\* run `\([^`]*\)`.*/\1/p' "${ROOT}/agents/orch-implementer.md")"
+[[ -n "$CLAIM" ]] && ok "the implementer's claim command is readable from its instructions" \
+  || fail "claim command" "no 'Take the writer mutex before editing:** run \`...\`' in agents/orch-implementer.md"
+grep -qF "\`${CLAIM}\`" "${ROOT}/templates/implementer-prompt.md" \
+  && ok "the implementer prompt template uses the same claim command" \
+  || fail "claim command drift" "templates/implementer-prompt.md does not carry: ${CLAIM}"
+# The starter settings allow that command by prefix. Claude Code matches a
+# prefix, and perl joins every -e into one program, so the prefix must end
+# with -- or `<prefix> -e '<any code>'` would run unasked (code review).
+# A claim that fails or cannot run, with nothing at the path, must stop the
+# implementer with a Need that says why. It must never fall back to the mkdir
+# program, which on 26.04 let 2 of 2 writers in, or read as a corrupt file
+# that is not there (code review).
+for f in agents/orch-implementer.md templates/implementer-prompt.md; do
+  if grep -qE '`mkdir [^`]*\.orch-active' "${ROOT}/$f" \
+     || ! grep -qF 'Need: the writer mutex could not be taken' "${ROOT}/$f"; then
+    fail "claim fallback" "$f: offers the mkdir program for the marker, or has no BLOCKED Need for an empty path"
+  else ok "$f: an empty path after the claim returns BLOCKED, never the mkdir program"; fi
+done
+RULE_PREFIX="${CLAIM%% \"*}"
+grep -qF "\"Bash(${RULE_PREFIX}:*)\"" "${ROOT}/templates/settings.json" && [[ "$RULE_PREFIX" == *" --" ]] \
+  && ok "the starter settings allow exactly that command, closed with -- so no perl option can follow" \
+  || fail "claim allow rule" "templates/settings.json lacks \"Bash(${RULE_PREFIX}:*)\", or it does not end with ' --'"
+LYING_BIN="${TMP}/lying-mkdir"; mkdir -p "$LYING_BIN"
+printf '#!/usr/bin/env bash\n%q "$@" && exit 0\nrc=$?\n[[ -d "${@: -1}" ]] && exit 0\nexit $rc\n' \
+  "$(command -v mkdir)" > "$LYING_BIN/mkdir"
+chmod +x "$LYING_BIN/mkdir"
+claim() { ( PATH="${LYING_BIN}:${PATH}"; eval "${CLAIM//<worktree>/.worktrees/mtx}" ) 2>/dev/null; }
 run "$SID" mtx >/dev/null 2>&1
-mkdir .worktrees/mtx/.orch-active 2>/dev/null && ok "first .orch-active claim succeeds" || fail "first mutex"
-mkdir .worktrees/mtx/.orch-active 2>/dev/null && fail "second mutex should fail" || ok "second .orch-active claim refused (exclusive)"
+claim && ok "first .orch-active claim succeeds" || fail "first mutex"
+claim && fail "second mutex should fail" || ok "second .orch-active claim refused (exclusive)"
 rmdir .worktrees/mtx/.orch-active
-# concurrent: two racing processes, exactly one wins the mutex.
+# concurrent: racing processes, exactly one wins the mutex.
 MRES="${TMP}/mtxrace"; : > "$MRES"
-for i in 1 2 3 4; do ( mkdir .worktrees/mtx/.orch-active 2>/dev/null && echo win >> "$MRES" ) & done
+for i in 1 2 3 4; do ( claim && echo win >> "$MRES" ) & done
 wait
 mwins="$(grep -c '^win$' "$MRES")"
 [[ "$mwins" == "1" ]] && ok "4 concurrent writers race → exactly 1 takes the mutex" || fail "mutex race" "got ${mwins}"
@@ -162,6 +196,19 @@ CL="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SCRIPT="${SCRIPT}" bash -c '
   [[ -d "${OWNERS}/wfail" ]] && echo LEFT || echo CLEANED
 ')"
 [[ "$CL" == "CLEANED" ]] && ok "registry_claim removes its claim dir when the meta write fails" || fail "claim cleanup" "got: ${CL}"
+
+printf '\n%s== white-box: registry_claim refuses a held name even when mkdir says done ==%s\n' "$DIM" "$RESET"
+# Under Ubuntu 26.04's mkdir a second claimer was told "done", overwrote the
+# owner's meta and, on a failed write, removed the owner's claim.
+CL="$(cd "${REPO}" && ORCH_HOME="${ORCH_HOME}" SCRIPT="${SCRIPT}" PATH="${LYING_BIN}:${PATH}" bash -c '
+  . "${SCRIPT}"; init_paths
+  mkdir -p "${OWNERS}/held"; printf "%s\t%s\t%s\t%s\n" sess-OTHER br /x 0 > "${OWNERS}/held/meta"
+  registry_claim held br2 /y SID 2>/dev/null && echo CLAIMED || echo REFUSED
+  cut -f1 "${OWNERS}/held/meta"
+  rm -rf "${OWNERS}/held"
+' | tr '\n' ' ')"
+[[ "$CL" == "REFUSED sess-OTHER " ]] && ok "registry_claim refuses a name another session holds; its claim is intact" \
+  || fail "claim under a lying mkdir" "got: ${CL}"
 
 printf '\n%s== white-box: rollback_all reverse-order; meta-less claim goes to PRUNE, not rm ==%s\n' "$DIM" "$RESET"
 # Source the script (BASH_SOURCE guard skips main), build a 2-worktree batch plus
