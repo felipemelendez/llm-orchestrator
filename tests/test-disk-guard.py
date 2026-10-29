@@ -210,6 +210,14 @@ class DiskGuardTests(unittest.TestCase):
                 self.refuses(command, ["shared temporary folder"])
         self.allows("mkdir -p /tmp/claudette/x")
 
+    def test_a_glob_after_claude_names_the_shared_folder(self):
+        for command in ("rm -rf /tmp/claude*/pr", "touch /tmp/claude*/x", f"mkdir /tmp/claude?{UID}/pr",
+                        "touch /private/tmp/claude[-_]*/x", "cd /tmp && touch claude*/x", "rm -rf /tmp/claude*"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        self.allows("ls -d /tmp/claude*")
+        self.allows("touch /tmp/claudette*/x")
+
     def test_a_start_folder_above_a_shared_root_exempts_nothing(self):  # code-review-3
         for cwd in ("/tmp", "/private/tmp", "/"):
             with self.subTest(cwd=cwd):

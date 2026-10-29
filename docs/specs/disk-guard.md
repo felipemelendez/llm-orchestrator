@@ -97,7 +97,8 @@ run) and the per-launch temporary folder (G2), which keeps a Codex child's
 
 1. **Rule A, the shared temporary folder.** A command that names a shared
    folder outside the session's own folder and holds a write word anywhere is
-   refused. The shared folders are `/tmp/claude`, `/tmp/claude-*` and their
+   refused. The shared folders are `/tmp/claude`, `/tmp/claude-*`, a glob
+   right after `claude` (`/tmp/claude*/pr`, `claude?`, `claude[...]`), and their
    `/private` forms (any user), `$TMPDIR` in any spelling (`$TMPDIR`,
    `${TMPDIR}`, and `${TMPDIR` with any operator: `:-` `-` `:=` `=` `:?` `?`
    `:+` `+` `#` `%` `/`), and the hook's own `$TMPDIR` unless it is

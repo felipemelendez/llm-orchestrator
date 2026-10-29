@@ -23,8 +23,9 @@ import sys
 UID = os.getuid()
 PUNCTUATION = ";&|()<>"
 PLACEHOLDER = "__ORCH_SUBSTITUTION__"  # a $(...) or `...`: its value is unknown
-# Claude Code's shared temporary roots, any user, with and without the dash (/tmp/claude is writable too).
-ROOT = re.compile(r"^(?:/private)?/tmp/claude(?:-[^/]+)?(?=/|$)")
+# Claude Code's shared temporary roots, any user, with and without the dash (/tmp/claude is writable too),
+# and a glob right after `claude` (`claude*`, `claude?`, `claude[...]`), which may match any of them.
+ROOT = re.compile(r"^(?:/private)?/tmp/claude(?:[-*?\[][^/]*)?(?=/|$)")
 # $TMPDIR, ${TMPDIR} and ${TMPDIR<any operator>...}: `:-` `-` `:=` `=` `:?` `?` `:+` `+` `#` `%` `/`.
 TMPVAR = re.compile(r"\$\{TMPDIR(?:[^A-Za-z0-9_}][^}]*)?\}|\$TMPDIR(?![A-Za-z0-9_])")
 SLASHES = re.compile(r"/(?:\.?/)+")  # `//` and `/./` mean `/`
