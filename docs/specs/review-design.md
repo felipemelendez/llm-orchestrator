@@ -34,6 +34,10 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 - **R1.** Unchanged: `run --detach`, then `wait` until finished. `run`
   refuses an existing run directory, and one inside the repository or any
   temporary directory. A crashed run leaves no `review.json`: incomplete.
+  Before it starts, `run` sweeps old review sandboxes and refuses to start
+  with less than 5 GiB free on the run directory's volume; while it runs, a
+  disk watchdog stops it below 2 GiB free or past a 10 GiB run directory
+  (`docs/specs/disk-guard.md`, G3 and G4).
 - **R2.** The skill sets `--writer`: `claude` on Claude Code, `codex` on
   Codex. `--brief`, `--adversarial-provider`, `--split` and `--no-refuter`
   are removed.
@@ -99,12 +103,16 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
   ```
   claude -p "/code-review high <probe instruction> <R4 instruction>"
-    --model opus --effort high --safe-mode --restricted
+    --model opus --effort high --restricted
     --tools Read,Grep,Glob,Bash,Agent --allowedTools Read,Grep,Glob,Bash,Agent
     --permission-mode dontAsk --output-format stream-json --verbose
     --strict-mcp-config --mcp-config '{"mcpServers":{}}'
-    --session-id <new uuid> --settings <T5's Bash sandbox>
+    --session-id <new uuid> --settings <T5's Bash sandbox and the disk guard>
   ```
+
+  The prompt starts with the one rule every launch carries: work only in the
+  copy, and never copy, clone or extract it into `$TMPDIR`, `/tmp` or a
+  parent folder (`docs/specs/disk-guard.md`, G2).
 
   - **The instruction goes in the `-p` text, after the level.**
     `/code-review` reviews in a subagent, and `--append-system-prompt` does
@@ -113,7 +121,15 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
     `code-review` arm never got its spec sentence. Text after the level
     reaches the subagent's prompt as "Review target: `...`"; it was obeyed,
     and the uncommitted change was still reviewed.
-  - `--safe-mode` keeps the person's CLAUDE.md, plugins and hooks out of the
+  - **No `--safe-mode`** (2026-10-28): under it, a `PreToolUse` hook passed
+    in `--settings` does not run, so the disk guard could not reach the
+    reviewer. `--restricted` ignores the person's user, project and local
+    settings files, and `--strict-mcp-config` their MCP servers; measured
+    with and without `--safe-mode`, the same three built-in plugins, the same
+    skills, no MCP server and the same input token count
+    (`docs/specs/disk-guard.md`, F1 and F2). The `init` event must list only
+    plugins whose `source` ends in `@builtin`, or the launch is a dropout.
+    Earlier, `--safe-mode` kept the person's CLAUDE.md, plugins and hooks out of the
     context, but not out of reach: 33 of 83 recorded replies cite
     `~/.claude/CLAUDE.md`. `--restricted` confines file tools to the working
     directory (live: a Read of `~/.claude/CLAUDE.md` was refused and listed in
@@ -147,7 +163,10 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
     the `opus` family; any other key is a substitution and a dropout. Claude
     reports no served effort; `review.json` records the requested one.
 - **R6. Codex reviewer.** In the copy, stdin closed, reduced environment
-  plus `RUST_LOG=warn,codex_otel=info`:
+  plus `RUST_LOG=warn,codex_otel=info` and `TMPDIR=<launch dir>/tmp`, a folder
+  of its own inside the run directory, removed when the launch ends (every
+  Codex launch, `codex exec` and `codex sandbox` experiment gets one; see
+  `docs/specs/disk-guard.md`, G2):
 
   ```
   codex review --uncommitted -c model_reasoning_effort="high"

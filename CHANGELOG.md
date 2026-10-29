@@ -5,6 +5,48 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-10-28 — review agents cannot fill the disk
+
+On 2026-10-28 a reviewer ran `cd $TMPDIR && rm -rf pr && mkdir pr && cp -R
+"$OLDPWD"/. .` and copied a folder into itself until the disk was full
+(79 GB in 12 minutes); every agent on the machine stopped. Finished review
+copies had also piled up to about 20 GB. Spec: `docs/specs/disk-guard.md`.
+
+- **A disk guard on every Bash command.** `guard-disk-writes.sh` refuses a
+  copy of a folder into itself (`cp -R . ./sub`, `rsync -a ./ ./backup/`,
+  `ditto . sub`, `tar -cf - . | tar -xf - -C sub`) and any write, new folder
+  or deletion under Claude Code's shared temporary folder (`/tmp/claude-*`)
+  or `$TMPDIR`, outside the session's own folder and the folder the command
+  starts in. The refusal says where to work instead. Ordinary work, reads of
+  the temporary folder and `mktemp -d` are allowed. It runs in every session
+  and subagent, and every review launch gets it too. Its own off switch is
+  `ORCH_ALLOW_TEMP_WRITES=1`, set by you when you start the session.
+- **Review launches run without `--safe-mode`**, because under it the guard
+  would not run. `--restricted` and `--strict-mcp-config` still keep your
+  settings, CLAUDE.md, plugins and MCP servers out, and a launch that shows a
+  plugin that is not built in is a dropout.
+- **One rule in every prompt**: work only in the folder you were given, and
+  never copy it into `$TMPDIR`, `/tmp` or a parent folder. Each Codex launch
+  and experiment gets its own `TMPDIR` inside the run directory, removed when
+  it ends.
+- **A review needs 5 GiB free to start**, and prints the `df` line and the
+  likely culprits when it refuses. While it runs, a watchdog checks every 10
+  seconds and stops the run below 2 GiB free or when its run directory passes
+  10 GiB: every launch is killed, the run is `INCOMPLETE` with the reason,
+  and the path that grew is printed. The same applies to
+  `orch-control.py launch`.
+- **Review copies are removed.** A run removes its copies when it ends; only
+  a run whose own steps failed keeps them for inspection. Each launch first
+  removes review copies left by runs that died (over a day idle, and no live
+  run holding them), through the same ownership checks as every cleanup.
+  `orch-control.py capacity status` shows how much the scratch folder holds.
+- **Fixed: a copy that failed to be made blocked its whole task's cleanup.**
+  When `git clone` ran out of disk, the task kept saying its ownership was
+  uncertain and was never removed.
+- Update: `claude plugin marketplace update llm-orchestrator`, then `claude
+  plugin update llm-orchestrator@llm-orchestrator`, and `codex plugin add
+  llm-orchestrator@llm-orchestrator` for Codex; start new sessions after.
+
 ## [0.18.0] - 2026-10-16 — agents keep building without waiting
 
 - **No limit on open branches or pull requests.** The old rule allowed two

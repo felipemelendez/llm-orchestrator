@@ -103,6 +103,7 @@ block of `.claude/settings.json`.
 | `orch-handoff-nudge.sh` | Reminds the assistant once to write a handoff note when the conversation gets long (see `ORCH_CONTEXT_HANDOFF_TOKENS` below) | yes | yes | `orch-handoff-nudge` |
 | `guard-no-verify.sh` | Refuses git commands that skip git's hooks or commit signing (`--no-verify` and similar) | yes | yes | `orch-guard` |
 | `guard-destructive-git.sh` | Refuses git commands that throw away uncommitted work (`git reset --hard`, `git stash`, `git clean -f`, …) in your main working folder; allowed inside a worktree the plugin created | yes | no | cannot be turned off this way |
+| `guard-disk-writes.sh` | Refuses a copy of a folder into itself (`cp -R . ./sub`) and any write, new folder or deletion under Claude Code's shared temporary folder (`/tmp/claude-*`) or `$TMPDIR`, outside the session's own folder and the folder the command starts in; every review launch gets it too | yes | no | cannot be turned off this way |
 | `orch-verify-gate.sh` | The completion check ([what it does](../README.md#what-happens-by-default)) | yes | yes | `orch-verify-gate` |
 | `subagent-stop.sh`, `orch-researcher-validator.sh` | Check that a helper agent's report has the expected shape | yes | yes | `orch-subagent-stop`, `orch-researcher-validator` |
 | `orch-retry-cap.sh` | Warns when the same action repeats three times in a row | yes | yes | `orch-retry-cap` |
@@ -131,7 +132,11 @@ own, set by a person in the environment Claude Code starts with:
 export ORCH_ALLOW_DESTRUCTIVE_GIT=1
 ```
 
-Putting it in front of the git command itself does not work. The
+The disk guard works the same way, with its own switch,
+`ORCH_ALLOW_TEMP_WRITES=1`; the review launchers never pass it to the
+reviewers they start.
+
+Putting either in front of the command itself does not work. The
 `--no-verify` guard's switch is `ORCH_ALLOW_NO_VERIFY=1`. The Codex file guard
 has no switch; a locked file changes only by
 [a ruling](cadence.md#changing-the-rules).

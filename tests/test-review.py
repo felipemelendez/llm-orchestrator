@@ -7,6 +7,7 @@ the prover, the refuter, the Claude experiment runner and `codex sandbox`.
 import importlib.util
 import json
 import os
+import shlex
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,6 +16,7 @@ import tempfile
 import textwrap
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/lib/orch-review.py"
@@ -43,6 +45,7 @@ from pathlib import Path
 FAKE_ROOT = Path(sys.argv[0]).resolve().parent.parent
 scenario = json.loads((FAKE_ROOT / "scenario.json").read_text())
 SANDBOX_ON = "touch: x: Operation not permitted\nORCH-SANDBOX-ON\n"
+BUILTIN_PLUGINS = [{"name": "cc-plugin-telemetry", "path": "builtin", "source": "cc-plugin-telemetry@builtin"}]
 def claim(program, role, entry):
     """Log this call and return its number and its behavior, under a lock for parallel calls."""
     with open(FAKE_ROOT / "fake.lock", "a") as lock:
@@ -52,7 +55,8 @@ def claim(program, role, entry):
             rows = [json.loads(line) for line in (FAKE_ROOT / "fake.log").read_text().splitlines()]
         n = sum(row["program"] == program and row["role"] == role for row in rows) + 1
         with open(FAKE_ROOT / "fake.log", "a") as stream:
-            stream.write(json.dumps(dict(entry, program=program, role=role, n=n)) + "\n")
+            stream.write(json.dumps(dict(entry, program=program, role=role, n=n,
+                                         tmpdir=os.environ.get("TMPDIR"))) + "\n")
     config = scenario.get(program, {})
     return n, config.get(f"{role}-{n}", config.get(role, {}))
 def side_effects(spec, cwd):
@@ -61,6 +65,19 @@ def side_effects(spec, cwd):
     for name in spec.get("write_copy", []):
         Path(cwd, name).write_text("probe\n")
     time.sleep(spec.get("sleep", 0))
+def grow(spec):
+    """A runaway write into $TMPDIR until the watchdog kills it; bounded, so a broken watchdog fails the
+    test and never the disk."""
+    if not spec.get("grow"):
+        return
+    (FAKE_ROOT / "grow.pid").write_text(str(os.getpid()))
+    path, deadline = Path(os.environ["TMPDIR"], "runaway"), time.time() + 30
+    with open(path, "ab") as out:
+        while path.stat().st_size < 40 * 1024 * 1024 and time.time() < deadline:
+            out.write(b"x" * 65536)
+            out.flush()
+            (FAKE_ROOT / "grow.size").write_text(str(path.stat().st_size))
+            time.sleep(0.005)
 def run_commands(spec, cwd):
     runs = []
     for item in spec.get("commands", []):
@@ -189,7 +206,7 @@ def code_review():
         emit({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": session})
     elif not spec.get("no_init"):
         emit({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "session_id": session,
-              "mcp_servers": spec.get("mcp_servers", [])})
+              "mcp_servers": spec.get("mcp_servers", []), "plugins": spec.get("plugins", BUILTIN_PLUGINS)})
     emit({"type": "assistant", "message": {"model": "<synthetic>", "content": [{"type": "text", "text": reply}]}})
     if not spec.get("no_result"):
         emit({"type": "result", "subtype": "success", "is_error": spec.get("is_error", False), "result": reply,
@@ -215,7 +232,8 @@ def runner(prompt):
         calls.append((command, output))
     if spec.get("swap") and len(calls) > 2:
         calls[1], calls[2] = calls[2], calls[1]
-    emit({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "mcp_servers": []})
+    emit({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "mcp_servers": [],
+          "plugins": spec.get("plugins", BUILTIN_PLUGINS)})
     for number, (command, output) in enumerate(calls):
         for event in tool_events(number, command, output, 0):
             emit(event)
@@ -231,7 +249,8 @@ def model_launch(prompt):
     side_effects(spec, cwd)
     model = spec.get("served_model", "claude-opus-5-5")
     if not spec.get("no_init"):
-        emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", [])})
+        emit({"type": "system", "subtype": "init", "model": model, "mcp_servers": spec.get("mcp_servers", []),
+              "plugins": spec.get("plugins", BUILTIN_PLUGINS)})
     commands = list(spec.get("commands", []))
     probe = re.search(r"^Sandbox check: run exactly this command first: (.+)$", prompt, re.M)
     mode = spec.get("probe", "sandboxed")
@@ -286,6 +305,7 @@ def review():
                                               "stdin": sys.stdin.read(), "rust_log": os.environ.get("RUST_LOG"),
                                               "env": sorted(os.environ), **git_state(cwd)})
     side_effects(spec, cwd)
+    grow(spec)
     items = [{"title": f"[P{f.get('priority', 1)}] {f.get('title', 'A problem')}", "body": f.get("body", "It breaks."),
               "confidence_score": 0.9, "priority": f.get("priority", 1),
               "code_location": {"absolute_file_path": os.path.join(cwd, f["file"]),
@@ -355,6 +375,7 @@ def model_launch():
           'mcp_servers="%s" event.timestamp=2026-09-26T00:00:00Z' % ", ".join(spec.get("mcp_servers", [])),
           file=sys.stderr, flush=True)
     side_effects(spec, cwd)
+    grow(spec)
     thread = str(uuid.uuid4())
     emit({"type": "thread.started", "thread_id": thread})
     for number, (command, output, code, item) in enumerate(run_commands(spec, cwd)):
@@ -376,6 +397,14 @@ assert args[0] == "exec", args
 model_launch()
 '''
 
+# The script with its module changed first, for a test that needs a tiny cap or a replaced reading.
+PATCHED = """import importlib.util, sys
+spec = importlib.util.spec_from_file_location("orch_review", SCRIPT)
+review = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(review)
+PATCH
+sys.exit(review.main(sys.argv[1:]))
+"""
 FIX = textwrap.dedent("""\
     --- a/calc.py
     +++ b/calc.py
@@ -475,21 +504,27 @@ class ReviewTests(unittest.TestCase):
                 (directory / name).symlink_to(self.bin / name)
         return directory
 
-    def invoke(self, *args, path_bin=None, check_rc=None):
+    def invoke(self, *args, path_bin=None, check_rc=None, patch=None):
+        """Run the script; `patch` is code run on the loaded module first (a tiny cap, a replaced reading)."""
         (self.root / "scenario.json").write_text(json.dumps(self.scenario))
-        result = subprocess.run([sys.executable, str(SCRIPT), *args], cwd=self.project,
+        script = SCRIPT
+        if patch:
+            script = self.root / "patched-review.py"
+            script.write_text(PATCHED.replace("SCRIPT", repr(str(SCRIPT))).replace("PATCH", patch))
+        result = subprocess.run([sys.executable, str(script), *args], cwd=self.project,
                                 capture_output=True, text=True, env=self.env(path_bin), timeout=300)
         if check_rc is not None:
             self.assertEqual(result.returncode, check_rc, result.stdout + result.stderr)
         return result
 
-    def review(self, path="standard", writer="codex", *extra, path_bin=None):
+    def review(self, path="standard", writer="codex", *extra, path_bin=None, patch=None):
         """Standard on Codex by default, which runs /code-review with both CLIs installed."""
         self.runs += 1
         self.run_dir = self.root / f"run-{self.runs}"
         result = self.invoke("run", "--path", path, "--writer", writer, "--base", self.base,
                              "--spec", str(self.spec), "--run-dir", str(self.run_dir), *extra,
-                             path_bin=path_bin)
+                             path_bin=path_bin, patch=patch)
+        self.stderr = result.stderr
         review = self.run_dir / "review.json"
         self.assertTrue(review.is_file(), result.stdout + result.stderr)
         self.printed = json.loads(result.stdout) if result.stdout.strip() else {}
@@ -928,8 +963,10 @@ class ReviewTests(unittest.TestCase):
         self.assertTrue(argv[1].startswith("/code-review high Sandbox check: before anything else, run exactly "
                                            "this command with your Bash tool: touch "))
         self.assertEqual(call["stdin"], "")
-        for flag in ("--safe-mode", "--restricted", "--strict-mcp-config", "--verbose"):
+        for flag in ("--restricted", "--strict-mcp-config", "--verbose"):
             self.assertIn(flag, argv)
+        # A hook passed in --settings does not run under --safe-mode (docs/specs/disk-guard.md, F1).
+        self.assertNotIn("--safe-mode", argv)
         self.assertNotIn("--no-session-persistence", argv)
         self.assertNotIn("--append-system-prompt", argv)
         pairs = {argv[i]: argv[i + 1] for i in range(2, len(argv) - 1)}
@@ -948,6 +985,9 @@ class ReviewTests(unittest.TestCase):
         self.assertIn(str(self.run_dir), sandbox["filesystem"]["denyRead"])
         self.assertIn("~/.claude", sandbox["filesystem"]["denyRead"])
         self.assertEqual(sandbox["network"]["allowedDomains"], [])
+        hooks = json.loads(pairs["--settings"])["hooks"]["PreToolUse"]
+        self.assertEqual([(entry["matcher"], entry["hooks"][0]["command"]) for entry in hooks],
+                         [("Bash", "bash " + shlex.quote(str(ROOT / "scripts/hooks/guard-disk-writes.sh")))])
 
     def test_r5_a_failed_skipped_or_late_probe_is_a_dropout(self):
         for probe in ("unsandboxed", "skip", "leaked", "both", "late"):
@@ -992,7 +1032,8 @@ class ReviewTests(unittest.TestCase):
                        "claude-opus-4-5-20251101-extra", "claude-opus-4-50"):
             with self.subTest(served=served):
                 self.assertFalse(MOD.claude_family(served, "claude-opus-4-5"))
-        self.assertIsNone(MOD.claude_checks(0, {"mcp_servers": []}, {"is_error": False, "subtype": "success"},
+        self.assertIsNone(MOD.claude_checks(0, {"mcp_servers": [], "plugins": []},
+                                            {"is_error": False, "subtype": "success"},
                                             ["claude-opus-4-5-20251101"], [], "claude-opus-4-5"))
 
     def test_r5_no_transcript_is_a_dropout(self):
@@ -1061,7 +1102,10 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(argv[:2], ["review", "--uncommitted"])
         values = [argv[i + 1] for i in range(len(argv) - 1) if argv[i] == "-c"]
         self.assertEqual(values[:2], ['model_reasoning_effort="high"', 'sandbox_mode="read-only"'])
-        self.assertTrue(values[2].startswith('developer_instructions="The change must implement'))
+        self.assertTrue(values[2].startswith("developer_instructions="))
+        instruction = json.loads(values[2].split("=", 1)[1])
+        self.assertTrue(instruction.startswith(MOD.WORKSPACE_RULE.format(path=call["cwd"])
+                                               + "\n\nThe change must implement"), instruction[:300])
         self.assertIn("mcp_servers.figma.enabled=false", values)
         self.assertIn("mcp_servers.computer-use.enabled=false", values)
         self.assertEqual(sorted(argv[i + 1] for i in range(len(argv) - 1) if argv[i] == "--disable"),
@@ -2363,6 +2407,165 @@ class ReviewTests(unittest.TestCase):
         review = self.review("standard", "codex")
         self.assertIsNone(self.found(review, "code-review-1")["simpler_alternative"])
         self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
+
+    # Disk safety (docs/specs/disk-guard.md)
+    def test_disk_every_model_launch_is_told_to_work_only_in_its_copy(self):
+        def told(text, cwd):
+            return MOD.WORKSPACE_RULE.format(path=cwd) in (text or "")
+        self.reviewer("claude", code_finding())
+        self.reviewer("codex", codex_finding())
+        self.prove({"code-review-1": proof(), "codex-review-1": proof()})
+        self.refute(verdict("code-review-1", "PROMOTED"), verdict("codex-review-1", "PROMOTED"))
+        self.review("full", "claude")
+        self.review("standard", "claude", path_bin=self.only("claude"))
+        self.review("standard", "codex", path_bin=self.only("codex"))
+        rows = [row for row in self.calls() if row["role"] != "sandbox"]
+        self.assertTrue({(row["program"], row["role"]) for row in rows} >= {
+            ("claude", "code-review"), ("codex", "codex-review"), ("claude", "prover"), ("claude", "refuter"),
+            ("claude", "runner"), ("codex", "prover")})
+        for row in rows:
+            with self.subTest(program=row["program"], role=row["role"]):
+                text = row.get("instruction") if row["role"] == "codex-review" else row["prompt"]
+                self.assertTrue(told(text, row["cwd"]), text)
+
+    def test_disk_codex_launches_get_their_own_tmpdir_in_the_run_directory_and_claude_keeps_its_own(self):
+        self.reviewer("codex", codex_finding())
+        self.prove({"codex-review-1": proof()})
+        self.review("standard", "claude")
+        codex = self.calls("codex")
+        self.assertTrue({row["role"] for row in codex} >= {"codex-review", "sandbox"})
+        for row in codex:
+            with self.subTest(role=row["role"]):
+                self.assertTrue(row["tmpdir"].startswith(str(self.run_dir) + "/"), row["tmpdir"])
+                self.assertFalse(Path(row["tmpdir"]).exists(), "the launch's tmp folder outlived it")
+        for row in self.calls("claude"):
+            # Claude Code's sandbox gives commands /tmp/claude-<uid> whatever TMPDIR is, and a long one
+            # breaks its socket (F3, F4): the guard in --settings protects Claude launches instead.
+            self.assertEqual(row["tmpdir"], str(self.tmpdir))
+            settings = json.loads(row["argv"][row["argv"].index("--settings") + 1])
+            self.assertIn("guard-disk-writes.sh", settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+            self.assertNotIn("--safe-mode", row["argv"])
+
+    def test_disk_a_plugin_that_is_not_built_in_or_no_plugin_list_is_a_dropout(self):
+        for plugins in ([{"name": "llm-orchestrator", "source": "llm-orchestrator@llm-orchestrator"}], None):
+            with self.subTest(plugins=plugins):
+                self.reviewer("claude", plugins=plugins)
+                self.assert_incomplete(self.review(), "not built in")
+
+    def test_disk_a_run_refuses_to_start_with_less_than_5_gib_free(self):
+        run_dir = self.root / "low-disk"
+        result = self.invoke("run", "--path", "standard", "--writer", "claude", "--base", self.base,
+                             "--spec", str(self.spec), "--run-dir", str(run_dir),
+                             patch="review.free_bytes = lambda path: 3 * review.GIB")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("only 3.0 GiB free", result.stderr)
+        self.assertIn("a review needs 5.0 GiB", result.stderr)
+        self.assertRegex(result.stderr, r"\n\S+ .*\d+%")  # the df line of the volume
+        self.assertIn(f"{self.root}: ", result.stderr)  # the run directory's nearest folder, with its size
+        self.assertFalse(run_dir.exists())
+        self.assertEqual(self.calls(), [])
+
+    def test_disk_the_watchdog_kills_a_launch_whose_run_directory_passes_its_cap(self):
+        self.reviewer("codex", grow=True)
+        review = self.review("standard", "claude", patch="review.RUN_DIR_CAP = 1 << 20\nreview.WATCH_INTERVAL = 0.2")
+        self.assert_incomplete(review, "disk watchdog: the run directory")
+        reason = next(r for r in review["incomplete_reasons"] if r.startswith("disk watchdog"))
+        grew = str(self.run_dir / "launches/codex-review/tmp")
+        self.assertIn(f"the path that grew: {grew}", reason)
+        self.assertIn(grew, self.stderr)
+        pid = int((self.root / "grow.pid").read_text())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
+        self.assertFalse(Path(grew).exists())
+        self.assertLess(int((self.root / "grow.size").read_text()), 40 * 1024 * 1024)  # killed, not finished
+        self.assertEqual(review["cleanup"]["task"]["status"], "done", review["cleanup"])
+
+    def test_disk_an_ordinary_incomplete_run_removes_its_copies_and_a_failed_step_keeps_them(self):
+        self.reviewer("claude", exit=3)
+        review = self.review()
+        self.assert_incomplete(review, "exits nonzero")
+        self.assertFalse(Path(self.calls("claude", "code-review")[0]["cwd"]).exists())
+        self.assertEqual(review["cleanup"]["task"]["status"], "done")
+        broken = self.project / "deps.ignored"
+        broken.mkdir()
+        (broken / "secret").write_text("x")
+        (broken / "secret").chmod(0)
+        self.addCleanup((broken / "secret").chmod, 0o600)
+        self.config({"review": {"copy_ignored": ["deps.ignored"]}})
+        review = self.review()
+        self.assert_incomplete(review, "CalledProcessError")
+        self.assertEqual(review["cleanup"]["task"]["status"], "kept", review["cleanup"])
+        scratch = self.home / ".cache/llm-orchestrator/task-resources/scratch"
+        self.assertTrue(any(path.name.startswith("clone-") for path in scratch.glob("*/*")))
+
+    def test_disk_the_watchdog_stops_every_launch_when_free_space_falls_under_the_floor(self):
+        run_dir = self.root / "floor-run"
+        run_dir.mkdir()
+        self.addCleanup(MOD.STOPPED.clear)
+        child = MOD.spawn(["sleep", "30"])
+        self.addCleanup(MOD.forget, child)
+        report = ["/dev/disk3s5 460Gi 459Gi 1.0Gi 100% /", "/scratch: 24.0 GiB"]
+        with mock.patch.object(MOD, "free_bytes", lambda path: MOD.GIB), \
+                mock.patch.object(MOD, "disk_report", lambda path: report):
+            watchdog = MOD.Watchdog(run_dir, interval=0.05)
+            watchdog.start()
+            watchdog.join(10)
+        self.assertEqual(child.wait(10), -9)
+        reason = json.loads((run_dir / "watchdog.json").read_text())["reason"]
+        self.assertIn("1.0 GiB free on the volume", reason)
+        self.assertIn("under the 2.0 GiB floor", reason)
+        self.assertIn("/scratch: 24.0 GiB", reason)
+        with self.assertRaises(MOD.Failure):
+            MOD.spawn(["true"])  # nothing new starts once it fired
+        self.assert_incomplete(MOD.decide(run_dir), "under the 2.0 GiB floor")
+
+    def sandbox_task(self, manager, name, consumer="orch-review", hours=25, kind="copy"):
+        """A task with one copy, last touched `hours` ago."""
+        task = manager.start(self.project, name)
+        token = manager.acquire(task["id"], consumer)["token"]
+        manager.create(task["id"], token, kind)
+        old = time.time() - hours * 3600
+        os.utime(manager.paths(task["id"])[0], (old, old))
+        return task
+
+    def test_disk_the_sweep_removes_old_dead_review_sandboxes_and_nothing_else(self):
+        manager = MOD.resources.Manager(self.root / "state")
+        dead = self.sandbox_task(manager, "review dead-run")
+        launch = self.sandbox_task(manager, "configured-writer", consumer="configured-cli")
+        interrupted = self.sandbox_task(manager, "review interrupted-run")
+        state = manager.read(interrupted["id"])
+        state.update(status="closed", leases={})
+        manager.save(state)
+        old = time.time() - 25 * 3600
+        os.utime(manager.paths(interrupted["id"])[0], (old, old))
+        young = self.sandbox_task(manager, "review young-run", hours=1)
+        live = self.sandbox_task(manager, "review live-run")
+        held = MOD.hold_live(live["scratch"])
+        self.addCleanup(os.close, held)
+        other = self.sandbox_task(manager, "PHOEBE-115", consumer="coordinator")
+        idle = self.sandbox_task(manager, "PHOEBE-116", consumer="coordinator")  # another task, its lease released
+        for token in list(manager.read(idle["id"])["leases"]):
+            manager.release(idle["id"], token, stopped=True)
+        os.utime(manager.paths(idle["id"])[0], (old, old))
+        borrowed = self.sandbox_task(manager, "review shared", consumer="coordinator")
+        emptied = self.sandbox_task(manager, "review emptied-by-hand")
+        shutil.rmtree(emptied["scratch"])
+        result = MOD.sweep(manager)
+        for task in (dead, launch, interrupted):
+            self.assertFalse(Path(task["scratch"]).exists(), task["task"])
+            self.assertEqual(manager.read(task["id"])["status"], "done")
+        for task in (young, live, other, idle, borrowed):
+            self.assertTrue(Path(task["scratch"]).exists(), task["task"])
+            self.assertEqual(manager.read(task["id"])["status"], "open")
+        self.assertEqual(manager.read(emptied["id"])["status"], "open")  # nothing to reclaim: left alone
+        self.assertEqual((len(result["removed"]), result["kept"]), (3, []), result)
+
+    def test_disk_a_launch_sweeps_first(self):
+        manager = MOD.resources.Manager(self.home / ".cache/llm-orchestrator/task-resources")
+        dead = self.sandbox_task(manager, "review dead-run")
+        self.review()
+        self.assertFalse(Path(dead["scratch"]).exists())
+        self.assertIn("removed 1 old review sandboxes", self.stderr)
 
     # Nothing unused stays
     def test_the_removed_seat_machinery_is_gone(self):

@@ -883,6 +883,35 @@ class LifecycleTests(unittest.TestCase):
         result = self.manager.finish(self.task_id)
         self.assertEqual(result["status"], "closed")
 
+    def test_a_creation_that_failed_and_left_nothing_does_not_block_cleanup(self):
+        # 2026-10-28: git clone ran out of disk and removed its partial clone; the resource it had
+        # registered, with no identity, then kept the task closed as uncertain, and its scratch, for good.
+        def full_disk(project, path, tree, head=None):
+            raise MOD.Unsafe("git clone --quiet: No space left on device")
+        kept = self.resource("copy")
+        token = self.acquire()
+        with mock.patch.object(MOD.Manager, "clone", staticmethod(full_disk)):
+            with self.assertRaises(MOD.Unsafe):
+                self.manager.create(self.task_id, token, "clone", tree=MOD.fingerprint(self.project))
+        self.release(token)
+        result = self.manager.finish(self.task_id)
+        self.assertEqual(result["status"], "done", result)
+        self.assertFalse(self.scratch.exists())
+        self.assertFalse(kept.exists())
+
+    def test_a_creation_that_failed_and_left_files_stays_uncertain(self):
+        def partial(project, path, tree, head=None):
+            path.mkdir()
+            (path / "half-written").write_text("x")
+            raise MOD.Unsafe("git read-tree: No space left on device")
+        token = self.acquire()
+        with mock.patch.object(MOD.Manager, "clone", staticmethod(partial)):
+            with self.assertRaises(MOD.Unsafe):
+                self.manager.create(self.task_id, token, "clone", tree=MOD.fingerprint(self.project))
+        self.release(token)
+        result = self.assert_retained()
+        self.assertIn("uncertain", str(result["reasons"]))
+
     def test_copied_skill_helper_allocates_a_copy(self):
         installed = self.root / "installed/.claude"
         (installed / "scripts/lib").mkdir(parents=True)

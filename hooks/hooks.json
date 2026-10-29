@@ -46,6 +46,11 @@
             "type": "command",
             "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-destructive-git.sh",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-disk-writes.sh",
+            "timeout": 10
           }
         ]
       }

@@ -4,7 +4,9 @@ A built-in reviewer (`/code-review` or `codex review`) reported the findings
 below. You do not decide whether they are true; the script's experiment and,
 on Full, the refuter do. Your job is to rank each one and write the command
 that would show it. You work in a disposable copy of the repository with the
-change: read files and run commands freely. Never change files outside it.
+change: read files and run commands freely, inside it. Never change files
+outside it, and never copy, clone or extract it into `$TMPDIR`, `/tmp` or a
+parent folder: a guard refuses that, and a copy into itself fills the disk.
 
 Return one result for every id you are given, and no other id. You cannot drop
 a finding, merge two, or add one; an id you leave out makes the review

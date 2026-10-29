@@ -136,6 +136,11 @@ else
 fi
 check_latency "guard-no-verify.sh"          "$BASH_EVENT"
 check_latency "guard-destructive-git.sh"    "$BASH_EVENT"
+check_latency "guard-disk-writes.sh"        "$BASH_EVENT"
+# The disk guard's slow path: a multi-command line it parses, resolves and refuses.
+DISK_EVENT="$TMP/disk.json"
+python3 -c 'import json,sys; print(json.dumps({"tool_name":"Bash","cwd":sys.argv[1],"session_id":"s","tool_input":{"command":"cd $TMPDIR && rm -rf pr && mkdir pr && cp -R \"$OLDPWD\"/. . && tar -cf - . | tar -xf - -C sub && bash -c \"git clone . x\""}}))' "$TMP" > "$DISK_EVENT"
+check_latency "guard-disk-writes.sh"        "$DISK_EVENT"
 check_latency "skill-telemetry.sh"          "$SKILL_EVENT"
 check_latency "subagent-stop.sh"            "$TRANSCRIPT_EVENT"
 check_latency "orch-researcher-validator.sh" "$TRANSCRIPT_EVENT"

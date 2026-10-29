@@ -535,8 +535,11 @@ probe_guard() {  # $1 = guard path, $2 = command; echoes the exit code
   printf '%s' "$rc"
 }
 if command -v git >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  # The disk guard's probe names no temporary folder, so only its Python helper (not
+  # the text fallback) refuses it: an install that lost the helper fails here.
   for probe in "guard-destructive-git.sh:git reset --har HEAD~1" \
-               "guard-no-verify.sh:git commit -m x --no-verif"; do
+               "guard-no-verify.sh:git commit -m x --no-verif" \
+               "guard-disk-writes.sh:cp -R . ./sub"; do
     guard="${probe%%:*}"; cmd="${probe#*:}"
     src_rc="$(probe_guard "$ROOT/scripts/hooks/$guard" "$cmd")"
     ins_rc="$(probe_guard "$TMP/proj/.claude/scripts/hooks/$guard" "$cmd")"
