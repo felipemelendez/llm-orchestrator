@@ -562,8 +562,11 @@ class Review:
         copy = Path(created["path"])
         (copy / SPEC_IN_COPY).parent.mkdir(parents=True, exist_ok=True)
         (copy / SPEC_IN_COPY).write_text(preflight["spec"])  # the text the preflight read: what `record` checks
+        # Every step below runs through spawn(), so the watchdog can kill it, and none starts once it fired.
         for name in preflight["copy_ignored"]:
             source = self.project / name
+            if STOPPED:
+                return copy, None, STOPPED[0]
             if not os.path.lexists(source):
                 continue
             problem = unsafe_copy_target(name, source, copy)
@@ -572,14 +575,14 @@ class Review:
             (copy / name).parent.mkdir(parents=True, exist_ok=True)
             copy_on_write(source, copy / name, copy)
         if preflight["setup"]:
-            try:
-                setup = subprocess.run(["sh", "-c", preflight["setup"]], cwd=copy, stdin=subprocess.DEVNULL,
-                                       capture_output=True, text=True, timeout=REPRO_TIMEOUT)
-                (directory / "setup.log").write_text(clip(setup.stdout + setup.stderr))
-                if setup.returncode:
-                    return copy, None, f"review.setup exited {setup.returncode}"
-            except subprocess.TimeoutExpired:
+            code, output = registered(["sh", "-c", preflight["setup"]], copy, REPRO_TIMEOUT)
+            (directory / "setup.log").write_text(clip(output))
+            if STOPPED:
+                return copy, None, STOPPED[0]
+            if code is None:
                 return copy, None, "review.setup timed out"
+            if code:
+                return copy, None, f"review.setup exited {code}"
         return copy, resources.fingerprint(copy), None
 
     def new_launch(self, name, role, provider, preflight, **extra):
@@ -1003,6 +1006,10 @@ class Review:
             if pending:
                 record["task"] = {"status": "blocked", "kept": [
                     "managed process shutdown pending: " + ", ".join(pending)]}
+                try:  # a second consumer marks it held on purpose, so no sweep releases it as dead
+                    self.manager.acquire(self.task["id"], "orch-review-pending")
+                except (resources.Unsafe, OSError) as error:
+                    record["task"]["kept"].append(f"could not mark it pending: {error}")
                 write_json(self.run_dir / "cleanup.json", record)
                 return
             try:
@@ -1062,14 +1069,33 @@ def copy_on_write(source, target, copy):
     """Copy one copy_ignored path into the copy. Only what cp created at `target`, a new path inside
     the copy (checked by unsafe_copy_target), is ever removed before the plain retry."""
     flags = ["-cR"] if sys.platform == "darwin" else ["-R", "--reflink=auto"]
-    if subprocess.run(["cp", *flags, str(source), str(target)], capture_output=True).returncode:
+    if registered(["cp", *flags, str(source), str(target)])[0]:
+        if STOPPED:
+            raise Failure(STOPPED[0])
         if not nested(target.parent.resolve(), copy.resolve()):
             raise Failure(f"refusing to remove {target}: it is outside the copy")
         if target.is_symlink() or target.is_file():
             target.unlink()
         elif target.is_dir():
             shutil.rmtree(target)
-        subprocess.run(["cp", "-R", str(source), str(target)], check=True, capture_output=True)
+        argv = ["cp", "-R", str(source), str(target)]
+        code = registered(argv)[0]
+        if code:
+            raise subprocess.CalledProcessError(code, argv)
+
+
+def registered(argv, cwd=None, timeout=None):
+    """Run one preparation command through spawn(), so the watchdog can kill it: (exit code, or None when
+    it timed out; its output)."""
+    process = spawn(argv, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        output, _ = process.communicate(timeout=timeout)
+        return process.returncode, output.decode(errors="replace")
+    except subprocess.TimeoutExpired:
+        return None, ""
+    finally:
+        kill_group(process)
+        forget(process)
 
 
 def sandboxed(copy, argv):
@@ -1162,29 +1188,61 @@ def heaviest(root):
     return path
 
 
+def grown(root):
+    """The heaviest path under root with its size, as text; a file vanishing while it is measured never stops it."""
+    try:
+        path = heaviest(root)
+        size = tree_bytes(path) if path.is_dir() else os.lstat(path).st_blocks * 512
+        return f"{path} ({gib(size)})"
+    except OSError as error:
+        return f"not measured ({error})"
+
+
+DU = ["du", "-sk"]
+DU_SECONDS = 30
+
+
+def du_sizes(paths, seconds=None):
+    """Bytes under each path, one `du` each, all started together and given one deadline, so a slow one
+    leaves the others measured."""
+    deadline = time.monotonic() + (DU_SECONDS if seconds is None else seconds)
+    running, sizes = [], {}
+    for path in paths:
+        try:
+            running.append((path, subprocess.Popen([*DU, path], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                                   stdin=subprocess.DEVNULL, text=True, start_new_session=True)))
+        except OSError:
+            pass
+    for path, process in running:
+        try:
+            out, _ = process.communicate(timeout=max(0.0, deadline - time.monotonic()))
+            size = out.split("\t", 1)[0].strip() if out else ""
+            if size.isdigit():
+                sizes[path] = int(size) * 1024
+        except subprocess.TimeoutExpired:
+            kill_group(process)
+    return sizes
+
+
 def disk_report(run_dir):
-    """The `df` line of the run directory's volume and the size of each likely culprit, one per line."""
-    probe = Path(run_dir).absolute()
-    while not probe.exists() and probe != probe.parent:
-        probe = probe.parent
+    """The `df` line of the run directory's volume and the size of each likely culprit: the task-resource
+    scratch, Claude Code's shared temporary folder, and the folder the run directories accumulate in."""
+    def existing(path):
+        path = Path(path).absolute()
+        while not path.exists() and path != path.parent:
+            path = path.parent
+        return path
+    probe = existing(run_dir)
     try:
         found = subprocess.run(["df", "-h", str(probe)], capture_output=True, text=True, timeout=10,
                                stdin=subprocess.DEVNULL)
         lines = [found.stdout.strip().splitlines()[-1]] if found.stdout.strip() else []
     except (OSError, subprocess.TimeoutExpired):
         lines = []
-    culprits = [resources.Manager.default_base() / "scratch", Path(f"/tmp/claude-{os.getuid()}"), probe]
+    culprits = [resources.Manager.default_base() / "scratch", Path(f"/tmp/claude-{os.getuid()}"),
+                existing(Path(run_dir).absolute().parent)]
     culprits = [str(path) for path in dict.fromkeys(culprits) if path.is_dir()]
-    sizes = {}
-    try:
-        found = subprocess.run(["du", "-sk", *culprits], capture_output=True, text=True, timeout=30,
-                               stdin=subprocess.DEVNULL)
-        for line in found.stdout.splitlines():
-            size, _, name = line.partition("\t")
-            if size.isdigit():
-                sizes[name] = int(size) * 1024
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    sizes = du_sizes(culprits)
     for name in culprits:
         lines.append(f"{name}: {gib(sizes[name]) if name in sizes else 'not measured in time'}")
     return lines
@@ -1217,27 +1275,27 @@ class Watchdog(threading.Thread):
             free = free_bytes(self.run_dir)
             if free < self.floor:
                 return self.fire(f"disk watchdog: {gib(free)} free on the volume of {self.run_dir}, under the "
-                                 f"{gib(self.floor)} floor", over_cap=False)
+                                 f"{gib(self.floor)} floor", culprits=True)
             size = tree_bytes(self.run_dir)
             if size > self.cap:
+                # Measured before the kill: a killed Codex launch removes its tmp folder right after.
                 return self.fire(f"disk watchdog: the run directory {self.run_dir} holds {gib(size)}, over its "
-                                 f"{gib(self.cap)} cap", over_cap=True)
+                                 f"{gib(self.cap)} cap; the path that grew: {grown(self.run_dir)}")
 
-    def fire(self, reason, over_cap):
-        with LIVE_LOCK:  # first stop everything, then measure what grew
+    def fire(self, reason, culprits=False):
+        with LIVE_LOCK:  # stop everything first
             STOPPED.append(reason)
             for process in list(LIVE):
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
-        if over_cap:
-            grew = heaviest(self.run_dir)
-            size = tree_bytes(grew) if grew.is_dir() else os.lstat(grew).st_blocks * 512
-            reason += f"; the path that grew: {grew} ({gib(size)})"
-            report = []
-        else:
-            report = disk_report(self.run_dir)
+        report = []
+        if culprits:  # measured once nothing grows; the reason is recorded whatever the measuring does
+            try:
+                report = disk_report(self.run_dir)
+            except Exception as error:
+                report = [f"not measured: {error}"]
             reason += "; the volume and the likely culprits: " + "; ".join(report)
         try:
             write_json(self.run_dir / "watchdog.json", {"reason": reason, "report": report, "date": now()})
@@ -1292,6 +1350,15 @@ def sweep(manager, now=None, age=None, seconds=None):
                     or not os.path.isdir(state["scratch"])  # nothing left on disk to reclaim
                     or now - path.stat().st_mtime < age or is_live(Path(state["scratch"]))):
                 continue
+            with manager.locked(path.stem, nonblocking=True):
+                pass  # a task another process is working on now is left for a later sweep
+        except BlockingIOError:
+            result["kept"].append(f"{path.stem}: busy")
+            continue
+        except (resources.Unsafe, OSError, ValueError, KeyError, TypeError) as error:
+            result["kept"].append(f"{path.stem}: {error}")
+            continue
+        try:
             for token in list(state["leases"]):
                 manager.release(path.stem, token, stopped=True)  # its run is gone: not live, over a day idle
             finished = manager.finish(path.stem)
@@ -1305,18 +1372,38 @@ def sweep(manager, now=None, age=None, seconds=None):
     return result
 
 
+def sweep_argv(base):
+    return [sys.executable, str(Path(__file__).resolve()), "sweep", "--state-dir", str(base)]
+
+
 def prepare_launch(run_dir, base=None):
-    """At each launch: sweep old sandboxes, then refuse when the disk is too full. Returns the refusal or None."""
+    """At each launch: sweep old sandboxes, then refuse when the disk is too full. Returns the refusal or None.
+    The sweep runs in its own process and the launch waits for it at most SWEEP_SECONDS: one large or locked
+    task never holds a launch past that, and a sweep still running finishes in the background (the
+    manager's cleanup is safe to interrupt and resume)."""
     base = Path(base) if base else resources.Manager.default_base()
     if base.is_dir():
         try:
-            swept = sweep(resources.Manager(base))
-        except (resources.Unsafe, OSError) as error:
-            swept = {"removed": [], "kept": [f"the sweep could not run: {error}"]}
-        if swept["removed"] or swept["kept"]:
-            print(f"orch-review: removed {len(swept['removed'])} old review sandboxes; kept: "
-                  + ("; ".join(swept["kept"]) or "none"), file=sys.stderr)
+            process = subprocess.Popen(sweep_argv(base), stdin=subprocess.DEVNULL, start_new_session=True)
+            try:
+                process.wait(timeout=SWEEP_SECONDS)
+            except subprocess.TimeoutExpired:
+                print(f"orch-review: the sweep of old review sandboxes ran past {SWEEP_SECONDS} s; it goes on in "
+                      f"the background (pid {process.pid}) and this launch continues", file=sys.stderr)
+        except OSError as error:
+            print(f"orch-review: the sweep could not start: {error}", file=sys.stderr)
     return launch_refusal(run_dir)
+
+
+def command_sweep(args):
+    try:
+        swept = sweep(resources.Manager(args.state_dir))
+    except (resources.Unsafe, OSError) as error:
+        swept = {"removed": [], "kept": [f"the sweep could not run: {error}"]}
+    if swept["removed"] or swept["kept"]:
+        print(f"orch-review: removed {len(swept['removed'])} old review sandboxes; kept: "
+              + ("; ".join(swept["kept"]) or "none"), file=sys.stderr)
+    return 0
 
 
 def scratch_usage(base=None, timeout=60):
@@ -1472,16 +1559,37 @@ CREDENTIAL_DIRS = ("~/.aws", "~/.ssh", "~/.gnupg", "~/.config/gh", "~/.config/gc
 def claude_sandbox(copy, run_dir):
     """Claude Code's settings for a launch. The Bash sandbox: writes only in its copy, no network, no
     reading the run directory or credential folders, and no fallback to running a command outside the
-    sandbox. The disk guard, from the plugin's own copy outside the clone, on every Bash call: the
-    sandbox still lets commands write anywhere under /tmp/claude-<uid> (docs/specs/disk-guard.md, F3),
-    and a hook passed here runs only without --safe-mode (F1)."""
+    sandbox. The disk guard on every Bash call: the sandbox still lets commands write anywhere under
+    /tmp/claude-<uid> (docs/specs/disk-guard.md, F3), and a hook passed here runs only without
+    --safe-mode (F1). The hook runs outside the sandbox, so it runs from a copy in the run directory,
+    which the launch can neither write nor read: the plugin's own files may sit inside the folder the
+    launch may write (a --copy install, or orch-control launch on the plugin's own repository)."""
     return json.dumps({"sandbox": {
         "enabled": True, "failIfUnavailable": True, "allowUnsandboxedCommands": False,
         "autoAllowBashIfSandboxed": True, "excludedCommands": [],
         "filesystem": {"allowWrite": [str(copy)], "denyRead": [str(run_dir), *CREDENTIAL_DIRS]},
         "network": {"allowedDomains": [], "strictAllowlist": True}},
         "hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
-            {"type": "command", "command": "bash " + shlex.quote(str(GUARD)), "timeout": 10}]}]}})
+            {"type": "command", "command": "bash " + shlex.quote(str(guard_copy(copy, run_dir))),
+             "timeout": 10}]}]}})
+
+
+GUARD_LOCK = threading.Lock()
+
+
+def guard_copy(copy, run_dir):
+    """The disk guard and its helper, copied once into <run dir>/guard/, where the launch cannot write."""
+    run_dir = Path(run_dir).resolve()
+    if nested(run_dir, Path(copy).resolve()):
+        raise Failure("the run directory is inside the folder the launch may write, so its guard could be changed")
+    target = run_dir / "guard/scripts/hooks" / GUARD.name
+    with GUARD_LOCK:
+        if not target.is_file():
+            for source in (GUARD.parents[1] / "lib/orch-disk-guard.py", GUARD):  # the hook last: it marks done
+                place = run_dir / "guard" / source.relative_to(ROOT)
+                place.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, place)
+    return target
 
 
 def workspace_rule(copy, text):
@@ -2807,6 +2915,8 @@ def main(argv=None):
     wait = commands.add_parser("wait", help="wait for a detached run to finish")
     wait.add_argument("run_dir")
     wait.add_argument("--seconds", type=int, default=540)
+    swept = commands.add_parser("sweep", help=argparse.SUPPRESS)
+    swept.add_argument("--state-dir", required=True)
     record = commands.add_parser("record", help="record what happened to each finding")
     record.add_argument("run_dir")
     record.add_argument("--dispositions", required=True)
@@ -2817,6 +2927,8 @@ def main(argv=None):
         return command_run(args)
     if args.command == "wait":
         return command_wait(args)
+    if args.command == "sweep":
+        return command_sweep(args)
     return command_record(args)
 
 

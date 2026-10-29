@@ -112,7 +112,8 @@ python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
 
   The prompt starts with the one rule every launch carries: work only in the
   copy, and never copy, clone or extract it into `$TMPDIR`, `/tmp` or a
-  parent folder (`docs/specs/disk-guard.md`, G2).
+  parent folder (`docs/specs/disk-guard.md`, G2). The disk guard runs from a copy made in
+  `<run dir>/guard/`, which the launch can neither read nor write.
 
   - **The instruction goes in the `-p` text, after the level.**
     `/code-review` reviews in a subagent, and `--append-system-prompt` does

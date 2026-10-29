@@ -9,38 +9,55 @@
 # working in the clone it was given. A prompt asked it not to; this hook makes
 # the command fail instead.
 #
-# It refuses a Bash command that
-#   1. copies a folder into itself: `cp -R`/`-r`/`-a`, `rsync`, `ditto`, or a
-#      `tar -c ... | tar -x ...` pipeline whose destination is the source or
-#      inside it (`cp -R . ./sub`, `rsync -a ./ ./backup/`);
-#   2. writes, creates or deletes anything inside Claude Code's shared
-#      temporary folder (/tmp/claude-*, /private/tmp/claude-*) or the hook's
-#      own $TMPDIR, outside the session's own folder
-#      (/tmp/claude-<uid>/<project>/<session id>/) and outside the folder the
-#      command starts in. Write-type means: a `>`/`>>` redirection or heredoc
-#      into a file, the destination of cp, mv, rsync, ditto, install or ln,
-#      mkdir, touch, rm, rmdir, truncate, tee, `dd of=`, `curl -o`/`-O`, wget,
-#      `tar -x` and `tar -cf <file>`, unzip, `git clone`, `git worktree add`,
-#      and `mktemp` given an explicit folder.
-# A literal $TMPDIR is read twice: as /tmp/claude-<uid>, what Claude Code's
-# Bash sandbox gives every command whatever the process was started with, and
-# as the hook's own $TMPDIR. Either one landing in a shared folder refuses.
+# Two conservative rules, not an exact model of the shell: an exact model
+# failed open on ordinary forms (option values, subshells, wrappers such as
+# timeout or xargs, `-o/path`), so each rule refuses more rather than less.
 #
-# It allows ordinary work: copies and writes inside the clone or project, and
+#   A. A command that names Claude Code's shared temporary folder
+#      (/tmp/claude-*, /private/tmp/claude-*, $TMPDIR, or the hook's own
+#      $TMPDIR) outside the session's own folder
+#      (/tmp/claude-<uid>/<project>/<session id>/), and holds a write word
+#      anywhere, is refused. Write words: cp mv rsync ditto tar mkdir touch tee
+#      dd rm rmdir ln install unzip curl wget truncate mktemp clone worktree
+#      -delete, and a `>` redirection to anything but /dev/null. "Anywhere"
+#      means in every part of the line: after a cd, inside $(...), backticks,
+#      `bash -c '...'`, eval, a heredoc fed to a shell or xargs, behind
+#      timeout, xargs or find -exec. A path counts when it starts a word or
+#      follows a separator or an option (`-o/tmp/...`, `-sSLo /tmp/...`,
+#      `--output=/tmp/...`, `D=/tmp/...`).
+#   B. A recursive copy (`cp -R`/`-r`/`-a`, rsync, ditto, or a
+#      `tar -c ... | tar -x ...` pipeline) whose destination is at or inside a
+#      source is refused (`cp -R . ./sub`, `cp -f -R . ./sub`,
+#      `timeout 600 cp -R . ./sub`, `find . -exec cp -R {} ./sub \;`). Every
+#      non-option word counts as a path, and every folder the line may be in
+#      (where it starts, and each cd target) is tried.
+#
+# It allows ordinary work: copies and writes inside the clone or project and
 # anywhere outside the temporary folders (a review's run directory is always
-# outside them); reads of the temporary folder (`ls`, `du`, `cat`, `grep`);
-# `mktemp -d` with no folder named.
+# outside them); a command that only reads the temporary folder (`ls`, `du`,
+# `cat`, `grep`); `mktemp -d` with no folder named; text in single quotes,
+# which the shell never runs (`printf %s '$(mkdir /tmp/claude-501/x)'`);
+# a heredoc that is data (`cat > notes.md <<EOF`) unless it names the shared
+# folder.
 #
-# Limits, stated so nobody counts on more: the parser follows cd/pushd/popd,
-# OLDPWD, PWD, HOME, TMPDIR, `NAME=value` assignments, `export`, `bash -c`,
-# `eval` and the inside of $(...) and backticks; a path built from anything
-# else (another variable, the output of a command, `D=$(mktemp -d)`) is not
-# known and does not by itself refuse. Programs that write files themselves
-# (python, node, make, tests) are not seen. Quoted text that is only
-# punctuation (`">"`) reads as an operator. Subshells share one directory.
+# What it refuses on purpose although nothing is written there (recorded in
+# docs/specs/disk-guard.md, Settled): a line that reads the shared folder and
+# writes elsewhere (`cat /tmp/claude-501/x.log > out.txt`: run the two apart),
+# a write word that is only an argument (`ls /tmp/claude-501 | grep tar`), a
+# subshell cd that a later write does not follow (`(cd /tmp/claude-501); mkdir
+# x`), a line nested more than four levels (`$(...)`, `bash -c`, eval), and a
+# line it cannot read (unbalanced quotes) that copies or writes near the shared
+# folder.
+#
+# Limits, stated so nobody counts on more: a path the line does not spell
+# (a variable set by an earlier command, `D=$(mktemp -d)`, a symlink made
+# earlier) is not known; programs that write files themselves (python, node,
+# make, tests) are not seen; a path fed on stdin to anything but a shell or
+# xargs is checked only as a name of the shared folder.
 #
 # Reads the event on stdin; exit 0 allows, exit 2 refuses with the reason on
-# stderr. The decision is scripts/lib/orch-disk-guard.py. Without python3, or
+# stderr. The decision is scripts/lib/orch-disk-guard.py, run with `python3 -I`
+# so nothing beside it or in the environment is imported. Without python3, or
 # when the helper fails, a plain text check refuses any command naming the
 # shared temporary folder or $TMPDIR together with a write word.
 #
@@ -65,7 +82,7 @@ INPUT=""
 [[ -t 0 ]] || INPUT=$(cat || true)
 
 if command -v python3 >/dev/null 2>&1 && [[ -f "${HELPER}" ]]; then
-  python3 "${HELPER}" <<< "${INPUT}"
+  python3 -I "${HELPER}" <<< "${INPUT}"
   rc=$?
   [[ ${rc} -eq 0 || ${rc} -eq 2 ]] && exit "${rc}"
 fi

@@ -17,6 +17,9 @@ import textwrap
 import time
 import unittest
 from unittest import mock
+import contextlib
+import io
+import threading
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/lib/orch-review.py"
@@ -987,7 +990,7 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(sandbox["network"]["allowedDomains"], [])
         hooks = json.loads(pairs["--settings"])["hooks"]["PreToolUse"]
         self.assertEqual([(entry["matcher"], entry["hooks"][0]["command"]) for entry in hooks],
-                         [("Bash", "bash " + shlex.quote(str(ROOT / "scripts/hooks/guard-disk-writes.sh")))])
+                         [("Bash", "bash " + shlex.quote(str(self.run_dir / "guard/scripts/hooks/guard-disk-writes.sh")))])
 
     def test_r5_a_failed_skipped_or_late_probe_is_a_dropout(self):
         for probe in ("unsandboxed", "skip", "leaked", "both", "late"):
@@ -2518,6 +2521,117 @@ class ReviewTests(unittest.TestCase):
         with self.assertRaises(MOD.Failure):
             MOD.spawn(["true"])  # nothing new starts once it fired
         self.assert_incomplete(MOD.decide(run_dir), "under the 2.0 GiB floor")
+
+    # The launcher rules the Full review of PR #55 reproduced (finding ids in each comment).
+    def test_disk_a_launch_runs_its_guard_from_a_copy_it_cannot_write(self):  # code-review-1
+        run_dir = self.root / "guarded-run"
+        run_dir.mkdir()
+        settings = json.loads(MOD.claude_sandbox(ROOT, run_dir))  # orch-control launch on the plugin's own repository
+        command = settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+        hook = Path(shlex.split(command)[1])
+        self.assertTrue(str(hook).startswith(str(run_dir.resolve()) + "/"), hook)
+        for path in settings["sandbox"]["filesystem"]["allowWrite"]:
+            self.assertFalse(str(hook).startswith(path.rstrip("/") + "/"), (hook, path))
+        self.assertIn(str(run_dir), settings["sandbox"]["filesystem"]["denyRead"])
+        for name in ("scripts/hooks/guard-disk-writes.sh", "scripts/lib/orch-disk-guard.py"):
+            self.assertEqual((run_dir / "guard" / name).read_bytes(), (ROOT / name).read_bytes())
+        with self.assertRaises(MOD.Failure):
+            MOD.claude_sandbox(self.root, self.root / "inside-the-copy")
+        self.assertIn('python3 -I "${HELPER}"', (ROOT / "scripts/hooks/guard-disk-writes.sh").read_text())
+
+    def test_disk_the_watchdog_records_its_reason_when_what_grew_vanishes(self):  # code-review-7, codex-review-6
+        run_dir = self.root / "vanishing-run"
+        grew = run_dir / "launches/codex-review/tmp"
+        grew.mkdir(parents=True)
+        (grew / "runaway").write_bytes(b"x" * 65536)
+        self.addCleanup(MOD.STOPPED.clear)
+        real = MOD.heaviest
+
+        def heaviest(root):  # the killed launch's launch_tmp removes tmp/ while it is measured
+            found = real(root)
+            shutil.rmtree(grew)
+            return found
+        with mock.patch.object(MOD, "heaviest", heaviest):
+            watchdog = MOD.Watchdog(run_dir, cap=0, interval=0.05)
+            watchdog.start()
+            watchdog.join(10)
+        reason = json.loads((run_dir / "watchdog.json").read_text())["reason"]
+        self.assertIn("over its 0.0 GiB cap; the path that grew: not measured", reason)
+        self.assert_incomplete(MOD.decide(run_dir), "disk watchdog: the run directory")
+
+    def test_disk_the_watchdog_stops_a_copys_setup_and_any_further_preparation(self):  # codex-review-4
+        copy, run_dir = self.root / "setup-copy", self.root / "setup-run"
+        copy.mkdir()
+        run_dir.mkdir()
+        self.addCleanup(MOD.STOPPED.clear)
+        fake = mock.Mock(manager=mock.Mock(create=lambda *a, **k: {"path": str(copy)}), task={"id": "t"},
+                         token="x", tree=None, head=None, project=self.root)
+        done = []
+        worker = threading.Thread(target=lambda: done.append(MOD.Review.make_copy(
+            fake, {"spec": "s", "copy_ignored": [], "setup": "sleep 30"}, run_dir)), daemon=True)
+        worker.start()
+        deadline = time.monotonic() + 10
+        while not MOD.LIVE and time.monotonic() < deadline:
+            time.sleep(0.05)
+        with mock.patch.object(MOD, "disk_report", lambda path: []):
+            MOD.Watchdog(run_dir).fire("disk watchdog: a test", culprits=True)
+        worker.join(5)
+        self.assertEqual(done and done[0][2], "disk watchdog: a test")  # stopped, not left running for 30 s
+        with self.assertRaises(MOD.Failure):
+            MOD.Review.make_copy(fake, {"spec": "s", "copy_ignored": [], "setup": None}, run_dir)
+
+    def test_disk_the_sweep_never_holds_a_launch_past_its_bound(self):  # codex-review-7
+        base = self.root / "slow-sweep"
+        base.mkdir()
+        err = io.StringIO()
+        with mock.patch.object(MOD, "sweep_argv", lambda base: ["sleep", "5"]), \
+                mock.patch.object(MOD, "SWEEP_SECONDS", 0.5), contextlib.redirect_stderr(err):
+            started = time.monotonic()
+            self.assertIsNone(MOD.prepare_launch(self.root / "new-run", base))
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertIn("goes on in the background", err.getvalue())
+
+    def test_disk_the_sweep_leaves_a_task_another_process_is_working_on(self):  # codex-review-7
+        manager = MOD.resources.Manager(self.root / "state")
+        dead = self.sandbox_task(manager, "review dead-run")
+        with manager.file_lock(manager.paths(dead["id"])[1]):
+            result = MOD.sweep(manager)
+        self.assertTrue(Path(dead["scratch"]).exists())
+        self.assertEqual(result["kept"], [f"{dead['id']}: busy"])
+        self.assertEqual(len(MOD.sweep(manager)["removed"]), 1)
+
+    def test_disk_a_task_whose_process_shutdown_is_pending_is_never_swept(self):  # code-review-9
+        manager = MOD.resources.Manager(self.root / "state")
+        task = manager.start(self.project, "review dead-run")
+        token = manager.acquire(task["id"], "orch-review")["token"]
+        manager.create(task["id"], token, "copy")
+        run_dir = self.root / "pending-run"
+        (run_dir / "launches/x").mkdir(parents=True)
+        MOD.write_json(run_dir / "launches/x/launch.json", {"capacity": {"cleanup_status": "pending"}})
+        MOD.Review.cleanup(mock.Mock(task=task, run_dir=run_dir, sessions=[], manager=manager, token=token,
+                                     live=None))
+        old = time.time() - 25 * 3600
+        os.utime(manager.paths(task["id"])[0], (old, old))
+        MOD.sweep(manager)
+        self.assertTrue(Path(task["scratch"]).exists())
+        self.assertIn("orch-review", manager.read(task["id"])["leases"].values())
+
+    def test_disk_the_report_sizes_each_culprit_on_its_own_and_the_folder_runs_accumulate_in(self):
+        # code-review-10, codex-review-11
+        runs = self.root / "slow-runs"
+        (runs / "run-1").mkdir(parents=True)
+        (self.home / ".cache/llm-orchestrator/task-resources/scratch").mkdir(parents=True)
+        fake_du = self.root / "fake-du.py"
+        fake_du.write_text("import sys, time\npath = sys.argv[-1]\nif path.endswith('slow-runs'):\n"
+                           "    time.sleep(10)\nprint('4096\\t' + path)\n")
+        with mock.patch.dict(os.environ, {"HOME": str(self.home)}), \
+                mock.patch.object(MOD, "DU", [sys.executable, str(fake_du)]), mock.patch.object(MOD, "DU_SECONDS", 2):
+            started = time.monotonic()
+            lines = MOD.disk_report(runs / "run-1")
+        self.assertLess(time.monotonic() - started, 6)
+        self.assertIn(f"{runs}: not measured in time", lines)
+        scratch = self.home / ".cache/llm-orchestrator/task-resources/scratch"
+        self.assertIn(f"{scratch}: 0.0 GiB", lines)
 
     def sandbox_task(self, manager, name, consumer="orch-review", hours=25, kind="copy"):
         """A task with one copy, last touched `hours` ago."""

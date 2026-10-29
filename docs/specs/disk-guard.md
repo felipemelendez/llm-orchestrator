@@ -61,80 +61,96 @@ building). They decide the shape of G1 and G2.
 ## G1. The guard hook
 
 A `PreToolUse` hook on `Bash`: `scripts/hooks/guard-disk-writes.sh`, a thin
-bash entry that hands the event to `scripts/lib/orch-disk-guard.py` (shlex
-tokenizing, path resolution). Exit 0 allows; exit 2 refuses with the reason on
-stderr. Like `guard-destructive-git.sh` it never uses `set -e`, and every path
-ends in exit 0 or exit 2. It is timed in `tests/test-hook-latency.sh` on a
-plain command and on a long command it parses and refuses (about 45 ms each,
-budget 500 ms). Without `python3`, or when the helper exits with anything but
-0 or 2, a plain text check refuses any command naming `/tmp/claude-` or
-`$TMPDIR`/`${TMPDIR` together with a write word; the helper does the same for
-a command it cannot tokenize (unbalanced quotes).
+bash entry that hands the event to `scripts/lib/orch-disk-guard.py`, run as
+`python3 -I` so nothing beside it or in the environment is imported. Exit 0
+allows; exit 2 refuses with the reason on stderr. Like
+`guard-destructive-git.sh` it never uses `set -e`, and every path ends in
+exit 0 or exit 2. It is timed in `tests/test-hook-latency.sh` on a plain
+command and on a long command it reads and refuses (budget 500 ms). Without
+`python3`, or when the helper exits with anything but 0 or 2, a plain text
+check refuses any command naming `/tmp/claude-` or `$TMPDIR`/`${TMPDIR`
+together with a write word.
+
+The first version modelled the shell exactly (option arities per command, the
+current folder after each `cd`, the order of substitutions). The Full review
+of PR #55 reproduced it failing open thirteen ways on ordinary syntax
+(`cp -f -R . ./sub`, `rm -r /tmp/claude-501/pr`, `curl -sSLo /tmp/...`,
+`cd $TMPDIR && true $(mkdir pr)`, `timeout 600 cp -R . ./sub`,
+`(cd /); mkdir pr`, `echo $((1<<2))` before a line it then skipped). Each was a
+gap in the model, and a model of the shell always has another. The rules
+below are conservative instead: when unsure, they refuse.
 
 ### What it refuses
 
-1. **A copy into itself.** `cp` with `-R`, `-r` or `-a`, `rsync`, `ditto`, and
-   a `tar -c ... | tar -x ...` pipeline (a subshell such as
-   `| (cd x && tar xf -)` is part of the pipeline), when the destination
-   resolves at or inside a source: `cp -R . ./sub`, `rsync -a ./ ./backup/`,
-   `ditto . sub`, `tar -cf - . | tar -xf - -C sub`, `cp -R * sub/`.
-2. **A write into a shared temporary folder.** The shared folders are
-   `/tmp/claude-*` and `/private/tmp/claude-*` (any user), and the hook's own
-   `$TMPDIR` unless it is `/` or the home folder. Write-type means: a `>`,
-   `>>`, `>|`, `&>` redirection or a heredoc into a file; the destination of
-   `cp`, `mv`, `rsync`, `ditto`, `install` or `ln`; `mkdir`, `touch`, `rm`,
-   `rmdir`, `truncate`, `tee`; `dd of=`; `curl -o`/`-O`/`--output-dir`;
-   `wget` (its `-O`/`-P` or the current folder); `tar -x` (its `-C` or the
-   current folder) and `tar -cf <file>`; `unzip` (its `-d` or the current
-   folder); `git clone` (its destination, or the repository name in the
-   current folder); `git worktree add <path>`; `mktemp` given an explicit
-   folder (`-p`, `--tmpdir=`, or a template with a `/`). A new folder under
-   the shared root (the incident began with `mkdir pr`) is covered here.
-3. A command nested more than four levels deep (`bash -c` inside `$(...)`
-   inside ...) is refused as not checkable.
-
-A literal `$TMPDIR` is read twice, once as `/tmp/claude-<uid>` (what Claude
-Code's sandbox gives every command, F3) and once as the hook's own `$TMPDIR`;
-either landing in a shared folder refuses.
+1. **Rule A, the shared temporary folder.** A command that names a shared
+   folder outside the session's own folder and holds a write word anywhere is
+   refused. The shared folders are `/tmp/claude-*` and `/private/tmp/claude-*`
+   (any user), `$TMPDIR` in any spelling (`$TMPDIR`, `${TMPDIR}`,
+   `${TMPDIR:-x}`), and the hook's own `$TMPDIR` unless it is `/` or the home
+   folder. A path counts when it starts a word or follows whitespace, a quote,
+   `=`, `:`, `@`, `,` or an option (`-o/tmp/...`, `-sSLo`, `--output=`).
+   The write words are `cp mv rsync ditto tar mkdir touch tee dd rm rmdir ln
+   install unzip curl wget truncate mktemp clone worktree -delete` as whole
+   words, and a `>` redirection to anything but `/dev/null`, `/dev/stdout`,
+   `/dev/stderr` or `/dev/tty`. Both are gathered from the whole line and
+   every part that runs: `$(...)`, `<(...)`, `>(...)` and backticks (not in
+   single quotes), `bash -c`/`sh -c`/`zsh -c` strings, `eval`, and a heredoc
+   whose line feeds `bash`, `sh`, `zsh`, `xargs`, `eval` or `source`. Because
+   the two are gathered, not matched to each other, a `cd` into the shared
+   folder, a wrapper (`timeout`, `xargs`, `find -exec`, `nice`, `stdbuf`), an
+   option value, or a subshell cannot separate them.
+2. **Rule B, a copy into itself.** `cp` with `-R`, `-r` or `-a` (in any
+   cluster, anywhere after `cp`), `rsync`, `ditto` (anywhere in the line, so
+   behind any wrapper), and a `tar -c ... | tar -x ...` pipeline, when a
+   destination resolves at or inside a source: `cp -R . ./sub`,
+   `cp -f -R . ./sub`, `cp -r -T . sub`, `rsync -a ./ ./backup/`,
+   `ditto . sub`, `tar -cf - . | tar -xf - -C sub`, `cp -R * sub/`,
+   `find . -exec cp -R {} ./sub \;` (`{}` reads as `find`'s first folder).
+   Every non-option word after the copier is a path; the destination is the
+   last one, or the `-t`/`--target-directory` value. Paths are resolved from
+   every folder the line may be in: where it starts, and each `cd`/`pushd`
+   target, in every combination with `$OLDPWD`. A `tar` pipeline is read from
+   the folder the shell runs each side in, so `tar cf - . | (cd /dest && tar
+   xf -)` is allowed.
+3. A command nested more than four levels deep (`$(...)`, `bash -c` and
+   `eval` each count) is refused as not checkable.
+4. A command it cannot tokenize (unbalanced quotes outside a heredoc) is
+   refused when it holds a copier or `tar`, or names a shared folder together
+   with a write word.
 
 ### What it allows
 
-- Everything outside the shared folders: copies and writes in the clone or
-  project, and in a review's run directory, which `run` already keeps outside
-  every temporary folder (R1).
-- Inside them, the session's own folder,
+- Everything that does not name a shared folder and copies nothing into
+  itself: copies and writes in the clone or project, and in a review's run
+  directory, which `run` already keeps outside every temporary folder (R1).
+- Inside the shared folders, the session's own folder,
   `/tmp/claude-<uid>/<any folder>/<session_id>/` (and its `/private` form),
   where `<session_id>` is the event's and matches `[A-Za-z0-9._-]+`; and the
   folder the command starts in (the event's `cwd`), unless that folder is a
   shared root itself.
-- Reads (`ls`, `du`, `cat`, `grep`, `find` without `-delete`), and `mktemp`
-  with no folder named, and temporary files programs make on their own: the
-  hook cannot see them, they are bounded, and refusing `mktemp -d` would break
-  ordinary scripts in every session.
+- A command that only reads a shared folder (`ls`, `du`, `cat`, `grep`,
+  `find` without `-delete`), and `mktemp` with no folder named.
+- Text in single quotes, which the shell never runs
+  (`printf %s '$(mkdir /tmp/claude-501/pr)'`, `grep -rn 'mkdir /tmp/...' .`).
+- A heredoc that is data (`cat > notes.md <<'EOF'`, `git commit -F - <<EOF`):
+  its body is read only for names of a shared folder, so text with
+  apostrophes or the words cp and mkdir in it is fine.
 
-### How paths are resolved
-
-Absolute paths; paths relative to the tracked current folder (the event's
-`cwd`, then each `cd`/`pushd`/`popd`, which also track `OLDPWD`); `.`, `..`,
-trailing `/.`, `~`, `$HOME`, `$PWD`, `$OLDPWD`, `$TMPDIR`, `${NAME:-default}`;
-`NAME=value` assignments and `export` earlier in the same command; a glob
-resolves to its folder part (`src/*` is `src`). Paths go through `realpath`.
-`bash -c`/`sh -c`/`zsh -c` strings, `eval`, `$(...)`, `<(...)` and backticks
-are parsed as commands; heredoc bodies are dropped as data. A destination
-built from anything else (another variable, a command's output such as
-`D=$(mktemp -d)`) is not known and does not by itself refuse. These limits,
-and that programs writing files themselves (python, node, tests) are not seen,
-are stated in the hook's header.
+A path the line does not spell (a variable set by an earlier command,
+`D=$(mktemp -d)`, a symlink made earlier) is not known, and programs that
+write files themselves (python, node, tests) are not seen. These limits are
+stated in the hook's header.
 
 ### The message
 
 `disk guard: refused: <what>, e.g. "cp copies <src> into <dst>, a folder
-inside it, which never ends" / "mkdir creates /private/tmp/claude-501/pr,
-inside the shared temporary folder /private/tmp/claude-501".` then `Work in
-the clone or folder you were given at <cwd>: run every command, evidence
-script and experiment there, and keep copies and temporary files inside it or
-in your session folder <folder>. Never copy, clone or extract it into itself,
-into $TMPDIR or /tmp/claude-*, or into a parent folder.`
+inside it, which never ends" / "mkdir in a command that names the shared
+temporary folder (/tmp/claude-501/pr)".` then `Work in the clone or folder
+you were given at <cwd>: run every command, evidence script and experiment
+there, and keep copies and temporary files inside it or in your session
+folder <folder>. Never copy, clone or extract it into itself, into $TMPDIR or
+/tmp/claude-*, or into a parent folder. A command that only reads the shared
+folder runs if it has no write in the same line.`
 
 The person's own override, as with `ORCH_ALLOW_DESTRUCTIVE_GIT`:
 `ORCH_ALLOW_TEMP_WRITES=1` in the hook's own environment. An inline prefix
@@ -146,15 +162,19 @@ does not disarm it, and the launchers' reduced environment never passes it.
   every Claude Code session that has the plugin, and its subagents.
 - Every `claude -p` the plugin launches (`run_claude`, `run_runner`,
   `run_code_review` in `orch-review.py`; `orch-control.py launch` uses
-  `run_claude`): the hook goes into the `--settings` JSON next to the sandbox,
-  as `bash <absolute path of the plugin's own guard-disk-writes.sh>`, outside
-  the clone, so a reviewer cannot change it. These launches drop
-  `--safe-mode` (F1) and keep `--restricted` and `--strict-mcp-config`, which
-  keep the person's settings files, CLAUDE.md, plugins and MCP servers out
-  (F2). The launch is checked from its init event: every plugin's `source`
-  must end in `@builtin`, or the launch is a dropout, so the guarantee
-  `--safe-mode` gave is observed, not assumed. `docs/specs/review-design.md`
-  R5 records the flags.
+  `run_claude`): the hook goes into the `--settings` JSON next to the sandbox.
+  It runs outside the sandbox, so it runs from a copy of the hook and its
+  helper made once in `<run dir>/guard/`, which the launch can neither read
+  (`denyRead`) nor write; the plugin's own files can sit inside the folder a
+  launch may write (a `--copy` install under `<project>/.claude`, or
+  `orch-control.py launch` on the plugin's own repository), where a model
+  could otherwise rewrite the hook it runs under. A run directory inside the
+  folder the launch may write is refused. These launches drop `--safe-mode`
+  (F1) and keep `--restricted` and `--strict-mcp-config`, which keep the
+  person's settings files, CLAUDE.md, plugins and MCP servers out (F2). The
+  launch is checked from its init event: every plugin's `source` must end in
+  `@builtin`, or the launch is a dropout, so the guarantee `--safe-mode` gave
+  is observed, not assumed. `docs/specs/review-design.md` R5 records the flags.
 - Not wired: the Codex plugin, and Codex children (`codex review`,
   `codex exec`, `codex sandbox`), which launch with plugins disabled. They get
   the per-launch `TMPDIR` (G2) and the watchdog (G3). The existing guards are
@@ -191,8 +211,9 @@ does not disarm it, and the launchers' reduced environment never passes it.
   less than 5 GiB free: exit 2, printing the free space, the `df -h` line of
   that volume and the size of the likely culprits (the task-resource
   `scratch/`, `/tmp/claude-<uid>`, and the run directory's parent, where runs
-  accumulate), each measured with one `du -sk` bounded to 30 seconds ("not
-  measured in time" otherwise).
+  accumulate, both at launch and when the watchdog fires), each with its own
+  `du -sk`, all started together under one 30-second deadline, so a slow one
+  leaves the others measured ("not measured in time" otherwise).
 - **While a run is live.** A watchdog thread, in the process that runs the
   review (the foreground run or the `--child` of `--detach`) and in
   `orch-control.py launch`, reads free space and the run directory's size
@@ -203,13 +224,19 @@ does not disarm it, and the launchers' reduced environment never passes it.
   copies under `scratch/` are not counted: their size is the repository's
   times the number of copies, known before launch, and a runaway inside one is
   refused by G1 or caught by the free-space floor.
-- **When it fires.** It kills every process group the run started (every
-  launch and experiment is started through one registry), and nothing new
-  starts: no launch, no experiment, no copy. It writes `watchdog.json` in the
-  run directory with the reason and the path that grew (for the cap, the
-  largest entry inside the run directory, descending while one child holds
-  more than half; for the free-space floor, the culprits' sizes) and prints
-  the same to stderr. `decide()` reads it: the run is `INCOMPLETE` with that
+- **When it fires.** It kills every process group the run started, and
+  nothing new starts: no launch, no experiment, no copy, no copy step. Every
+  launch, experiment and preparation step (the `copy_ignored` copies and
+  `review.setup`) is started through one registry, `spawn()`, and a copy
+  checks for the stop between its steps; only the `git clone` of a copy runs
+  inside the task manager, bounded by the repository's size. For the cap, the
+  path that grew (the largest entry inside the run directory, descending while
+  one child holds more than half) is measured before the kill, because a
+  killed Codex launch removes its tmp folder right after; a file vanishing
+  while it is measured gives "not measured", never a dead watchdog. For the
+  free-space floor the culprits are measured after the kill. The reason is
+  then written to `watchdog.json` whatever the measuring did, and printed to
+  stderr. `decide()` reads it: the run is `INCOMPLETE` with that
   reason, and the outcome row carries it. The killed launches are ordinary
   dropouts, so the copies are removed at the end (G4). For
   `orch-control.py launch` the attempt is a dropout with the reason.
@@ -253,13 +280,20 @@ does not disarm it, and the launchers' reduced environment never passes it.
     moment the task exists until its cleanup; the descriptor is not inherited,
     so the lock ends when the run's process does, however it ends.
   - **Sweep at each launch.** `orch-review.py run` and `orch-control.py
-    launch` first sweep, bounded to 120 seconds, the tasks the two launchers
+    launch` first sweep. The sweep runs in its own process
+    (`orch-review.py sweep --state-dir <base>`); the launch waits for it at
+    most 120 seconds, and a sweep still running finishes in the background
+    (the manager's cleanup is safe to interrupt and resume), so one large or
+    locked task never holds a launch. A task whose lifecycle lock another
+    process holds is skipped as busy. It sweeps the tasks the two launchers
     make (task `review <run>` whose only lease, if any, is `orch-review`, and
     `configured-<role>` whose only lease is `configured-cli`), when the task's
     record was last written over 24 hours ago, the task is not `done`, its
     scratch folder still exists (a record whose folder was removed by hand has
     nothing to reclaim and is left as it is), and nobody holds its scratch
-    lock. A task from before this change has no
+    lock. A run or launch whose managed-process shutdown is unconfirmed keeps
+    its lease on purpose and adds a second consumer (`orch-review-pending`,
+    `configured-cli-pending`), so the sweep never releases it as dead. A task from before this change has no
     lock and is judged by age alone. The sweep releases the dead lease and
     finishes the task through the manager, so every ownership check (owned
     folder and uid, no symlink followed, a clone's refs, a nested repository)
@@ -289,6 +323,26 @@ three version fields, as in 0.18.0), so an installed copy updates with
 `claude plugin update` and `codex plugin add`.
 
 ## Settled
+
+- The guard is conservative, not an exact model of the shell (Full review of
+  PR #55, 2026-10-29: the exact model failed open thirteen ways). A command
+  that names a shared temporary folder and holds a write word anywhere is
+  refused even when the write goes elsewhere: `cat /tmp/claude-501/x.log >
+  out.txt`, `ls /tmp/claude-501 | grep tar`, `(cd /tmp/claude-501); mkdir pr`.
+  Reason: a line that both reads the shared folder and writes elsewhere is
+  rare for an agent, the message says to run the read on its own, and every
+  narrower rule tried had a form that slipped through.
+- Option values are never told apart from paths in rule B (`rsync -e ssh`
+  makes `ssh` a source). Reason: telling them apart needs every program's
+  option table, and a missing entry hid `-R` (`cp -f -R`); a wrong extra path
+  can only refuse more.
+- A heredoc fed to anything but a shell or `xargs` is data: only its names of
+  a shared folder count. Reason: notes and commit messages hold apostrophes
+  and the words cp or mkdir; a heredoc into a file that names the shared
+  folder is still refused. Write such a file with the editor tool.
+- A line nested more than four levels (`$(...)`, `bash -c`, `eval`), or one
+  it cannot tokenize that copies or writes near the shared folder, is refused.
+  Reason: no agent writes either in ordinary work, and both fail closed.
 
 - The thresholds: refuse to launch under 5 GiB free; fire under 2 GiB free or
   when the run directory passes 10 GiB; sweep sandboxes over 24 hours idle.

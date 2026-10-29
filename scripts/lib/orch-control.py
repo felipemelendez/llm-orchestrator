@@ -156,6 +156,7 @@ def launch(args, policy):
         if (attempt.get("capacity") or {}).get("cleanup_status") == "pending":
             attempt["preserved_task"] = {"id": task["id"], "scratch": str(run_dir),
                                          "reason": "process shutdown unconfirmed; consumer lease retained"}
+            manager.acquire(task["id"], "configured-cli-pending")  # held on purpose: no sweep releases it
         output = review.read_json(launch_dir / "output.json")
         review.append_outcome(attempt)
         print(json.dumps({"attempt": attempt, "output": output}))

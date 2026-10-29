@@ -138,6 +138,73 @@ class DiskGuardTests(unittest.TestCase):
         commands = [hook["command"] for entry in hooks if entry.get("matcher") == "Bash" for hook in entry["hooks"]]
         self.assertIn("bash ${CLAUDE_PLUGIN_ROOT}/scripts/hooks/guard-disk-writes.sh", commands)
 
+    # The rules the Full review of PR #55 reproduced as failing open (finding ids in each comment).
+    def test_option_values_never_hide_a_copy_into_itself(self):  # code-review-2, codex-review-1
+        for command in ("cp -f -R . ./sub", "cp -R -f . ./sub", "cp -r -T . sub", "rsync -e ssh -a . ./sub",
+                        "cp -R -t sub ."):
+            with self.subTest(command=command):
+                self.refuses(command, ["inside it"])
+
+    def test_option_values_never_hide_a_delete_in_the_shared_folder(self):  # code-review-3, codex-review-1
+        for command in (f"rm -r {TEMP}/pr", f"rm -d {TEMP}/pr", f"touch -r x {TEMP}/a", f"truncate -s 0 {TEMP}/f"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+
+    def test_attached_and_bundled_download_outputs_name_the_shared_folder(self):  # code-review-4, codex-review-5
+        for command in (f"curl -sSLo {TEMP}/x https://e.invalid", f"cd {TEMP} && curl -LO https://e.invalid/f",
+                        f"wget -qO {TEMP}/x https://e.invalid", f"curl -o{TEMP}/out https://e.invalid",
+                        f"wget -O{TEMP}/out https://e.invalid", f"curl --output={TEMP}/o https://e.invalid"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+
+    def test_a_substitution_is_read_with_the_folder_and_variables_before_it(self):  # code-review-5, codex-review-2
+        for command in ("cd $TMPDIR && true $(mkdir pr)", f"cd {TEMP} && echo $(mkdir pr)",
+                        f'D={TEMP}/pr; echo $(mkdir "$D")', f"cd {TEMP} && echo `mkdir pr`"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+
+    def test_a_wrapped_command_is_checked(self):  # code-review-6
+        for command, words in (("timeout 600 cp -R . ./sub", "inside it"), ("find . -exec cp -R {} ./sub \\;", "inside it"),
+                               (f"xargs mkdir {TEMP}/pr", "shared temporary folder"),
+                               ("stdbuf -oL nice -n 5 rsync -a . ./backup", "inside it"),
+                               (f"find {TEMP} -delete", "shared temporary folder")):
+            with self.subTest(command=command):
+                self.refuses(command, [words])
+
+    def test_only_a_real_heredoc_hides_its_body(self):  # code-review-8
+        for command in (f"echo $((1<<2))\nmkdir {TEMP}/pr", f'echo "a<<b"\nmkdir {TEMP}/pr',
+                        f"bash <<'EOF'\nmkdir {TEMP}/x\nEOF", f"xargs mkdir <<EOF\n{TEMP}/x\nEOF"):
+            with self.subTest(command=command):
+                self.refuses(command, ["shared temporary folder"])
+        self.allows("cat > notes.md <<'EOF'\nIt's done: mkdir and cp are fine here\nEOF")
+        self.allows("git commit -q -F - <<'EOF'\nDon't copy into itself\nEOF")
+
+    def test_a_subshell_cd_does_not_hide_a_shared_write(self):  # codex-review-3
+        self.refuses(f"cd {TEMP}; (cd /); mkdir pr", ["shared temporary folder"])
+        self.refuses(f"(cd /tmp) ; cd {self.clone} && cp -R . {self.clone}/sub", ["inside it"])
+
+    def test_single_quoted_text_is_not_run(self):  # codex-review-8
+        for command in (f"printf %s '$(mkdir {TEMP}/pr)'", f"grep -rn 'mkdir {TEMP}/' docs",
+                        f"echo '`cp -R . {TEMP}/x`'"):
+            with self.subTest(command=command):
+                self.allows(command)
+        self.refuses(f"echo \"$(mkdir {TEMP}/pr)\"", ["shared temporary folder"])
+
+    def test_eval_counts_toward_the_nesting_limit(self):  # codex-review-9
+        self.refuses("eval eval eval eval eval eval 'mkdir x'", ["nested too deeply"])
+        self.allows("eval 'echo ok'")
+
+    def test_successive_git_directories_cannot_move_a_clone_out_of_sight(self):  # codex-review-10
+        self.refuses(f"git -C {TEMP} -C pr clone https://example.invalid/y.git", ["shared temporary folder"])
+
+    def test_a_write_anywhere_in_a_command_naming_the_shared_folder_is_refused(self):  # Settled: conservative rule
+        for command in (f"(cd {TEMP}); mkdir pr", f"cat {TEMP}/x.log > out.txt", f"ls {TEMP} && mkdir build"):
+            with self.subTest(command=command):
+                result = self.refuses(command, ["shared temporary folder"])
+                self.assertIn("only reads the shared folder runs if it has no write in the same line", result.stderr)
+        self.allows(f"cat {TEMP}/x.log")
+        self.allows(f"ls {TEMP} 2>/dev/null | sort")
+
 
 if __name__ == "__main__":
     unittest.main()

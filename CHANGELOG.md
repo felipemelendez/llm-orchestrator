@@ -17,14 +17,18 @@ copies had also piled up to about 20 GB. Spec: `docs/specs/disk-guard.md`.
   `ditto . sub`, `tar -cf - . | tar -xf - -C sub`) and any write, new folder
   or deletion under Claude Code's shared temporary folder (`/tmp/claude-*`)
   or `$TMPDIR`, outside the session's own folder and the folder the command
-  starts in. The refusal says where to work instead. Ordinary work, reads of
-  the temporary folder and `mktemp -d` are allowed. It runs in every session
+  starts in. It is conservative: a command that names that folder and holds
+  a write word anywhere (behind `timeout`, in `$(...)`, after a `cd`) is
+  refused, even when the write goes elsewhere; run a read of the folder on
+  its own. The refusal says where to work instead. Ordinary work, reads of
+  the temporary folder, single-quoted text and `mktemp -d` are allowed. It runs in every session
   and subagent, and every review launch gets it too. Its own off switch is
   `ORCH_ALLOW_TEMP_WRITES=1`, set by you when you start the session.
 - **Review launches run without `--safe-mode`**, because under it the guard
   would not run. `--restricted` and `--strict-mcp-config` still keep your
   settings, CLAUDE.md, plugins and MCP servers out, and a launch that shows a
-  plugin that is not built in is a dropout.
+  plugin that is not built in is a dropout. The guard they run is a copy in
+  the run directory, which the launch can neither read nor write.
 - **One rule in every prompt**: work only in the folder you were given, and
   never copy it into `$TMPDIR`, `/tmp` or a parent folder. Each Codex launch
   and experiment gets its own `TMPDIR` inside the run directory, removed when
@@ -32,13 +36,14 @@ copies had also piled up to about 20 GB. Spec: `docs/specs/disk-guard.md`.
 - **A review needs 5 GiB free to start**, and prints the `df` line and the
   likely culprits when it refuses. While it runs, a watchdog checks every 10
   seconds and stops the run below 2 GiB free or when its run directory passes
-  10 GiB: every launch is killed, the run is `INCOMPLETE` with the reason,
-  and the path that grew is printed. The same applies to
+  10 GiB: every launch, copy and `review.setup` is killed, the run is
+  `INCOMPLETE` with the reason, and the path that grew is printed. The same applies to
   `orch-control.py launch`.
 - **Review copies are removed.** A run removes its copies when it ends; only
   a run whose own steps failed keeps them for inspection. Each launch first
   removes review copies left by runs that died (over a day idle, and no live
-  run holding them), through the same ownership checks as every cleanup.
+  run holding them), through the same ownership checks as every cleanup; a
+  launch waits for that sweep at most two minutes.
   `orch-control.py capacity status` shows how much the scratch folder holds.
 - **Fixed: a copy that failed to be made blocked its whole task's cleanup.**
   When `git clone` ran out of disk, the task kept saying its ownership was
