@@ -49,14 +49,14 @@ _orch_pid_alive() {
 # folder by then — so two callers racing for one lock were both told "done"
 # (docs/specs/folder-locks.md). perl's mkdir is the system call itself, which
 # has exactly one winner; perl ships with macOS, every Ubuntu and Git for
-# Windows. Only perl's own answer counts: 0 created, 1 not created (already
-# there, or no parent). Never `perl ... || mkdir`, which would hand perl's
-# "already exists" to the faulty program. Any other status means perl did not
-# run (an unset version-manager shim exits 126), so the mkdir program decides.
+# Windows. When perl is on PATH only its answer counts: 0 created, anything
+# else not created, even a perl that cannot run (fixed in the environment; a
+# lock that fails loudly loses nothing, a false win can). Never
+# `perl ... || mkdir`; the mkdir program runs only where perl is absent.
 orch_mkdir_once() {
   if command -v perl >/dev/null 2>&1; then
     perl -e 'mkdir shift or exit 1' -- "$1" 2>/dev/null
-    case $? in 0) return 0 ;; 1) return 1 ;; esac
+    return
   fi
   command mkdir -- "$1" 2>/dev/null
 }

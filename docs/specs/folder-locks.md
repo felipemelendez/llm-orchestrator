@@ -65,7 +65,8 @@ documented behaviour.
   `perl -e 'mkdir shift or exit 1' -- "<worktree>/.orch-active"`, run exactly
   as written and on its own; the instructions say why plain `mkdir` is not
   used. If that command cannot run at all (permission denied, or no perl), the
-  implementer reads the path like any failed claim: a folder means another
+  implementer reads the path like any failed claim (finding nothing there, it
+  runs the claim once more first, in case the holder just released it): a folder means another
   writer holds it; nothing there means the claim could not be made (denied,
   no perl, or the worktree missing or not writable), and it stops with
   `Status: BLOCKED` and a Need that names the allow rule and the worktree
@@ -137,6 +138,15 @@ file) each opened new races in review, because reclaiming a lock that does not
 release itself on death has no simple correct form. It goes to its own ticket,
 where the choice (a kernel lock that releases itself, or an in-place takeover)
 can be designed and reviewed on its own.
+
+## Settled
+
+- A perl that is on PATH but cannot run (a broken version-manager shim, a bad
+  PERL5OPT) makes the create fail; it never hands the create to the `mkdir`
+  program (Felipe's session, 2026-10-29). Review asked both ways in turn:
+  falling back lets Ubuntu 26.04's program say "done" twice, failing blocks
+  locks until perl is fixed. A lock that fails loudly loses nothing; a false
+  win can lose a note or let two writers in. Reopen only with a new argument.
 
 ## Alternatives considered
 

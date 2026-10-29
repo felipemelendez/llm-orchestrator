@@ -366,16 +366,20 @@ if should_run lock; then
     ok "without perl, orch_mkdir_once creates a new folder and refuses an existing one"
   else fail "orch_mkdir_once without perl" "the mkdir fallback did not create once and refuse after"; fi
   # A perl that is found but cannot run (an unset version-manager shim exits
-  # 126) must not make every create fail: only perl's own "not created" (exit 1)
-  # is an answer; anything else falls back to the mkdir program (code review).
+  # 126) makes the create fail. It never hands the create to the mkdir program,
+  # which on 26.04 says "done" for a folder that exists (docs/specs/folder-locks.md,
+  # Settled). Checked with the lying mkdir behind it: an existing folder is
+  # refused, and nothing is created in its place.
   BADPERL_BIN="$SMOKE_TMP/bad-perl"; mkdir -p "$BADPERL_BIN"
   printf '#!/bin/sh\nexit 126\n' > "$BADPERL_BIN/perl"; chmod +x "$BADPERL_BIN/perl"
-  if ( PATH="$BADPERL_BIN:$PATH"; orch_mkdir_once "$TF3.badperl" ) && [[ -d "$TF3.badperl" ]] \
-     && ! ( PATH="$BADPERL_BIN:$PATH"; orch_mkdir_once "$TF3.badperl" ); then
-    ok "a perl that cannot run falls back to mkdir: creates once and refuses after"
-  else fail "orch_mkdir_once with a broken perl" "a perl that cannot run blocked the create, or the fallback did not refuse after"; fi
+  mkdir -p "$TF3.badperl"
+  if ( PATH="$BADPERL_BIN:$LYING_BIN:$PATH"; orch_mkdir_once "$TF3.badperl" ) \
+     || ( PATH="$BADPERL_BIN:$LYING_BIN:$PATH"; orch_mkdir_once "$TF3.badperl-new" ) \
+     || [[ -e "$TF3.badperl-new" ]]; then
+    fail "orch_mkdir_once with a broken perl" "a perl that cannot run handed the create to the mkdir program"
+  else ok "a perl that cannot run fails the create, never the mkdir program"; fi
 
-  rm -rf "$TF3.lockdir" "$TF3.fallback" "$TF3.badperl" "$LYING_BIN" "$NOPERL_BIN" "$BADPERL_BIN"
+  rm -rf "$TF3.lockdir" "$TF3.fallback" "$TF3.badperl" "$TF3.badperl-new" "$LYING_BIN" "$NOPERL_BIN" "$BADPERL_BIN"
   rm -f "$TF" "$TF.lock" "$TF.lockdir" "$TF2" "$TF2.lock" "$TF2.lockdir"
   unset ORCH_LOCK_TIMEOUT
 fi
