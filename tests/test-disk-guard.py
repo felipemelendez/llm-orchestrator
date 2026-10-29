@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shlex
 import shutil
 import subprocess
@@ -102,6 +103,17 @@ REFUSED = [
     # rule 0: only the session's own folder is set aside
     ("escape", f"mkdir -p {T}/{PROJECT}/another-session/x", None), ("escape", f"mkdir {OWN}/../../pr", None),
     ("escape", f'mkdir "{OWN}"/../pr', None),
+    # the closed-list re-review (20261029-plugin55-closed): rule 0 reads the whole word, is anchored, and
+    # takes neither . nor .. as the project folder; what follows the folder's plain path stays visible
+    ("escape", f'mkdir "{OWN}/a b/../../../pr"', None), ("escape", f'mkdir {OWN}/"a b/../../../pr"', None),
+    ("escape", f"mkdir -p {T}/../{SESSION}/pr", None),
+    ("escape", f"mkdir -p {T}/./{SESSION}/pr", None), ("escape", f"mkdir -p /var{OWN}/pr", None),
+    ("escape", f'echo "{OWN}/x $(mkdir {T}/pr)"', None),
+    # rule 2: a copy missing its source or destination, a redirection's target, fd digits, case and /private
+    ("no-source", "echo . sub | xargs cp -R", None), ("no-source", "rsync -a", None),
+    ("nested", "cp -R 2>/dev/null . ./sub", None), ("nested", "cp -R src . 9 >log", None),
+    ("nested", "cp -R . sub >&2", None), ("nested", "cp -R src SRC/x", None),
+    ("nested", "cp -R /var/folders/q/repo sub", "/private/var/folders/q/repo"),
 ]
 
 # Ordinary work, and the session's own folder. (kind, command): "own" rows test rule 0.
@@ -119,6 +131,10 @@ ALLOWED = [
     ("own", f"ls {OWN}/scratchpad"), ("own", f"echo hi > {OWN}/scratchpad/a.txt"),
     ("own", f"mkdir -p {OWN}/x && cp -R src {OWN}/copy"), ("own", f"cp -R . /private{OWN}/copy"),
     ("own", f"TMPDIR={OWN}/t codex exec 'review the diff'"), ("own", f'mkdir -p "{OWN}/x-$$"'),
+    ("own", f"mkdir -p {OWN}/build/tmp"), ("own", f"ls {OWN}/claude-{UID}"),
+    ("own", f"mkdir /TMP/CLAUDE-{UID}/{PROJECT}/{SESSION}/x"), ("own", f'cp notes.txt "{OWN}/a b/c.txt"'),
+    ("work", "tar -czf a.tgz src\nls | grep tar"), ("work", "tar cf a.tar src\nprintf done | cat\ntar xf a.tar -C dest"),
+    ("work", "cp -R src dist 2>&1 | tail -1"),
 ]
 
 
@@ -137,9 +153,10 @@ class DiskGuardTests(unittest.TestCase):
         self.clone = self.root / "clone"
         self.clone.mkdir()
 
-    def hook(self, command, env=None, cwd=None, hook=HOOK):
+    def hook(self, command, env=None, cwd=None, hook=HOOK, event=None):
         payload = {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(cwd or self.clone),
-                   "session_id": SESSION, "transcript_path": f"/Users/someone/.claude/projects/{PROJECT}/{SESSION}.jsonl"}
+                   "session_id": SESSION, "transcript_path": f"/Users/someone/.claude/projects/{PROJECT}/{SESSION}.jsonl",
+                   **(event or {})}
         environment = {"PATH": os.environ["PATH"], "HOME": str(self.root / "home"), **(env or {})}
         return subprocess.run([BASH, str(hook)], input=json.dumps(payload), capture_output=True, text=True,
                               env=environment, cwd=str(self.clone), timeout=20)
@@ -235,6 +252,14 @@ class DiskGuardTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command, hook=hook).returncode, 0)
 
+    def test_the_plain_fallback_reads_only_the_command(self):
+        hook = self.installed_copy()
+        around = {"cwd": "/Users/someone/src/tar", "tool_input": {"command": "ls", "description": "List the tar files"},
+                  "transcript_path": f"/tmp/claude-{UID}/x/{SESSION}.jsonl"}
+        self.assertEqual(self.hook("", hook=hook, event=around).returncode, 0)
+        inside = {"tool_input": {"command": 'echo "\\"command\\": \\"ls\\"" && cp -R a b', "description": "d"}}
+        self.assertEqual(self.hook("", hook=hook, event=inside).returncode, 2)
+
     def test_the_plain_fallback_runs_when_the_helper_fails_or_python_is_missing(self):
         broken = self.installed_copy("raise RuntimeError(\"broken\")\n")
         result = self.hook(INCIDENT, hook=broken)
@@ -245,6 +270,24 @@ class DiskGuardTests(unittest.TestCase):
             os.symlink(shutil.which(name), tools / name)
         self.assertEqual(self.hook(INCIDENT, env={"PATH": str(tools)}).returncode, 2)
         self.assertEqual(self.hook("git status", env={"PATH": str(tools)}).returncode, 0)
+
+    def test_every_command_the_plugin_tells_a_model_to_run_passes_the_guard(self):
+        decide = load_helper().decide
+        pages = [*ROOT.glob("commands/*.md"), *ROOT.glob("agents/*.md"), *ROOT.glob("skills/**/*.md"),
+                 *ROOT.glob("templates/**/*.md"), *ROOT.glob("output-styles/*.md")]
+        blocks = [(page, block) for page in pages
+                  for block in re.findall(r"```(?:bash|sh|shell)\n(.*?)```", page.read_text(), re.S)]
+        self.assertGreater(len(blocks), 20)
+        for page, block in blocks:
+            with self.subTest(page=str(page.relative_to(ROOT)), block=block[:80]):
+                self.assertIsNone(decide(block, "/w", SESSION, None))
+
+    def test_the_message_names_the_session_folder_from_the_transcripts_own_folder(self):
+        transcript = f"/Users/projects/.claude/projects/{PROJECT}/{SESSION}.jsonl"  # a home folder called projects
+        result = self.hook("mktemp -d", event={"transcript_path": transcript})
+        self.assertIn(f"in your session's own folder, /tmp/claude-{UID}/{PROJECT}/{SESSION}/", result.stderr)
+        result = self.hook("mktemp -d", event={"transcript_path": f"/Users/x/.claude/projects/{PROJECT}/{SESSION}/subagents/a.jsonl"})
+        self.assertIn("put temporary files inside that folder", result.stderr)
 
     def test_hooks_json_wires_the_guard_for_every_bash_call(self):
         hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]["PreToolUse"]

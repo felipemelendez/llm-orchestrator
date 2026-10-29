@@ -29,9 +29,9 @@
 # Reads the event on stdin; exit 0 allows, exit 2 refuses with the reason on
 # stderr. The decision is scripts/lib/orch-disk-guard.py, run with `python3 -I`
 # so nothing beside it or in the environment is imported. Without python3, or
-# when the helper exits with anything but 0 or 2, a plain text check refuses
-# any rule-1 word and any copier word (cp, rsync, ditto, tar), since it cannot
-# read rule 2.
+# when the helper exits with anything but 0 or 2, a plain text check of the
+# command alone refuses any rule-1 word and any copier word (cp, rsync, ditto,
+# tar), since it cannot read rule 2.
 #
 # The only opt-out is ORCH_ALLOW_TEMP_WRITES=1 in the hook's OWN environment,
 # set by a person when launching the session. An inline
@@ -62,8 +62,10 @@ if command -v python3 >/dev/null 2>&1 && [[ -f "${HELPER}" ]]; then
   fi
 fi
 
-# The event is JSON: a newline in the command is the two characters \n.
-FLAT=$(printf '%s' "${INPUT}" | LC_ALL=C tr -c '[:print:]' ' ' | sed 's/\\[nrt]/ /g')
+# Only the command is checked: the JSON string after the "command" key, up to its closing unescaped quote
+# (in valid JSON, "command" followed by : can only be a key). A newline in it is the two characters \n.
+FLAT=$(printf '%s' "${INPUT}" | LC_ALL=C tr -c '[:print:]' ' ' \
+  | LC_ALL=C sed -nE 's/.*"command"[[:space:]]*:[[:space:]]*"(([^"\\]|\\.)*)".*/\1/p' | sed 's/\\[nrt]/ /g')
 if LC_ALL=C grep -qiE '[$][{]?[#!]?TMPDIR([^A-Za-z0-9_]|$)|/tmp([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_])mktemp([^A-Za-z0-9_]|$)|(^|[^A-Za-z0-9_.-])claude-[0-9]+([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_])(cp|rsync|ditto|tar)([^A-Za-z0-9_]|$)' <<< "${FLAT}"; then
   echo "disk guard: refused: the guard's helper could not run, and the command copies or names the shared temporary area. Work in the clone or folder you were given, and keep copies and temporary files inside it." >&2
   exit 2

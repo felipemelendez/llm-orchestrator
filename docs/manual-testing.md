@@ -251,7 +251,7 @@ The heart of the system. Use a sandbox project (or a tiny throwaway feature in a
 ### 5.1 Setup
 
 ```bash
-cd /tmp && mkdir orch-test-feature && cd orch-test-feature
+mkdir -p ~/orch-test-feature && cd ~/orch-test-feature
 git init -q && git commit --allow-empty -q -m initial
 echo '{}' > package.json
 ```
@@ -376,7 +376,7 @@ Alternatively, in a fresh `claude` session, type `/resume` to pick a session fro
 
 ```bash
 # Optional cleanup of test artifacts
-rm -rf /tmp/orch-test-feature
+rm -rf ~/orch-test-feature
 # Inspect memory state
 ls ~/.llm-orchestrator/memory/
 ls ./CLAUDE.md

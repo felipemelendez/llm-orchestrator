@@ -23,7 +23,7 @@ MAX_LENGTH = 100_000
 LONG_WORDS = ("cp", "rsync", "ditto", "tar", "tmpdir", "/tmp", "mktemp", "claude-")  # rule 3, lower case
 SLASHES = re.compile(r"/(?:\.?/)+")
 OWN = "/session-folder"  # what the session's own folder becomes: absolute, and no rule-1 word
-SESSION_ID = re.compile(r"[A-Za-z0-9._-]+")
+SESSION_ID = re.compile(r"(?!\.+$)[A-Za-z0-9._-]+")
 # Rule 1. Names and paths ignore case, as macOS's disk does; a variable's name does not.
 SHARED = re.compile(r"\$TMPDIR(?![A-Za-z0-9_])|\$\{[#!]?TMPDIR(?![A-Za-z0-9_])"
                     r"|(?i:/tmp)(?![A-Za-z0-9_.-])"
@@ -35,26 +35,63 @@ CHANGES_FOLDER = re.compile(r"(?i)(?<![A-Za-z0-9_.-])(?:cd|pushd|popd)(?![A-Za-z
 SPELLED_OUT = re.compile(r"[A-Za-z0-9._/+-]+")
 TARGET = re.compile(r"--target-directory(?:=(.*))?|-[A-Za-z]*?t(.*)")  # cp's -t value
 SEPARATORS = ";&|()<>`"
+FD_DIGITS = re.compile(r"(?<![^\s;&|()<>`])[0-9]+(?=[<>])")  # the 2 of 2>, never a separate 9 before >
+PATH_RUN = re.compile(r"[A-Za-z0-9._/+-]*")
+
+
+def word_end(text, i, quote):
+    """Where the shell word that continues at `i` ends, reading quotes and backslashes; `quote` is open at `i`."""
+    while i < len(text):
+        c = text[i]
+        if c == "\\" and quote != "'":
+            i += 1
+        elif quote:
+            quote = None if c == quote else quote
+        elif c in "'\"`":
+            quote = c
+        elif c.isspace() or c in ";&|<>":
+            break
+        i += 1
+    return i
 
 
 def set_aside(text, session):
-    """Rule 0: each spelling of the session's own folder becomes OWN, unless the path after it holds `..`."""
+    """Rule 0: (the text rule 1 reads, the text rule 2 reads). Each spelling of the session's own folder, at the
+    start of a word, leaves rule 1's text with the plain path characters after it, and is OWN in rule 2's text.
+    One whose word holds `..` anywhere stays as it is, so rule 1 refuses it."""
     if not session:
-        return text
-    folder = re.compile(r"(?:/private)?/tmp/claude(?:-[0-9]+)?/[A-Za-z0-9._-]+/" + re.escape(session)
-                        + r"(?![A-Za-z0-9._-])([^\s;&|()<>`]*)")
-    return folder.sub(lambda match: match.group(0) if ".." in match.group(1) else OWN + match.group(1), text)
+        return text, text
+    folder = re.compile(r"(?i)(?<![^\s'\"`=;&|()<>])(?:/private)?/tmp/claude(?:-[0-9]+)?/(?!\.\.?/)[A-Za-z0-9._-]+/"
+                        + re.escape(session) + r"(?![A-Za-z0-9._-])")
+    hidden, kept, last = [], [], 0
+    for match in folder.finditer(text):
+        before = text[match.start() - 1:match.start()]
+        end = word_end(text, match.end(), before if before and before in "'\"`" else None)
+        if match.start() < last or ".." in text[match.end():end]:
+            continue
+        run = PATH_RUN.match(text, match.end()).end()
+        hidden.append(text[last:match.start()] + " " + text[run:end])
+        kept.append(text[last:match.start()] + OWN + text[match.end():end])
+        last = end
+    return "".join(hidden) + text[last:], "".join(kept) + text[last:]
+
+
+def canonical(path):
+    """A path as macOS's disk reads it: case ignored, and /private/var, /private/tmp, /private/etc as /var, /tmp, /etc."""
+    return re.sub(r"^/private(?=/(?:var|tmp|etc)(?:/|$))", "", path).lower()
 
 
 def copies(words):
-    """(name, arguments) for each cp, rsync or ditto word; its arguments run to the next separator or copier."""
-    found, current = [], None
+    """(name, arguments) for each cp, rsync or ditto word; its arguments run to the next separator or copier,
+    and a redirection takes only its own target."""
+    found, current, target_next = [], None, False
     for word in words:
         name = os.path.basename(word).lower()
-        if word and set(word) <= set(SEPARATORS):
-            if current and current[1] and current[1][-1].isdigit() and set(word) & set("<>"):
-                current[1].pop()  # the 2 of 2>
-            current = None
+        if target_next:
+            target_next = False  # a redirection's own target, never an argument
+        elif word and set(word) <= set(SEPARATORS):
+            target_next = bool(set(word) & set("<>")) and not set(word) & set(";|()`")
+            current = current if target_next else None
         elif name in ("cp", "rsync", "ditto"):
             current = (name, [])
             found.append(current)
@@ -79,8 +116,9 @@ def copy_reason(name, args, cwd, changes_folder):
             target = option.group(1) or option.group(2) or None
             value_next = target is None
     destination = target if target is not None else (operands.pop() if operands else None)
-    if destination is None:
-        return None
+    if destination is None or not operands:
+        return (f"{name} copies with its source or destination not on the line (from xargs or stdin). Write "
+                "each source and the destination out")
     for operand in operands + [destination]:
         if not SPELLED_OUT.fullmatch(operand):
             return (f"{name} copies with a path that is not spelled out ({operand}). In a recursive copy, write "
@@ -89,13 +127,10 @@ def copy_reason(name, args, cwd, changes_folder):
         if changes_folder and not operand.startswith("/"):
             return (f"{name} copies a relative path ({operand}) in a command that changes folder. Run the cd "
                     "as its own command, or write the paths from /")
-    if not operands:
-        return (f"{name} copies into {destination} from sources that are not on the line (xargs or stdin). "
-                "Write each source out")
     into = os.path.normpath(os.path.join(cwd, destination))
     for source in operands:
         origin = os.path.normpath(os.path.join(cwd, source))
-        if into == origin or into.startswith(origin.rstrip("/") + "/"):
+        if canonical(into) == canonical(origin) or canonical(into).startswith(canonical(origin).rstrip("/") + "/"):
             return f"{name} copies {origin} into {into}, a folder inside it, which never ends"
     return None
 
@@ -108,26 +143,28 @@ def decide(command, cwd, session, hint):
             return ("a command over 100,000 characters that copies or names the shared temporary area. "
                     "Split it into shorter commands")
         return None
-    text = set_aside(SLASHES.sub("/", command), session)
-    shared = SHARED.search(text)
+    seen, text = set_aside(SLASHES.sub("/", command), session)
+    shared = SHARED.search(seen)
     if shared:
         return (f"the command names the shared temporary area ({shared.group(0)}). Read a file there with "
                 f"the Read tool; work in the clone or folder you were given, {cwd}; and put temporary files "
                 + (f"in your session's own folder, {hint}" if hint else "inside that folder"))
-    first = TAR.search(text)
-    bar = text.find("|", first.end()) if first else -1
-    if bar >= 0 and TAR.search(text, bar + 1):
-        return "a tar pipeline (tar ... | ... tar). Extract with -C into a folder you spell out, as two commands"
+    text = text.replace("\\\n", " ")
+    for line in text.split("\n"):
+        first = TAR.search(line)
+        bar = line.find("|", first.end()) if first else -1
+        if bar >= 0 and TAR.search(line, bar + 1):
+            return "a tar pipeline (tar ... | ... tar). Extract with -C into a folder you spell out, as two commands"
     if not COPIER.search(text):
         return None
-    lexer = shlex.shlex(text.replace("\\\n", " ").replace("\n", " ; "), posix=True, punctuation_chars=SEPARATORS)
+    lexer = shlex.shlex(FD_DIGITS.sub(" ", text).replace("\n", " ; "), posix=True, punctuation_chars=SEPARATORS)
     lexer.whitespace_split, lexer.commenters = True, ""
     try:
         words = list(lexer)
     except ValueError as error:
         return (f"a command with a copier that the guard cannot read ({error}). Close its quotes, or write "
                 "text that holds cp, rsync or ditto with the Write tool")
-    start = set_aside(os.path.normpath(cwd), session)
+    start = set_aside(os.path.normpath(cwd), session)[1]
     changes_folder = bool(CHANGES_FOLDER.search(text))
     return next(filter(None, (copy_reason(name, args, start, changes_folder) for name, args in copies(words))), None)
 
@@ -141,8 +178,8 @@ def main():
     session = session if isinstance(session, str) and SESSION_ID.fullmatch(session) else None
     cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else os.getcwd()
     transcript = event.get("transcript_path")
-    parts = transcript.split("/") if isinstance(transcript, str) else []
-    project = parts[parts.index("projects") + 1] if "projects" in parts[:-1] else None
+    folder, name = os.path.split(transcript) if isinstance(transcript, str) else ("", "")
+    project = os.path.basename(folder) if session and name == f"{session}.jsonl" else None  # <project>/<session>.jsonl
     hint = f"/tmp/claude-{os.getuid()}/{project}/{session}/" if session and project else None
     reason = decide(command, cwd, session, hint)
     if reason:

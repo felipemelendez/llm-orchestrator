@@ -68,8 +68,12 @@ lets the command run; exit 2 refuses it, with the reason on stderr. Like
 `guard-destructive-git.sh` it never uses `set -e`, and every path ends in
 exit 0 or exit 2. When `python3` is missing, or the helper exits with anything
 but 0 or 2 (an event it cannot read, a bug; its own output is then dropped),
-a plain text check runs instead: `grep -E` refuses rule 1's words and any
-copier word (`cp`, `rsync`, `ditto`, `tar`), because it cannot read rule 2.
+a plain text check runs instead. It takes the command alone out of the
+event (`sed`: the JSON string after the `"command"` key, to its closing
+unescaped quote; in valid JSON, `"command"` followed by `:` can only be a
+key), and `grep -E` refuses rule 1's words and any copier word (`cp`,
+`rsync`, `ditto`, `tar`) in it, because it cannot read rule 2. The event's
+folder and description are never read.
 
 **The contract.** The hook reads the command as flat text. It has no model
 of the shell: no variable values, no `cd` tracking, no difference between
@@ -90,13 +94,21 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
 
 0. **First, two normalizations.** `//` and `/./` become `/`. Then each
    occurrence of the session's own folder,
-   `(/private)?/tmp/claude(-<digits>)?/<project>/<session id>` followed by
-   the rest of its path (up to a space or one of ``;&|()<>` ``), is set aside:
-   rule 1 does not see it, and rule 2 reads it as one fixed folder. The
-   session id is the event's `session_id`, when it matches
-   `[A-Za-z0-9._-]+`; the project folder matches `[A-Za-z0-9._-]+`. An
-   occurrence whose rest holds `..` is not set aside
-   (`mkdir <session folder>/../../pr` is refused by rule 1).
+   `(/private)?/tmp/claude(-<digits>)?/<project>/<session id>`, matched in
+   any case and only at the start of a word (at the start of the text, or
+   after a space, a quote, `=` or one of ``;&|()<>` ``), is set aside: rule 1
+   sees neither the folder nor the plain path characters
+   (`A-Z a-z 0-9 . _ / + -`) right after it, so `<session folder>/build/tmp`
+   and `<session folder>/claude-501` are allowed. Anything later in the word
+   stays visible (`"<session folder>/x $(mkdir /tmp/claude-501/pr)"` is
+   refused). Rule 2 reads the folder as one fixed folder. The session id is
+   the event's `session_id`, when it matches `[A-Za-z0-9._-]+` and is not
+   only dots; the project folder matches `[A-Za-z0-9._-]+` and is not `.` or
+   `..`. An occurrence is not set aside when its whole shell word, read with
+   its quotes and backslashes (`"<session folder>/a b/../../pr"` is one
+   word), holds `..`: rule 1 then refuses it
+   (`mkdir <session folder>/../../pr`). `/var/tmp/claude-501/...` is not the
+   session's folder.
 1. **The shared temporary area.** A command whose remaining text, anywhere
    (quotes, heredoc bodies and arithmetic included), holds any of these is
    refused, whether it reads or writes:
@@ -116,15 +128,19 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
    launch a child with its own temporary folder; its value is checked like
    any other text (`TMPDIR=/tmp/x codex exec` is refused for `/tmp`).
 2. **A recursive copy into itself.** A `tar … | … tar` pipeline on one line
-   (a `tar` word, then a `|`, then another `tar` word) is refused: extract
+   (a `tar` word, then a `|`, then another `tar` word, read one line at a time
+   after backslash-newlines are joined) is refused: extract
    with `-C` into a spelled-out folder, as two commands. When the text holds
    `cp`, `rsync` or `ditto` as a word, it is tokenized once with `shlex`
    (POSIX rules; `;&|()<>` and the backtick are separators; a
-   backslash-newline joins lines and a newline separates commands). A
+   backslash-newline joins lines and a newline separates commands; a file
+   descriptor's digits written against `<` or `>`, the `2` of `2>`, are
+   dropped first, but a separate `9 >` keeps its `9`). A
    tokenizer error (quotes that do not close) refuses. A copy is a token
    whose name after the last `/`, in any case, is `cp`, `rsync` or `ditto`;
-   its arguments are the tokens after it, up to the next separator or copier
-   (a digit just before a redirection, the `2` of `2>`, is dropped). It is
+   its arguments are the tokens after it, up to the next separator or copier;
+   a redirection takes only its own target, so `cp -R 2>/dev/null . ./sub`
+   still reads `.` and `./sub`. It is
    recursive when it is a `cp` with `r`, `R` or `a` in any short-option
    cluster, or with `--recursive` or `--archive`, and every `rsync` or
    `ditto`. Its operands are the arguments that do not start with `-`; the
@@ -138,10 +154,13 @@ the run directory) and G2's prompt rule. The hook is not a security boundary
      refuses;
    - an operand is relative and the text also holds `cd`, `pushd` or `popd`
      as a word;
-   - it has a destination and no source on the line (`ls | xargs cp -R -t
-     sub`);
+   - it does not have both a source and a destination on the line
+     (`ls | xargs cp -R -t sub`, `echo . sub | xargs cp -R`, and so
+     `rsync --version` too);
    - the destination, resolved with `normpath(join(cwd, op))` from the
-     event's `cwd`, equals or lies inside a source (`cp -R . ./sub`,
+     event's `cwd`, equals or lies inside a source, both compared without
+     regard to case and with `/private` removed before `/var`, `/tmp` and
+     `/etc`, as macOS's disk reads them (`cp -R src SRC/x`) (`cp -R . ./sub`,
      `cp -r .. sub`, `rsync -a ./ ./backup/`, `ditto . sub`).
 3. **Too long.** A command longer than 100,000 characters is refused when
    it holds, as a plain substring in any case, `cp`, `rsync`, `ditto`, `tar`,
@@ -191,7 +210,10 @@ G3 bounds them.
 command names the shared temporary area (<the word>). Read a file there
 with the Read tool; work in the clone or folder you were given, <cwd>; and
 put temporary files in your session's own folder, <folder>` (or `inside
-that folder` when the session's folder is not known). For rule 2, for
+that folder` when the session's folder is not known). The folder is
+`/tmp/claude-<uid>/<project>/<session id>/`, and the project is the folder
+that holds the transcript, only when the transcript's file is
+`<session id>.jsonl`; otherwise it is not guessed. For rule 2, for
 example: `cp copies <src> into <dst>, a folder inside it, which never ends`;
 `cp copies with a path that is not spelled out ($D). In a recursive copy,
 write each path with letters, digits and . _ / + - only: no variable, ~,

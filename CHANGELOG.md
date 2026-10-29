@@ -22,7 +22,9 @@ copies had also piled up to about 20 GB. Spec: `docs/specs/disk-guard.md`.
   100,000 characters that holds any of these words. Everything else runs;
   the watchdog below catches what the list does not name. The refusal says
   what to do instead. It runs in every session and subagent, and every
-  review launch gets it too. Its own off switch is
+  review launch gets it too. `/llm-orchestrator:cadence-init` now writes the
+  configuration you confirm in the repository's git folder, not a temporary
+  file, and removes it after the init. Its own off switch is
   `ORCH_ALLOW_TEMP_WRITES=1`, set by you when you start the session.
 - **Review launches run without `--safe-mode`**, because under it the guard
   would not run. `--restricted` and `--strict-mcp-config` still keep your

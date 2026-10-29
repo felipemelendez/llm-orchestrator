@@ -53,12 +53,13 @@ ask them to confirm or correct. Before writing the configuration, confirm:
   a change to a protected file and so needs a numbered ruling.
 - `typecheck_cmd` is right, or intentionally empty.
 
-### 3. Write the confirmed JSON to a temp file
+### 3. Write the confirmed JSON to a file in the repository's git folder
 
-Only after the user confirms. Write exactly what they agreed to:
+Only after the user confirms. Write exactly what they agreed to. The file goes
+in the git folder, never in a temporary folder, which the disk guard refuses:
 
 ```bash
-CFG=$(mktemp)
+CFG="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "$ROOT")/orch-cadence-config.json"
 cat > "$CFG" <<'JSON'
 <the confirmed cadence.json, verbatim>
 JSON
@@ -67,7 +68,8 @@ JSON
 ### 4. Run the init
 
 ```bash
-bash "$CAD/cadence-init.sh" --root "$ROOT" --config "$CFG"
+CFG="$(git -C "$ROOT" rev-parse --absolute-git-dir 2>/dev/null || printf '%s' "$ROOT")/orch-cadence-config.json"
+bash "$CAD/cadence-init.sh" --root "$ROOT" --config "$CFG"; rm -f "$CFG"
 ```
 
 Add `--adopt` when the user says this project already has its own laws (it
