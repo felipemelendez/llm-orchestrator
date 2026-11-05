@@ -2370,6 +2370,11 @@ class ReviewTests(unittest.TestCase):
         output = (first["receipts"]["1"].get("output") or "").strip()
         if output:
             self.assertIn(output.splitlines()[0], text)
+        # A patch that does not apply shows git's reason (Standard review codex-review-1).
+        broken = json.loads((self.run_dir / "review.json").read_text())
+        broken["findings"][0]["receipts"]["apply"] = {"ran": True, "exit_code": 1, "duration_s": 0.1,
+                                                     "output": "error: patch failed: calc.py:2"}
+        self.assertIn("error: patch failed: calc.py:2", MOD.findings_markdown(broken))
         # A claim carrying a fence cannot break the document: every opened fence closes.
         self.assertIn("````", MOD.fenced("a ``` b"))
         self.assertEqual(self.invoke("findings", str(self.root / "missing")).returncode, 2)
