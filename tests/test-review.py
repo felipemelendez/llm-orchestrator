@@ -2383,6 +2383,20 @@ class ReviewTests(unittest.TestCase):
         result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
         self.assertIn('"evidence": {"type": "file-line", "file": "<path>", "line": <n>, "quote": "<text>"}',
                       result.stderr)
+        # Every problem of the evidence, not the first (Standard review codex-review-1).
+        dispositions.write_text(json.dumps({
+            "code-review-1": {"disposition": "refuted", "evidence": {"type": "file-line-quote", "file": "calc.py",
+                                                                     "line": 0, "quote": ""}},
+            "code-review-2": {"disposition": "ignored", "reason": "x", "person_approved": True}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        for fragment in ('type must be "file-line", not "file-line-quote"', "line must be a 1-based integer",
+                         "quote must be the line's text"):
+            self.assertIn(fragment, result.stderr)
+        # Every refusal points at the rules, the early ones too (codex-review-2).
+        dispositions.write_text(json.dumps([]))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertIn("must be a JSON object", result.stderr)
+        self.assertIn("orch-review.py record --rules", result.stderr)
         rules = self.invoke("record", "--rules", check_rc=0).stdout
         helped = self.invoke("record", "--help", check_rc=0).stdout
         for text in (rules, helped):

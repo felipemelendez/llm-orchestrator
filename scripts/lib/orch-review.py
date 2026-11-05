@@ -169,6 +169,27 @@ def file_line_valid(project, tree, evidence):
     return True, "the quote matches the reviewed line"
 
 
+def file_line_problems(project, tree, evidence):
+    """Every reason `evidence` is not a valid refuted quote (empty when it is), for the record step,
+    which reports them all at once. file_line_valid decides the same question for the prover."""
+    if not isinstance(evidence, dict):
+        return ["evidence must be an object"]
+    problems = []
+    if evidence.get("type") != "file-line":
+        problems.append(f'type must be "file-line", not {json.dumps(evidence.get("type"))}')
+    line, quote = evidence.get("line"), evidence.get("quote")
+    if type(line) is not int or line < 1:
+        problems.append("line must be a 1-based integer")
+    if not isinstance(quote, str) or not quote.strip():
+        problems.append("quote must be the line's text")
+    lines = tree_lines(project, tree, evidence.get("file"))
+    if lines is None:
+        problems.append("file is not in the reviewed change")
+    elif not problems and (line > len(lines) or lines[line - 1].strip() != quote.strip()):
+        problems.append("the quote does not match that line")
+    return problems
+
+
 ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:\s+(\S+)|\s*$)")
 FENCE_MARKER = re.compile(r"^\s*(`{3,}|~{3,})")
 COMMENT = re.compile(r"<!--.*?-->")
@@ -2881,24 +2902,27 @@ an agent never sets it on its own judgment.
 """
 
 
+RULES_POINTER = "\nEvery rule and the shape of each disposition: orch-review.py record --rules"
+
+
 def command_record(args):
     """R21: one disposition per finding, appended to the outcome log."""
     if args.rules:
         print(RECORD_RULES, end="")
         return 0
     if not args.run_dir or not args.dispositions:
-        return fail("record needs RUN_DIR and --dispositions FILE (or --rules to print the rules)")
+        return fail("record needs RUN_DIR and --dispositions FILE" + RULES_POINTER)
     run_dir = Path(args.run_dir).expanduser().absolute()
     review = read_json(run_dir / "review.json")
     run = read_json(run_dir / "run.json", {})
     preflight = read_json(run_dir / "preflight.json", {})
     if review is None:
-        return fail("the run has no review.json")
+        return fail("the run has no review.json" + RULES_POINTER)
     if (run_dir / "dispositions.json").exists():
-        return fail("dispositions were already recorded for this run")
+        return fail("dispositions were already recorded for this run" + RULES_POINTER)
     dispositions = read_json(args.dispositions)
     if not isinstance(dispositions, dict):
-        return fail("the dispositions file must be a JSON object keyed by finding id")
+        return fail("the dispositions file must be a JSON object keyed by finding id" + RULES_POINTER)
     ids = [f["id"] for f in review["findings"]]
     problems = [f"{name}: no disposition" for name in ids if name not in dispositions]
     problems += [f"{name}: not a finding of this review" for name in dispositions if name not in ids]
@@ -2920,10 +2944,11 @@ def command_record(args):
             if kept:
                 own.append(f"never {kind}: {kept}")
             elif kind == "refuted":
-                valid, why = file_line_valid(project, review["tree"], entry.get("evidence"))
-                if not valid:
-                    own.append(f"refuted needs a file-line quote from the reviewed files ({why}); the shape is "
-                               '"evidence": {"type": "file-line", "file": "<path>", "line": <n>, "quote": "<text>"}')
+                why = file_line_problems(project, review["tree"], entry.get("evidence"))
+                if why:
+                    own.append(f"refuted needs a file-line quote from the reviewed files ({'; '.join(why)}); "
+                               'the shape is "evidence": {"type": "file-line", "file": "<path>", "line": <n>, '
+                               '"quote": "<text>"}')
             else:
                 valid, why = settled_valid(settled, entry.get("entry"))
                 if not valid:
@@ -2952,8 +2977,7 @@ def command_record(args):
             own.append("the disposition must be fixed, refuted, settled, follow-up or ignored")
         problems += [f"{found['id']}: {item}" for item in own]
     if problems:
-        return fail("; ".join(problems) + "\nEvery rule and the shape of each disposition: "
-                    "orch-review.py record --rules")
+        return fail("; ".join(problems) + RULES_POINTER)
     write_json(run_dir / "dispositions.json", dispositions)
     append_outcome(*[{"row": "finding", "run_id": review["run_id"], "date": now(), "finding": f["id"],
                       "reviewer": f.get("reviewer"), "provider": f["provider"], "rank": f.get("rank"),
