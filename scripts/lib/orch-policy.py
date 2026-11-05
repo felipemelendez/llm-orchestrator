@@ -25,7 +25,8 @@ PIN_GRACE_S = 6 * 3600
 # How to refresh a stale catalog: by observation, never by editing a timestamp.
 REFRESH_STEPS = {
     "codex": ("refresh it through the provider CLI: run `codex` once (for example `codex exec 'Reply ready'`) so it "
-              "rewrites its own models cache; do not edit that file"),
+              "rewrites its own models cache, never by editing that file; a catalog at a configured path is "
+              "re-observed the same way and recorded from what the CLI printed"),
     "claude": ("refresh it through the provider CLI: run `claude --version` and one real launch of each configured "
                "model (for example `claude -p --model opus --effort high --output-format json 'Reply ready'`), then "
                "record fetched_at, client_version and provenance from what they printed"),
@@ -376,7 +377,7 @@ class Policy:
             when = (f"{age / 3600:.1f} h old, limit {max_age / 3600:.1f} h" if age >= 0
                     else f"{-age / 3600:.1f} h in the future: check this machine's clock")
             raise PolicyError(f"{provider} catalog observation at {path} is stale or in the future (fetched_at "
-                              f"{data['fetched_at']}, {when}); {REFRESH_STEPS.get(provider, REFRESH_STEPS['claude'])}")
+                              f"{data['fetched_at']}, {when}); {REFRESH_STEPS[provider]}")
         # The age is checked on every call outside a pinned run; the CLI version
         # probe and the rest run once per catalog content for the life of this Policy.
         cached = self._catalogs.get(provider)

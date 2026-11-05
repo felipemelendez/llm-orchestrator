@@ -89,9 +89,10 @@ that leads outside is allowed, because the file it reads is outside. An observat
 Default maximum age is one day; configuration can shorten it. A review checks
 each catalog's age once, at preflight, before it launches anything; the exact
 content accepted there stays accepted for the rest of that run, up to six hours
-past its limit, so a round never turns INCOMPLETE because a catalog aged while
-the reviewers ran. Any other content is checked in full, and each launch
-records when the age was checked (`age_checked_at`). A stale catalog stops
+past its limit, so a round of ordinary length does not turn INCOMPLETE because a
+catalog aged while the reviewers ran (a run stalled longer still stops, on the
+stale catalog). Any other content is checked in full, and a launch admitted by
+the pin records when the age was checked (`age_checked_at`). A stale catalog stops
 preflight with its age and the refresh steps: Codex refreshes its own cache
 when it runs; a Claude catalog is re-observed, never re-dated. A catalog is
 local capability evidence, not a successful remote inference. Authentication,
