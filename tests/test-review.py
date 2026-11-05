@@ -2375,6 +2375,9 @@ class ReviewTests(unittest.TestCase):
         broken["findings"][0]["receipts"]["apply"] = {"ran": True, "exit_code": 1, "duration_s": 0.1,
                                                      "output": "error: patch failed: calc.py:2"}
         self.assertIn("error: patch failed: calc.py:2", MOD.findings_markdown(broken))
+        broken["findings"][0]["receipts"]["apply"] = {"ran": True, "exit_code": 0, "duration_s": 0.1,
+                                                     "output": "warning: calc.py has type 100644, expected 100755"}
+        self.assertIn("expected 100755", MOD.findings_markdown(broken))
         # A claim carrying a fence cannot break the document: every opened fence closes.
         self.assertIn("````", MOD.fenced("a ``` b"))
         self.assertEqual(self.invoke("findings", str(self.root / "missing")).returncode, 2)

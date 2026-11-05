@@ -2893,8 +2893,8 @@ def findings_markdown(review):
             if repro.get("patch"):
                 applied = receipts.get("apply")
                 out += ["", f"- {receipt_line('Fix patch applied', applied)}"]
-                # Why a patch did not apply is the useful part; a clean apply's chatter is not.
-                if applied and applied.get("exit_code") != 0 and applied.get("output"):
+                # A failed apply says why; a clean one can still warn (a file mode, whitespace).
+                if applied and applied.get("output"):
                     out += ["", fenced(trimmed(applied["output"]))]
                 out += [f"- {receipt_line('After the patch', receipts.get('2'))}"]
                 second = receipts.get("2")
