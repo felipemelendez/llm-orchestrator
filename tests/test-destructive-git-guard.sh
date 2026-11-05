@@ -291,6 +291,134 @@ blocks 'git reset --hard$X'
 allows "$(printf 'python3 - <<PY\ntext = "the --hard flag discards work"\nprint(text)\nPY')"
 blocks "$(printf 'bash - <<SH\ngit reset --hard\nSH')"
 
+printf '\n%s== heredoc bodies are data unless something can run them ==%s\n' "$DIM" "$RESET"
+# Measured before the fix (Mia, 2026-11-05): a PR comment or handoff written
+# through a heredoc that MENTIONED these commands was blocked (rc=2) as if
+# every body line were a command.
+allows "$(printf "gh pr comment 5 --body-file - <<'EOF'\nThen run git branch -D old and git push --delete origin old\nEOF")"
+allows "$(printf "cat > handoff.md <<'EOF'\nnext: git switch main\nEOF")"
+blocks "$(printf 'cat > h.md <<EOF\nnext: git switch main for $USER\nEOF')"
+blocks "$(printf "gh pr comment 5 --body \"\$(cat <<'EOF'\nrun git branch -D old\nthen git switch main\nEOF\n)\"")"
+blocks "$(printf "cat <<-'EOF' | gh pr comment 5 --body-file -\n\tgit switch main\n\tEOF")"
+blocks "$(printf "cat <<A <<'B'\nx\nA\ngit switch main\nB")"
+# Only exact single-command shapes drop a body (see orch-git-classify.py,
+# "Heredoc bodies"): the lines above are outside them and keep the old
+# behaviour, as do an unquoted delimiter, a pipe, two heredocs and a
+# `$(cat <<'EOF' ...)` substitution. The shapes that do:
+allows "$(printf "gh issue comment 9 --body-file=- <<'EOF'\ngit switch main\nEOF")"
+allows "$(printf "gh pr create --title \"fix: a; b\" --body-file - <<'EOF'\ngit branch -D old\nEOF")"
+allows "$(printf "cat > /Users/x/handoffs/h.md <<'EOF'\nnext: git switch main\nEOF")"
+allows "$(printf "cat <<'EOF' > handoff.md\nnext: git reset --hard\nEOF\n")"
+allows "$(printf "cat <<-'EOF' > notes/today.md\n\tgit switch main\n\tEOF")"
+# Second Full review round: each was allowed by the general design.
+blocks "$(printf "git config core.editor \"sh runner\"\ngit commit --allow-empty <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit --amend <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit -e -F - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat 1<> .husky/pre-commit <<'EOF'\ngit reset --hard\nEOF\ngit commit -m x")"
+blocks "$(printf "cat > tools/git/pre-commit <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > pre-commit <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > scripts/\"../.git/hooks/pre-commit\" <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > ../x <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "printf -v x '%%s' \"\$(cat <<'EOF'\n\$(git reset --hard)\nEOF\n)\"")"
+blocks "$(printf "echo \${x:-'}'<<EOF}\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > a.md <<'EOF'\nx\nEOF\ngit reset --hard")"
+blocks "$(printf "gh pr comment 5 --body-file - <<EOF\ngit reset --hard\nEOF")"
+blocks 'echo a\ #; git reset --hard'
+# Third Full review round.
+blocks "$(printf "gh pr comment 5 --body-file - --repo \"<<'EOF'\"\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > a.md <<'EOF'X\nx\nEOFX\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit -F - -ae <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit --allow-empty --edi -F - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh pr comment 5 -e --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > scripts/PRE-COMMIT <<'EOF'\ngit reset --hard\nEOF")"
+allows "$(printf "git commit -a -s -F - <<'EOF'\nexplain git reset --hard\nEOF")"
+# Already allowed on main: bash deletes a backslash-newline, so these are a
+# reset; and `$'...'` escapes decode before git sees them.
+blocks "$(printf 'git re\\\nset --hard')"
+blocks "$(printf 'echo a\\\n#; git reset --hard')"
+blocks "git reset \$'--h\\x61rd'"
+# Fourth Full review round.
+blocks "$(printf "cat <<X\nprice \$'\nX\ngit reset --hard")"
+blocks "git reset \$'--hard\\0x'"
+blocks "$(printf "gh pr comment 5 --editor=true --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh pr comment 5 -e=true --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh pr comment 5 --web=true --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf 'git reset "--ha\\\nrd"')"
+allows "$(printf "gh pr create --title t --base main --draft --body-file=- <<'EOF'\ngit switch main\nEOF")"
+# ...and everything that can turn a body, or text around it, into code.
+blocks "$(printf "cat <<'EOF' | sh\ngit switch main\nEOF")"
+blocks "$(printf "bash -c \"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
+blocks "$(printf "\"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
+blocks "$(printf "x=\$(cat <<'EOF'\ngit reset --hard\nEOF\n); eval \"\$x\"")"
+blocks "$(printf "source <(cat <<'EOF'\ngit reset --hard\nEOF\n)")"
+blocks "$(printf "if true; then bash; fi <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf 'cat <<EOF\n$(git reset --hard)\nEOF')"
+blocks "$(printf 'cat <<EOF\n`git reset --hard`\nEOF')"
+blocks "$(printf "git branch -D \"\$(cat <<'EOF'\nold\nEOF\n)\"")"
+blocks "$(printf "xargs git branch -D <<'EOF'\nold\nEOF")"
+# A `<<` the shell does not read as a heredoc must not hide the next lines.
+blocks "$(printf "echo '<<EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf 'echo "<<EOF"\ngit reset --hard\nEOF')"
+blocks "$(printf "echo \$'\\\\'<<EOF'\ngit reset --hard\nEOF\n'")"
+blocks "$(printf 'echo ${x/<<EOF/}\ngit reset --hard\nEOF')"
+blocks "$(printf 'echo $((1<<2))\ngit reset --hard\n2')"
+blocks "$(printf "cat <<'EOF'\nfoo\nEOF\ngit reset --hard")"
+blocks "$(printf "cat <<'EOF' && git switch main\nfoo\nEOF")"
+blocks "$(printf "cat <<'EOF'\nfoo\ngit reset --hard")"
+# A comment ends at its newline. Measured on main before the fix: rc=0, the
+# reset on the second line was ALLOWED (shlex's comment ran to the end of the
+# newline-joined string).
+blocks "$(printf 'echo hi # note\ngit reset --hard')"
+blocks "$(printf 'echo hi # <<EOF\ngit reset --hard\nEOF')"
+allows 'echo "issue #12 is fixed"'
+blocks "$(printf "gh pr create --title \"fix: a; b\" --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\"")"
+# Each of these was ALLOWED by a first, denylist version of the heredoc rule
+# (found by the independent spec review); only an allowlist of data sinks
+# closes the class.
+blocks "$(printf "stdbuf -o0 sh <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "crontab - <<'EOF'\n* * * * * git reset --hard\nEOF")"
+blocks "$(printf "at now <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "sqlite3 <<'EOF'\n.shell git reset --hard\nEOF")"
+blocks "$(printf "sed -f - f <<'EOF'\n1e git reset --hard\nEOF")"
+blocks "$(printf "alias q=bash\nq <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "/bin/ba?h <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "ba''sh <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "<<'EOF' bash\ngit reset --hard\nEOF")"
+blocks "$(printf "2>/dev/null bash <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh x <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "tee >(sh) <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > /tmp/x.sh <<'EOF'\ngit reset --hard\nEOF\nchmod +x /tmp/x.sh && /tmp/x.sh")"
+blocks "$(printf "echo \"\$(echo \"x\" ; sh -c y)\" <<'EOF'\ngit reset --hard\nEOF")"
+# bash joins a trailing backslash before matching the delimiter: the body ends
+# at `EO\<nl>F` and the reset runs.
+blocks "$(printf 'cat <<EOF\nEO\\\nF\ngit reset --hard\nEOF')"
+blocks "$(printf 'echo $[1<< 2 ]\ngit reset --hard\n2')"
+blocks "$(printf 'a[1<< 1]=5\ngit reset --hard\n1')"
+# ANSI-C quoting: the escaped quote keeps `# x` inside the string. Measured on
+# main before the fix: rc=0, the reset was allowed.
+blocks "echo \$'a\\'b # x' ; git reset --hard"
+blocks "git reset \$'--hard'"
+# Second spec-review round. A substitution in the command-word slot runs its
+# OUTPUT; a git alias (defined by `git config` or GIT_CONFIG_* variables) can
+# run stdin; a sink can write a hook or dotfile that runs in the same command.
+blocks "$(printf "\$(cat <<'EOF'\ngit reset --hard\nEOF\n)")"
+blocks "$(printf "echo hi; \$(cat <<'EOF'\ngit reset --hard\nEOF\n)")"
+blocks "$(printf "\`cat <<'EOF'\ngit reset --hard\nEOF\n\`")"
+blocks "$(printf "git config alias.zz '!sh'\ngit zz <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zz GIT_CONFIG_VALUE_0=!sh git zz <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > .githooks/commit-msg <<'EOF'\ngit reset --hard\nEOF\ngit commit -m x")"
+blocks "$(printf "cat >> ~/.zshenv <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "tee .git/hooks/pre-commit <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git add a.py && git commit -m \"\$(cat <<'EOF'\nexplain git reset --hard\nEOF\n)\" && git push -u origin x")"
+blocks "$(printf "gh pr create --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\" --title \"fix: a; b\"")"
+allows "$(printf "git commit -F - <<'EOF'\ngit reset --hard is bad\nEOF")"
+# From the first Full review (code-review-1, code-review-8, codex-review-4,
+# codex-review-5).
+blocks "$(printf 'cat <<EOF $(\ngit reset --hard\nEOF\n)')"
+blocks "$(printf "echo {#'\ncat <<EOF\n'\ngit reset --hard\nEOF")"
+blocks "$(printf 'cat <<"E\\\\OF"\nx\nE\\OF\ngit reset --hard\nE\\\\OF')"
+allows 'echo \" # git reset --hard'
+
 printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
 # Brace expansion must keep the PREFIX. Blanking the punctuation turned
 # `--{hard,hard}` into ['--','hard','hard'], and a bare `--` is the pathspec

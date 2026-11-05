@@ -83,6 +83,44 @@ GLOBAL_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                      "--exec-path", "--config-env", "--attr-source"}
 
 
+_ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
+                "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def ansi_c_decode(body):
+    """The text bash makes of a `$'...'` body: \\xHH, \\uHHHH, \\UHHHHHHHH, octal \\nnn,
+    \\cX and the single-letter escapes; an unknown escape keeps its backslash."""
+    out, i, n = [], 0, len(body)
+    while i < n:
+        c = body[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c); i += 1; continue
+        e = body[i + 1]
+        if e in _ANSI_SIMPLE:
+            out.append(_ANSI_SIMPLE[e]); i += 2; continue
+        for letter, width in (("x", 2), ("u", 4), ("U", 8)):
+            if e == letter:
+                m = re.match(r"[0-9A-Fa-f]{1,%d}" % width, body[i + 2:])
+                if m:
+                    try:
+                        out.append(chr(int(m.group(0), 16)))
+                    except (ValueError, OverflowError):
+                        pass
+                    i += 2 + len(m.group(0))
+                else:
+                    out.append(body[i:i + 2]); i += 2
+                break
+        else:
+            if e in "01234567":
+                m = re.match(r"[0-7]{1,3}", body[i + 1:])
+                out.append(chr(int(m.group(0), 8) & 0xFF)); i += 1 + len(m.group(0))
+            elif e == "c" and i + 2 < n:
+                out.append(chr(ord(body[i + 2]) & 0x1F)); i += 3
+            else:
+                out.append(body[i:i + 2]); i += 2
+    return "".join(out)
+
+
 def unfold(s):
     """Remove backslash-newline (line continuation) outside quotes, then turn
     remaining unquoted newlines into explicit `;` separators.
@@ -92,9 +130,12 @@ def unfold(s):
     a separator there and the reset never looked adjacent to anything.
     """
     out, i, n, quote = [], 0, len(s), None
+    escaped_end = -1
     while i < n:
         c = s[i]
         if quote:
+            if c == "\\" and quote == '"' and i + 1 < n and s[i + 1] == "\n":
+                i += 2; continue                      # bash deletes it inside "..." too
             out.append(c)
             if c == "\\" and quote == '"' and i + 1 < n:
                 out.append(s[i + 1]); i += 2; continue
@@ -103,9 +144,43 @@ def unfold(s):
             i += 1
             continue
         if c == "\\" and i + 1 < n and s[i + 1] == "\n":
-            out.append(" "); i += 2; continue        # continuation: splice
+            # Continuation: bash DELETES the pair, so `git re\<nl>set` is
+            # `git reset`. A space here split it into `re` and `set`.
+            i += 2; continue
+        if c == "\\" and i + 1 < n:
+            # An escaped character is literal: `\"` opens no string, `\#`
+            # starts no comment, and an escaped space is part of a word, so
+            # the `#` in `a\ #` does not begin one either.
+            out.append(s[i:i + 2]); i += 2; escaped_end = len(out); continue
+        if c == "$" and i + 1 < n and s[i + 1] == "'":
+            # ANSI-C quoting: a backslash escapes the quote, so `$'a\\'b # x'`
+            # is one string, not a string followed by a comment. shlex does
+            # not know it either, so it is handed over DECODED, in double
+            # quotes: `git reset $'--h\\x61rd'` is `git reset --hard`.
+            j = i + 2
+            while j < n and s[j] != "'":
+                j += 2 if s[j] == "\\" else 1
+            if j < n:
+                # bash ends the string at its first NUL: `$'--hard\\0x'` is `--hard`.
+                body = ansi_c_decode(s[i + 2:j]).split("\0", 1)[0]
+                for ch in ("\\", '"'):
+                    body = body.replace(ch, "\\" + ch)
+                out.append('"' + body + '"'); i = j + 1; continue
+            # Unterminated: not a string this parser can read; leave it as text.
         if c in ("'", '"'):
             quote = c; out.append(c); i += 1; continue
+        # A comment ends at the NEWLINE. shlex's own comment handling ran to
+        # the end of the whole (already one-line) string, so `echo hi # note`
+        # followed by `git reset --hard` on the next line was one comment and
+        # the reset was allowed. Comments are dropped here, where the newline
+        # is still visible, and tokenize() turns shlex's comments off.
+        # A word starts after what was EMITTED, not after the raw previous
+        # character: after a deleted continuation `a\<nl>#` is the word `a#`.
+        prev = out[-1][-1] if out else ""
+        if c == "#" and len(out) != escaped_end and (not prev or prev in " \t;&|()<>"):
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+            continue
         out.append(" ; " if c == "\n" else c)
         i += 1
     return "".join(out)
@@ -160,10 +235,16 @@ def expand_braces(tok, _budget=None):
     return out or [tok]
 
 
-def tokenize(cmd):
-    lex = shlex.shlex(unfold(cmd), posix=True, punctuation_chars=True)
+def shell_words(text):
+    """shlex as both callers need it: POSIX quoting, operators split out, no comments."""
+    lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lex.commenters = ""             # unfold() already removed real comments
     lex.whitespace_split = True
-    return [w for tok in lex for w in expand_braces(tok)]
+    return list(lex)
+
+
+def tokenize(cmd):
+    return [w for tok in shell_words(unfold(cmd)) for w in expand_braces(tok)]
 
 
 def segments(tokens):
@@ -569,6 +650,127 @@ def classify_no_verify(inv):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Heredoc bodies.
+#
+# WHY THIS EXISTS. shlex knows nothing about heredocs, so every body line was
+# tokenized as a COMMAND: a pull-request comment or a handoff written with
+# `<<'EOF'` that merely mentioned "git branch -D old" or "git switch main" was
+# blocked as if it ran them (the Mia project hit it three times in one day).
+#
+# WHY IT IS THIS NARROW. A general version (track quoting, comments,
+# substitutions; drop a body when every command is a "data sink") was built
+# first and failed four independent reviews in a row, each finding new
+# commands that bash runs and the guard allowed: git built-ins that run text
+# (`config core.editor`, the editor reading stdin, `fetch --upload-pack`),
+# hooks under any name, `1<>`, `printf -v`, quoting inside `${...}`. A guard
+# cannot out-model the shell. So a body is dropped only when the WHOLE command
+# is one of a few exact shapes, each a single simple command whose stdin is
+# sent or stored and never run:
+#
+#     cat > plain/path <<'EOF'            (a file written; nothing runs it here)
+#     gh pr|issue comment|create|edit|review ... --body-file - <<'EOF'
+#     git commit ... -F - <<'EOF'          (never -e/--edit: no editor)
+#
+# The delimiter is quoted (no expansion, no line joining), the header carries
+# no `$`, backtick, backslash, `#` or operator other than cat's one `>`, the
+# body ends at the first exact delimiter line, and nothing but blank lines
+# follows it. Anything else is classified exactly as before.
+
+_HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z0-9_.-]+)\2(?=[ \t]|$)")
+_PUNCT = "();<>|&"
+_PLAIN_FILE = re.compile(r"/?[A-Za-z0-9_][A-Za-z0-9_./-]*")
+# Every hook git runs by name; a file with one of these names may be a hook
+# wherever core.hooksPath points.
+GIT_HOOK_NAMES = {
+    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit",
+    "pre-merge-commit", "prepare-commit-msg", "commit-msg", "post-commit",
+    "pre-rebase", "post-checkout", "post-merge", "pre-push", "pre-receive",
+    "update", "proc-receive", "post-receive", "post-update",
+    "reference-transaction", "push-to-checkout", "pre-auto-gc",
+    "post-rewrite", "sendemail-validate", "fsmonitor-watchman",
+    "p4-changelist", "p4-prepare-changelist", "p4-post-changelist",
+    "p4-pre-submit", "post-index-change"}
+GH_BODY_VERBS = {"comment", "create", "edit", "review"}
+
+
+def _plain_file(path):
+    """A file name nothing in this one command could run: no dot component
+    (.git, .husky, ..), no home or variable, no hook by name."""
+    parts = [p for p in path.split("/") if p]
+    return bool(_PLAIN_FILE.fullmatch(path)) and bool(parts) \
+        and not any(p.startswith(".") for p in parts) \
+        and "hook" not in path.lower() and parts[-1].lower() not in GIT_HOOK_NAMES
+
+
+def _stdin_flag(words, *names):
+    return any(w in names and k + 1 < len(words) and words[k + 1] == "-"
+               for k, w in enumerate(words)) \
+        or any(w == f"{name}=-" for w in words for name in names if name.startswith("--"))
+
+
+# The only flags each shape may carry, matched exactly: git and gh both
+# accept spellings no list of refusals keeps up with (`-ae`, `--edi` open
+# git's editor), so the shapes list what is allowed instead.
+GIT_COMMIT_FLAGS = {"-a", "--all", "--allow-empty", "--amend", "--no-edit", "-s", "--signoff", "-q", "--quiet",
+                    "-F", "--file", "-", "--file=-"}
+# gh's parser accepts `--editor=true` and `-e=true`, so gh too gets an
+# allowlist: every word starting with `-` must be one of these, alone or as
+# `--name=value`. Values are the words that do not start with `-`.
+GH_FLAGS = {"--body-file", "-F", "-", "--title", "-t", "--repo", "-R", "--base", "-B", "--head", "-H",
+            "--draft", "-d", "--label", "-l", "--assignee", "-a", "--reviewer", "-r", "--milestone", "-m",
+            "--project", "-p", "--approve", "--request-changes", "--comment", "-c", "--add-label",
+            "--remove-label", "--add-assignee", "--remove-assignee", "--add-reviewer", "--remove-reviewer"}
+
+
+def _sends_stdin_as_data(words):
+    """The header of one of the exact shapes above, as shell words."""
+    if words[:1] == ["cat"]:
+        return words == ["cat"] or (len(words) == 3 and words[1] == ">" and _plain_file(words[2]))
+    if any(w and all(c in _PUNCT for c in w) for w in words):
+        return False
+    if words[:1] == ["gh"] and len(words) > 2 and words[1] in ("pr", "issue") \
+            and words[2] in GH_BODY_VERBS:
+        return _stdin_flag(words, "--body-file", "-F") and all(
+            w in GH_FLAGS or (w.startswith("--") and w.split("=", 1)[0] in GH_FLAGS and w != "--body-file=")
+            for w in words[3:] if w.startswith("-"))
+    if words[:2] == ["git", "commit"]:
+        return _stdin_flag(words, "-F", "--file") and all(w in GIT_COMMIT_FLAGS for w in words[2:])
+    return False
+
+
+def strip_data_heredocs(cmd):
+    """The command without its heredoc body when it is one of the exact data
+    shapes; otherwise `cmd` unchanged."""
+    first, newline, rest = cmd.partition("\n")
+    if not newline:
+        return cmd
+    ops = list(_HEREDOC_OP.finditer(first))
+    if len(ops) != 1:
+        return cmd
+    op = ops[0]
+    header = first[:op.start()] + " " + first[op.end():]
+    if "<<" in header or re.search(r"[$`\\#]", header):
+        return cmd
+    try:
+        words = shell_words(header)
+        # The operator must be a real one: shlex keeps `"<<'EOF'"` inside a
+        # quoted word, so a `<<` that is quoted text yields no `<<` token.
+        line_words = shell_words(first)
+    except ValueError:
+        return cmd
+    if line_words.count("<<") != 1:
+        return cmd
+    if not words or not _sends_stdin_as_data(words):
+        return cmd
+    delim, tabs = op.group(3), op.group(1) == "-"
+    lines = rest.split("\n")
+    for k, line in enumerate(lines):
+        if (line.lstrip("\t") if tabs else line) == delim:
+            return header.strip() if all(not tail.strip() for tail in lines[k + 1:]) else cmd
+    return cmd
+
+
 def main():
     mode = "destructive"
     relax = False
@@ -587,6 +789,10 @@ def main():
     cmd = sys.stdin.read()
     if not cmd.strip():
         sys.exit(3)
+    try:
+        cmd = strip_data_heredocs(cmd)
+    except Exception:
+        pass                        # keep the bodies: the old behaviour
 
     if paranoid:
         # Second pass, requested by the caller after a confident-mode exit 3.
