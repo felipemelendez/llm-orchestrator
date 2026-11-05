@@ -2260,7 +2260,8 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(result.stderr.strip(),
                          "orch-review: code-review-2: never settled: a catastrophic or unranked finding reaches the person; "
                          "the person decides it; code-review-3: never settled: a catastrophic or unranked finding reaches "
-                         "the person; the person decides it")
+                         "the person; the person decides it\nEvery rule and the shape of each disposition: "
+                         "orch-review.py record --rules")
         self.spec.write_text("add(a, b) returns the sum of a and b.\n\n## Settled\n- add never rounds\n- added after the run\n")
         approved = {"disposition": "ignored", "reason": "x", "person_approved": True}
         dispositions.write_text(json.dumps({"code-review-1": {"disposition": "settled", "entry": "added after the run"},
@@ -2406,6 +2407,67 @@ class ReviewTests(unittest.TestCase):
                      (ROOT / "skills/finishing-a-branch/references/landing-rules.md").read_text(),
                      (ROOT / "skills/receiving-code-review/SKILL.md").read_text()):
             self.assertIn("person_approved", text)
+
+    def test_r21_record_reports_every_problem_of_every_entry_at_once_and_prints_its_rules(self):
+        # Mia, 2026-11-05: the rules were learned one refusal at a time. A security follow-up missing both
+        # its reference and person_approved, and a blocking ignore missing both its reason and the approval,
+        # now come back in ONE refusal that names all four, and points at --rules.
+        (self.project / "auth.py").write_text("password = input()\n")
+        self.reviewer("claude", code_finding(), code_finding(line=1))
+        self.prove({"code-review-1": proof(repro={"command": "true", "patch": FIX}),
+                    "code-review-2": proof(repro={"command": "true", "patch": FIX})})
+        review = self.review()
+        self.assertTrue(review["security"])
+        dispositions = self.root / "dispositions.json"
+        dispositions.write_text(json.dumps({"code-review-1": {"disposition": "follow-up"},
+                                            "code-review-2": {"disposition": "ignored"}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertNotEqual(result.returncode, 0)
+        for fragment in ("code-review-1: follow-up needs the reference",
+                         "code-review-1: a security, privacy or data-integrity finding is deferred only",
+                         "code-review-2: ignored needs a reason",
+                         "code-review-2: a blocking finding is ignored only when the person said so",
+                         "orch-review.py record --rules"):
+            self.assertIn(fragment, result.stderr)
+        self.assertEqual([row for row in self.outcome_rows() if row["row"] == "finding"], [])
+        # A refuted entry with the wrong evidence type is told the exact shape.
+        dispositions.write_text(json.dumps({
+            "code-review-1": {"disposition": "refuted", "evidence": {"type": "file-line-quote", "file": "calc.py",
+                                                                     "line": 2, "quote": "return a - b"}},
+            "code-review-2": {"disposition": "ignored", "reason": "x", "person_approved": True}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertIn('"evidence": {"type": "file-line", "file": "<path>", "line": <n>, "quote": "<text>"}',
+                      result.stderr)
+        # Every problem of the evidence, not the first (Standard review codex-review-1).
+        dispositions.write_text(json.dumps({
+            "code-review-1": {"disposition": "refuted", "evidence": {"type": "file-line-quote", "file": "calc.py",
+                                                                     "line": 0, "quote": ""}},
+            "code-review-2": {"disposition": "ignored", "reason": "x", "person_approved": True}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        for fragment in ('type must be "file-line", not "file-line-quote"', "line must be a 1-based integer",
+                         "quote must be the line's text"):
+            self.assertIn(fragment, result.stderr)
+        # A wrong type does not hide a quote that also does not match (second review, codex-review-1).
+        dispositions.write_text(json.dumps({
+            "code-review-1": {"disposition": "refuted", "evidence": {"type": "test-run", "file": "calc.py",
+                                                                     "line": 2, "quote": "nope"}},
+            "code-review-2": {"disposition": "ignored", "reason": "x", "person_approved": True}}))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertIn('type must be "file-line", not "test-run"; the quote does not match that line', result.stderr)
+        # Every refusal points at the rules, the early ones too (codex-review-2).
+        dispositions.write_text(json.dumps([]))
+        result = self.invoke("record", str(self.run_dir), "--dispositions", str(dispositions))
+        self.assertIn("must be a JSON object", result.stderr)
+        self.assertIn("orch-review.py record --rules", result.stderr)
+        rules = self.invoke("record", "--rules", check_rc=0).stdout
+        helped = self.invoke("record", "--help", check_rc=0).stdout
+        for text in (rules, helped):
+            for kind in ("fixed", "refuted", "settled", "follow-up", "ignored"):
+                self.assertIn(f'"disposition": "{kind}"', text)
+            for fragment in ('"type": "file-line"', '"quote"', '"reference"', '"reason"', '"person_approved": true',
+                             "security, privacy or data-integrity", "a reproduced finding"):
+                self.assertIn(fragment, text)
+        self.assertEqual(self.invoke("record", str(self.run_dir)).returncode, 2)
 
     # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
     def test_design_every_rendered_brief_carries_the_simplicity_question(self):
