@@ -86,7 +86,12 @@ before any `..`. When that real file is inside the project it is refused, with
 an error naming the entry as written and the real path; a link in the project
 that leads outside is allowed, because the file it reads is outside. An observation needs a timezone-aware `fetched_at`, matching
 `client_version`, and the model's advertised `supported_reasoning_levels`.
-Default maximum age is one day; configuration can shorten it. A catalog is
+Default maximum age is one day; configuration can shorten it. A review checks
+each catalog's age once, at preflight, before it launches anything; a catalog
+accepted there stays accepted for the rest of that run unless its content
+changes, so a round never turns INCOMPLETE because a catalog aged past its
+limit while the reviewers ran. A stale catalog stops preflight with its age and
+the refresh steps. A catalog is
 local capability evidence, not a successful remote inference. Authentication,
 rate limits and service availability can still make a launch incomplete.
 

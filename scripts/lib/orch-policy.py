@@ -117,6 +117,8 @@ class Policy:
         self.path = self.project / ".llm-orchestrator.json"
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
+        # pin_catalogs() sets this; see there.
+        self._catalogs_pinned = False
         # One lookup answers whether the file is there; load() then reads and validates it.
         self._entry = self.listed(".llm-orchestrator.json") if revision is not None else None
         self.enabled = (self._entry is not None if revision is not None
@@ -348,11 +350,18 @@ class Policy:
             age = (datetime.now(timezone.utc) - observed).total_seconds()
         except (KeyError, ValueError, TypeError, AttributeError) as error:
             raise PolicyError("catalog has no valid timezone-aware fetched_at observation") from error
-        if not 0 <= age <= entry.get("max_age_s", 86400):
-            raise PolicyError("catalog observation is stale or in the future; refresh it through the provider CLI")
-        # The age is checked on every call; the CLI version probe and the rest run
-        # once per catalog content for the life of this Policy.
         cached = self._catalogs.get(provider)
+        if self._catalogs_pinned and cached and cached[0] == (str(path), digest(raw)):
+            return cached[1], cached[2]
+        max_age = entry.get("max_age_s", 86400)
+        if not 0 <= age <= max_age:
+            raise PolicyError(
+                f"{provider} catalog observation at {path} is stale or in the future (fetched_at "
+                f"{data['fetched_at']}, {age / 3600:.1f} h old, limit {max_age / 3600:.1f} h); refresh it "
+                f"through the provider CLI: run `{provider} --version` and one real launch of each configured "
+                "model, then rewrite fetched_at, client_version and provenance from what they printed")
+        # The age is checked on every call until pin_catalogs(); the CLI version
+        # probe and the rest run once per catalog content for the life of this Policy.
         if cached and cached[0] == (str(path), digest(raw)):
             return cached[1], cached[2]
         try:
@@ -405,6 +414,18 @@ class Policy:
             raise PolicyError(f"{provider} {settings['model']} does not advertise effort {effort}")
         return {"model": settings["model"], "effort": effort, "role": role, "provider": provider,
                 "justification": settings.get("justification"), "catalog": provenance}
+
+    def pin_catalogs(self):
+        """Keep every catalog accepted so far valid, by age, for the life of this Policy.
+
+        A review checks its catalogs at preflight and then launches reviewers,
+        provers and a refuter over the next hour. Re-checking the age before each
+        launch let a catalog that was fresh at preflight cross its limit mid-run,
+        so a round returned INCOMPLETE after its reviewers had already run and
+        dropped the provers. The observation that admitted the run stands for
+        the run. A catalog whose content changes is still checked in full.
+        """
+        self._catalogs_pinned = True
 
     def validate_launches(self):
         return [self.resolve(provider, role) for provider, roles in self.data.get("roles", {}).items() for role in roles]

@@ -625,6 +625,60 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn("AUTHOR-MARKER", call["prompt"])
         self.assertEqual(call["argv"][call["argv"].index("--effort") + 1], "high")
 
+    def test_policy_catalog_fresh_at_preflight_stays_valid_for_the_whole_run(self):
+        # Mia, 2026-11-05: a catalog fresh at preflight crossed its 24 h limit
+        # mid-run, every later launch re-checked its age, and the round came back
+        # INCOMPLETE ("catalog observation is stale") after the reviewers ran,
+        # dropping the provers. Here the clock jumps two days once preflight is done.
+        catalog = self.root / "claude-catalog.json"
+        catalog.write_text(json.dumps({"fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "client_version": "1.2.3", "provenance": "synthetic observation; not live inference",
+            "models": [{"slug": "opus", "supported_reasoning_levels": [{"effort": "high"}, {"effort": "low"}]}]}))
+        config = {"schema": 1,
+                  "roles": {"claude": {role: {"model": "opus"} for role in ("reviewer", "prover", "refuter", "runner")}},
+                  "catalogs": {"claude": {"path": str(catalog)}}}
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps(config))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "policy at base")
+        self.base = self.git("rev-parse", "HEAD").strip()
+        self.reviewer("claude", code_finding())
+        self.prove({"code-review-1-1": proof(), "code-review-2-1": proof()})
+        patch = textwrap.dedent("""\
+            import datetime as _dt
+            class _Later(_dt.datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return _dt.datetime.now(tz) + _dt.timedelta(days=2)
+            _preflight = review.Review.preflight
+            def preflight(self):
+                result = _preflight(self)
+                review.policy_module.datetime = _Later
+                return result
+            review.Review.preflight = preflight
+            """)
+        review = self.review(path_bin=self.policy_bin(), patch=patch)
+        self.assertEqual(self.preflight()["reasons"], [])
+        self.assertNotIn("stale", json.dumps(review.get("incomplete_reasons", [])))
+        self.assertTrue(self.calls("claude", "prover"), "the prover never launched")
+
+    def test_policy_stale_catalog_stops_the_review_before_any_launch(self):
+        catalog = self.root / "claude-catalog.json"
+        catalog.write_text(json.dumps({"fetched_at": "2020-01-01T00:00:00Z",
+            "client_version": "1.2.3", "provenance": "synthetic observation; not live inference",
+            "models": [{"slug": "opus", "supported_reasoning_levels": [{"effort": "high"}, {"effort": "low"}]}]}))
+        config = {"schema": 1,
+                  "roles": {"claude": {role: {"model": "opus"} for role in ("reviewer", "prover", "refuter", "runner")}},
+                  "catalogs": {"claude": {"path": str(catalog)}}}
+        (self.project / ".llm-orchestrator.json").write_text(json.dumps(config))
+        self.git("add", ".llm-orchestrator.json")
+        self.git("commit", "-qm", "policy at base")
+        self.base = self.git("rev-parse", "HEAD").strip()
+        review = self.review(path_bin=self.policy_bin())
+        self.assert_incomplete(review, "stale")
+        self.assertTrue(any("h old" in reason and "--version" in reason
+                            for reason in review["incomplete_reasons"]), review["incomplete_reasons"])
+        self.assertEqual([row for row in self.calls() if row["role"] != "sandbox"], [])
+
     def test_policy_that_fails_at_the_merge_base_is_still_named_as_its_source(self):
         # code-review-6: a malformed base policy is the base's policy, not "none".
         (self.project / ".llm-orchestrator.json").write_text(json.dumps({"schema": 1, "unknown_key": True}))
