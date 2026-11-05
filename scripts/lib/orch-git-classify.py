@@ -134,6 +134,8 @@ def unfold(s):
     while i < n:
         c = s[i]
         if quote:
+            if c == "\\" and quote == '"' and i + 1 < n and s[i + 1] == "\n":
+                i += 2; continue                      # bash deletes it inside "..." too
             out.append(c)
             if c == "\\" and quote == '"' and i + 1 < n:
                 out.append(s[i + 1]); i += 2; continue
@@ -158,10 +160,13 @@ def unfold(s):
             j = i + 2
             while j < n and s[j] != "'":
                 j += 2 if s[j] == "\\" else 1
-            body = ansi_c_decode(s[i + 2:j])
-            for ch in ("\\", '"', "$", "`"):
-                body = body.replace(ch, "\\" + ch)
-            out.append('"' + body + '"'); i = j + 1; continue
+            if j < n:
+                # bash ends the string at its first NUL: `$'--hard\\0x'` is `--hard`.
+                body = ansi_c_decode(s[i + 2:j]).split("\0", 1)[0]
+                for ch in ("\\", '"'):
+                    body = body.replace(ch, "\\" + ch)
+                out.append('"' + body + '"'); i = j + 1; continue
+            # Unterminated: not a string this parser can read; leave it as text.
         if c in ("'", '"'):
             quote = c; out.append(c); i += 1; continue
         # A comment ends at the NEWLINE. shlex's own comment handling ran to
@@ -709,7 +714,13 @@ def _stdin_flag(words, *names):
 # git's editor), so the shapes list what is allowed instead.
 GIT_COMMIT_FLAGS = {"-a", "--all", "--allow-empty", "--amend", "--no-edit", "-s", "--signoff", "-q", "--quiet",
                     "-F", "--file", "-", "--file=-"}
-_GH_REFUSED = re.compile(r"^(-[A-Za-z]*[ew][A-Za-z]*|--editor|--web)$")
+# gh's parser accepts `--editor=true` and `-e=true`, so gh too gets an
+# allowlist: every word starting with `-` must be one of these, alone or as
+# `--name=value`. Values are the words that do not start with `-`.
+GH_FLAGS = {"--body-file", "-F", "-", "--title", "-t", "--repo", "-R", "--base", "-B", "--head", "-H",
+            "--draft", "-d", "--label", "-l", "--assignee", "-a", "--reviewer", "-r", "--milestone", "-m",
+            "--project", "-p", "--approve", "--request-changes", "--comment", "-c", "--add-label",
+            "--remove-label", "--add-assignee", "--remove-assignee", "--add-reviewer", "--remove-reviewer"}
 
 
 def _sends_stdin_as_data(words):
@@ -720,7 +731,9 @@ def _sends_stdin_as_data(words):
         return False
     if words[:1] == ["gh"] and len(words) > 2 and words[1] in ("pr", "issue") \
             and words[2] in GH_BODY_VERBS:
-        return _stdin_flag(words, "--body-file", "-F") and not any(_GH_REFUSED.match(w) for w in words)
+        return _stdin_flag(words, "--body-file", "-F") and all(
+            w in GH_FLAGS or (w.startswith("--") and w.split("=", 1)[0] in GH_FLAGS and w != "--body-file=")
+            for w in words[3:] if w.startswith("-"))
     if words[:2] == ["git", "commit"]:
         return _stdin_flag(words, "-F", "--file") and all(w in GIT_COMMIT_FLAGS for w in words[2:])
     return False

@@ -337,6 +337,14 @@ allows "$(printf "git commit -a -s -F - <<'EOF'\nexplain git reset --hard\nEOF")
 blocks "$(printf 'git re\\\nset --hard')"
 blocks "$(printf 'echo a\\\n#; git reset --hard')"
 blocks "git reset \$'--h\\x61rd'"
+# Fourth Full review round.
+blocks "$(printf "cat <<X\nprice \$'\nX\ngit reset --hard")"
+blocks "git reset \$'--hard\\0x'"
+blocks "$(printf "gh pr comment 5 --editor=true --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh pr comment 5 -e=true --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh pr comment 5 --web=true --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf 'git reset "--ha\\\nrd"')"
+allows "$(printf "gh pr create --title t --base main --draft --body-file=- <<'EOF'\ngit switch main\nEOF")"
 # ...and everything that can turn a body, or text around it, into code.
 blocks "$(printf "cat <<'EOF' | sh\ngit switch main\nEOF")"
 blocks "$(printf "bash -c \"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
