@@ -18,6 +18,20 @@ import time
 import uuid
 
 
+# How long past its limit a catalog pinned at a review's preflight still admits
+# that review's later launches (a Full run with a refuter takes about an hour).
+PIN_GRACE_S = 6 * 3600
+
+# How to refresh a stale catalog: by observation, never by editing a timestamp.
+REFRESH_STEPS = {
+    "codex": ("refresh it through the provider CLI: run `codex` once (for example `codex exec 'Reply ready'`) so it "
+              "rewrites its own models cache; do not edit that file"),
+    "claude": ("refresh it through the provider CLI: run `claude --version` and one real launch of each configured "
+               "model (for example `claude -p --model opus --effort high --output-format json 'Reply ready'`), then "
+               "record fetched_at, client_version and provenance from what they printed"),
+}
+
+
 class PolicyError(ValueError):
     pass
 
@@ -117,8 +131,8 @@ class Policy:
         self.path = self.project / ".llm-orchestrator.json"
         self.data, self._catalogs = {}, {}
         self._context, self._config_digest = None, None
-        # pin_catalogs() sets this; see there.
-        self._catalogs_pinned = False
+        # pin_catalogs() fills this; see there.
+        self._pinned = {}
         # One lookup answers whether the file is there; load() then reads and validates it.
         self._entry = self.listed(".llm-orchestrator.json") if revision is not None else None
         self.enabled = (self._entry is not None if revision is not None
@@ -350,19 +364,23 @@ class Policy:
             age = (datetime.now(timezone.utc) - observed).total_seconds()
         except (KeyError, ValueError, TypeError, AttributeError) as error:
             raise PolicyError("catalog has no valid timezone-aware fetched_at observation") from error
-        cached = self._catalogs.get(provider)
-        if self._catalogs_pinned and cached and cached[0] == (str(path), digest(raw)):
-            return cached[1], cached[2]
+        key = (str(path), digest(raw))
         max_age = entry.get("max_age_s", 86400)
+        # A snapshot pinned at a review's preflight stands for that run, up to a
+        # bound: a run that stalls (a sleeping laptop) does not launch on a
+        # catalog days old. Only the exact content pinned is covered.
+        pinned = self._pinned.get(provider)
+        if pinned and pinned[0] == key and 0 <= age <= max_age + PIN_GRACE_S:
+            return pinned[1], pinned[2]
         if not 0 <= age <= max_age:
-            raise PolicyError(
-                f"{provider} catalog observation at {path} is stale or in the future (fetched_at "
-                f"{data['fetched_at']}, {age / 3600:.1f} h old, limit {max_age / 3600:.1f} h); refresh it "
-                f"through the provider CLI: run `{provider} --version` and one real launch of each configured "
-                "model, then rewrite fetched_at, client_version and provenance from what they printed")
-        # The age is checked on every call until pin_catalogs(); the CLI version
+            when = (f"{age / 3600:.1f} h old, limit {max_age / 3600:.1f} h" if age >= 0
+                    else f"{-age / 3600:.1f} h in the future: check this machine's clock")
+            raise PolicyError(f"{provider} catalog observation at {path} is stale or in the future (fetched_at "
+                              f"{data['fetched_at']}, {when}); {REFRESH_STEPS.get(provider, REFRESH_STEPS['claude'])}")
+        # The age is checked on every call outside a pinned run; the CLI version
         # probe and the rest run once per catalog content for the life of this Policy.
-        if cached and cached[0] == (str(path), digest(raw)):
+        cached = self._catalogs.get(provider)
+        if cached and cached[0] == key:
             return cached[1], cached[2]
         try:
             version = subprocess.run([provider, "--version"], stdin=subprocess.DEVNULL, capture_output=True,
@@ -378,11 +396,11 @@ class Policy:
         if not isinstance(data.get("models"), list):
             raise PolicyError("catalog has no models list")
         provenance = {"path": str(path),
-                      "sha256": digest(raw),
+                      "sha256": key[1],
                       "fetched_at": data["fetched_at"], "client_version": client,
                       "provenance": data.get("provenance", "Codex CLI model catalog cache"),
                       "remote_inference_validated": False}
-        self._catalogs[provider] = ((str(path), digest(raw)), data, provenance)
+        self._catalogs[provider] = (key, data, provenance)
         return data, provenance
 
     def intended(self, provider, role):
@@ -423,9 +441,14 @@ class Policy:
         launch let a catalog that was fresh at preflight cross its limit mid-run,
         so a round returned INCOMPLETE after its reviewers had already run and
         dropped the provers. The observation that admitted the run stands for
-        the run. A catalog whose content changes is still checked in full.
+        the run, for up to PIN_GRACE_S past its limit. Only the content accepted
+        before the pin is covered: a catalog that changes, or one first accepted
+        later, is checked in full; returning to the pinned content is covered again.
+        The provenance records when the age was checked (age_checked_at).
         """
-        self._catalogs_pinned = True
+        for provider, (key, data, provenance) in self._catalogs.items():
+            self._pinned[provider] = (key, data, dict(provenance, age_checked_at=datetime.now(timezone.utc)
+                                                      .strftime("%Y-%m-%dT%H:%M:%SZ")))
 
     def validate_launches(self):
         return [self.resolve(provider, role) for provider, roles in self.data.get("roles", {}).items() for role in roles]

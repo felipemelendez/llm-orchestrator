@@ -629,7 +629,8 @@ class ReviewTests(unittest.TestCase):
         # Mia, 2026-11-05: a catalog fresh at preflight crossed its 24 h limit
         # mid-run, every later launch re-checked its age, and the round came back
         # INCOMPLETE ("catalog observation is stale") after the reviewers ran,
-        # dropping the provers. Here the clock jumps two days once preflight is done.
+        # dropping the provers. Here the clock jumps 26 hours (past the 24 h limit, inside the 6 h
+        # grace) once preflight is done.
         catalog = self.root / "claude-catalog.json"
         catalog.write_text(json.dumps({"fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "client_version": "1.2.3", "provenance": "synthetic observation; not live inference",
@@ -648,7 +649,7 @@ class ReviewTests(unittest.TestCase):
             class _Later(_dt.datetime):
                 @classmethod
                 def now(cls, tz=None):
-                    return _dt.datetime.now(tz) + _dt.timedelta(days=2)
+                    return _dt.datetime.now(tz) + _dt.timedelta(hours=26)
             _preflight = review.Review.preflight
             def preflight(self):
                 result = _preflight(self)

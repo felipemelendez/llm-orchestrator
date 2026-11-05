@@ -173,6 +173,72 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(POLICY.PolicyError, "stale"):
             policy.resolve("codex", "writer")
 
+    def test_a_pinned_catalog_covers_only_its_own_content_and_only_up_to_the_grace(self):
+        # Review findings on the pin (code-review-2, codex-review-1): a flag exempted content first accepted
+        # after the pin, and an A -> B -> A swap lost the pin. The pin is a snapshot of what was accepted.
+        path = self.catalog_paths["codex"]
+        first = path.read_text()
+        policy = POLICY.Policy(self.project)
+        policy.resolve("codex", "writer")
+        policy.pin_catalogs()
+        later = datetime.now(timezone.utc) + timedelta(days=2)
+
+        class Later(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return later
+
+        with patch.object(POLICY, "datetime", Later):
+            # Two days on is past the 24 h limit plus the 6 h grace: the pin no longer covers it.
+            with self.assertRaisesRegex(POLICY.PolicyError, "stale"):
+                policy.resolve("codex", "writer")
+        within = datetime.now(timezone.utc) + timedelta(hours=26)
+
+        class Within(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return within
+
+        with patch.object(POLICY, "datetime", Within):
+            self.assertEqual(policy.resolve("codex", "writer")["catalog"]["sha256"],
+                             POLICY.digest(first.encode()))
+            # New content accepted after the pin is not covered by it.
+            data = json.loads(first)
+            data["fetched_at"] = datetime.now(timezone.utc).isoformat()
+            data["provenance"] = "a second observation"
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(POLICY.PolicyError, "stale"):
+                policy.resolve("codex", "writer")
+            # Back to the pinned content: covered again.
+            path.write_text(first)
+            settings = policy.resolve("codex", "writer")
+            self.assertIn("age_checked_at", settings["catalog"])
+        # A Policy that never pinned keeps the per-call age check.
+        unpinned = POLICY.Policy(self.project)
+        unpinned.resolve("codex", "writer")
+        with patch.object(POLICY, "datetime", Within):
+            with self.assertRaisesRegex(POLICY.PolicyError, "stale"):
+                unpinned.resolve("codex", "writer")
+
+    def test_a_stale_catalog_names_its_age_and_how_each_provider_refreshes_it(self):
+        for provider, wanted, never in (("codex", "rewrites its own models cache", "record fetched_at"),
+                                        ("claude", "record fetched_at, client_version and provenance", "models cache")):
+            path = self.catalog_paths[provider]
+            saved = path.read_text()
+            data = json.loads(saved)
+            data["fetched_at"] = "2000-01-01T00:00:00Z"
+            path.write_text(json.dumps(data))
+            with self.assertRaises(POLICY.PolicyError) as caught:
+                POLICY.Policy(self.project).resolve(provider, "reviewer")
+            self.assertIn("h old, limit 24.0 h", str(caught.exception))
+            self.assertIn(wanted, str(caught.exception))
+            self.assertNotIn(never, str(caught.exception))
+            data["fetched_at"] = (datetime.now(timezone.utc) + timedelta(hours=3)).isoformat()
+            path.write_text(json.dumps(data))
+            with self.assertRaisesRegex(POLICY.PolicyError, "in the future: check this machine's clock"):
+                POLICY.Policy(self.project).resolve(provider, "reviewer")
+            path.write_text(saved)
+
     def test_catalog_is_read_once_per_policy_until_its_file_changes(self):
         policy = POLICY.Policy(self.project)
         original = subprocess.run
