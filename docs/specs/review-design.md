@@ -29,6 +29,7 @@ python3 scripts/lib/orch-review.py run --detach --path standard|full
     --writer claude|codex --base <ref> --spec <file> --run-dir <new dir>
     [--allow-test-changes]
 python3 scripts/lib/orch-review.py wait <run-dir> --seconds 540
+python3 scripts/lib/orch-review.py findings <run-dir>
 ```
 
 - **R1.** Unchanged: `run --detach`, then `wait` until finished. `run`
