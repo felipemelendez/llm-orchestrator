@@ -83,6 +83,44 @@ GLOBAL_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                      "--exec-path", "--config-env", "--attr-source"}
 
 
+_ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
+                "t": "\t", "v": "\v", "\\": "\\", "'": "'", '"': '"', "?": "?"}
+
+
+def ansi_c_decode(body):
+    """The text bash makes of a `$'...'` body: \\xHH, \\uHHHH, \\UHHHHHHHH, octal \\nnn,
+    \\cX and the single-letter escapes; an unknown escape keeps its backslash."""
+    out, i, n = [], 0, len(body)
+    while i < n:
+        c = body[i]
+        if c != "\\" or i + 1 >= n:
+            out.append(c); i += 1; continue
+        e = body[i + 1]
+        if e in _ANSI_SIMPLE:
+            out.append(_ANSI_SIMPLE[e]); i += 2; continue
+        for letter, width in (("x", 2), ("u", 4), ("U", 8)):
+            if e == letter:
+                m = re.match(r"[0-9A-Fa-f]{1,%d}" % width, body[i + 2:])
+                if m:
+                    try:
+                        out.append(chr(int(m.group(0), 16)))
+                    except (ValueError, OverflowError):
+                        pass
+                    i += 2 + len(m.group(0))
+                else:
+                    out.append(body[i:i + 2]); i += 2
+                break
+        else:
+            if e in "01234567":
+                m = re.match(r"[0-7]{1,3}", body[i + 1:])
+                out.append(chr(int(m.group(0), 8) & 0xFF)); i += 1 + len(m.group(0))
+            elif e == "c" and i + 2 < n:
+                out.append(chr(ord(body[i + 2]) & 0x1F)); i += 3
+            else:
+                out.append(body[i:i + 2]); i += 2
+    return "".join(out)
+
+
 def unfold(s):
     """Remove backslash-newline (line continuation) outside quotes, then turn
     remaining unquoted newlines into explicit `;` separators.
@@ -104,21 +142,23 @@ def unfold(s):
             i += 1
             continue
         if c == "\\" and i + 1 < n and s[i + 1] == "\n":
-            out.append(" "); i += 2; continue        # continuation: splice
+            # Continuation: bash DELETES the pair, so `git re\<nl>set` is
+            # `git reset`. A space here split it into `re` and `set`.
+            i += 2; continue
         if c == "\\" and i + 1 < n:
             # An escaped character is literal: `\"` opens no string, `\#`
             # starts no comment, and an escaped space is part of a word, so
             # the `#` in `a\ #` does not begin one either.
-            out.append(s[i:i + 2]); i += 2; escaped_end = i; continue
+            out.append(s[i:i + 2]); i += 2; escaped_end = len(out); continue
         if c == "$" and i + 1 < n and s[i + 1] == "'":
             # ANSI-C quoting: a backslash escapes the quote, so `$'a\\'b # x'`
-            # is one string, not a string followed by a comment.
-            # shlex does not know it either, so it is handed over as the same
-            # text in double quotes (escape sequences are not decoded).
+            # is one string, not a string followed by a comment. shlex does
+            # not know it either, so it is handed over DECODED, in double
+            # quotes: `git reset $'--h\\x61rd'` is `git reset --hard`.
             j = i + 2
             while j < n and s[j] != "'":
                 j += 2 if s[j] == "\\" else 1
-            body = s[i + 2:j]
+            body = ansi_c_decode(s[i + 2:j])
             for ch in ("\\", '"', "$", "`"):
                 body = body.replace(ch, "\\" + ch)
             out.append('"' + body + '"'); i = j + 1; continue
@@ -129,7 +169,10 @@ def unfold(s):
         # followed by `git reset --hard` on the next line was one comment and
         # the reset was allowed. Comments are dropped here, where the newline
         # is still visible, and tokenize() turns shlex's comments off.
-        if c == "#" and i != escaped_end and (i == 0 or s[i - 1] in " \t\n;&|()<>"):
+        # A word starts after what was EMITTED, not after the raw previous
+        # character: after a deleted continuation `a\<nl>#` is the word `a#`.
+        prev = out[-1][-1] if out else ""
+        if c == "#" and len(out) != escaped_end and (not prev or prev in " \t;&|()<>"):
             j = s.find("\n", i)
             i = n if j < 0 else j
             continue
@@ -187,11 +230,16 @@ def expand_braces(tok, _budget=None):
     return out or [tok]
 
 
-def tokenize(cmd):
-    lex = shlex.shlex(unfold(cmd), posix=True, punctuation_chars=True)
+def shell_words(text):
+    """shlex as both callers need it: POSIX quoting, operators split out, no comments."""
+    lex = shlex.shlex(text, posix=True, punctuation_chars=True)
     lex.commenters = ""             # unfold() already removed real comments
     lex.whitespace_split = True
-    return [w for tok in lex for w in expand_braces(tok)]
+    return list(lex)
+
+
+def tokenize(cmd):
+    return [w for tok in shell_words(unfold(cmd)) for w in expand_braces(tok)]
 
 
 def segments(tokens):
@@ -624,7 +672,8 @@ def classify_no_verify(inv):
 # body ends at the first exact delimiter line, and nothing but blank lines
 # follows it. Anything else is classified exactly as before.
 
-_HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z0-9_.-]+)\2")
+_HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z0-9_.-]+)\2(?=[ \t]|$)")
+_PUNCT = "();<>|&"
 _PLAIN_FILE = re.compile(r"/?[A-Za-z0-9_][A-Za-z0-9_./-]*")
 # Every hook git runs by name; a file with one of these names may be a hook
 # wherever core.hooksPath points.
@@ -646,7 +695,7 @@ def _plain_file(path):
     parts = [p for p in path.split("/") if p]
     return bool(_PLAIN_FILE.fullmatch(path)) and bool(parts) \
         and not any(p.startswith(".") for p in parts) \
-        and "hook" not in path.lower() and parts[-1] not in GIT_HOOK_NAMES
+        and "hook" not in path.lower() and parts[-1].lower() not in GIT_HOOK_NAMES
 
 
 def _stdin_flag(words, *names):
@@ -655,23 +704,26 @@ def _stdin_flag(words, *names):
         or any(w == f"{name}=-" for w in words for name in names if name.startswith("--"))
 
 
+# The only flags each shape may carry, matched exactly: git and gh both
+# accept spellings no list of refusals keeps up with (`-ae`, `--edi` open
+# git's editor), so the shapes list what is allowed instead.
+GIT_COMMIT_FLAGS = {"-a", "--all", "--allow-empty", "--amend", "--no-edit", "-s", "--signoff", "-q", "--quiet",
+                    "-F", "--file", "-", "--file=-"}
+_GH_REFUSED = re.compile(r"^(-[A-Za-z]*[ew][A-Za-z]*|--editor|--web)$")
+
+
 def _sends_stdin_as_data(words):
     """The header of one of the exact shapes above, as shell words."""
-    operators = [w for w in words if w and all(c in _PUNCT for c in w)]
     if words[:1] == ["cat"]:
         return words == ["cat"] or (len(words) == 3 and words[1] == ">" and _plain_file(words[2]))
-    if operators:
+    if any(w and all(c in _PUNCT for c in w) for w in words):
         return False
     if words[:1] == ["gh"] and len(words) > 2 and words[1] in ("pr", "issue") \
             and words[2] in GH_BODY_VERBS:
-        return _stdin_flag(words, "--body-file", "-F")
+        return _stdin_flag(words, "--body-file", "-F") and not any(_GH_REFUSED.match(w) for w in words)
     if words[:2] == ["git", "commit"]:
-        return _stdin_flag(words, "-F", "--file") \
-            and not any(w in ("-e", "--edit") for w in words)
+        return _stdin_flag(words, "-F", "--file") and all(w in GIT_COMMIT_FLAGS for w in words[2:])
     return False
-
-
-_PUNCT = "();<>|&"
 
 
 def strip_data_heredocs(cmd):
@@ -688,11 +740,13 @@ def strip_data_heredocs(cmd):
     if "<<" in header or re.search(r"[$`\\#]", header):
         return cmd
     try:
-        lex = shlex.shlex(header, posix=True, punctuation_chars=True)
-        lex.whitespace_split = True
-        lex.commenters = ""
-        words = list(lex)
+        words = shell_words(header)
+        # The operator must be a real one: shlex keeps `"<<'EOF'"` inside a
+        # quoted word, so a `<<` that is quoted text yields no `<<` token.
+        line_words = shell_words(first)
     except ValueError:
+        return cmd
+    if line_words.count("<<") != 1:
         return cmd
     if not words or not _sends_stdin_as_data(words):
         return cmd

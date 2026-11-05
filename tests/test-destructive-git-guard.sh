@@ -324,6 +324,19 @@ blocks "$(printf "echo \${x:-'}'<<EOF}\ngit reset --hard\nEOF")"
 blocks "$(printf "cat > a.md <<'EOF'\nx\nEOF\ngit reset --hard")"
 blocks "$(printf "gh pr comment 5 --body-file - <<EOF\ngit reset --hard\nEOF")"
 blocks 'echo a\ #; git reset --hard'
+# Third Full review round.
+blocks "$(printf "gh pr comment 5 --body-file - --repo \"<<'EOF'\"\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > a.md <<'EOF'X\nx\nEOFX\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit -F - -ae <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit --allow-empty --edi -F - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh pr comment 5 -e --body-file - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > scripts/PRE-COMMIT <<'EOF'\ngit reset --hard\nEOF")"
+allows "$(printf "git commit -a -s -F - <<'EOF'\nexplain git reset --hard\nEOF")"
+# Already allowed on main: bash deletes a backslash-newline, so these are a
+# reset; and `$'...'` escapes decode before git sees them.
+blocks "$(printf 'git re\\\nset --hard')"
+blocks "$(printf 'echo a\\\n#; git reset --hard')"
+blocks "git reset \$'--h\\x61rd'"
 # ...and everything that can turn a body, or text around it, into code.
 blocks "$(printf "cat <<'EOF' | sh\ngit switch main\nEOF")"
 blocks "$(printf "bash -c \"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
