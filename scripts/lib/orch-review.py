@@ -154,19 +154,33 @@ def tree_lines(project, tree, name):
     return result.stdout.splitlines() if result.returncode == 0 else None
 
 
-def file_line_valid(project, tree, evidence):
-    """R9: the quoted line exists in the reviewed files and matches, ignoring outer spaces."""
-    if not isinstance(evidence, dict) or evidence.get("type") != "file-line":
-        return False, "not file-line evidence"
+def file_line_problems(project, tree, evidence):
+    """R9: every reason `evidence` is not a quote of a line in the reviewed files; empty when it is.
+    The record step reports them all at once; file_line_valid answers yes or no from the same list."""
+    if not isinstance(evidence, dict):
+        return ["evidence must be an object"]
+    problems = []
+    if evidence.get("type") != "file-line":
+        problems.append(f'type must be "file-line", not {json.dumps(evidence.get("type"))}')
     line, quote = evidence.get("line"), evidence.get("quote")
-    if type(line) is not int or line < 1 or not isinstance(quote, str) or not quote.strip():
-        return False, "file-line evidence needs a line number and a quote"
+    line_ok = type(line) is int and line >= 1
+    quote_ok = isinstance(quote, str) and bool(quote.strip())
+    if not line_ok:
+        problems.append("line must be a 1-based integer")
+    if not quote_ok:
+        problems.append("quote must be the line's text")
     lines = tree_lines(project, tree, evidence.get("file"))
     if lines is None:
-        return False, "the file is not in the reviewed change"
-    if line > len(lines) or lines[line - 1].strip() != quote.strip():
-        return False, "the quote does not match that line"
-    return True, "the quote matches the reviewed line"
+        problems.append("file is not in the reviewed change")
+    elif line_ok and quote_ok and (line > len(lines) or lines[line - 1].strip() != quote.strip()):
+        problems.append("the quote does not match that line")
+    return problems
+
+
+def file_line_valid(project, tree, evidence):
+    """R9: the quoted line exists in the reviewed files and matches, ignoring outer spaces."""
+    problems = file_line_problems(project, tree, evidence)
+    return (False, "; ".join(problems)) if problems else (True, "the quote matches the reviewed line")
 
 
 ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:\s+(\S+)|\s*$)")
@@ -2914,20 +2928,74 @@ def command_findings(args):
     sys.stdout.write(findings_markdown(review))
     return 0
 
+RECORD_RULES = """\
+How `orch-review.py record RUN_DIR --dispositions FILE` judges a dispositions file.
+
+FILE is one JSON object keyed by finding id (the ids in RUN_DIR/review.json).
+Every finding of the run needs exactly one entry, and no other key is allowed.
+Every problem in every entry is reported in one refusal; nothing is recorded
+until all entries pass. A run is recorded once.
+
+fixed      {"disposition": "fixed",
+            "check": "<the command that failed before the fix and passes after>"}
+
+refuted    {"disposition": "refuted",
+            "evidence": {"type": "file-line", "file": "<path in the reviewed tree>",
+                         "line": <1-based integer>,
+                         "quote": "<that line's text; outer spaces ignored>"}}
+           The type is exactly "file-line"; the quote must match that line of
+           the tree the run reviewed. A test run is not evidence for refuted.
+
+settled    {"disposition": "settled",
+            "entry": "<one whole entry of the spec's `## Settled` section>"}
+           The spec the run read must have that section.
+
+follow-up  {"disposition": "follow-up",
+            "reference": "<the PR, issue or plan task that carries it>"}
+           Only for a serious finding that did not reproduce: status
+           unverified, promoted or unresolved, and its repro either missing or
+           run on the unpatched copy and passed. A repro that failed there
+           showed the failure: fix it. A repro that never ran proves nothing.
+           A security, privacy or data-integrity finding (by its kind or words,
+           or any finding of a review run with the security lens) also needs
+           "person_approved": true.
+
+ignored    {"disposition": "ignored", "reason": "<why>"}
+           A blocking finding (status verified, unverified, promoted,
+           unresolved or unjudged) also needs "person_approved": true.
+
+Never refuted, settled or follow-up, whatever the entry says:
+  - a reproduced finding (it showed a wrong result): record it fixed, or
+    ignored with person_approved: true once the person decides;
+  - a catastrophic or unranked finding: the person decides it, recorded as
+    fixed or ignored with person_approved: true.
+
+"person_approved": true records that the person said so in this session;
+an agent never sets it on its own judgment.
+"""
+
+
+RULES_POINTER = "\nEvery rule and the shape of each disposition: orch-review.py record --rules"
+
 
 def command_record(args):
     """R21: one disposition per finding, appended to the outcome log."""
+    if args.rules:
+        print(RECORD_RULES, end="")
+        return 0
+    if not args.run_dir or not args.dispositions:
+        return fail("record needs RUN_DIR and --dispositions FILE" + RULES_POINTER)
     run_dir = Path(args.run_dir).expanduser().absolute()
     review = read_json(run_dir / "review.json")
     run = read_json(run_dir / "run.json", {})
     preflight = read_json(run_dir / "preflight.json", {})
     if review is None:
-        return fail("the run has no review.json")
+        return fail("the run has no review.json" + RULES_POINTER)
     if (run_dir / "dispositions.json").exists():
-        return fail("dispositions were already recorded for this run")
+        return fail("dispositions were already recorded for this run" + RULES_POINTER)
     dispositions = read_json(args.dispositions)
     if not isinstance(dispositions, dict):
-        return fail("the dispositions file must be a JSON object keyed by finding id")
+        return fail("the dispositions file must be a JSON object keyed by finding id" + RULES_POINTER)
     ids = [f["id"] for f in review["findings"]]
     problems = [f"{name}: no disposition" for name in ids if name not in dispositions]
     problems += [f"{name}: not a finding of this review" for name in dispositions if name not in ids]
@@ -2938,44 +3006,51 @@ def command_record(args):
         if entry is None:
             continue
         kind = entry.get("disposition") if isinstance(entry, dict) else None
+        own = []
+        # Every independent problem of an entry is reported, not just the first:
+        # the record step used to be learned one refusal at a time.
         if kind == "fixed":
             if not (isinstance(entry.get("check"), str) and entry["check"].strip()):
-                problems.append(f"{found['id']}: fixed needs the check that failed before and passes after")
+                own.append("fixed needs the check that failed before and passes after (\"check\": \"<command>\")")
         elif kind in ("refuted", "settled"):
             kept = kept_from_the_person(found)
             if kept:
-                problems.append(f"{found['id']}: never {kind}: {kept}")
+                own.append(f"never {kind}: {kept}")
             elif kind == "refuted":
-                valid, why = file_line_valid(project, review["tree"], entry.get("evidence"))
-                if not valid:
-                    problems.append(f"{found['id']}: refuted needs a file-line quote from the reviewed files ({why})")
+                why = file_line_problems(project, review["tree"], entry.get("evidence"))
+                if why:
+                    own.append(f"refuted needs a file-line quote from the reviewed files ({'; '.join(why)}); "
+                               'the shape is "evidence": {"type": "file-line", "file": "<path>", "line": <n>, '
+                               '"quote": "<text>"}')
             else:
                 valid, why = settled_valid(settled, entry.get("entry"))
                 if not valid:
-                    problems.append(f"{found['id']}: {why}")
+                    own.append(why)
         elif kind == "follow-up":
             kept = kept_from_the_person(found)
             why = follow_up_refused(found)
             if kept:
-                problems.append(f"{found['id']}: never a follow-up: {kept}")
+                own.append(f"never a follow-up: {kept}")
             elif why:
-                problems.append(f"{found['id']}: {why}")
-            elif not (isinstance(entry.get("reference"), str) and entry["reference"].strip()):
-                problems.append(f"{found['id']}: follow-up needs the reference of the PR, issue or plan task "
-                                "that carries it")
-            elif deferred_only_by_the_person(review, found) and entry.get("person_approved") is not True:
-                problems.append(f"{found['id']}: a security, privacy or data-integrity finding is deferred only "
-                                "when the person said so (person_approved: true)")
+                own.append(why)
+            # A follow-up that is allowed at all is told every field it lacks.
+            if not (kept or why) and not (isinstance(entry.get("reference"), str) and entry["reference"].strip()):
+                own.append("follow-up needs the reference of the PR, issue or plan task that carries it "
+                           "(\"reference\": \"<link or id>\")")
+            if not (kept or why) and deferred_only_by_the_person(review, found) \
+                    and entry.get("person_approved") is not True:
+                own.append("a security, privacy or data-integrity finding is deferred only when the person said so "
+                           "(person_approved: true)")
         elif kind == "ignored":
             if not (isinstance(entry.get("reason"), str) and entry["reason"].strip()):
-                problems.append(f"{found['id']}: ignored needs a reason")
-            elif found["status"] in BLOCKING and entry.get("person_approved") is not True:
-                problems.append(f"{found['id']}: a blocking finding is ignored only when the person said so "
-                                "(person_approved: true)")
+                own.append("ignored needs a reason (\"reason\": \"<why>\")")
+            if found["status"] in BLOCKING and entry.get("person_approved") is not True:
+                own.append("a blocking finding is ignored only when the person said so (person_approved: true)")
         else:
-            problems.append(f"{found['id']}: the disposition must be fixed, refuted, settled, follow-up or ignored")
+            own.append("the disposition must be fixed, refuted, settled, follow-up or ignored")
+        problems += [f"{found['id']}: {item}" for item in own]
     if problems:
-        return fail("; ".join(problems))
+        return fail("; ".join(problems) + RULES_POINTER)
     write_json(run_dir / "dispositions.json", dispositions)
     append_outcome(*[{"row": "finding", "run_id": review["run_id"], "date": now(), "finding": f["id"],
                       "reviewer": f.get("reviewer"), "provider": f["provider"], "rank": f.get("rank"),
@@ -3012,9 +3087,11 @@ def main(argv=None):
     swept.add_argument("--state-dir", required=True)
     shown = commands.add_parser("findings", help="print a finished review's findings as Markdown")
     shown.add_argument("run_dir")
-    record = commands.add_parser("record", help="record what happened to each finding")
-    record.add_argument("run_dir")
-    record.add_argument("--dispositions", required=True)
+    record = commands.add_parser("record", help="record what happened to each finding",
+                                 epilog=RECORD_RULES, formatter_class=argparse.RawDescriptionHelpFormatter)
+    record.add_argument("run_dir", nargs="?")
+    record.add_argument("--dispositions")
+    record.add_argument("--rules", action="store_true", help="print every disposition rule and shape, then exit")
     args = parser.parse_args(argv)
     if args.command == "run":
         if not args.child and not all((args.path, args.writer, args.base, args.spec)):
