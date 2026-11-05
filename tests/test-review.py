@@ -2378,6 +2378,50 @@ class ReviewTests(unittest.TestCase):
         self.assert_incomplete(review, "at capacity (server_overloaded) again after one retry")
         self.assertEqual(len(self.calls("codex", "codex-review")), 2)
 
+    def test_codex_review_retry_sends_the_same_instruction(self):
+        # Review finding codex-review-3: the retry wrapped the instruction a second time.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        self.review("standard", "claude", patch=self.NO_DELAY)
+        first, second = self.calls("codex", "codex-review")
+        self.assertEqual(first["instruction"], second["instruction"])
+
+    def test_codex_review_retry_that_cannot_start_keeps_its_history(self):
+        # codex-review-2: a second launch that raised lost the retry record.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        patch = self.NO_DELAY + textwrap.dedent("""\
+            _managed, _seen = review.managed_process, []
+            def managed_process(argv, *rest, **kw):
+                if argv[:2] == ["codex", "review"]:
+                    _seen.append(1)
+                    if len(_seen) == 2:
+                        raise OSError("admission refused")
+                return _managed(argv, *rest, **kw)
+            review.managed_process = managed_process
+            """)
+        review = self.review("standard", "claude", patch=patch)
+        self.assert_incomplete(review, "the capacity retry could not start: admission refused")
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertEqual(launch["capacity_retry"]["codex_error_info"], "server_overloaded")
+
+    def test_codex_review_never_retries_over_a_pending_process_cleanup(self):
+        # codex-review-1: moving the first attempt's policy-launch.json hid a pending shutdown.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        patch = self.NO_DELAY + textwrap.dedent("""\
+            _managed = review.managed_process
+            def managed_process(argv, cwd, prompt, stream_path, launch_dir, *rest, **kw):
+                code = _managed(argv, cwd, prompt, stream_path, launch_dir, *rest, **kw)
+                if argv[:2] == ["codex", "review"]:
+                    review.write_json(launch_dir / "policy-launch.json", {"capacity": {
+                        "cleanup_status": "pending", "cleanup_reason": "shutdown unconfirmed"}})
+                return code
+            review.managed_process = managed_process
+            """)
+        review = self.review("standard", "claude", patch=patch)
+        self.assertEqual(len(self.calls("codex", "codex-review")), 1)
+        self.assert_incomplete(review, "at capacity (server_overloaded)")
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertIsNone(launch.get("capacity_retry"))
+
     def test_codex_review_that_only_quotes_the_capacity_message_is_not_retried(self):
         self.reviewer("codex", codex_finding(title="Selected model is at capacity. Please try a different model."))
         self.review("standard", "claude", patch=self.NO_DELAY)

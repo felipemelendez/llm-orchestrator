@@ -2316,6 +2316,7 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
     runs once more after CAPACITY_RETRY_DELAY. The sandbox is read-only, so the copy the second
     attempt reviews is the one the first saw. A second overload is a dropout like any other."""
     settings = launch_settings(policy, "codex", "reviewer", requested)
+    given, asked = instruction, requested   # the retry is the same launch, from the same inputs
     requested, effort = settings["model"], settings["effort"]
     if policy and policy.enabled:
         instruction = policy.prompt(instruction)
@@ -2333,7 +2334,11 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
     stdout = stdout_path.read_text(errors="replace")
     stderr = (launch_dir / "stderr.log").read_text(errors="replace")
     path, events, helpers, missing = review_rollout(stderr, codex_home())
-    if retry and server_overloaded(events):
+    pending = ((read_json(launch_dir / "policy-launch.json", {}) or {}).get("capacity") or {}).get(
+        "cleanup_status") == "pending"
+    # Never retry over a first process whose shutdown is unconfirmed: its pending cleanup must stay on
+    # this launch's record, where Review.cleanup() reads it before the copy is released.
+    if retry and not pending and server_overloaded(events):
         first = launch_dir / "attempt-1"
         first.mkdir()
         for item in list(launch_dir.iterdir()):
@@ -2341,10 +2346,15 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
                 shutil.move(str(item), str(first / item.name))
         if path:
             shutil.copyfile(path, first / "rollout.jsonl")
+        history = {"first_exit_code": code, "codex_error_info": "server_overloaded",
+                   "first_attempt": str(first), "delay_s": CAPACITY_RETRY_DELAY}
         time.sleep(CAPACITY_RETRY_DELAY)
-        fields = run_codex_review(copy, instruction, launch_dir, requested, servers, changed, policy, retry=False)
-        fields["capacity_retry"] = {"first_exit_code": code, "codex_error_info": "server_overloaded",
-                                    "first_attempt": str(first), "delay_s": CAPACITY_RETRY_DELAY}
+        try:
+            fields = run_codex_review(copy, given, launch_dir, asked, servers, changed, policy, retry=False)
+        except (resources.Unsafe, Failure, OSError, policy_module.PolicyError) as error:
+            fields = finish_launch({"reason": f"the capacity retry could not start: {error}", "exit_code": None,
+                                    "served_model": [], "served_effort": []}, None, launch_dir)
+        fields["capacity_retry"] = history
         return fields
     contexts = [e["payload"] for e in events or [] if e.get("type") == "turn_context" and isinstance(e.get("payload"), dict)]
     served = list(dict.fromkeys(c.get("model") for c in contexts if isinstance(c.get("model"), str)))
