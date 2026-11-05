@@ -5,6 +5,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-05 — fewer wasted review rounds
+
+- **A review no longer fails halfway because the model list got old.** Its
+  age is checked once, at the start. If it is too old, the message says how
+  old and how to refresh it.
+- **A busy Codex gets a second try.** When Codex says the model is at
+  capacity, the review waits 45 seconds and tries once more.
+- **Recording review results is easier.** `orch-review.py record --rules`
+  shows every rule, and a rejected file lists all its problems at once.
+- **Read a review's results in plain text.** `orch-review.py findings
+  <run-dir>` prints each finding, how it was checked and what happened.
+- **Tip: let GitHub delete merged branches.** Run
+  `gh repo edit --delete-branch-on-merge` once in each repository.
+
 ## [0.19.0] - 2026-10-29 — reviews cannot fill your disk
 
 On 2026-10-28 a review agent copied a folder into itself until the disk was
