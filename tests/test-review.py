@@ -350,7 +350,15 @@ def review():
             events.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "c1",
                            "output": [{"type": "input_text", "text": "Script completed\\nOutput:\\n"},
                                       {"type": "input_text", "text": json.dumps({"exit_code": 0, "output": diff})}]}})
-        events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": message}})
+        if spec.get("tokens"):
+            events.append({"type": "event_msg", "payload": {"type": "token_count", "info": {
+                "total_token_usage": spec["tokens"]}}})
+        if spec.get("overloaded"):
+            events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": None,
+                           "error": {"message": "Selected model is at capacity. Please try a different model.",
+                                     "codex_error_info": "server_overloaded"}}})
+        else:
+            events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": message}})
         rollout(conversation, events)
     for conversation in [parent, helper, *reviews]:
         if not spec.get("no_start_lines"):
@@ -2382,6 +2390,85 @@ class ReviewTests(unittest.TestCase):
         # A claim carrying a fence cannot break the document: every opened fence closes.
         self.assertIn("````", MOD.fenced("a ``` b"))
         self.assertEqual(self.invoke("findings", str(self.root / "missing")).returncode, 2)
+
+    # Codex capacity dropouts (Mia, 2026-11-05)
+    NO_DELAY = "review.CAPACITY_RETRY_DELAY = 0\n"
+
+    def test_codex_review_at_capacity_is_retried_once_and_completes(self):
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        review = self.review("standard", "claude", patch=self.NO_DELAY)
+        self.assertEqual(review["verdict"], "READY", review["incomplete_reasons"])
+        self.assertEqual(len(self.calls("codex", "codex-review")), 2)
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertEqual(launch["status"], "complete")
+        self.assertEqual(launch["capacity_retry"]["codex_error_info"], "server_overloaded")
+        self.assertEqual(launch["capacity_retry"]["first_exit_code"], 1)
+        first = Path(launch["capacity_retry"]["first_attempt"])
+        self.assertTrue((first / "rollout.jsonl").is_file() and (first / "stderr.log").is_file())
+
+    def test_codex_review_at_capacity_twice_is_a_named_dropout(self):
+        self.scenario["codex"]["codex-review"] = {"overloaded": True, "exit": 1}
+        review = self.review("standard", "claude", patch=self.NO_DELAY)
+        self.assert_incomplete(review, "at capacity (server_overloaded) again after one retry")
+        self.assertEqual(len(self.calls("codex", "codex-review")), 2)
+
+    def test_codex_review_retry_reports_both_attempts_tokens(self):
+        # Second review, codex-review-1: the first attempt's tokens were dropped.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1,
+                                                    "tokens": {"input_tokens": 100, "output_tokens": 1}}
+        self.scenario["codex"]["codex-review-2"] = {"tokens": {"input_tokens": 200, "output_tokens": 2}}
+        review = self.review("standard", "claude", patch=self.NO_DELAY)
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertEqual(launch["tokens"], {"input_tokens": 300, "output_tokens": 3})
+
+    def test_codex_review_retry_sends_the_same_instruction(self):
+        # Review finding codex-review-3: the retry wrapped the instruction a second time.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        self.review("standard", "claude", patch=self.NO_DELAY)
+        first, second = self.calls("codex", "codex-review")
+        self.assertEqual(first["instruction"], second["instruction"])
+
+    def test_codex_review_retry_that_cannot_start_keeps_its_history(self):
+        # codex-review-2: a second launch that raised lost the retry record.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        patch = self.NO_DELAY + textwrap.dedent("""\
+            _managed, _seen = review.managed_process, []
+            def managed_process(argv, *rest, **kw):
+                if argv[:2] == ["codex", "review"]:
+                    _seen.append(1)
+                    if len(_seen) == 2:
+                        raise OSError("admission refused")
+                return _managed(argv, *rest, **kw)
+            review.managed_process = managed_process
+            """)
+        review = self.review("standard", "claude", patch=patch)
+        self.assert_incomplete(review, "the capacity retry could not start: admission refused")
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertEqual(launch["capacity_retry"]["codex_error_info"], "server_overloaded")
+
+    def test_codex_review_never_retries_over_a_pending_process_cleanup(self):
+        # codex-review-1: moving the first attempt's policy-launch.json hid a pending shutdown.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        patch = self.NO_DELAY + textwrap.dedent("""\
+            _managed = review.managed_process
+            def managed_process(argv, cwd, prompt, stream_path, launch_dir, *rest, **kw):
+                code = _managed(argv, cwd, prompt, stream_path, launch_dir, *rest, **kw)
+                if argv[:2] == ["codex", "review"]:
+                    review.write_json(launch_dir / "policy-launch.json", {"capacity": {
+                        "cleanup_status": "pending", "cleanup_reason": "shutdown unconfirmed"}})
+                return code
+            review.managed_process = managed_process
+            """)
+        review = self.review("standard", "claude", patch=patch)
+        self.assertEqual(len(self.calls("codex", "codex-review")), 1)
+        self.assert_incomplete(review, "at capacity (server_overloaded)")
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertIsNone(launch.get("capacity_retry"))
+
+    def test_codex_review_that_only_quotes_the_capacity_message_is_not_retried(self):
+        self.reviewer("codex", codex_finding(title="Selected model is at capacity. Please try a different model."))
+        self.review("standard", "claude", patch=self.NO_DELAY)
+        self.assertEqual(len(self.calls("codex", "codex-review")), 1)
 
     def test_r21_record_reports_every_problem_of_every_entry_at_once_and_prints_its_rules(self):
         # Mia, 2026-11-05: the rules were learned one refusal at a time. A security follow-up missing both
