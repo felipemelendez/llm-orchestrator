@@ -154,40 +154,33 @@ def tree_lines(project, tree, name):
     return result.stdout.splitlines() if result.returncode == 0 else None
 
 
-def file_line_valid(project, tree, evidence):
-    """R9: the quoted line exists in the reviewed files and matches, ignoring outer spaces."""
-    if not isinstance(evidence, dict) or evidence.get("type") != "file-line":
-        return False, "not file-line evidence"
-    line, quote = evidence.get("line"), evidence.get("quote")
-    if type(line) is not int or line < 1 or not isinstance(quote, str) or not quote.strip():
-        return False, "file-line evidence needs a line number and a quote"
-    lines = tree_lines(project, tree, evidence.get("file"))
-    if lines is None:
-        return False, "the file is not in the reviewed change"
-    if line > len(lines) or lines[line - 1].strip() != quote.strip():
-        return False, "the quote does not match that line"
-    return True, "the quote matches the reviewed line"
-
-
 def file_line_problems(project, tree, evidence):
-    """Every reason `evidence` is not a valid refuted quote (empty when it is), for the record step,
-    which reports them all at once. file_line_valid decides the same question for the prover."""
+    """R9: every reason `evidence` is not a quote of a line in the reviewed files; empty when it is.
+    The record step reports them all at once; file_line_valid answers yes or no from the same list."""
     if not isinstance(evidence, dict):
         return ["evidence must be an object"]
     problems = []
     if evidence.get("type") != "file-line":
         problems.append(f'type must be "file-line", not {json.dumps(evidence.get("type"))}')
     line, quote = evidence.get("line"), evidence.get("quote")
-    if type(line) is not int or line < 1:
+    line_ok = type(line) is int and line >= 1
+    quote_ok = isinstance(quote, str) and bool(quote.strip())
+    if not line_ok:
         problems.append("line must be a 1-based integer")
-    if not isinstance(quote, str) or not quote.strip():
+    if not quote_ok:
         problems.append("quote must be the line's text")
     lines = tree_lines(project, tree, evidence.get("file"))
     if lines is None:
         problems.append("file is not in the reviewed change")
-    elif not problems and (line > len(lines) or lines[line - 1].strip() != quote.strip()):
+    elif line_ok and quote_ok and (line > len(lines) or lines[line - 1].strip() != quote.strip()):
         problems.append("the quote does not match that line")
     return problems
+
+
+def file_line_valid(project, tree, evidence):
+    """R9: the quoted line exists in the reviewed files and matches, ignoring outer spaces."""
+    problems = file_line_problems(project, tree, evidence)
+    return (False, "; ".join(problems)) if problems else (True, "the quote matches the reviewed line")
 
 
 ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:\s+(\S+)|\s*$)")
