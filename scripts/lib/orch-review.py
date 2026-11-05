@@ -2834,6 +2834,83 @@ def command_wait(args):
         time.sleep(1)
 
 
+OUTPUT_LINES = 40
+
+
+def fenced(text, info=""):
+    """A Markdown code block that no backtick run inside `text` can close."""
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{info}\n{text.rstrip(chr(10))}\n{fence}"
+
+
+def trimmed(text):
+    lines = (text or "").rstrip("\n").splitlines()
+    if len(lines) <= OUTPUT_LINES:
+        return "\n".join(lines)
+    return "\n".join(lines[:OUTPUT_LINES] + [f"... {len(lines) - OUTPUT_LINES} more lines in review.json"])
+
+
+def receipt_line(name, receipt):
+    if not receipt:
+        return f"{name}: not run"
+    if not receipt.get("ran"):
+        return f"{name}: did not run"
+    if receipt.get("timed_out"):
+        return f"{name}: timed out after {receipt.get('duration_s')} s"
+    return f"{name}: exit {receipt.get('exit_code')} ({receipt.get('duration_s')} s)"
+
+
+def findings_markdown(review):
+    """The findings of one review as Markdown: what each claims, and what its prover ran and saw."""
+    findings = review.get("findings") or []
+    out = [f"# Review {review.get('run_id')}: {review.get('verdict_line') or review.get('verdict')}", ""]
+    out.append(f"{review.get('path')} review against {review.get('base')}, reviewers "
+               f"{', '.join(review.get('reviewers') or []) or 'none'}, {len(findings)} finding(s).")
+    for reason in review.get("incomplete_reasons") or []:
+        out.append(f"- Incomplete: {reason}")
+    for found in findings:
+        where = f"{found.get('file')}:{found.get('line')}" if found.get("file") else "no location"
+        state = "reproduced" if found.get("reproduced") else "not reproduced"
+        out += ["", f"## {found['id']}: {found.get('rank') or 'unranked'} {found.get('kind') or 'finding'}, "
+                    f"{found.get('status')} ({state})", "", f"`{where}`", ""]
+        claim = found.get("claim") or found.get("words") or ""
+        out.append(f"**Claim.** {claim}".rstrip())
+        if found.get("words") and found.get("words") != claim:
+            out += ["", f"**Reviewer ({found.get('reviewer') or found.get('provider')}).** {found['words']}"]
+        if found.get("simpler_alternative"):
+            out += ["", f"**Simpler alternative.** {found['simpler_alternative']}"]
+        if found.get("not_runnable"):
+            out += ["", f"**Not runnable.** {found['not_runnable']}"]
+        repro = found.get("repro") if isinstance(found.get("repro"), dict) else None
+        receipts = found.get("receipts") or {}
+        if repro and repro.get("command"):
+            out += ["", "**Reproduction.**", "", fenced(repro["command"], "sh")]
+            first = receipts.get("1")
+            out += ["", f"- {receipt_line('On the unpatched copy', first)}"]
+            if first and first.get("output"):
+                out += ["", fenced(trimmed(first["output"]))]
+            if repro.get("patch"):
+                out += ["", f"- {receipt_line('Fix patch applied', receipts.get('apply'))}",
+                        f"- {receipt_line('After the patch', receipts.get('2'))}"]
+                second = receipts.get("2")
+                if second and second.get("output"):
+                    out += ["", fenced(trimmed(second["output"]))]
+        refuter = found.get("refuter") if isinstance(found.get("refuter"), dict) else None
+        if refuter:
+            out += ["", f"**Refuter.** {refuter.get('verdict')}: {refuter.get('explanation') or ''}".rstrip()]
+    return "\n".join(out) + "\n"
+
+
+def command_findings(args):
+    run_dir = Path(args.run_dir).expanduser().absolute()
+    review = read_json(run_dir / "review.json")
+    if not isinstance(review, dict):
+        return fail(f"{run_dir} has no review.json (still running? use wait)")
+    sys.stdout.write(findings_markdown(review))
+    return 0
+
+
 def command_record(args):
     """R21: one disposition per finding, appended to the outcome log."""
     run_dir = Path(args.run_dir).expanduser().absolute()
@@ -2929,6 +3006,8 @@ def main(argv=None):
     wait.add_argument("--seconds", type=int, default=540)
     swept = commands.add_parser("sweep", help=argparse.SUPPRESS)
     swept.add_argument("--state-dir", required=True)
+    shown = commands.add_parser("findings", help="print a finished review's findings as Markdown")
+    shown.add_argument("run_dir")
     record = commands.add_parser("record", help="record what happened to each finding")
     record.add_argument("run_dir")
     record.add_argument("--dispositions", required=True)
@@ -2941,6 +3020,8 @@ def main(argv=None):
         return command_wait(args)
     if args.command == "sweep":
         return command_sweep(args)
+    if args.command == "findings":
+        return command_findings(args)
     return command_record(args)
 
 

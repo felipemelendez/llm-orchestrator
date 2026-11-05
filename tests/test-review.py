@@ -1421,7 +1421,7 @@ class ReviewTests(unittest.TestCase):
         self.prove({"code-review-1": mild("test-tampering")})
         self.assertEqual(self.found(self.review(), "code-review-1")["rank"], "serious")
         review = self.review("standard", "codex", "--allow-test-changes")
-        self.assertEqual((self.found(review, "code-review-1")["rank"], review["verdict"]),
+        self.assertEqual((review["findings"][0]["rank"], review["verdict"]),
                          ("mild", "READY-WITH-FIXES"))
 
     def test_r8_a_test_gap_without_a_failing_receipt_is_mild_and_with_one_blocks(self):
@@ -2352,6 +2352,28 @@ class ReviewTests(unittest.TestCase):
                      (ROOT / "skills/receiving-code-review/SKILL.md").read_text()):
             self.assertIn("person_approved", text)
 
+    def test_findings_prints_each_finding_with_its_reproduction_and_output_as_markdown(self):
+        # Mia, 2026-11-05: every project copied a Python snippet to turn review.json into a findings file.
+        self.reviewer("claude", code_finding(), code_finding(line=1, summary="second"))
+        self.prove({"code-review-1": proof(), "code-review-2": proof(repro=None, not_runnable="no command shows it")})
+        review = self.review()
+        self.assertEqual(len(review["findings"]), 2, (review["verdict"], review["incomplete_reasons"],
+                                                      [f["id"] for f in review["findings"]]))
+        result = self.invoke("findings", str(self.run_dir), check_rc=0)
+        text = result.stdout
+        self.assertTrue(text.startswith(f"# Review {review['run_id']}: "))
+        first = review["findings"][0]
+        for fragment in (f"## {review['findings'][0]['id']}: ", f"## {review['findings'][1]['id']}: ", "`calc.py:2`", "**Claim.**",
+                         "**Reproduction.**", first["repro"]["command"], "On the unpatched copy: exit ",
+                         "After the patch: exit ", "**Not runnable.** no command shows it"):
+            self.assertIn(fragment, text)
+        output = (first["receipts"]["1"].get("output") or "").strip()
+        if output:
+            self.assertIn(output.splitlines()[0], text)
+        # A claim carrying a fence cannot break the document: every opened fence closes.
+        self.assertIn("````", MOD.fenced("a ``` b"))
+        self.assertEqual(self.invoke("findings", str(self.root / "missing")).returncode, 2)
+
     # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
     def test_design_every_rendered_brief_carries_the_simplicity_question(self):
         snippet = (ROOT / "skills/requesting-code-review/references/design-simplicity.md").read_text().strip()
@@ -2412,7 +2434,7 @@ class ReviewTests(unittest.TestCase):
         self.prove({"code-review-1": proof()})
         self.log.unlink()
         review = self.review("standard", "codex")
-        self.assertIsNone(self.found(review, "code-review-1")["simpler_alternative"])
+        self.assertIsNone(review["findings"][0]["simpler_alternative"])
         self.assertEqual(review["verdict"], "NOT-READY", review["incomplete_reasons"])
 
     # Disk safety (docs/specs/disk-guard.md)
