@@ -291,6 +291,43 @@ blocks 'git reset --hard$X'
 allows "$(printf 'python3 - <<PY\ntext = "the --hard flag discards work"\nprint(text)\nPY')"
 blocks "$(printf 'bash - <<SH\ngit reset --hard\nSH')"
 
+printf '\n%s== heredoc bodies are data unless something can run them ==%s\n' "$DIM" "$RESET"
+# Measured before the fix (Mia, 2026-11-05): a PR comment or handoff written
+# through a heredoc that MENTIONED these commands was blocked (rc=2) as if
+# every body line were a command.
+allows "$(printf "gh pr comment 5 --body-file - <<'EOF'\nThen run git branch -D old and git push --delete origin old\nEOF")"
+allows "$(printf "cat > handoff.md <<'EOF'\nnext: git switch main\nEOF")"
+allows "$(printf 'cat > h.md <<EOF\nnext: git switch main for $USER\nEOF')"
+allows "$(printf "gh pr comment 5 --body \"\$(cat <<'EOF'\nrun git branch -D old\nthen git switch main\nEOF\n)\"")"
+allows "$(printf "cat <<-'EOF' | gh pr comment 5 --body-file -\n\tgit switch main\n\tEOF")"
+allows "$(printf "cat <<A <<'B'\nx\nA\ngit switch main\nB")"
+# ...and everything that can turn a body, or text around it, into code.
+blocks "$(printf "cat <<'EOF' | sh\ngit switch main\nEOF")"
+blocks "$(printf "bash -c \"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
+blocks "$(printf "\"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
+blocks "$(printf "x=\$(cat <<'EOF'\ngit reset --hard\nEOF\n); eval \"\$x\"")"
+blocks "$(printf "source <(cat <<'EOF'\ngit reset --hard\nEOF\n)")"
+blocks "$(printf "if true; then bash; fi <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf 'cat <<EOF\n$(git reset --hard)\nEOF')"
+blocks "$(printf 'cat <<EOF\n`git reset --hard`\nEOF')"
+blocks "$(printf "git branch -D \"\$(cat <<'EOF'\nold\nEOF\n)\"")"
+blocks "$(printf "xargs git branch -D <<'EOF'\nold\nEOF")"
+# A `<<` the shell does not read as a heredoc must not hide the next lines.
+blocks "$(printf "echo '<<EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf 'echo "<<EOF"\ngit reset --hard\nEOF')"
+blocks "$(printf "echo \$'\\\\'<<EOF'\ngit reset --hard\nEOF\n'")"
+blocks "$(printf 'echo ${x/<<EOF/}\ngit reset --hard\nEOF')"
+blocks "$(printf 'echo $((1<<2))\ngit reset --hard\n2')"
+blocks "$(printf "cat <<'EOF'\nfoo\nEOF\ngit reset --hard")"
+blocks "$(printf "cat <<'EOF' && git switch main\nfoo\nEOF")"
+blocks "$(printf "cat <<'EOF'\nfoo\ngit reset --hard")"
+# A comment ends at its newline. Measured on main before the fix: rc=0, the
+# reset on the second line was ALLOWED (shlex's comment ran to the end of the
+# newline-joined string).
+blocks "$(printf 'echo hi # note\ngit reset --hard')"
+blocks "$(printf 'echo hi # <<EOF\ngit reset --hard\nEOF')"
+allows 'echo "issue #12 is fixed"'
+
 printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
 # Brace expansion must keep the PREFIX. Blanking the punctuation turned
 # `--{hard,hard}` into ['--','hard','hard'], and a bare `--` is the pathspec

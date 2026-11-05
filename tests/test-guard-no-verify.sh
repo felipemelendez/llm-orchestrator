@@ -204,6 +204,10 @@ allows "$(printf 'python3 - <<PY\ntext = "--no-verify is blocked by policy"\npri
 allows "$(printf 'python3 - <<PY\ndoc = "guards: never bypass hooks"\nprint(doc)\nPY')"
 blocks "$(printf 'bash - <<SH\ngit commit --no-verify -m x\nSH')"
 blocks 'bash -c "git commit --no-verify -m x"'
+# A commit message written through a heredoc may mention the flag; a comment
+# must not hide a bypassing commit on the next line.
+allows "$(printf "git commit -m \"\$(cat <<'EOF'\nfix: never pass --no-verify\nEOF\n)\"")"
+blocks "$(printf 'echo hi # note\ngit commit --no-verify -m x')"
 
 printf '\n%s== opt-in and profile gates ==%s\n' "$DIM" "$RESET"
 RC=$(rc_for 'git commit --no-verify -m x' 'x' ORCH_ALLOW_NO_VERIFY=1)

@@ -106,6 +106,15 @@ def unfold(s):
             out.append(" "); i += 2; continue        # continuation: splice
         if c in ("'", '"'):
             quote = c; out.append(c); i += 1; continue
+        # A comment ends at the NEWLINE. shlex's own comment handling ran to
+        # the end of the whole (already one-line) string, so `echo hi # note`
+        # followed by `git reset --hard` on the next line was one comment and
+        # the reset was allowed. Comments are dropped here, where the newline
+        # is still visible, and tokenize() turns shlex's comments off.
+        if c == "#" and (i == 0 or s[i - 1] in " \t\n;&|()<>"):
+            j = s.find("\n", i)
+            i = n if j < 0 else j
+            continue
         out.append(" ; " if c == "\n" else c)
         i += 1
     return "".join(out)
@@ -162,6 +171,7 @@ def expand_braces(tok, _budget=None):
 
 def tokenize(cmd):
     lex = shlex.shlex(unfold(cmd), posix=True, punctuation_chars=True)
+    lex.commenters = ""             # unfold() already removed real comments
     lex.whitespace_split = True
     return [w for tok in lex for w in expand_braces(tok)]
 
@@ -569,6 +579,157 @@ def classify_no_verify(inv):
     return None
 
 
+# ---------------------------------------------------------------------------
+# Heredoc bodies.
+#
+# WHY THIS EXISTS. shlex knows nothing about heredocs, so every body line was
+# tokenized as a COMMAND: a pull-request comment or a handoff written with
+# `cat <<'EOF'` that merely mentioned "git branch -D old" or "git switch main"
+# was blocked as if it ran them (the Mia project hit it three times in one
+# day). A body is the stdin of the command that owns it. When no command on
+# the line can execute text, the body is data and is removed before scanning.
+#
+# Every doubt keeps the body in place, which is the old (blocking) behaviour:
+# recognising a `<<` the shell does not treat as a heredoc would hide real
+# commands, while missing one only costs a false block. So quoting, comments,
+# `${...}`, `$'...'` and command substitution are tracked; arithmetic, `case`,
+# an unterminated body, an unusual delimiter, an expandable body carrying
+# `$(` or a backtick, or any interpreter or variable in command position
+# anywhere in what remains, leave the command exactly as it was.
+
+_HEREDOC_RE = re.compile(
+    r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|(\\?)([A-Za-z0-9_.\-]+))"
+    r"(?=[\s;|&()<>]|$)")
+_PUNCT = "();<>|&"
+RESERVED = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until",
+            "for", "in", "case", "esac", "function", "select", "!", "{", "}",
+            "[[", "]]", "coproc"}
+
+
+def _bodies_inert(text):
+    """True when nothing left in `text` can turn stdin or output into code.
+
+    Quotes are dropped and backticks become separators, so a command
+    substitution's words are visible: a word that could be a command is
+    treated as one. Over-reading only keeps the body (a false block)."""
+    flat = text.replace("'", " ").replace('"', " ").replace("`", " ; ")
+    try:
+        toks = tokenize(flat)
+    except Exception:
+        return False
+    at_cmd = True
+    for t in toks:
+        if t in OPS or (all(c in _PUNCT for c in t)
+                        and any(c in "();|&" for c in t)):
+            at_cmd = True
+            continue
+        if not at_cmd:
+            continue
+        if ASSIGNMENT_RE.match(t) or t in RESERVED:
+            continue
+        if "$" in t or os.path.basename(t) in INTERP:
+            return False
+        at_cmd = False
+    return True
+
+
+def strip_data_heredocs(cmd):
+    """Remove heredoc bodies that are provably data; else return `cmd`."""
+    if "<<" not in cmd or "((" in cmd or re.search(r"(^|[^\w-])case\b", cmd):
+        return cmd
+    out, stack, pending, stripped = [], [], [], False
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        top = stack[-1] if stack else None
+        if top in ("'",):
+            out.append(c); i += 1
+            if c == "'":
+                stack.pop()
+            continue
+        if top == "$'":
+            if c == "\\" and i + 1 < n:
+                out.append(cmd[i:i + 2]); i += 2; continue
+            out.append(c); i += 1
+            if c == "'":
+                stack.pop()
+            continue
+        if c == "\\" and i + 1 < n:
+            if cmd[i + 1] == "\n" and pending:
+                return cmd          # continuation on a heredoc line: too subtle
+            out.append(cmd[i:i + 2]); i += 2; continue
+        if cmd.startswith("$'", i) and top != '"':
+            stack.append("$'"); out.append("$'"); i += 2; continue
+        if cmd.startswith("${", i):
+            stack.append("${"); out.append("${"); i += 2; continue
+        if cmd.startswith("$(", i) or (top != '"' and cmd.startswith(("<(", ">("), i)):
+            stack.append("$("); out.append(cmd[i:i + 2]); i += 2; continue
+        if c == "`":
+            if top == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+            out.append(c); i += 1; continue
+        if top == '"':
+            out.append(c); i += 1
+            if c == '"':
+                stack.pop()
+            continue
+        if c in ("'", '"'):
+            stack.append(c); out.append(c); i += 1; continue
+        if top == "${":
+            out.append(c); i += 1
+            if c == "}":
+                stack.pop()
+            continue
+        # Code context: top level, `$(...)`, `<(...)`, or backticks.
+        if c == "(" and top == "$(":
+            stack.append("("); out.append(c); i += 1; continue
+        if c == ")" and top in ("$(", "("):
+            stack.pop(); out.append(c); i += 1; continue
+        if c == "#" and (i == 0 or cmd[i - 1] in " \t\n;|&()<>{}`"):
+            j = cmd.find("\n", i)
+            j = n if j < 0 else j
+            out.append(cmd[i:j]); i = j; continue
+        if cmd.startswith("<<", i):
+            if cmd.startswith("<<<", i):
+                out.append("<<<"); i += 3; continue
+            if top == "`":
+                return cmd          # heredocs inside backticks: not modelled
+            m = _HEREDOC_RE.match(cmd, i)
+            if not m:
+                return cmd
+            quoted = bool(m.group(2) or m.group(3) or m.group(4))
+            delim = m.group(2) or m.group(3) or m.group(5)
+            pending.append((delim, m.group(1) == "-", quoted))
+            out.append(m.group(0)); i = m.end(); continue
+        if c == "\n" and pending:
+            out.append(c); i += 1
+            for delim, tabs, quoted in pending:
+                body = []
+                while True:
+                    if i >= n:
+                        return cmd  # unterminated body
+                    j = cmd.find("\n", i)
+                    j = n if j < 0 else j
+                    line = cmd[i:j]
+                    i = min(j + 1, n)
+                    if (line.lstrip("\t") if tabs else line) == delim:
+                        break
+                    body.append(line)
+                text = "\n".join(body)
+                if not quoted and ("$(" in text or "`" in text):
+                    return cmd      # an expanding body runs that code
+                stripped = True
+            pending = []
+            continue
+        out.append(c); i += 1
+    if pending or stack or not stripped:
+        return cmd
+    result = "".join(out)
+    return result if _bodies_inert(result) else cmd
+
+
 def main():
     mode = "destructive"
     relax = False
@@ -587,6 +748,10 @@ def main():
     cmd = sys.stdin.read()
     if not cmd.strip():
         sys.exit(3)
+    try:
+        cmd = strip_data_heredocs(cmd)
+    except Exception:
+        pass                        # keep the bodies: the old behaviour
 
     if paranoid:
         # Second pass, requested by the caller after a confident-mode exit 3.
