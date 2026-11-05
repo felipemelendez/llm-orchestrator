@@ -368,6 +368,12 @@ blocks "$(printf "tee .git/hooks/pre-commit <<'EOF'\ngit reset --hard\nEOF")"
 allows "$(printf "git add a.py && git commit -m \"\$(cat <<'EOF'\nexplain git reset --hard\nEOF\n)\" && git push -u origin x")"
 allows "$(printf "gh pr create --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\" --title \"fix: a; b\"")"
 allows "$(printf "git commit -F - <<'EOF'\ngit reset --hard is bad\nEOF")"
+# From the first Full review (code-review-1, code-review-8, codex-review-4,
+# codex-review-5).
+blocks "$(printf 'cat <<EOF $(\ngit reset --hard\nEOF\n)')"
+blocks "$(printf "echo {#'\ncat <<EOF\n'\ngit reset --hard\nEOF")"
+blocks "$(printf 'cat <<"E\\\\OF"\nx\nE\\OF\ngit reset --hard\nE\\\\OF')"
+allows 'echo \" # git reset --hard'
 
 printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
 # Brace expansion must keep the PREFIX. Blanking the punctuation turned

@@ -104,6 +104,10 @@ def unfold(s):
             continue
         if c == "\\" and i + 1 < n and s[i + 1] == "\n":
             out.append(" "); i += 2; continue        # continuation: splice
+        if c == "\\" and i + 1 < n:
+            # An escaped character is literal: `\"` opens no string and `\#`
+            # starts no comment.
+            out.append(s[i:i + 2]); i += 2; continue
         if c == "$" and i + 1 < n and s[i + 1] == "'":
             # ANSI-C quoting: a backslash escapes the quote, so `$'a\\'b # x'`
             # is one string, not a string followed by a comment.
@@ -694,6 +698,7 @@ def strip_data_heredocs(cmd):
     # command-word slot keeps the bodies: its OUTPUT is the command) and its
     # own text is checked separately, as a command line of its own.
     flats, inner = [], []
+    pending_depth = 0
     i, n = 0, len(cmd)
     line_start = 0
     while i < n:
@@ -754,7 +759,7 @@ def strip_data_heredocs(cmd):
             else:
                 flat.append(c)
             continue
-        if c == "#" and (i == 0 or cmd[i - 1] in " \t\n;|&()<>{}`"):
+        if c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|()<>"):
             j = cmd.find("\n", i)
             j = n if j < 0 else j
             out.append(cmd[i:j]); i = j; continue
@@ -769,9 +774,19 @@ def strip_data_heredocs(cmd):
                 return cmd
             quoted = bool(m.group(2) or m.group(3) or m.group(4))
             delim = m.group(2) or m.group(3) or m.group(5)
+            if "\\" in delim:
+                return cmd          # quote removal would change the delimiter
+            if pending and pending_depth != len(stack):
+                return cmd
+            pending_depth = len(stack)
             pending.append((delim, m.group(1) == "-", quoted))
             out.append(m.group(0)); flat.append(" << Q "); i = m.end(); continue
         if c == "\n" and pending:
+            if len(stack) != pending_depth:
+                # bash reads a body at the newline that ends the heredoc's own
+                # command; a newline inside a substitution opened after it is
+                # code there, not the start of the body.
+                return cmd
             out.append(c); flat.append(c); i += 1
             for delim, tabs, quoted in pending:
                 body = []
