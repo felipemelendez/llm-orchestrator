@@ -327,6 +327,33 @@ blocks "$(printf "cat <<'EOF'\nfoo\ngit reset --hard")"
 blocks "$(printf 'echo hi # note\ngit reset --hard')"
 blocks "$(printf 'echo hi # <<EOF\ngit reset --hard\nEOF')"
 allows 'echo "issue #12 is fixed"'
+allows "$(printf "gh pr create --title \"fix: a; b\" --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\"")"
+# Each of these was ALLOWED by a first, denylist version of the heredoc rule
+# (found by the independent spec review); only an allowlist of data sinks
+# closes the class.
+blocks "$(printf "stdbuf -o0 sh <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "crontab - <<'EOF'\n* * * * * git reset --hard\nEOF")"
+blocks "$(printf "at now <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "sqlite3 <<'EOF'\n.shell git reset --hard\nEOF")"
+blocks "$(printf "sed -f - f <<'EOF'\n1e git reset --hard\nEOF")"
+blocks "$(printf "alias q=bash\nq <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "/bin/ba?h <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "ba''sh <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "<<'EOF' bash\ngit reset --hard\nEOF")"
+blocks "$(printf "2>/dev/null bash <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "gh x <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "tee >(sh) <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > /tmp/x.sh <<'EOF'\ngit reset --hard\nEOF\nchmod +x /tmp/x.sh && /tmp/x.sh")"
+blocks "$(printf "echo \"\$(echo \"x\" ; sh -c y)\" <<'EOF'\ngit reset --hard\nEOF")"
+# bash joins a trailing backslash before matching the delimiter: the body ends
+# at `EO\<nl>F` and the reset runs.
+blocks "$(printf 'cat <<EOF\nEO\\\nF\ngit reset --hard\nEOF')"
+blocks "$(printf 'echo $[1<< 2 ]\ngit reset --hard\n2')"
+blocks "$(printf 'a[1<< 1]=5\ngit reset --hard\n1')"
+# ANSI-C quoting: the escaped quote keeps `# x` inside the string. Measured on
+# main before the fix: rc=0, the reset was allowed.
+blocks "echo \$'a\\'b # x' ; git reset --hard"
+blocks "git reset \$'--hard'"
 
 printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
 # Brace expansion must keep the PREFIX. Blanking the punctuation turned
