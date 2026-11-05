@@ -208,6 +208,7 @@ blocks 'bash -c "git commit --no-verify -m x"'
 # must not hide a bypassing commit on the next line.
 allows "$(printf "git commit -m \"\$(cat <<'EOF'\nfix: never pass --no-verify\nEOF\n)\"")"
 blocks "$(printf 'echo hi # note\ngit commit --no-verify -m x')"
+blocks "$(printf "\$(cat <<'EOF'\ngit commit --no-verify -m x\nEOF\n)")"
 
 printf '\n%s== opt-in and profile gates ==%s\n' "$DIM" "$RESET"
 RC=$(rc_for 'git commit --no-verify -m x' 'x' ORCH_ALLOW_NO_VERIFY=1)

@@ -354,6 +354,20 @@ blocks "$(printf 'a[1<< 1]=5\ngit reset --hard\n1')"
 # main before the fix: rc=0, the reset was allowed.
 blocks "echo \$'a\\'b # x' ; git reset --hard"
 blocks "git reset \$'--hard'"
+# Second spec-review round. A substitution in the command-word slot runs its
+# OUTPUT; a git alias (defined by `git config` or GIT_CONFIG_* variables) can
+# run stdin; a sink can write a hook or dotfile that runs in the same command.
+blocks "$(printf "\$(cat <<'EOF'\ngit reset --hard\nEOF\n)")"
+blocks "$(printf "echo hi; \$(cat <<'EOF'\ngit reset --hard\nEOF\n)")"
+blocks "$(printf "\`cat <<'EOF'\ngit reset --hard\nEOF\n\`")"
+blocks "$(printf "git config alias.zz '!sh'\ngit zz <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zz GIT_CONFIG_VALUE_0=!sh git zz <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > .githooks/commit-msg <<'EOF'\ngit reset --hard\nEOF\ngit commit -m x")"
+blocks "$(printf "cat >> ~/.zshenv <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "tee .git/hooks/pre-commit <<'EOF'\ngit reset --hard\nEOF")"
+allows "$(printf "git add a.py && git commit -m \"\$(cat <<'EOF'\nexplain git reset --hard\nEOF\n)\" && git push -u origin x")"
+allows "$(printf "gh pr create --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\" --title \"fix: a; b\"")"
+allows "$(printf "git commit -F - <<'EOF'\ngit reset --hard is bad\nEOF")"
 
 printf '\n%s== found by adversarial review of the classifier itself ==%s\n' "$DIM" "$RESET"
 # Brace expansion must keep the PREFIX. Blanking the punctuation turned

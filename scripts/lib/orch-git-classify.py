@@ -618,11 +618,31 @@ _HEREDOC_RE = re.compile(
     r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|(\\?)([A-Za-z0-9_.\-]+))"
     r"(?=[\s;|&()<>]|$)")
 _PUNCT = "();<>|&"
-# Programs that never execute their stdin or arguments. `git` is here because
-# every git invocation left in the command is still classified by the rules.
-DATA_SINKS = {"cat", "tee", "echo", "printf", "git"}
+# Programs that never execute their stdin or arguments.
+DATA_SINKS = {"cat", "tee", "echo", "printf"}
 # gh subcommands that send text, never run it (gh aliases and extensions can).
 GH_DATA = {"pr", "issue", "release", "api", "gist", "label"}
+# git is a sink only with one of its BUILT-IN subcommands: git never lets an
+# alias shadow a builtin, and an alias (`git config alias.x '!sh'`, or one
+# set through GIT_CONFIG_* variables) can run its stdin. Every git invocation
+# left in the command is still classified by the destructive rules.
+GIT_BUILTINS = {
+    "add", "am", "apply", "archive", "blame", "branch", "bundle", "cat-file",
+    "check-attr", "check-ignore", "checkout", "cherry-pick", "clone", "commit",
+    "config", "describe", "diff", "fetch", "format-patch", "grep",
+    "hash-object", "init", "log", "ls-files", "ls-remote", "merge",
+    "merge-base", "mv", "notes", "pull", "push", "rebase", "reflog", "remote",
+    "reset", "restore", "rev-list", "rev-parse", "revert", "rm", "shortlog",
+    "show", "show-ref", "stash", "status", "stripspace", "switch", "tag",
+    "worktree"}
+_REDIRECT = {">", ">>"}
+
+
+def _unsafe_target(word):
+    """A file a sink writes that git or a shell may run: hooks, dotfiles,
+    anything under `~` or a variable, or a quoted (placeholder) name."""
+    return (word == "Q" or word.startswith((".", "~", "$")) or "/." in word
+            or "hook" in word.lower())
 
 
 def _only_data_sinks(flat):
@@ -635,14 +655,25 @@ def _only_data_sinks(flat):
     for t in toks + [";"]:
         if t in OPS or (t and all(c in _PUNCT for c in t)
                         and any(c in "();|&" for c in t)):
-            words = [w for w in seg if not ASSIGNMENT_RE.match(w)]
-            if seg and not words:
-                return False
-            if words:
-                if words[0] == "gh":
-                    if len(words) < 2 or words[1] not in GH_DATA:
+            if seg:
+                # An env assignment can retarget git (GIT_CONFIG_*, GIT_DIR)
+                # or a pager/editor; a bare assignment runs nothing we know.
+                if ASSIGNMENT_RE.match(seg[0]):
+                    return False
+                head = seg[0]
+                if head == "gh":
+                    if len(seg) < 2 or seg[1] not in GH_DATA:
                         return False
-                elif words[0] not in DATA_SINKS:
+                elif head == "git":
+                    if len(seg) < 2 or seg[1] not in GIT_BUILTINS:
+                        return False
+                elif head not in DATA_SINKS:
+                    return False
+                for k, w in enumerate(seg):
+                    if w in _REDIRECT and (k + 1 >= len(seg) or _unsafe_target(seg[k + 1])):
+                        return False
+                if head == "tee" and any(_unsafe_target(w) for w in seg[1:]
+                                         if not w.startswith("-")):
                     return False
             seg = []
             continue
@@ -659,6 +690,10 @@ def strip_data_heredocs(cmd):
     # every string replaced by a placeholder word and every command
     # substitution opened as a separate command, for the sink check.
     out, flat, stack, pending, stripped = [], [], [], [], False
+    # A substitution is a placeholder word `Q` where it stands (so one in the
+    # command-word slot keeps the bodies: its OUTPUT is the command) and its
+    # own text is checked separately, as a command line of its own.
+    flats, inner = [], []
     i, n = 0, len(cmd)
     line_start = 0
     while i < n:
@@ -687,14 +722,16 @@ def strip_data_heredocs(cmd):
         if cmd.startswith("${", i):
             stack.append("${"); out.append("${"); flat.append(" Q "); i += 2; continue
         if cmd.startswith("$(", i) or (top != '"' and cmd.startswith(("<(", ">("), i)):
-            stack.append("$("); out.append(cmd[i:i + 2]); flat.append(" ; ")
+            stack.append("$("); out.append(cmd[i:i + 2]); flat.append("Q")
+            flats.append(flat); flat = []
             i += 2; continue
         if c == "`":
+            out.append(c); i += 1
             if top == "`":
-                stack.pop()
+                stack.pop(); inner.append("".join(flat)); flat = flats.pop()
             else:
-                stack.append("`")
-            out.append(c); flat.append(" ; "); i += 1; continue
+                stack.append("`"); flat.append("Q"); flats.append(flat); flat = []
+            continue
         if top == '"':
             out.append(c); i += 1
             if c == '"':
@@ -711,8 +748,12 @@ def strip_data_heredocs(cmd):
         if c == "(" and top == "$(":
             stack.append("("); out.append(c); flat.append(c); i += 1; continue
         if c == ")" and top in ("$(", "("):
-            stack.pop(); out.append(c); flat.append(" ; " if top == "$(" else c)
-            i += 1; continue
+            stack.pop(); out.append(c); i += 1
+            if top == "$(":
+                inner.append("".join(flat)); flat = flats.pop()
+            else:
+                flat.append(c)
+            continue
         if c == "#" and (i == 0 or cmd[i - 1] in " \t\n;|&()<>{}`"):
             j = cmd.find("\n", i)
             j = n if j < 0 else j
@@ -758,7 +799,8 @@ def strip_data_heredocs(cmd):
         out.append(c); flat.append(c); i += 1
     if pending or stack or not stripped:
         return cmd
-    return "".join(out) if _only_data_sinks("".join(flat)) else cmd
+    texts = ["".join(flat)] + inner
+    return "".join(out) if all(_only_data_sinks(t) for t in texts) else cmd
 
 
 def main():
