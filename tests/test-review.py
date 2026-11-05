@@ -350,7 +350,12 @@ def review():
             events.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "c1",
                            "output": [{"type": "input_text", "text": "Script completed\\nOutput:\\n"},
                                       {"type": "input_text", "text": json.dumps({"exit_code": 0, "output": diff})}]}})
-        events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": message}})
+        if spec.get("overloaded"):
+            events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": None,
+                           "error": {"message": "Selected model is at capacity. Please try a different model.",
+                                     "codex_error_info": "server_overloaded"}}})
+        else:
+            events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": message}})
         rollout(conversation, events)
     for conversation in [parent, helper, *reviews]:
         if not spec.get("no_start_lines"):
@@ -2351,6 +2356,32 @@ class ReviewTests(unittest.TestCase):
                      (ROOT / "skills/finishing-a-branch/references/landing-rules.md").read_text(),
                      (ROOT / "skills/receiving-code-review/SKILL.md").read_text()):
             self.assertIn("person_approved", text)
+
+    # Codex capacity dropouts (Mia, 2026-11-05)
+    NO_DELAY = "review.CAPACITY_RETRY_DELAY = 0\n"
+
+    def test_codex_review_at_capacity_is_retried_once_and_completes(self):
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1}
+        review = self.review("standard", "claude", patch=self.NO_DELAY)
+        self.assertEqual(review["verdict"], "READY", review["incomplete_reasons"])
+        self.assertEqual(len(self.calls("codex", "codex-review")), 2)
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertEqual(launch["status"], "complete")
+        self.assertEqual(launch["capacity_retry"]["codex_error_info"], "server_overloaded")
+        self.assertEqual(launch["capacity_retry"]["first_exit_code"], 1)
+        first = Path(launch["capacity_retry"]["first_attempt"])
+        self.assertTrue((first / "rollout.jsonl").is_file() and (first / "stderr.log").is_file())
+
+    def test_codex_review_at_capacity_twice_is_a_named_dropout(self):
+        self.scenario["codex"]["codex-review"] = {"overloaded": True, "exit": 1}
+        review = self.review("standard", "claude", patch=self.NO_DELAY)
+        self.assert_incomplete(review, "at capacity (server_overloaded) again after one retry")
+        self.assertEqual(len(self.calls("codex", "codex-review")), 2)
+
+    def test_codex_review_that_only_quotes_the_capacity_message_is_not_retried(self):
+        self.reviewer("codex", codex_finding(title="Selected model is at capacity. Please try a different model."))
+        self.review("standard", "claude", patch=self.NO_DELAY)
+        self.assertEqual(len(self.calls("codex", "codex-review")), 1)
 
     # Design simplicity: every rendered brief asks the question, and the kind carries its alternative
     def test_design_every_rendered_brief_carries_the_simplicity_question(self):

@@ -2292,8 +2292,29 @@ def run_code_review(copy, instruction, launch_dir, run_dir, changed, policy=None
 NO_PROJECT_DOCS = ["-c", "project_doc_max_bytes=0"]
 
 
-def run_codex_review(copy, instruction, launch_dir, requested, servers, changed, policy=None):
-    """R6: `codex review`, proved from its stderr log and the review's rollout."""
+# Codex ends a rollout this way when the provider sheds load ("Selected model
+# is at capacity. Please try a different model."). Measured on this machine
+# (2026-10-29) and in Mia's rounds (2026-11-05): exit 1, often within seconds.
+# One retry after a pause turns most of these into a completed review.
+CAPACITY_RETRY_DELAY = 45
+
+
+def server_overloaded(events):
+    """The provider's own error code on the rollout's last task_complete, never words in a reply."""
+    for event in reversed(events or []):
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        if event.get("type") == "event_msg" and payload.get("type") == "task_complete":
+            error = payload.get("error")
+            return isinstance(error, dict) and error.get("codex_error_info") == "server_overloaded"
+    return False
+
+
+def run_codex_review(copy, instruction, launch_dir, requested, servers, changed, policy=None, retry=True):
+    """R6: `codex review`, proved from its stderr log and the review's rollout.
+
+    A first attempt that the provider ends as overloaded is kept under attempt-1/ and the launch
+    runs once more after CAPACITY_RETRY_DELAY. The sandbox is read-only, so the copy the second
+    attempt reviews is the one the first saw. A second overload is a dropout like any other."""
     settings = launch_settings(policy, "codex", "reviewer", requested)
     requested, effort = settings["model"], settings["effort"]
     if policy and policy.enabled:
@@ -2312,6 +2333,19 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
     stdout = stdout_path.read_text(errors="replace")
     stderr = (launch_dir / "stderr.log").read_text(errors="replace")
     path, events, helpers, missing = review_rollout(stderr, codex_home())
+    if retry and server_overloaded(events):
+        first = launch_dir / "attempt-1"
+        first.mkdir()
+        for item in list(launch_dir.iterdir()):
+            if item != first:
+                shutil.move(str(item), str(first / item.name))
+        if path:
+            shutil.copyfile(path, first / "rollout.jsonl")
+        time.sleep(CAPACITY_RETRY_DELAY)
+        fields = run_codex_review(copy, instruction, launch_dir, requested, servers, changed, policy, retry=False)
+        fields["capacity_retry"] = {"first_exit_code": code, "codex_error_info": "server_overloaded",
+                                    "first_attempt": str(first), "delay_s": CAPACITY_RETRY_DELAY}
+        return fields
     contexts = [e["payload"] for e in events or [] if e.get("type") == "turn_context" and isinstance(e.get("payload"), dict)]
     served = list(dict.fromkeys(c.get("model") for c in contexts if isinstance(c.get("model"), str)))
     efforts = list(dict.fromkeys(c.get("effort") for c in contexts if isinstance(c.get("effort"), str)))
@@ -2340,6 +2374,8 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
     mismatched = [model for model in served if requested is not None and model != requested]
     fields["reason"] = first_reason(
         f"timed out after {LAUNCH_TIMEOUT} seconds" if code is None else None,
+        "the provider reported the model at capacity (server_overloaded)"
+        + (" again after one retry" if not retry else "") if server_overloaded(events) else None,
         f"exits nonzero ({code})" if code not in (None, 0) else None,
         missing,
         codex_log_mcp(stderr),
@@ -2690,7 +2726,8 @@ def decide(run_dir):
             "launches": [{key: launch.get(key) for key in (
                 "name", "role", "provider", "builtin", "status", "reason", "requested_model", "served_model",
                 "requested_effort", "served_effort", "served_sandbox", "same_provider", "cost_usd", "tokens",
-                "sandbox_check", "session_id", "policy_settings", "capacity", "argv", "delivery_id", "inference_status")} for launch in launches],
+                "sandbox_check", "session_id", "policy_settings", "capacity", "argv", "delivery_id", "inference_status",
+                "capacity_retry")} for launch in launches],
             "findings": findings, "counts": counts, "cleanup": read_json(run_dir / "cleanup.json")}
 
 
@@ -2732,7 +2769,8 @@ def outcome_row(run_dir, review):
             "diff_lines": review["diff_lines"],
             "launches": [{key: launch.get(key) for key in (
                 "name", "role", "provider", "builtin", "status", "requested_model", "served_model",
-                "requested_effort", "served_effort", "policy_settings", "capacity", "cost_usd", "tokens", "inference_status")}
+                "requested_effort", "served_effort", "policy_settings", "capacity", "cost_usd", "tokens", "inference_status",
+                "capacity_retry")}
                          for launch in review["launches"]],
             "verdict": review["verdict"], "incomplete_reasons": review["incomplete_reasons"],
             "counts": review["counts"], "duration_s": review.get("duration_s"),
