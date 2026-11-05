@@ -2346,14 +2346,21 @@ def run_codex_review(copy, instruction, launch_dir, requested, servers, changed,
                 shutil.move(str(item), str(first / item.name))
         if path:
             shutil.copyfile(path, first / "rollout.jsonl")
+        spent = codex_review_tokens(events)
         history = {"first_exit_code": code, "codex_error_info": "server_overloaded",
-                   "first_attempt": str(first), "delay_s": CAPACITY_RETRY_DELAY}
+                   "first_attempt": str(first), "delay_s": CAPACITY_RETRY_DELAY, "first_tokens": spent}
         time.sleep(CAPACITY_RETRY_DELAY)
         try:
             fields = run_codex_review(copy, given, launch_dir, asked, servers, changed, policy, retry=False)
         except (resources.Unsafe, Failure, OSError, policy_module.PolicyError) as error:
             fields = finish_launch({"reason": f"the capacity retry could not start: {error}", "exit_code": None,
                                     "served_model": [], "served_effort": []}, None, launch_dir)
+        # The launch used both attempts' tokens; report the sum, not only the second's.
+        if spent:
+            total = dict(fields.get("tokens") or {})
+            for key, value in spent.items():
+                total[key] = total.get(key, 0) + value
+            fields["tokens"] = total
         fields["capacity_retry"] = history
         return fields
     contexts = [e["payload"] for e in events or [] if e.get("type") == "turn_context" and isinstance(e.get("payload"), dict)]

@@ -350,6 +350,9 @@ def review():
             events.append({"type": "response_item", "payload": {"type": "custom_tool_call_output", "call_id": "c1",
                            "output": [{"type": "input_text", "text": "Script completed\\nOutput:\\n"},
                                       {"type": "input_text", "text": json.dumps({"exit_code": 0, "output": diff})}]}})
+        if spec.get("tokens"):
+            events.append({"type": "event_msg", "payload": {"type": "token_count", "info": {
+                "total_token_usage": spec["tokens"]}}})
         if spec.get("overloaded"):
             events.append({"type": "event_msg", "payload": {"type": "task_complete", "last_agent_message": None,
                            "error": {"message": "Selected model is at capacity. Please try a different model.",
@@ -2377,6 +2380,15 @@ class ReviewTests(unittest.TestCase):
         review = self.review("standard", "claude", patch=self.NO_DELAY)
         self.assert_incomplete(review, "at capacity (server_overloaded) again after one retry")
         self.assertEqual(len(self.calls("codex", "codex-review")), 2)
+
+    def test_codex_review_retry_reports_both_attempts_tokens(self):
+        # Second review, codex-review-1: the first attempt's tokens were dropped.
+        self.scenario["codex"]["codex-review-1"] = {"overloaded": True, "exit": 1,
+                                                    "tokens": {"input_tokens": 100, "output_tokens": 1}}
+        self.scenario["codex"]["codex-review-2"] = {"tokens": {"input_tokens": 200, "output_tokens": 2}}
+        review = self.review("standard", "claude", patch=self.NO_DELAY)
+        launch = next(l for l in review["launches"] if l["provider"] == "codex")
+        self.assertEqual(launch["tokens"], {"input_tokens": 300, "output_tokens": 3})
 
     def test_codex_review_retry_sends_the_same_instruction(self):
         # Review finding codex-review-3: the retry wrapped the instruction a second time.
