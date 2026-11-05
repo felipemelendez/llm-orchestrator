@@ -461,6 +461,9 @@ class Review:
                     for provider, role in policy_roles(plan):
                         self.policy.resolve(provider, role)
                         self.policy.capacity(provider, role)  # rejects unsupported hard inference cap
+                # Every catalog this run needs passed its age check just now; the
+                # launches that follow must not fail on age alone (orch-policy pin_catalogs).
+                self.policy.pin_catalogs()
         except policy_module.PolicyError as error:
             reasons.append(f"preflight: project policy: {error}")
         try:

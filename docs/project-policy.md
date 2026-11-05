@@ -86,7 +86,15 @@ before any `..`. When that real file is inside the project it is refused, with
 an error naming the entry as written and the real path; a link in the project
 that leads outside is allowed, because the file it reads is outside. An observation needs a timezone-aware `fetched_at`, matching
 `client_version`, and the model's advertised `supported_reasoning_levels`.
-Default maximum age is one day; configuration can shorten it. A catalog is
+Default maximum age is one day; configuration can shorten it. A review checks
+each catalog's age once, at preflight, before it launches anything; the exact
+content accepted there stays accepted for the rest of that run, up to six hours
+past its limit, so a round of ordinary length does not turn INCOMPLETE because a
+catalog aged while the reviewers ran (a run stalled longer still stops, on the
+stale catalog). Any other content is checked in full, and a launch admitted by
+the pin records when the age was checked (`age_checked_at`). A stale catalog stops
+preflight with its age and the refresh steps: Codex refreshes its own cache
+when it runs; a Claude catalog is re-observed, never re-dated. A catalog is
 local capability evidence, not a successful remote inference. Authentication,
 rate limits and service availability can still make a launch incomplete.
 
