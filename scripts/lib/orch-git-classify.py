@@ -92,6 +92,7 @@ def unfold(s):
     a separator there and the reset never looked adjacent to anything.
     """
     out, i, n, quote = [], 0, len(s), None
+    escaped_end = -1
     while i < n:
         c = s[i]
         if quote:
@@ -105,9 +106,10 @@ def unfold(s):
         if c == "\\" and i + 1 < n and s[i + 1] == "\n":
             out.append(" "); i += 2; continue        # continuation: splice
         if c == "\\" and i + 1 < n:
-            # An escaped character is literal: `\"` opens no string and `\#`
-            # starts no comment.
-            out.append(s[i:i + 2]); i += 2; continue
+            # An escaped character is literal: `\"` opens no string, `\#`
+            # starts no comment, and an escaped space is part of a word, so
+            # the `#` in `a\ #` does not begin one either.
+            out.append(s[i:i + 2]); i += 2; escaped_end = i; continue
         if c == "$" and i + 1 < n and s[i + 1] == "'":
             # ANSI-C quoting: a backslash escapes the quote, so `$'a\\'b # x'`
             # is one string, not a string followed by a comment.
@@ -127,7 +129,7 @@ def unfold(s):
         # followed by `git reset --hard` on the next line was one comment and
         # the reset was allowed. Comments are dropped here, where the newline
         # is still visible, and tokenize() turns shlex's comments off.
-        if c == "#" and (i == 0 or s[i - 1] in " \t\n;&|()<>"):
+        if c == "#" and i != escaped_end and (i == 0 or s[i - 1] in " \t\n;&|()<>"):
             j = s.find("\n", i)
             i = n if j < 0 else j
             continue
@@ -600,222 +602,106 @@ def classify_no_verify(inv):
 #
 # WHY THIS EXISTS. shlex knows nothing about heredocs, so every body line was
 # tokenized as a COMMAND: a pull-request comment or a handoff written with
-# `cat <<'EOF'` that merely mentioned "git branch -D old" or "git switch main"
-# was blocked as if it ran them (the Mia project hit it three times in one
-# day). A body is the stdin of the command that owns it, so it is data when
-# nothing in the command can run text.
+# `<<'EOF'` that merely mentioned "git branch -D old" or "git switch main" was
+# blocked as if it ran them (the Mia project hit it three times in one day).
 #
-# "Nothing can run text" is an ALLOWLIST, not a denylist: every command in the
-# whole line must start with one of DATA_SINKS. A denylist of interpreters was
-# tried first and an independent review broke it at once (`stdbuf -o0 sh`,
-# `crontab -`, `at now`, `sqlite3`, an alias, a leading redirect, a body
-# written to a file and then run). Every doubt keeps the body in place, which
-# is the old (blocking) behaviour: recognising a `<<` the shell does not read
-# as a heredoc would hide real commands, while missing one only costs a false
-# block. So quoting, `$'...'`, `${...}`, comments and command substitution are
-# tracked, and arithmetic (`((`, `$[`), `[` before the operator, `case`, an
-# unterminated body, an expanding body with `$(`, a backtick or a trailing
-# backslash (bash joins it before matching the delimiter), and an unusual
-# delimiter all leave the command exactly as it was.
+# WHY IT IS THIS NARROW. A general version (track quoting, comments,
+# substitutions; drop a body when every command is a "data sink") was built
+# first and failed four independent reviews in a row, each finding new
+# commands that bash runs and the guard allowed: git built-ins that run text
+# (`config core.editor`, the editor reading stdin, `fetch --upload-pack`),
+# hooks under any name, `1<>`, `printf -v`, quoting inside `${...}`. A guard
+# cannot out-model the shell. So a body is dropped only when the WHOLE command
+# is one of a few exact shapes, each a single simple command whose stdin is
+# sent or stored and never run:
+#
+#     cat > plain/path <<'EOF'            (a file written; nothing runs it here)
+#     gh pr|issue comment|create|edit|review ... --body-file - <<'EOF'
+#     git commit ... -F - <<'EOF'          (never -e/--edit: no editor)
+#
+# The delimiter is quoted (no expansion, no line joining), the header carries
+# no `$`, backtick, backslash, `#` or operator other than cat's one `>`, the
+# body ends at the first exact delimiter line, and nothing but blank lines
+# follows it. Anything else is classified exactly as before.
 
-_HEREDOC_RE = re.compile(
-    r"<<(-?)[ \t]*(?:'([^'\n]+)'|\"([^\"\n]+)\"|(\\?)([A-Za-z0-9_.\-]+))"
-    r"(?=[\s;|&()<>]|$)")
-_PUNCT = "();<>|&"
-# Programs that never execute their stdin or arguments.
-DATA_SINKS = {"cat", "tee", "echo", "printf"}
-# gh subcommands that send text, never run it (gh aliases and extensions can).
-GH_DATA = {"pr", "issue", "release", "api", "gist", "label"}
-# git is a sink only with one of its BUILT-IN subcommands: git never lets an
-# alias shadow a builtin, and an alias (`git config alias.x '!sh'`, or one
-# set through GIT_CONFIG_* variables) can run its stdin. Every git invocation
-# left in the command is still classified by the destructive rules.
-GIT_BUILTINS = {
-    "add", "am", "apply", "archive", "blame", "branch", "bundle", "cat-file",
-    "check-attr", "check-ignore", "checkout", "cherry-pick", "clone", "commit",
-    "config", "describe", "diff", "fetch", "format-patch", "grep",
-    "hash-object", "init", "log", "ls-files", "ls-remote", "merge",
-    "merge-base", "mv", "notes", "pull", "push", "rebase", "reflog", "remote",
-    "reset", "restore", "rev-list", "rev-parse", "revert", "rm", "shortlog",
-    "show", "show-ref", "stash", "status", "stripspace", "switch", "tag",
-    "worktree"}
-_REDIRECT = {">", ">>"}
+_HEREDOC_OP = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z0-9_.-]+)\2")
+_PLAIN_FILE = re.compile(r"/?[A-Za-z0-9_][A-Za-z0-9_./-]*")
+# Every hook git runs by name; a file with one of these names may be a hook
+# wherever core.hooksPath points.
+GIT_HOOK_NAMES = {
+    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit",
+    "pre-merge-commit", "prepare-commit-msg", "commit-msg", "post-commit",
+    "pre-rebase", "post-checkout", "post-merge", "pre-push", "pre-receive",
+    "update", "proc-receive", "post-receive", "post-update",
+    "reference-transaction", "push-to-checkout", "pre-auto-gc",
+    "post-rewrite", "sendemail-validate", "fsmonitor-watchman",
+    "p4-changelist", "p4-prepare-changelist", "p4-post-changelist",
+    "p4-pre-submit", "post-index-change"}
+GH_BODY_VERBS = {"comment", "create", "edit", "review"}
 
 
-def _unsafe_target(word):
-    """A file a sink writes that git or a shell may run: hooks, dotfiles,
-    anything under `~` or a variable, or a quoted (placeholder) name."""
-    return (word == "Q" or word.startswith((".", "~", "$")) or "/." in word
-            or "hook" in word.lower())
+def _plain_file(path):
+    """A file name nothing in this one command could run: no dot component
+    (.git, .husky, ..), no home or variable, no hook by name."""
+    parts = [p for p in path.split("/") if p]
+    return bool(_PLAIN_FILE.fullmatch(path)) and bool(parts) \
+        and not any(p.startswith(".") for p in parts) \
+        and "hook" not in path.lower() and parts[-1] not in GIT_HOOK_NAMES
 
 
-def _only_data_sinks(flat):
-    """True when every command in `flat` (strings already blanked) is a sink."""
-    try:
-        toks = tokenize(flat)
-    except Exception:
+def _stdin_flag(words, *names):
+    return any(w in names and k + 1 < len(words) and words[k + 1] == "-"
+               for k, w in enumerate(words)) \
+        or any(w == f"{name}=-" for w in words for name in names if name.startswith("--"))
+
+
+def _sends_stdin_as_data(words):
+    """The header of one of the exact shapes above, as shell words."""
+    operators = [w for w in words if w and all(c in _PUNCT for c in w)]
+    if words[:1] == ["cat"]:
+        return words == ["cat"] or (len(words) == 3 and words[1] == ">" and _plain_file(words[2]))
+    if operators:
         return False
-    seg = []
-    for t in toks + [";"]:
-        if t in OPS or (t and all(c in _PUNCT for c in t)
-                        and any(c in "();|&" for c in t)):
-            if seg:
-                # An env assignment can retarget git (GIT_CONFIG_*, GIT_DIR)
-                # or a pager/editor; a bare assignment runs nothing we know.
-                if ASSIGNMENT_RE.match(seg[0]):
-                    return False
-                head = seg[0]
-                if head == "gh":
-                    if len(seg) < 2 or seg[1] not in GH_DATA:
-                        return False
-                elif head == "git":
-                    if len(seg) < 2 or seg[1] not in GIT_BUILTINS:
-                        return False
-                elif head not in DATA_SINKS:
-                    return False
-                for k, w in enumerate(seg):
-                    if w in _REDIRECT and (k + 1 >= len(seg) or _unsafe_target(seg[k + 1])):
-                        return False
-                if head == "tee" and any(_unsafe_target(w) for w in seg[1:]
-                                         if not w.startswith("-")):
-                    return False
-            seg = []
-            continue
-        seg.append(t)
-    return True
+    if words[:1] == ["gh"] and len(words) > 2 and words[1] in ("pr", "issue") \
+            and words[2] in GH_BODY_VERBS:
+        return _stdin_flag(words, "--body-file", "-F")
+    if words[:2] == ["git", "commit"]:
+        return _stdin_flag(words, "-F", "--file") \
+            and not any(w in ("-e", "--edit") for w in words)
+    return False
+
+
+_PUNCT = "();<>|&"
 
 
 def strip_data_heredocs(cmd):
-    """Remove heredoc bodies that are provably data; else return `cmd`."""
-    if "<<" not in cmd or "((" in cmd or "$[" in cmd \
-            or re.search(r"(^|[^\w-])case\b", cmd):
+    """The command without its heredoc body when it is one of the exact data
+    shapes; otherwise `cmd` unchanged."""
+    first, newline, rest = cmd.partition("\n")
+    if not newline:
         return cmd
-    # `out` is the command without the bodies. `flat` is the same text with
-    # every string replaced by a placeholder word and every command
-    # substitution opened as a separate command, for the sink check.
-    out, flat, stack, pending, stripped = [], [], [], [], False
-    # A substitution is a placeholder word `Q` where it stands (so one in the
-    # command-word slot keeps the bodies: its OUTPUT is the command) and its
-    # own text is checked separately, as a command line of its own.
-    flats, inner = [], []
-    pending_depth = 0
-    i, n = 0, len(cmd)
-    line_start = 0
-    while i < n:
-        c = cmd[i]
-        top = stack[-1] if stack else None
-        if top == "'":
-            out.append(c); i += 1
-            if c == "'":
-                stack.pop()
-            continue
-        if top == "$'":
-            if c == "\\" and i + 1 < n:
-                out.append(cmd[i:i + 2]); i += 2; continue
-            out.append(c); i += 1
-            if c == "'":
-                stack.pop()
-            continue
-        if c == "\\" and i + 1 < n:
-            if cmd[i + 1] == "\n" and pending:
-                return cmd          # continuation on a heredoc line: too subtle
-            out.append(cmd[i:i + 2])
-            flat.append(cmd[i:i + 2] if top not in ('"', "${") else "")
-            i += 2; continue
-        if cmd.startswith("$'", i) and top != '"':
-            stack.append("$'"); out.append("$'"); flat.append(" Q "); i += 2; continue
-        if cmd.startswith("${", i):
-            stack.append("${"); out.append("${"); flat.append(" Q "); i += 2; continue
-        if cmd.startswith("$(", i) or (top != '"' and cmd.startswith(("<(", ">("), i)):
-            stack.append("$("); out.append(cmd[i:i + 2]); flat.append("Q")
-            flats.append(flat); flat = []
-            i += 2; continue
-        if c == "`":
-            out.append(c); i += 1
-            if top == "`":
-                stack.pop(); inner.append("".join(flat)); flat = flats.pop()
-            else:
-                stack.append("`"); flat.append("Q"); flats.append(flat); flat = []
-            continue
-        if top == '"':
-            out.append(c); i += 1
-            if c == '"':
-                stack.pop()
-            continue
-        if top == "${":
-            out.append(c); i += 1
-            if c == "}":
-                stack.pop()
-            continue
-        if c in ("'", '"'):
-            stack.append(c); out.append(c); flat.append(" Q "); i += 1; continue
-        # Code context: top level, `$(...)`, `<(...)`, or backticks.
-        if c == "(" and top == "$(":
-            stack.append("("); out.append(c); flat.append(c); i += 1; continue
-        if c == ")" and top in ("$(", "("):
-            stack.pop(); out.append(c); i += 1
-            if top == "$(":
-                inner.append("".join(flat)); flat = flats.pop()
-            else:
-                flat.append(c)
-            continue
-        if c == "#" and (i == 0 or cmd[i - 1] in " \t\n;&|()<>"):
-            j = cmd.find("\n", i)
-            j = n if j < 0 else j
-            out.append(cmd[i:j]); i = j; continue
-        if cmd.startswith("<<", i):
-            if cmd.startswith("<<<", i):
-                out.append("<<<"); flat.append(" <<< "); i += 3; continue
-            if top == "`" or "[" in cmd[line_start:i] \
-                    or (i > 0 and cmd[i - 1] not in " \t;|&("):
-                return cmd          # subscript, arithmetic, backticks, fused fd
-            m = _HEREDOC_RE.match(cmd, i)
-            if not m:
-                return cmd
-            quoted = bool(m.group(2) or m.group(3) or m.group(4))
-            delim = m.group(2) or m.group(3) or m.group(5)
-            if "\\" in delim:
-                return cmd          # quote removal would change the delimiter
-            if pending and pending_depth != len(stack):
-                return cmd
-            pending_depth = len(stack)
-            pending.append((delim, m.group(1) == "-", quoted))
-            out.append(m.group(0)); flat.append(" << Q "); i = m.end(); continue
-        if c == "\n" and pending:
-            if len(stack) != pending_depth:
-                # bash reads a body at the newline that ends the heredoc's own
-                # command; a newline inside a substitution opened after it is
-                # code there, not the start of the body.
-                return cmd
-            out.append(c); flat.append(c); i += 1
-            for delim, tabs, quoted in pending:
-                body = []
-                while True:
-                    if i >= n:
-                        return cmd  # unterminated body
-                    j = cmd.find("\n", i)
-                    j = n if j < 0 else j
-                    line = cmd[i:j]
-                    i = min(j + 1, n)
-                    if (line.lstrip("\t") if tabs else line) == delim:
-                        break
-                    if not quoted and line.endswith("\\"):
-                        return cmd  # bash joins it before matching the delimiter
-                    body.append(line)
-                text = "\n".join(body)
-                if not quoted and ("$(" in text or "`" in text):
-                    return cmd      # an expanding body runs that code
-                stripped = True
-            pending = []
-            line_start = i
-            continue
-        if c == "\n":
-            line_start = i + 1
-        out.append(c); flat.append(c); i += 1
-    if pending or stack or not stripped:
+    ops = list(_HEREDOC_OP.finditer(first))
+    if len(ops) != 1:
         return cmd
-    texts = ["".join(flat)] + inner
-    return "".join(out) if all(_only_data_sinks(t) for t in texts) else cmd
+    op = ops[0]
+    header = first[:op.start()] + " " + first[op.end():]
+    if "<<" in header or re.search(r"[$`\\#]", header):
+        return cmd
+    try:
+        lex = shlex.shlex(header, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        lex.commenters = ""
+        words = list(lex)
+    except ValueError:
+        return cmd
+    if not words or not _sends_stdin_as_data(words):
+        return cmd
+    delim, tabs = op.group(3), op.group(1) == "-"
+    lines = rest.split("\n")
+    for k, line in enumerate(lines):
+        if (line.lstrip("\t") if tabs else line) == delim:
+            return header.strip() if all(not tail.strip() for tail in lines[k + 1:]) else cmd
+    return cmd
 
 
 def main():

@@ -297,10 +297,33 @@ printf '\n%s== heredoc bodies are data unless something can run them ==%s\n' "$D
 # every body line were a command.
 allows "$(printf "gh pr comment 5 --body-file - <<'EOF'\nThen run git branch -D old and git push --delete origin old\nEOF")"
 allows "$(printf "cat > handoff.md <<'EOF'\nnext: git switch main\nEOF")"
-allows "$(printf 'cat > h.md <<EOF\nnext: git switch main for $USER\nEOF')"
-allows "$(printf "gh pr comment 5 --body \"\$(cat <<'EOF'\nrun git branch -D old\nthen git switch main\nEOF\n)\"")"
-allows "$(printf "cat <<-'EOF' | gh pr comment 5 --body-file -\n\tgit switch main\n\tEOF")"
-allows "$(printf "cat <<A <<'B'\nx\nA\ngit switch main\nB")"
+blocks "$(printf 'cat > h.md <<EOF\nnext: git switch main for $USER\nEOF')"
+blocks "$(printf "gh pr comment 5 --body \"\$(cat <<'EOF'\nrun git branch -D old\nthen git switch main\nEOF\n)\"")"
+blocks "$(printf "cat <<-'EOF' | gh pr comment 5 --body-file -\n\tgit switch main\n\tEOF")"
+blocks "$(printf "cat <<A <<'B'\nx\nA\ngit switch main\nB")"
+# Only exact single-command shapes drop a body (see orch-git-classify.py,
+# "Heredoc bodies"): the lines above are outside them and keep the old
+# behaviour, as do an unquoted delimiter, a pipe, two heredocs and a
+# `$(cat <<'EOF' ...)` substitution. The shapes that do:
+allows "$(printf "gh issue comment 9 --body-file=- <<'EOF'\ngit switch main\nEOF")"
+allows "$(printf "gh pr create --title \"fix: a; b\" --body-file - <<'EOF'\ngit branch -D old\nEOF")"
+allows "$(printf "cat > /Users/x/handoffs/h.md <<'EOF'\nnext: git switch main\nEOF")"
+allows "$(printf "cat <<'EOF' > handoff.md\nnext: git reset --hard\nEOF\n")"
+allows "$(printf "cat <<-'EOF' > notes/today.md\n\tgit switch main\n\tEOF")"
+# Second Full review round: each was allowed by the general design.
+blocks "$(printf "git config core.editor \"sh runner\"\ngit commit --allow-empty <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit --amend <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "git commit -e -F - <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat 1<> .husky/pre-commit <<'EOF'\ngit reset --hard\nEOF\ngit commit -m x")"
+blocks "$(printf "cat > tools/git/pre-commit <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > pre-commit <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > scripts/\"../.git/hooks/pre-commit\" <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > ../x <<'EOF'\ngit reset --hard\nEOF")"
+blocks "$(printf "printf -v x '%%s' \"\$(cat <<'EOF'\n\$(git reset --hard)\nEOF\n)\"")"
+blocks "$(printf "echo \${x:-'}'<<EOF}\ngit reset --hard\nEOF")"
+blocks "$(printf "cat > a.md <<'EOF'\nx\nEOF\ngit reset --hard")"
+blocks "$(printf "gh pr comment 5 --body-file - <<EOF\ngit reset --hard\nEOF")"
+blocks 'echo a\ #; git reset --hard'
 # ...and everything that can turn a body, or text around it, into code.
 blocks "$(printf "cat <<'EOF' | sh\ngit switch main\nEOF")"
 blocks "$(printf "bash -c \"\$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"")"
@@ -327,7 +350,7 @@ blocks "$(printf "cat <<'EOF'\nfoo\ngit reset --hard")"
 blocks "$(printf 'echo hi # note\ngit reset --hard')"
 blocks "$(printf 'echo hi # <<EOF\ngit reset --hard\nEOF')"
 allows 'echo "issue #12 is fixed"'
-allows "$(printf "gh pr create --title \"fix: a; b\" --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\"")"
+blocks "$(printf "gh pr create --title \"fix: a; b\" --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\"")"
 # Each of these was ALLOWED by a first, denylist version of the heredoc rule
 # (found by the independent spec review); only an allowlist of data sinks
 # closes the class.
@@ -365,8 +388,8 @@ blocks "$(printf "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.zz GIT_CONFIG_VALUE_
 blocks "$(printf "cat > .githooks/commit-msg <<'EOF'\ngit reset --hard\nEOF\ngit commit -m x")"
 blocks "$(printf "cat >> ~/.zshenv <<'EOF'\ngit reset --hard\nEOF")"
 blocks "$(printf "tee .git/hooks/pre-commit <<'EOF'\ngit reset --hard\nEOF")"
-allows "$(printf "git add a.py && git commit -m \"\$(cat <<'EOF'\nexplain git reset --hard\nEOF\n)\" && git push -u origin x")"
-allows "$(printf "gh pr create --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\" --title \"fix: a; b\"")"
+blocks "$(printf "git add a.py && git commit -m \"\$(cat <<'EOF'\nexplain git reset --hard\nEOF\n)\" && git push -u origin x")"
+blocks "$(printf "gh pr create --body \"\$(cat <<'EOF'\ngit switch main\nEOF\n)\" --title \"fix: a; b\"")"
 allows "$(printf "git commit -F - <<'EOF'\ngit reset --hard is bad\nEOF")"
 # From the first Full review (code-review-1, code-review-8, codex-review-4,
 # codex-review-5).

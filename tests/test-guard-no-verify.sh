@@ -209,6 +209,10 @@ blocks 'bash -c "git commit --no-verify -m x"'
 allows "$(printf "git commit -m \"\$(cat <<'EOF'\nfix: never pass --no-verify\nEOF\n)\"")"
 blocks "$(printf 'echo hi # note\ngit commit --no-verify -m x')"
 blocks "$(printf "\$(cat <<'EOF'\ngit commit --no-verify -m x\nEOF\n)")"
+# A commit message on stdin is one of the shapes whose body is data; the
+# header's own flags are still classified.
+allows "$(printf "git commit -F - <<'EOF'\nfix: git commit --no-verify is never allowed\nEOF")"
+blocks "$(printf "git commit --no-verify -F - <<'EOF'\nx\nEOF")"
 
 printf '\n%s== opt-in and profile gates ==%s\n' "$DIM" "$RESET"
 RC=$(rc_for 'git commit --no-verify -m x' 'x' ORCH_ALLOW_NO_VERIFY=1)
